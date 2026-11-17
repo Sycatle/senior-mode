@@ -349,9 +349,10 @@ setup_claude_md() {
   local root=$1 tpl=$2 name=$3 claude=$1/CLAUDE.md block=$2/principles.md skeleton new lines
   if [ ! -e "$claude" ]; then
     skeleton=$(cat "$tpl/CLAUDE.md")
-    { printf '%s\n\n' "${skeleton//\{\{name\}\}/"$name"}"; cat "$block"; } >"$claude"
+    # Split around the one placeholder: a pattern substitution would read & in the name (bash 5.2).
+    { printf '%s\n\n' "${skeleton%%\{\{name\}\}*}$name${skeleton#*\{\{name\}\}}"; cat "$block"; } >"$claude"
     echo "CLAUDE.md: created from the skeleton; commands, code map and pitfalls to fill"
-  elif ! grep -q '^<!-- /\?senior-mode:principles' "$claude"; then
+  elif ! grep -qE '^<!-- /?senior-mode:principles' "$claude"; then
     { echo; cat "$block"; } >>"$claude"
     echo "CLAUDE.md: Principles added, the rest kept"
   # One opening marker, then one closing marker, else awk refuses and the file is left alone.

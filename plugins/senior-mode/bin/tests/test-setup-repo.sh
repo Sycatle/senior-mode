@@ -153,9 +153,11 @@ grep -qx '# R&D' "$rd/CLAUDE.md" || fail "repository name with & mangled: $(head
 # commit subjects: nothing to check without commits; a remote without a known default branch fails
 # and says how to fix it, instead of reading the whole history.
 (cd "$rd" && .githooks/commit-msg --branch) 2>"$work/err" || fail "--branch fails without commits: $(cat "$work/err")"
-commit "$rd" "old style subject" --no-verify
+commit "$rd" "feat: first"
 git init -q --bare "$work/trunk.git"
 git -C "$rd" remote add origin "$work/trunk.git"
+(cd "$rd" && .githooks/commit-msg --branch) 2>"$work/err" || fail "--branch blocks the first push to an empty origin: $(cat "$work/err")"
+commit "$rd" "old style subject" --no-verify
 git -C "$rd" push -q --no-verify origin HEAD:trunk >/dev/null 2>&1
 (cd "$rd" && .githooks/commit-msg --branch) 2>"$work/err" && fail "--branch passes with an unknown default branch"
 grep -q 'set-head' "$work/err" || fail "unknown default branch not explained: $(cat "$work/err")"

@@ -209,18 +209,15 @@ release() {
     die "no release-please-config.json; run senior-mode setup repo"
   slug=$(repo_slug)
   token=$(mktemp)
-  if ! gh auth token >"$token"; then
-    rm -f "$token"
-    die "gh is not logged in; run gh auth login"
-  fi
+  # shellcheck disable=SC2064 # expand now: $token is local and gone when the trap runs
+  trap "rm -f '$token'" EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  gh auth token >"$token" || die "gh is not logged in; run gh auth login"
   for step in github-release release-pr; do
-    if ! (cd "$root" && npx --yes "release-please@$RELEASE_PLEASE" "$step" \
-      --token "$token" --repo-url "$slug" ${dry:+"$dry"}); then
-      rm -f "$token"
-      die "release-please $step failed"
-    fi
+    (cd "$root" && npx --yes "release-please@$RELEASE_PLEASE" "$step" \
+      --token "$token" --repo-url "$slug" ${dry:+"$dry"}) || die "release-please $step failed"
   done
-  rm -f "$token"
 }
 
 # Where the result of `check` is kept for a commit, until `publish` sends it (ADR 0006).

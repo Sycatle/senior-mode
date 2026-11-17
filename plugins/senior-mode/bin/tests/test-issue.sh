@@ -107,6 +107,11 @@ create --title "Typed" --body-file "$work/body.md" --size S --priority "P0 now" 
 logged "issue edit 9 --repo acme/app --add-label type:feature --remove-label type:bug" ||
   fail "old type label kept: $(cat "$GH_LOG")"
 logged "--remove-label needs-info" && fail "a non-type label removed"
+echo '[{"number": 9, "title": "Typed", "labels": [{"name": "type:feature"}, {"name": "type: bug"}]}]' >"$FIX/issues.json"
+create --title "Typed" --body-file "$work/body.md" --size S --priority "P0 now" --type feature ||
+  fail "typed reuse failed: $(cat "$work/err")"
+logged "--remove-label type:feature" && fail "the asked type label removed"
+grep -q -- "--remove-label type: bug$" "$GH_LOG" || fail "a label with a space is split: $(cat "$GH_LOG")"
 
 # --help prints this command's usage and succeeds.
 create --help || fail "--help exits non-zero"

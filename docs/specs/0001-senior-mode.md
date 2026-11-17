@@ -159,8 +159,9 @@ it does not read code at length.
 - **Self-protection:** during a run, hooks deny edits to `.github/workflows/**`, `.claude/**`,
   `.githooks/**` and the protected-zone list itself, so an agent cannot weaken its own barriers.
 - **Always denied:** `--no-verify`, force-push, direct push to the default branch,
-  `gh pr merge --admin` or a merge through `gh api`, history rewrite on shared branches, deleting
-  files outside the ticket's worktree.
+  `gh pr merge --admin` or a PUT to the REST merge endpoint, history rewrite on shared branches,
+  deleting files outside the ticket's worktree. The guard reads commands as written; it is a
+  guardrail for honest mistakes, not a sandbox (GraphQL or `bash -c` are not parsed).
 
 Run loop per ticket:
 1. `ops` selects the top Ready item (Priority, then milestone due date), unblocked, size ≤ M.

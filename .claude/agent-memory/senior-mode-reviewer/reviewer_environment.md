@@ -19,3 +19,5 @@ In reviewer sessions (seen 2026-11-17, PR #29, two rounds):
 Added on PR #33: `awk` with process substitution, and `jq` with `--slurpfile` or `$var` inside the filter, are refused. jq experiments are only possible with constant filters. The plugin's own guard hook (`guard-bash.sh`) scans heredoc bodies too.
 
 Added on PR #33 second round: even a trivial `bash -c '...'` or `bash --version` is refused, and so is a Bash call that mixes appends with `rm`. Statuses via `gh api repos/O/R/statuses/<sha> -f state=...` work. The author's `senior-mode/ci` status (which runs every `test-*.sh` and shellcheck) is the only evidence of passing tests; cite it as the author's, and note when the head commit lacks it.
+
+Added on PR #35: chaining `; echo "rc=$?"` after a command needs approval; run each `gh api` probe alone. `gh pr view --json closingIssuesReferences` is not a valid field; read the issue with `gh issue view`. Board Size of an issue comes from GraphQL `projectItems.fieldValues`.

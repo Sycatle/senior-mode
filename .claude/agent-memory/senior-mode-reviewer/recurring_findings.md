@@ -50,3 +50,9 @@ Added on PR #33 second round (2026-11-17):
 Added on PR #33 third round (2026-11-17):
 - **A reviewer's own fix suggestion can regress.** My R2 fix ("fail when origin exists but no base is found") blocked the first push to an empty origin, where no `refs/remotes/origin/*` exist yet and `set-head --auto` cannot help. **How to apply:** when proposing a "fail loudly" fallback, list the states that reach it (empty remote, unborn HEAD, nothing fetched) before posting.
 - **Portability is unstated.** The scripts use no bash 4 feature, but fixes use `"${x//p/"$v"}"` (inner quotes kept literally on bash 4.2 and earlier) and GNU BRE `\?`. **How to apply:** flag as non-blocking until a supported platform is stated; propose that the setup or README spec state it at retro.
+
+Added on PR #35 (2026-11-17, frame + issue create):
+- **"Reuse instead of duplicate" paths that still write.** `issue create` reuses an open issue by title but re-applies a default Status (Backlog), Priority and Size, which resets Ready/In progress tickets on rerun. **How to apply:** for every find-or-create, check that the found branch does not write defaults; only explicitly passed values may change existing state.
+- **Skills that delegate to agents lacking the tools.** `frame` asked `scout` (Read/Grep/Glob only) to run `gh api`; ops has no Write but must supply `--body-file`. **How to apply:** for each "ask agent X to do Y" in a skill, check X's `tools:` frontmatter can do Y.
+- **Ready before the spec reaches main.** Framing moved slices to Ready while the spec PR was still open (needs-human for L). **How to apply:** check ordering of ready vs docs PR merge in any planning skill.
+- **Empty arrays under `set -u`** (`"${a[@]}"`) fail on bash <= 4.3 (macOS 3.2); regexes like `^[0-9]*$` accept empty values that then match `grep -qx ""` on a here-string.

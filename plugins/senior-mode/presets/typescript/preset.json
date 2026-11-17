@@ -1,0 +1,7 @@
+{
+  "commands": ["lint", "typecheck", "test", "build", "e2e"],
+  "checks": [{ "name": "commit subjects", "run": ".githooks/commit-msg --branch" }],
+  "release": {
+    "packages": { ".": { "release-type": "node", "component": "{{name}}", "include-component-in-tag": true } }
+  }
+}

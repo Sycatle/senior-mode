@@ -26,7 +26,7 @@ case "$*" in
     echo '[{"id": 9, "name": "senior-mode", "source_type": "Repository"}]' >"$FIX/rulesets.json" ;;
   "api -X PUT repos/acme/app/rulesets/"*) cat >>"$GH_LOG" ;;
   "workflow list"*) if [ -f "$FIX/workflows.json" ]; then respond <"$FIX/workflows.json"; else echo '[]' | respond; fi ;;
-  "workflow disable"*) ;;
+  "workflow disable"* | "workflow enable"*) ;;
   "project view"*)
     [ -z "${VIEW_ERR:-}" ] || { echo "$VIEW_ERR" >&2; exit 1; }
     jq -e --argjson n "$3" '.number == $n' "$FIX/project.json" >/dev/null 2>&1 ||
@@ -165,15 +165,28 @@ failing LINK_ERR
 
 # ci.mode local (the default): active workflows are disabled on GitHub, never deleted.
 echo '[{"id": 11, "name": "CI", "path": ".github/workflows/ci.yml", "state": "active"},
-  {"id": 12, "name": "Old", "path": ".github/workflows/old.yml", "state": "disabled_manually"}]' >"$FIX/workflows.json"
+  {"id": 12, "name": "Old", "path": ".github/workflows/old.yml", "state": "disabled_manually"},
+  {"id": 13, "name": "Dependabot Updates", "path": "dynamic/dependabot/dependabot-updates", "state": "active"},
+  {"id": 14, "name": "senior-mode", "path": ".github/workflows/senior-mode.yml", "state": "active"}]' >"$FIX/workflows.json"
 setup
+logged "workflow list --all --limit 1000" || fail "workflows past the first 50 are not listed"
 logged "workflow disable 11 --repo acme/app" || fail "an active workflow is left running in local mode"
 logged "workflow disable 12" && fail "an already disabled workflow is disabled again"
-grep -q "workflows: disabled CI" "$work/out" || fail "disabled workflows not reported: $(cat "$work/out")"
-grep -q "gh workflow enable" "$work/out" || fail "no way back given: $(cat "$work/out")"
-jq '.ci = {mode: "actions"}' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
-setup
+logged "workflow disable 13" && fail "a GitHub built-in workflow (Dependabot) is disabled"
+grep -q "workflows: disabled CI, senior-mode" "$work/out" || fail "disabled workflows not reported: $(cat "$work/out")"
+grep -q "ci.mode actions" "$work/out" || fail "no lasting way back given: $(cat "$work/out")"
+[ "$(cfg .ci.mode)" = null ] || fail "ci.mode written without --ci"
+
+# --ci actions: stored, nothing disabled, and our own workflow turned back on.
+jq '(.[] | select(.id == 14) | .state) = "disabled_manually"' "$FIX/workflows.json" >"$work/w" && mv "$work/w" "$FIX/workflows.json"
+: >"$GH_LOG"
+(cd "$repo" && "$cli" setup github --ci actions) >"$work/out" 2>"$work/err" || fail "setup --ci actions failed: $(cat "$work/err")"
+[ "$(cfg .ci.mode)" = actions ] || fail "--ci actions not stored: $(cfg .ci)"
 logged "workflow disable" && fail "workflows disabled in actions mode"
+logged "workflow enable 14 --repo acme/app" || fail "a disabled senior-mode workflow stays off in actions mode"
+setup
+logged "workflow disable" && fail "a rerun without --ci forgets the stored mode"
+(cd "$repo" && "$cli" setup github --ci cloud) >/dev/null 2>&1 && fail "an unknown ci mode is accepted"
 
 # Rulesets unavailable on the plan.
 rm "$FIX/rulesets.json"

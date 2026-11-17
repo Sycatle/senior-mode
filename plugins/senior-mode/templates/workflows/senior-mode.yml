@@ -27,6 +27,9 @@ jobs:
         with:
           ref: ${{ env.SHA }}
           fetch-depth: 0
+      - name: Default branch
+        # checkout leaves origin/HEAD unset; the commit subjects check compares against it.
+        run: git remote set-head origin "${{ github.event.repository.default_branch }}"
       - uses: actions/setup-node@v4
         if: hashFiles('package.json') != ''
         with:
@@ -46,7 +49,8 @@ jobs:
       - name: Install dependencies
         if: hashFiles('package.json') != ''
         run: |
-          corepack enable
+          # Node 25 and later ship without corepack, which provides pnpm and yarn.
+          if [ -f pnpm-lock.yaml ] || [ -f yarn.lock ]; then npm install --global corepack && corepack enable; fi
           if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
           elif [ -f yarn.lock ]; then yarn install
           elif [ -f bun.lock ] || [ -f bun.lockb ]; then bun install --frozen-lockfile
@@ -55,27 +59,34 @@ jobs:
           fi
       - name: Checks
         run: |
-          failed=""
-          while IFS=$'\t' read -r name run; do
+          count=$(jq -e '.checks | length' .claude/senior-mode.json) && [ "$count" -gt 0 ] ||
+            { echo "FAILED=no checks in .claude/senior-mode.json" >>"$GITHUB_ENV"; exit 1; }
+          failed="" passed=0
+          for i in $(seq 0 $((count - 1))); do
+            name=$(jq -r ".checks[$i].name" .claude/senior-mode.json)
+            run=$(jq -r ".checks[$i].run" .claude/senior-mode.json)
             echo "::group::$name"
-            bash -c "$run" || failed="$failed${failed:+, }$name"
+            if bash -c "$run" </dev/null; then passed=$((passed + 1)); else failed="$failed${failed:+, }$name"; fi
             echo "::endgroup::"
-          done < <(jq -r '.checks[]? | [.name, .run] | @tsv' .claude/senior-mode.json)
+          done
+          echo "PASSED=$passed/$count checks passed" >>"$GITHUB_ENV"
           echo "FAILED=$failed" >>"$GITHUB_ENV"
           [ -z "$failed" ] || { echo "failed: $failed"; exit 1; }
       - name: Status senior-mode/ci
-        if: always()
+        if: ${{ !cancelled() }}
         run: |
-          if [ "${{ job.status }}" = success ]; then state=success desc="all checks passed"
+          if [ "${{ job.status }}" = success ]; then state=success desc=$PASSED
           else state=failure desc="failed: ${FAILED:-setup}"
           fi
           gh api "repos/${{ github.repository }}/statuses/$SHA" -f state="$state" \
-            -f context=senior-mode/ci -f description="$desc" \
+            -f context=senior-mode/ci -f description="${desc:0:140}" \
             -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null
 
   dependencies:
     name: Dependency review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # Private repositories need GitHub Advanced Security for it: a refusal is not a failure.
+    continue-on-error: true
     steps:
       - uses: actions/dependency-review-action@v4

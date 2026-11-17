@@ -84,7 +84,7 @@ A ticket that grows past its size during work stops; the architect proposes a sp
 ## 6. Definitions of Ready and Done
 
 **Ready** (required for `run`; checked by the `ready` skill, status `Ready` in the Project):
-- linked spec with acceptance criteria written as Given/When/Then;
+- linked spec, merged on the default branch, with acceptance criteria written as Given/When/Then;
 - size S or M; no `needs-info` label; no open blocking dependency;
 - test seams identified (where the tests will hook in);
 - for an L epic: spec and ADRs `accepted`.

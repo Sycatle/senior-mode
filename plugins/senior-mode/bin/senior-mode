@@ -16,7 +16,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> | check | publish [commit] | context"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> | check | publish [commit] | context | setup github"
 }
 
 config_file() {
@@ -146,6 +146,126 @@ publish() {
   echo "senior-mode/ci = $state on ${sha:0:7}: $description"
 }
 
+# Board fields and options (spec 0001 §11), in order. Aliases match options of GitHub's default
+# Status field, so that values already set on items survive the repair.
+BOARD='{
+  "Status": [{"name": "Backlog", "color": "GRAY", "aliases": ["todo"]}, {"name": "Ready", "color": "BLUE"},
+    {"name": "In progress", "color": "YELLOW"}, {"name": "In review", "color": "PURPLE"}, {"name": "Done", "color": "GREEN"}],
+  "Priority": [{"name": "P0 now", "color": "RED"}, {"name": "P1 next", "color": "ORANGE"},
+    {"name": "P2 later", "color": "YELLOW"}, {"name": "P3 someday", "color": "GRAY"}],
+  "Size": [{"name": "S", "color": "GREEN"}, {"name": "M", "color": "YELLOW"}, {"name": "L", "color": "RED"}]
+}'
+
+# Options to give a field: the wanted ones, keeping the id, colour and description of an existing
+# option with the same name (any case) or an alias, then the field's other options unchanged.
+# shellcheck disable=SC2016 # a jq program, not shell
+MERGE_OPTIONS='.options as $cur
+  | [$want[] | . as $w
+      | ([$cur[] | (.name | ascii_downcase) as $n
+          | select($n == ($w.name | ascii_downcase) or (($w.aliases // []) | index($n)))][0]) as $m
+      | {name: $w.name, color: ($m.color // $w.color), description: ($m.description // "")}
+        + (if $m then {id: $m.id} else {} end)] as $ours
+  | $ours + [$cur[] | select(.id as $i | $ours | map(.id) | index($i) | not) | {id, name, color, description}]'
+
+# Single-select fields of a Project, with their options.
+board_fields() {
+  jq -nc --arg id "$1" '{variables: {id: $id}, query: "query($id: ID!) { node(id: $id) { ... on ProjectV2 {
+    fields(first: 50) { nodes { ... on ProjectV2SingleSelectField { id name options { id name color description } } } } } } }"}' |
+    gh_retry api graphql --input - --jq '[.data.node.fields.nodes[] | select(.options)]'
+}
+
+# Finds the Project of the repository (cached number, else same title) or creates it; prints
+# "<number> <id>".
+setup_project() {
+  local file=$1 owner=$2 name=$3 slug=$4 number id
+  number=$(jq -r '.project.number // empty' "$file")
+  if [ -z "$number" ] || ! id=$(gh project view "$number" --owner "$owner" --format json --jq .id 2>/dev/null); then
+    number=$(gh_retry project list --owner "$owner" --limit 100 --format json \
+      --jq "[.projects[] | select(.title == \"$name\")][0].number // empty")
+    if [ -z "$number" ]; then
+      number=$(gh_retry project create --owner "$owner" --title "$name" --format json --jq .number)
+      echo "Project #$number $name: created" >&2
+    fi
+    id=$(gh_retry project view "$number" --owner "$owner" --format json --jq .id)
+  fi
+  gh_retry project link "$number" --owner "$owner" --repo "$slug" >/dev/null
+  echo "$number $id"
+}
+
+# Creates missing board fields, repairs the options of existing ones.
+setup_fields() {
+  local number=$1 owner=$2 id=$3 fields field current options
+  fields=$(board_fields "$id")
+  for field in Status Priority Size; do
+    current=$(jq -c --arg f "$field" '.[] | select(.name == $f)' <<<"$fields")
+    if [ -z "$current" ]; then
+      gh_retry project field-create "$number" --owner "$owner" --name "$field" --data-type SINGLE_SELECT \
+        --single-select-options "$(jq -r --arg f "$field" '.[$f] | map(.name) | join(",")' <<<"$BOARD")" >/dev/null
+      echo "field $field: created"
+      continue
+    fi
+    options=$(jq -c --argjson want "$(jq -c --arg f "$field" '.[$f]' <<<"$BOARD")" "$MERGE_OPTIONS" <<<"$current")
+    [ "$(jq -c 'map(.name)' <<<"$options")" != "$(jq -c '.options | map(.name)' <<<"$current")" ] || continue
+    jq -nc --arg f "$(jq -r .id <<<"$current")" --argjson o "$options" '{variables: {field: $f, options: $o},
+      query: "mutation($field: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]!) {
+        updateProjectV2Field(input: {fieldId: $field, singleSelectOptions: $options}) { clientMutationId } }"}' |
+      gh_retry api graphql --input - >/dev/null
+    echo "field $field: options repaired, existing values kept"
+  done
+}
+
+# The GitHub side of a project (spec 0001 §11, #11), idempotent: Project linked to the repository with
+# Status, Priority and Size; labels; rebase-only merges; branch protection requiring both statuses
+# (ADR 0006); ids cached in the config.
+setup_github() {
+  local root file slug owner name info owner_type default number id labels label color description body err
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  file=$root/.claude/senior-mode.json
+  mkdir -p "$root/.claude"
+  [ -f "$file" ] || echo '{}' >"$file"
+  jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; fix or remove it, then run setup again"
+  slug=$(repo_slug) owner=${slug%%/*} name=${slug#*/}
+  info=$(gh_retry api "repos/$slug" --jq '"\(.owner.type) \(.default_branch)"') || die "cannot read $slug on GitHub"
+  owner_type=${info% *} default=${info#* }
+
+  read -r number id < <(setup_project "$file" "$owner" "$name" "$slug")
+  [ -n "$id" ] || die "could not find or create the Project"
+  setup_fields "$number" "$owner" "$id"
+  jq --arg o "$owner" --argjson n "$number" --arg id "$id" --argjson f "$(board_fields "$id")" \
+    '.project = {owner: $o, number: $n, id: $id, fields: ($f | map(select(.name | IN("Status", "Priority", "Size"))
+      | {key: .name, value: {id, options: (.options | map({key: .name, value: .id}) | from_entries)}}) | from_entries)}' \
+    "$file" >"$file.tmp" && mv "$file.tmp" "$file"
+  echo "Project #$number $name: linked, fields Status, Priority, Size; ids cached in .claude/senior-mode.json"
+
+  labels='needs-human|d93f0b|Waiting for a human decision or merge
+needs-info|fbca04|Missing information before work can start
+blocked|b60205|Blocked by something outside this ticket'
+  [ "$owner_type" = Organization ] || labels+='
+type:feature|a2eeef|New capability for users
+type:bug|d73a4a|Something does not work as specified
+type:task|c5def5|Work that is neither a feature nor a bug
+type:chore|ededed|Maintenance with no user-visible change'
+  while IFS='|' read -r label color description; do
+    gh_retry label create "$label" --repo "$slug" --color "$color" --description "$description" --force >/dev/null
+  done <<<"$labels"
+  echo "labels: $(cut -d'|' -f1 <<<"$labels" | paste -sd' ' -)"
+
+  gh_retry repo edit "$slug" --enable-rebase-merge --enable-merge-commit=false --enable-squash-merge=false \
+    --delete-branch-on-merge >/dev/null
+  echo "merges: rebase only, branches deleted after merge"
+
+  body=$(jq -nc '{required_status_checks: {strict: true, contexts: ["senior-mode/ci", "senior-mode/review"]},
+    enforce_admins: false, required_pull_request_reviews: null, restrictions: null,
+    required_linear_history: true, allow_force_pushes: false, allow_deletions: false}')
+  if err=$(gh_retry api -X PUT "repos/$slug/branches/$default/protection" --input - <<<"$body" 2>&1 >/dev/null); then
+    echo "protection on $default: pull requests need senior-mode/ci and senior-mode/review, linear history; admins may override with gh pr merge --admin"
+  elif grep -q "Upgrade to GitHub Pro" <<<"$err"; then
+    echo "protection on $default: not available on this plan for a private repository; the git hooks and the guard hook still apply"
+  else
+    die "branch protection on $default: $err"
+  fi
+}
+
 # What a session needs at start (SessionStart hook, spec 0001 §15): a short router and, on a ticket
 # branch <type>/<issue>-<slug>, the ticket, its Status, its spec and acceptance criteria. Never fails.
 context() {
@@ -181,6 +301,10 @@ ROUTER
 case "${1:-}" in
   context)
     context
+    ;;
+  setup)
+    [ $# -eq 2 ] && [ "$2" = github ] || usage
+    setup_github
     ;;
   check)
     [ $# -eq 1 ] || usage

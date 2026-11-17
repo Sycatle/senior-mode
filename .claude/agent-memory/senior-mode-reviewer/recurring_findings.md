@@ -56,3 +56,9 @@ Added on PR #35 (2026-11-17, frame + issue create):
 - **Skills that delegate to agents lacking the tools.** `frame` asked `scout` (Read/Grep/Glob only) to run `gh api`; ops has no Write but must supply `--body-file`. **How to apply:** for each "ask agent X to do Y" in a skill, check X's `tools:` frontmatter can do Y.
 - **Ready before the spec reaches main.** Framing moved slices to Ready while the spec PR was still open (needs-human for L). **How to apply:** check ordering of ready vs docs PR merge in any planning skill.
 - **Empty arrays under `set -u`** (`"${a[@]}"`) fail on bash <= 4.3 (macOS 3.2); regexes like `^[0-9]*$` accept empty values that then match `grep -qx ""` on a here-string.
+
+Added on PR #35 re-review (2026-11-17):
+- **Fixes placed in the caller, not the shared rule.** The rule that Ready must wait for the merged spec was added to `frame` only. The `ready` checklist still accepts a spec that is only on a docs branch. **How to apply:** when a fix adds a precondition to one skill, check whether the discipline skill it calls should own that precondition.
+- **A widened lookup without the field that tells what it found.** `milestones?state=all` combined with `--jq '.[].title'` hides closed milestones. **How to apply:** when a lookup goes from open to all states, check that the state reaches the decision.
+- **Stdin or heredoc handoff to a Haiku agent.** Without an explicit quoted `<<'EOF'`, backticks in the body run as commands. The guard hook also parses heredoc lines that start with git or gh after a backtick. **How to apply:** every skill that passes free text through Bash must name the quoted heredoc form.
+- **Single-to-multi argument changes** (`item set` pairs): check the global `usage()` and the agent docs that show the old form.

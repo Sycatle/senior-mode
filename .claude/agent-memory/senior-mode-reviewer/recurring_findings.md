@@ -62,3 +62,9 @@ Added on PR #35 re-review (2026-11-17):
 - **A widened lookup without the field that tells what it found.** `milestones?state=all` combined with `--jq '.[].title'` hides closed milestones. **How to apply:** when a lookup goes from open to all states, check that the state reaches the decision.
 - **Stdin or heredoc handoff to a Haiku agent.** Without an explicit quoted `<<'EOF'`, backticks in the body run as commands. The guard hook also parses heredoc lines that start with git or gh after a backtick. **How to apply:** every skill that passes free text through Bash must name the quoted heredoc form.
 - **Single-to-multi argument changes** (`item set` pairs): check the global `usage()` and the agent docs that show the old form.
+
+Added on PR #37 (2026-11-17, follow-up of #35 notes):
+- **A listing that drops the id the next step needs.** The frame milestone listing printed state and title, but the reopen PATCH needs the number. **How to apply:** for every "list, then act on one" instruction, check that the list prints the key the action takes.
+- **Write actions placed in a read-only step.** The "reopen a closed milestone" rule sat in frame's Facts step, before any milestone was chosen. **How to apply:** check that each write runs in the step where its target is known.
+- **Skill rule changed, spec definition not.** `ready` gained "on the default branch", but spec 0001 §6 (Definition of Ready) was not updated, and `Spec-Unchanged` cited §11 instead. **How to apply:** for skill wording changes, grep the spec for the definition the skill implements, not only the section the PR cites.
+- **Space-joined lists split again with an unquoted `for`.** Label names went through jq `join(" ")` and then `for b in $stale`, so names with spaces or globs break. Also, `join` on numbers needs jq 1.6 or later. **How to apply:** prefer one item per line with `while IFS= read -r`, and `tostring` before `join`.

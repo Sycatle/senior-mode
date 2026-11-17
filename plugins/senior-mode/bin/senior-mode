@@ -124,7 +124,7 @@ link() {
 # its fields, milestone, label and links converge to the arguments, its Status only with --status.
 issue_create() {
   local title="" body="" size="" priority="" status="" milestone="" type="" parent=""
-  local blockers=() edits=() file slug found number stale url b fields
+  local blockers=() edits=() file slug found number url b fields
   while [ $# -gt 0 ]; do
     case $1 in -h | --help)
       echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> --priority <option> [--status <option>] [--milestone <title>] [--type feature|bug|task|chore] [--blocked-by <n>]... [--parent <n>]"
@@ -164,14 +164,17 @@ issue_create() {
   # The number of an open issue with this title, then its type labels other than the asked one.
   found=$(gh_retry issue list --repo "$slug" --state open --limit 1000 --json number,title,labels |
     jq -r --arg t "$title" --arg k "type:$type" 'first(.[] | select(.title == $t)
-      | [.number] + [.labels[]?.name | select(startswith("type:") and . != $k)] | join(" ")) // empty')
-  read -r number stale <<<"$found" || true
+      | [.number | tostring] + [.labels[]?.name | select(startswith("type:") and . != $k)]
+      | join("\n")) // empty')
+  number=$(head -1 <<<"$found")
   if [ -n "$number" ]; then
     echo "#$number $title (already open)"
     [ -z "$milestone" ] || edits+=(--milestone "$milestone")
     if [ -n "$type" ]; then
       edits+=(--add-label "type:$type")
-      for b in $stale; do edits+=(--remove-label "$b"); done
+      while IFS= read -r b; do
+        [ -z "$b" ] || edits+=(--remove-label "$b")
+      done <<<"$(tail -n +2 <<<"$found")"
     fi
     [ ${#edits[@]} -eq 0 ] || gh_retry issue edit "$number" --repo "$slug" "${edits[@]}" >/dev/null
   else

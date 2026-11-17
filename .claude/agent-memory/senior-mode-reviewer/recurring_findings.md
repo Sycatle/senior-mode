@@ -131,3 +131,20 @@ Added on PR #49 (2026-11-17, release manifest seed, follow-up of #40/#44):
 Added on PR #50 re-review (2026-11-18):
 - **Dropping path resolution on one side only.** My N4 fix (remove `realpath -m`) left `root` from `git rev-parse --show-toplevel`, which is physical (it resolves symlinks), compared with a logical `file_path`. A symlinked project path or macOS `/var` (mktemp) then denies every docs/ write. **How to apply:** when a path check compares two paths, both must be normalised the same way. Ask for a test that uses a symlinked repo path.
 - **All six findings fixed in one round, with tests**, plus the human-merge jq note. A PR that commits the reviewer memory files along with the feature is a human-merge note, not a finding.
+
+Added on PR #52 (2026-11-18, release-please release PR for 0.1.0):
+- **Release PR checklist that was enough to approve:** manifest, plugin.json `version`, CHANGELOG heading and config `initial-version` agree; no tag or release exists yet (first release uses `initial-version` without a bump); every feat/fix on main touching the package path is listed, and commits that only touch root files (`release-please-config.json`) are rightly left out; CHANGELOG date is the UTC date. The plugin.json reformat (arrays expanded) by the JSON updater is not a finding. Tag `senior-mode--v<x>` is deliberate (636c9c3).
+- **Generated bodies cannot carry `Spec-Unchanged:`.** When the spec 12 drift check lands, it must exempt `autorelease: pending` PRs. Not a finding on the release PR itself.
+- **Count before you post.** I first wrote 26 fixes instead of 24 and had to PATCH the comment. Piping `gh api --jq 'sub(...)'` into `gh api -X PATCH -F body=@-` works for such corrections.
+
+Added on PR #53 (2026-11-18, ci.mode actions workflow + local-mode workflow disabling, #32):
+- **"All workflows" lists include GitHub's dynamic ones.** `gh workflow list --all` (REST) returns `dynamic/...` paths (Dependabot Updates, Dependency Graph, Copilot review/agent, pages-build-deployment) as active; checked live on cli/cli. Default `--limit` is 50. **How to apply:** any bulk workflow action must filter `.path | startswith(".github/workflows/")` and pass a limit.
+- **Shell loops that re-implement `check()`.** `while read ... done < <(jq ... @tsv)` with `bash -c "$run"`: the check eats the loop's stdin, @tsv doubles backslashes and escapes newlines, and a jq failure gives zero iterations, which reads as success. **How to apply:** ask for index iteration like `check()`, `</dev/null`, and a failure when the count is zero.
+- **Status descriptions over 140 chars** are refused by the statuses API; `check()` cuts them, new posters must too.
+- **Disruptive defaults missing from the setup consent table.** The default local mode disables every workflow, but the setup skill's "what will change" table did not say so, and a rerun undoes the advertised `gh workflow enable`. **How to apply:** for each new GitHub-side effect of setup, check that the skill's consent step lists it.
+- Protected-zone call: workflow template + code that disables workflows = CI zone (`needs-human`, status failure while blocking findings remain).
+
+Added on PR #53 re-review (2026-11-18, ci.mode actions workflow for #32):
+- **A fix to a printed "way back" can drop the half that still works.** My B3 asked to say that a rerun disables workflows again; the fix replaced `gh workflow enable <name>` with "until ci.mode actions", but actions mode only re-enables its own workflow. **How to apply:** when a message tells the user how to undo something, check that the named step actually undoes it for every case, not only for the tool's own files.
+- **Accepted test pattern for workflow templates:** extract the `run:` block of a step with awk from the template and run it against fixtures (exit code plus `$GITHUB_ENV` contents). It pins the real step, not a copy.
+- **Protected-zone call:** workflow template plus code that disables workflows on GitHub = CI zone (`needs-human`, status pending), as with #43.

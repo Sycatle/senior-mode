@@ -164,8 +164,9 @@ it does not read code at length.
 Run loop per ticket:
 1. `ops` selects the top Ready item (Priority, then milestone due date), unblocked, size ≤ M.
 2. Worktree and branch `<type>/<issue>-<slug>`; status `In progress`.
-3. `test-author` writes failing tests from the acceptance criteria; commit `test(...)`.
-4. `implementer` makes them pass and refactors, committing atomically; `verify` before each push.
+3. `test-author` writes failing tests from the acceptance criteria and records the failing output.
+4. `implementer` makes them pass and refactors; tests land in the same commit as the code they cover,
+   so every commit passes on its own (ADR 0005); the PR quotes the red run; `verify` before each push.
 5. Spec updated if its `paths` are touched; PR opened from the template with `Closes #n`; status
    `In review`.
 6. `reviewer` (fresh context) posts its review and sets the commit status `senior-mode/review`;

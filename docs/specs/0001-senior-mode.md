@@ -1,0 +1,301 @@
+---
+id: 0001
+title: senior-mode, a Claude Code plugin for senior-grade delivery
+status: draft
+size: L
+paths: ["plugins/**", ".claude-plugin/**", "evals/**"]
+adrs: [0001, 0002, 0003, 0004, 0005]
+---
+
+# senior-mode
+
+## 1. Problem
+
+People who build software with AI agents, technical or not, ship fast and then drown: no backlog, no
+priorities, no tests, giant unreviewable diffs, docs that rot, decisions nobody remembers. Existing
+workflow kits each solve a slice:
+
+| Reference | Keeps | Misses |
+|---|---|---|
+| superpowers | proof before "done", fresh context per task, model escalation, worktrees | ~160 KB of skills injected every session, process imposed on every task, no GitHub integration |
+| mattpocock/skills | small composable skills, grilling interviews, vertical-slice tickets, two-axis review | no model routing, no Projects, no CI, no autonomy |
+| spec-kit | constitution, spec/code drift detection (`analyze`, `converge`) | many files per feature, GitHub is peripheral |
+
+None drives GitHub Projects end to end, none pins models per role, none runs autonomously within
+mechanical guardrails.
+
+## 2. Goals and non-goals
+
+Goals:
+- Turn an idea into a prioritised, milestone-ordered GitHub Project of ready tickets, through a short
+  interview that proposes alternatives and things the user did not think of.
+- Deliver tickets with TDD, atomic conventional commits, small PRs, fresh-context review and green CI,
+  interactively (`next`) or autonomously (`run`), day after day.
+- Keep every change auditable: commit → PR → issue → spec → ADR.
+- Spend tokens where they buy quality: cheap models for mechanics, strong ones for judgement.
+- Scale ceremony to the task: a typo never gets an ADR.
+- Use every Claude Code extension point where it beats prose instructions (section 16).
+
+Non-goals:
+- Not a project-management SaaS: GitHub is the only store of state.
+- No estimation in hours or points; size S/M/L only.
+- No hosting or deployment platform of its own; presets wire the user's existing one.
+- No support for trackers other than GitHub in v1.
+
+## 3. Users and journeys
+
+| User | Typical day |
+|---|---|
+| Vibe coder (technical, undisciplined) | `/senior-mode:next` each morning; `/senior-mode:run` before leaving; reviews only what is labelled `needs-human` |
+| Non-technical founder | `/senior-mode:frame` to turn an idea into tickets; `/senior-mode:status` to read where things stand; validates outcomes (scenario, preview), never code |
+| Senior developer | Uses the guardrails and the agent team to delegate; tunes the config and principles |
+
+Everything shown to the user is plain language first, technical detail second (section "Technical
+detail" in issues and PRs). Every decision is presented as a table of alternatives with a
+recommended option.
+
+## 4. Principles
+
+1. **Proportional process.** Triage decides the ceremony (section 5). KISS over completeness.
+2. **One source of truth per kind of fact.** State lives in GitHub (Project, issues, PRs). Durable
+   knowledge lives in the repository (specs, ADRs, `CLAUDE.md`). Nothing is duplicated.
+3. **Mechanisms over prose.** A rule that can be checked by a hook, a CI job or a script is not written
+   as an instruction. Prose is for judgement.
+4. **Fresh eyes.** The author of tests is not the implementer; the reviewer starts from an empty
+   context; the reviewer is never cheaper than the implementer.
+5. **Proof before claims.** "Done" means verification commands were run and their output read.
+6. **Least model that can do the job.** Pinned per role, escalated on failure (ADR 0004).
+7. **Small and reversible.** One PR per ticket, ~400 changed lines at most excluding generated code.
+8. **Ask, do not guess, when it matters.** Open product or architecture decisions are asked in batches
+   of 3 to 4 questions, recommended option first; facts the code can answer are never asked.
+
+## 5. Triage
+
+Every request is classified before any work. The classification is written in the issue (`Size`).
+
+| Size | Criteria (any one is enough for the higher size) | Ceremony |
+|---|---|---|
+| S | one module, < ~50 lines, no new dependency, no interface change, trivially reversible | branch + PR; no issue required, no spec; bug fixes still need a regression test |
+| M | bounded feature or refactor, < ~400 lines, may add a dependency or change an internal interface | issue + light spec (`docs/specs`, problem, acceptance criteria, out of scope) + TDD + PR |
+| L | new subsystem, data migration, public interface, hard-to-reverse choice, or > ~400 lines | `frame` mandatory: alternatives, ADR(s), full spec, epic issue split into sub-issues of size ≤ M; a human accepts spec and ADRs before implementation |
+
+A ticket that grows past its size during work stops; the architect proposes a split.
+
+## 6. Definitions of Ready and Done
+
+**Ready** (required for `run`; checked by the `ready` skill, status `Ready` in the Project):
+- linked spec with acceptance criteria written as Given/When/Then;
+- size S or M; no `needs-info` label; no open blocking dependency;
+- test seams identified (where the tests will hook in);
+- for an L epic: spec and ADRs `accepted`.
+
+**Done:**
+- verification commands green (lint, typecheck, tests, build) and run, not assumed;
+- fresh-context review passed on both axes (spec, standards);
+- PR merged with `Closes #n`, Project item `Done`, follow-up issues created for discovered work;
+- spec status and `paths` updated in the same PR; ADR added for any new decision; `CLAUDE.md`
+  updated if a command, the code map or a non-derivable pitfall changed.
+
+## 7. Commands
+
+Commands are user-invocable skills (`disable-model-invocation: true`), namespaced `/senior-mode:<name>`.
+Natural-language triggers in any language route to them ("let's frame", "cadrons", "go", "enchaîne").
+
+| Command | Purpose | Agents |
+|---|---|---|
+| `setup` | Adopt a repo (new or existing): detect stack, choose preset, create the Project and its fields, labels, branch protection, CI, release-please, git hooks, issue and PR templates, `CLAUDE.md` with Principles, `.claude/senior-mode.json`. Idempotent; re-run to repair. | scout, ops |
+| `frame` | Idea → interview rounds → alternatives → spec → ADR(s) → tickets as vertical slices with acceptance criteria, dependencies, size, priority, milestone. Ends with a summary of proactive suggestions the user did not ask for. | scout, researcher, architect, ops |
+| `next` | The daily session: short state of the board, open PRs needing a human, then picks the top Ready ticket and delivers it with the user in the loop (TDD, commits, PR). | ops, test-author, implementer, reviewer |
+| `run` | Autonomous delivery of up to N Ready tickets (section 9). | all |
+| `status` | Plain-language dashboard: done since last time, in progress, blocked, next, waiting for a human, release state. Cheap. | ops |
+| `retro` | Weekly: reprioritise, close or rescope stale items, list debt, check spec drift, and turn recurring mistakes into mechanisms (a hook, a CI check, a lint rule) proposed as tickets. | architect, ops |
+
+The companion plugin `senior-mode-fr` adds French aliases (`/cadre`, `/suivant`, `/lance`, `/etat`,
+`/retro`, `/installer`), each a one-line skill delegating to the English command.
+
+## 8. Discipline skills
+
+Model-invoked, small (target < 3 KB each), loaded only when their description matches:
+
+| Skill | Rule it carries |
+|---|---|
+| `triage` | Section 5 criteria and what each size requires |
+| `ready` | Definition of Ready checklist; moves an item to `Ready` or labels it `needs-info` |
+| `tdd` | Red first for logic and bugs (regression test mandatory); UI and glue covered by an end-to-end scenario per acceptance criterion; spikes exempt but discarded or tested before merge |
+| `commit` | Atomic conventional commits: one logical change, builds and passes on its own, body says why |
+| `verify` | Run the project's verification commands and read the output before claiming success |
+| `spec` | Spec template, lifecycle (`draft` → `accepted` → `implemented` → `superseded`), `paths` frontmatter, update in the same PR |
+| `adr` | When an ADR is required, MADR-lite template, never edit an accepted ADR (supersede it) |
+| `grill` | Interview protocol: decision frontier, 3-4 questions per round, recommended option first, facts fetched by `scout`, never ask what the repo answers |
+| `review` | Two axes (spec conformance, standards: SOLID, KISS, DRY where it pays, naming, error handling, security, tests that test behaviour) |
+
+## 9. Agent team
+
+Pinned model and effort per role (ADR 0004). The orchestrating session stays thin: it routes,
+it does not read code at length.
+
+| Agent | Model / effort | Role | Tools |
+|---|---|---|---|
+| `scout` | haiku / low | Read the codebase, answer factual questions for interviews and planning | read-only |
+| `researcher` | sonnet / medium | External docs, library comparison, prior art, with sources | read-only + web |
+| `architect` | opus / high | Alternatives, ADRs, specs, vertical-slice decomposition, ticket splits | read + docs write |
+| `test-author` | sonnet / medium | Failing tests from acceptance criteria, in the ticket's worktree | edit tests only |
+| `implementer` | sonnet / medium → opus / high after 2 failed attempts | Make tests green, refactor, atomic commits | edit, bash |
+| `reviewer` | opus / high | Fresh-context review on both axes, protected-zone check, merge verdict | read-only + gh |
+| `ops` | haiku / low | Issues, Project fields, labels, PRs, CI status, merges, releases | gh, git |
+
+## 10. Autonomy and guardrails
+
+`run` merges by itself (ADR 0003) within these bounds:
+
+- **Batch:** at most `autonomy.maxTickets` tickets (default 3), sequential by default, parallel worktrees
+  only for tickets with no dependency between them (`autonomy.parallel`, default 1).
+- **Circuit breaker:** stop after `autonomy.maxConsecutiveFailures` (default 2) failed tickets, or when
+  a ticket outgrows its size; failed tickets go back to `Backlog` with a comment explaining why.
+- **Protected zones** (globs in config, defaults per preset): data migrations; security, auth,
+  permissions, secrets, payments; CI, infrastructure, container files, major dependency upgrades;
+  any L ticket or ADR. Work there is implemented and reviewed but labelled `needs-human` and never
+  merged by an agent.
+- **Self-protection:** during a run, hooks deny edits to `.github/workflows/**`, `.claude/**`,
+  `.githooks/**` and the protected-zone list itself, so an agent cannot weaken its own barriers.
+- **Always denied:** `--no-verify`, force-push, direct push to the default branch, history rewrite on
+  shared branches, deleting files outside the ticket's worktree.
+
+Run loop per ticket:
+1. `ops` selects the top Ready item (Priority, then milestone due date), unblocked, size ≤ M.
+2. Worktree and branch `<type>/<issue>-<slug>`; status `In progress`.
+3. `test-author` writes failing tests from the acceptance criteria; commit `test(...)`.
+4. `implementer` makes them pass and refactors, committing atomically; `verify` before each push.
+5. Spec updated if its `paths` are touched; PR opened from the template with `Closes #n`; status
+   `In review`.
+6. `reviewer` (fresh context) posts its review and sets the commit status `senior-mode/review`;
+   at most 2 fix rounds.
+7. Protected zone → `needs-human`, stop there. Otherwise `gh pr merge --rebase --auto`; branch
+   protection requires CI and `senior-mode/review`.
+8. Final report in plain language: merged, waiting for a human, failed and why, cost indicators.
+
+`run` can also be scheduled in GitHub Actions (headless) for nightly batches, with the same config.
+
+## 11. GitHub model
+
+- **Project (v2):** fields `Status` (Backlog, Ready, In progress, In review, Done), `Priority`
+  (P0 now, P1 next, P2 later, P3 someday), `Size` (S, M, L). Built-in workflows set Done on merge.
+- **Native features first:** milestones for roadmap stages (with due dates), sub-issues for epics,
+  issue dependencies (blocked by) for ordering, issue types when the owner is an organization;
+  on personal accounts, type labels `type:feature|bug|task|chore` replace issue types.
+- **Labels:** `needs-human`, `needs-info`, `blocked`, plus type labels when needed. Nothing else by
+  default.
+- **Branches:** short-lived, one per ticket, from the default branch.
+- **Commits:** Conventional Commits, atomic, enforced by a `commit-msg` git hook and a CI check.
+- **Merge:** rebase only, linear history, required checks (ADR 0005).
+- **Release:** release-please opens the release PR; changelog and semver from commits.
+- **Titles:** issue and PR titles say what the user gets, in plain words, in the project language.
+
+## 12. Documents in an adopted repository
+
+```
+CLAUDE.md                 ≤ 80 lines: commands, code map, non-derivable pitfalls, Principles section
+docs/specs/NNNN-slug.md   one per M/L feature, frontmatter: id, title, status, size, paths, adrs, issue
+docs/specs/INDEX.md       generated, never edited by hand
+docs/adr/NNNN-slug.md     one decision each, MADR-lite, statuses proposed/accepted/superseded
+.claude/senior-mode.json  project config (section 13)
+.githooks/                commit-msg (Conventional Commits), pre-push (fast checks)
+.github/                  ci.yml, release-please, PR template, issue forms, CODEOWNERS, dependabot
+CHANGELOG.md              generated by release-please
+```
+
+Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
+- a PR touching the `paths` of an `accepted` or `implemented` spec must touch that spec, or say
+  `Spec-Unchanged: <reason>` in its body;
+- `INDEX.md` must be up to date; spec and ADR numbers unique; superseded documents point to their
+  successor; no other documentation folder is created by the plugin.
+
+## 13. Project config
+
+`.claude/senior-mode.json`, written by `setup`, read by skills, hooks and the `bin/` script:
+
+```json
+{
+  "language": "fr",
+  "preset": "typescript",
+  "commands": { "lint": "...", "typecheck": "...", "test": "...", "build": "..." },
+  "project": { "owner": "...", "number": 1, "id": "PVT_...", "fields": { "Status": {"id": "...", "options": {}} } },
+  "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "autoMerge": true },
+  "protected": { "migrations": [], "security": [], "infra": [] },
+  "limits": { "prLines": 400 }
+}
+```
+
+Field and option ids are cached here so no agent rediscovers them with extra API calls.
+
+## 14. Stack presets and CI
+
+`setup` detects the stack and applies a preset; unknown stacks get the generic preset (commands asked
+once, then stored).
+
+| Preset | Lint / format | Types | Tests | Extra |
+|---|---|---|---|---|
+| typescript | Biome or the existing ESLint/Prettier | `tsc --noEmit` | Vitest, Playwright for e2e | Next.js aware |
+| python | Ruff | mypy or pyright | pytest | uv |
+| go | gofmt, golangci-lint | compiler | go test | |
+| rust | rustfmt, clippy `-D warnings` | compiler | cargo test / nextest | cargo-deny |
+| generic | asked | asked | asked | |
+
+Every preset's CI: install with cache, lint, typecheck, tests, build, Conventional Commits check, spec
+drift check, secret scanning, dependency review; dependabot (or Renovate when present); release-please.
+An existing CI is extended, never replaced.
+
+## 15. Token economy
+
+- Skills are short; long references live in sibling files loaded only when needed.
+- No session-start injection of large content: at most a ~15-line router.
+- Facts come from `scout` (cheap) instead of the main session reading files.
+- Config caches GitHub ids; `status` and `ops` work never use expensive models.
+- Each ticket runs in a fresh context; the orchestrator keeps summaries, not transcripts.
+- Verification output is filtered to failures before being shown to a model.
+
+## 16. Claude Code surface map
+
+To be completed from the inventory of Claude Code extension points: every component a plugin can
+ship, and how senior-mode uses it.
+
+## 17. Plugin repository layout
+
+```
+.claude-plugin/marketplace.json     marketplace listing both plugins
+plugins/senior-mode/
+  .claude-plugin/plugin.json
+  skills/<command>/SKILL.md         setup, frame, next, run, status, retro
+  skills/<discipline>/SKILL.md      triage, ready, tdd, commit, verify, spec, adr, grill, review
+  agents/*.md                       section 9
+  hooks/hooks.json, hooks/*.sh      section 10
+  bin/senior-mode                   index, drift check, config read, Project helpers
+  templates/                        spec, ADR, CLAUDE.md, PR and issue templates, githooks
+  presets/<stack>/                  CI workflow, commands, protected-zone defaults
+plugins/senior-mode-fr/             French aliases
+evals/                              triage, readiness, grill and end-to-end cases
+docs/specs/, docs/adr/              this project's own specs and ADRs
+```
+
+## 18. Quality of the plugin itself
+
+- CI: manifest validation, frontmatter schema of skills and agents, shellcheck on hooks and `bin/`,
+  unit tests of `bin/senior-mode`, size budget per skill, Conventional Commits, spec drift.
+- Evals: fixed cases for triage (S/M/L), Definition of Ready, interview quality, and an end-to-end
+  run on a fixture repository (setup → frame → run) checked on artefacts, not on prose.
+- Dogfooding: senior-mode is built with senior-mode from v0.1 on.
+
+## 19. Delivery plan
+
+| Milestone | Content |
+|---|---|
+| v0.1 Bootstrap | Plugin skeleton, `setup` (generic + typescript presets), `frame`, discipline skills, agents, hooks; written by hand, then used to plan the rest |
+| v0.2 Daily loop | `next`, `status`, spec index and drift check, git hooks |
+| v0.3 Autonomy | `run`, review status check, protected zones, circuit breaker, scheduled run in Actions |
+| v0.4 Breadth | python, go, rust presets, `retro`, `senior-mode-fr` |
+| v1.0 | Evals green, docs, marketplace publication |
+
+## 20. Open questions
+
+- Exact behaviour of scheduled headless runs (credentials, cost caps) once the surface inventory is in.
+- Whether `status` should also write a weekly digest issue for non-technical stakeholders.

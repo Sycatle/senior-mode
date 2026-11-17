@@ -16,7 +16,8 @@ Idempotent: running it again creates nothing twice and repairs what is missing.
 2. `gh auth status` succeeds. If the token lacks the `project` scope, ask the user to run
    `gh auth refresh -s project` (it opens a browser) and wait.
 3. Tell the user, in one short table, what will change on GitHub: a Project board linked to the
-   repository, labels, rebase-only merges, a ruleset on the default branch. Proceed on their yes.
+   repository, labels, rebase-only merges, a ruleset on the default branch, and the files of
+   Repository below. Proceed on their yes.
 
 ## GitHub
 
@@ -35,6 +36,15 @@ Run `senior-mode setup github`. It:
 
 On a private repository of a free plan GitHub refuses rulesets: it reports it and goes on; the git
 hooks and the plugin's guard still apply.
+
+## Repository
+
+1. Ask once, in plain words, how to lint, typecheck, test and build; skip what the project lacks.
+2. Run `senior-mode setup repo --command lint="<cmd>" ...` (one `--command` per answer). It adds
+   checks, git hooks, Principles in `CLAUDE.md`, PR and issue templates in the project language,
+   permissions and the release-please config; what exists is kept and extended.
+3. If it created `CLAUDE.md`, ask the scout agent for commands, code map and pitfalls, then fill the
+   skeleton, 80 lines at most.
 
 ## Report
 

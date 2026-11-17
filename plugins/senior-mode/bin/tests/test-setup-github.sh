@@ -25,6 +25,8 @@ case "$*" in
   "api -X POST repos/acme/app/rulesets"*) plan_limit; cat >>"$GH_LOG"
     echo '[{"id": 9, "name": "senior-mode", "source_type": "Repository"}]' >"$FIX/rulesets.json" ;;
   "api -X PUT repos/acme/app/rulesets/"*) cat >>"$GH_LOG" ;;
+  "workflow list"*) if [ -f "$FIX/workflows.json" ]; then respond <"$FIX/workflows.json"; else echo '[]' | respond; fi ;;
+  "workflow disable"*) ;;
   "project view"*)
     [ -z "${VIEW_ERR:-}" ] || { echo "$VIEW_ERR" >&2; exit 1; }
     jq -e --argjson n "$3" '.number == $n' "$FIX/project.json" >/dev/null 2>&1 ||
@@ -160,6 +162,18 @@ echo '{"language": "fr", "project": {"number": 99}}' >"$repo/.claude/senior-mode
 failing LIST_ERR
 echo '{"language": "fr", "project": {"number": 5}}' >"$repo/.claude/senior-mode.json"
 failing LINK_ERR
+
+# ci.mode local (the default): active workflows are disabled on GitHub, never deleted.
+echo '[{"id": 11, "name": "CI", "path": ".github/workflows/ci.yml", "state": "active"},
+  {"id": 12, "name": "Old", "path": ".github/workflows/old.yml", "state": "disabled_manually"}]' >"$FIX/workflows.json"
+setup
+logged "workflow disable 11 --repo acme/app" || fail "an active workflow is left running in local mode"
+logged "workflow disable 12" && fail "an already disabled workflow is disabled again"
+grep -q "workflows: disabled CI" "$work/out" || fail "disabled workflows not reported: $(cat "$work/out")"
+grep -q "gh workflow enable" "$work/out" || fail "no way back given: $(cat "$work/out")"
+jq '.ci = {mode: "actions"}' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+setup
+logged "workflow disable" && fail "workflows disabled in actions mode"
 
 # Rulesets unavailable on the plan.
 rm "$FIX/rulesets.json"

@@ -1,0 +1,81 @@
+# Written by senior-mode setup (ci.mode "actions"). Runs the checks of .claude/senior-mode.json,
+# the same list as the pre-push hook and `senior-mode check`, and sets the senior-mode/ci status.
+name: senior-mode
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: senior-mode-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    env:
+      SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        if: hashFiles('package.json') != ''
+        with:
+          node-version: lts/*
+      - uses: oven-sh/setup-bun@v2
+        if: hashFiles('bun.lock', 'bun.lockb') != ''
+      - uses: actions/cache@v4
+        if: hashFiles('package.json') != ''
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/yarn
+            ~/.local/share/pnpm/store
+            ~/.bun/install/cache
+          key: deps-${{ runner.os }}-${{ hashFiles('**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock', '**/bun.lock', '**/bun.lockb') }}
+          restore-keys: deps-${{ runner.os }}-
+      - name: Install dependencies
+        if: hashFiles('package.json') != ''
+        run: |
+          corepack enable
+          if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then yarn install
+          elif [ -f bun.lock ] || [ -f bun.lockb ]; then bun install --frozen-lockfile
+          elif [ -f package-lock.json ]; then npm ci
+          else npm install
+          fi
+      - name: Checks
+        run: |
+          failed=""
+          while IFS=$'\t' read -r name run; do
+            echo "::group::$name"
+            bash -c "$run" || failed="$failed${failed:+, }$name"
+            echo "::endgroup::"
+          done < <(jq -r '.checks[]? | [.name, .run] | @tsv' .claude/senior-mode.json)
+          echo "FAILED=$failed" >>"$GITHUB_ENV"
+          [ -z "$failed" ] || { echo "failed: $failed"; exit 1; }
+      - name: Status senior-mode/ci
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = success ]; then state=success desc="all checks passed"
+          else state=failure desc="failed: ${FAILED:-setup}"
+          fi
+          gh api "repos/${{ github.repository }}/statuses/$SHA" -f state="$state" \
+            -f context=senior-mode/ci -f description="$desc" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null
+
+  dependencies:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/dependency-review-action@v4

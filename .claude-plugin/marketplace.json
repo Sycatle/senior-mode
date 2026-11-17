@@ -1,0 +1,12 @@
+{
+  "name": "senior-mode",
+  "owner": { "name": "sycatle" },
+  "description": "senior-mode and its companion plugins.",
+  "plugins": [
+    {
+      "name": "senior-mode",
+      "source": "./plugins/senior-mode",
+      "description": "Senior-grade delivery for Claude Code: framing, specs and ADRs, TDD, atomic commits, GitHub Projects and a bounded autonomous agent team."
+    }
+  ]
+}

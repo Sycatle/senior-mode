@@ -5,9 +5,11 @@
 # A guardrail for honest mistakes, not a sandbox: `bash -c "..."` and the like are not parsed.
 set -o pipefail
 input=$(cat)
-# Quoted text is data (commit messages, echo), never options: replace it before parsing.
-# A backslash-newline continues the line.
-command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ") | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
+# Quoted text is data (commit messages, echo), never options: replace it before parsing. A quoted
+# single word (a URL, a ref) is unquoted instead. A backslash-newline continues the line.
+command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
+  | gsub("\"(?<w>[^\"\\\\\\s$`]*)\"|'"'"'(?<v>[^'"'"'\\s]*)'"'"'"; .w // .v)
+  | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
 cwd=$(jq -r '.cwd // empty' <<<"$input")
 
 deny() {
@@ -57,7 +59,7 @@ while IFS= read -r segment; do
   i=0
   while [[ ${w[i]:-} == *=* || ${w[i]:-} == command || ${w[i]:-} == exec ]]; do i=$((i + 1)); done
   if [ "${w[i]##*/}" = gh ] 2>/dev/null; then
-    # The ruleset lets admins bypass it on purpose (ADR 0006); an agent running as an admin must not.
+    # The ruleset lets admins bypass it on purpose (spec 0001 §11); an agent running as an admin must not.
     [[ " ${w[*]:i+1} " =~ \ pr\ (.*\ )?merge\  && " ${w[*]:i+1} " =~ \ --admin[=\ ] ]] &&
       deny "gh pr merge --admin bypasses the required checks and review: a human must do it."
     # Through the API, an admin's merge bypasses the ruleset without any flag.

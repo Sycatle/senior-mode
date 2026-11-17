@@ -21,3 +21,5 @@ Added on PR #33: `awk` with process substitution, and `jq` with `--slurpfile` or
 Added on PR #33 second round: even a trivial `bash -c '...'` or `bash --version` is refused, and so is a Bash call that mixes appends with `rm`. Statuses via `gh api repos/O/R/statuses/<sha> -f state=...` work. The author's `senior-mode/ci` status (which runs every `test-*.sh` and shellcheck) is the only evidence of passing tests; cite it as the author's, and note when the head commit lacks it.
 
 Added on PR #35: chaining `; echo "rc=$?"` after a command needs approval; run each `gh api` probe alone. `gh pr view --json closingIssuesReferences` is not a valid field; read the issue with `gh issue view`. Board Size of an issue comes from GraphQL `projectItems.fieldValues`.
+
+Added on PR #37: `senior-mode config get` (the plugin's own bin) and even `jq -n` with a constant filter, chained with `jq --version`, were refused. Read `.claude/senior-mode.json` with Read instead. `gh pr view --json comments,commits,files` works.

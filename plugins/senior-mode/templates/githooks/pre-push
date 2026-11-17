@@ -7,6 +7,9 @@ root=$(git rev-parse --show-toplevel)
 config=$root/.claude/senior-mode.json
 command -v jq >/dev/null || { echo "pre-push: jq is needed to read $config" >&2; exit 1; }
 count=$(jq '.checks // [] | length' "$config" 2>/dev/null) || { echo "pre-push: cannot read $config" >&2; exit 1; }
+# Git exports GIT_DIR to hooks, absolute in a linked worktree: a check that runs git on a test
+# fixture would write into this repository.
+for v in $(git rev-parse --local-env-vars); do unset "$v"; done
 output=$(mktemp)
 trap 'rm -f "$output"' EXIT
 failed=0

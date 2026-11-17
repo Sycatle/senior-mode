@@ -103,3 +103,9 @@ Added on PR #44 (2026-11-17, release-please initial-version):
 
 Added on PR #39 rebase re-review (2026-11-17):
 - **Rebase re-reviews: prove the code is unchanged first.** `git range-diff <oldbase>..<oldhead> origin/main..<newhead>` with `=` on every code commit, plus `merge-base --is-ancestor origin/main <head>`, was enough to approve without re-reading the logic. Then only check what main added that could interact (here: other `trap`s in the CLI).
+
+Added on #46 review (2026-11-17, git hook env unset in check and pre-push; asked before any push):
+- **Env-leak tests that match a whole prefix.** The check `env | grep ^GIT_ && exit 1` fails on any GIT_* variable of the caller (GIT_EDITOR, GIT_SSH_COMMAND, GIT_PAGER), not only the ones the fix unsets. The head commit's own check record said `failed: script tests`. **How to apply:** env-leak asserts must name the exact variables (or the `git rev-parse --local-env-vars` list).
+- **Review asked before push.** No PR and no remote commit, so no comment, label or status can be set. **How to apply:** check `gh api repos/O/R/commits/<sha>` first; report the findings and ask for a push. The local record `.git/senior-mode/checks/<sha>` (line 1 state, line 2 description) is the author's check evidence when no status exists.
+- **Memory commits that replace instead of append.** e7ba0f5 overwrote the PR #39 raw-contents note in reviewer_environment.md (restored). **How to apply:** diff memory files in each PR for removed lines.
+- **Protected-zone call:** `senior-mode check` and the pre-push template are the local CI (ADR 0006), so needs-human.

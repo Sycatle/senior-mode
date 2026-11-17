@@ -236,7 +236,10 @@ check() {
   for ((i = 0; i < count; i++)); do
     name=$(jq -r ".checks[$i].name" "$file")
     cmd=$(jq -r ".checks[$i].run" "$file")
-    if (cd "$root" && bash -c "$cmd") >"$output" 2>&1; then
+    # Git exports GIT_DIR to hooks, absolute in a linked worktree: a check that runs git on a test
+    # fixture would write into this repository.
+    if (cd "$root" && for v in $(git rev-parse --local-env-vars); do unset "$v"; done && bash -c "$cmd") \
+      >"$output" 2>&1; then
       passed=$((passed + 1))
       echo "ok    $name"
     else

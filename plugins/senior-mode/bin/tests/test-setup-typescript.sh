@@ -65,6 +65,13 @@ d=$(project notsc '{"scripts": {"lint": "eslint ."}}' package-lock.json tsconfig
 setup "$d"
 [ -z "$(check_run "$d" typecheck)" ] || fail "tsc fallback without typescript: $(check_run "$d" typecheck)"
 
+# typescript declared but not installed: the fallback never downloads a package, it fails.
+for pair in package-lock.json:'npx --no -- tsc --noEmit' bun.lock:'bun run tsc --noEmit'; do
+  d=$(project "tsc-${pair%%:*}" '{"devDependencies": {"typescript": "5"}}' "${pair%%:*}" tsconfig.json)
+  setup "$d"
+  [ "$(check_run "$d" typecheck)" = "${pair#*:}" ] || fail "tsc fallback may download: $(check_run "$d" typecheck)"
+done
+
 # Lockfiles pick the package manager.
 for pair in yarn.lock:yarn bun.lock:bun bun.lockb:bun; do
   d=$(project "pm-${pair%%:*}" '{"scripts": {"lint": "biome check ."}}' "${pair%%:*}")

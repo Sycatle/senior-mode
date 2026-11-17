@@ -4,7 +4,7 @@ title: senior-mode, a Claude Code plugin for senior-grade delivery
 status: accepted
 size: L
 paths: ["plugins/**", ".claude-plugin/**", "evals/**"]
-adrs: [0001, 0002, 0003, 0004, 0005]
+adrs: [0001, 0002, 0003, 0004, 0005, 0006]
 ---
 
 # senior-mode
@@ -170,11 +170,14 @@ Run loop per ticket:
    `In review`.
 6. `reviewer` (fresh context) posts its review and sets the commit status `senior-mode/review`;
    at most 2 fix rounds.
-7. Protected zone → `needs-human`, stop there. Otherwise `gh pr merge --rebase --auto`; branch
-   protection requires CI and `senior-mode/review`.
+7. Protected zone → `needs-human`, stop there. Otherwise `senior-mode check` runs on the PR head and
+   publishes `senior-mode/ci`; once it and `senior-mode/review` are green, `ops` merges with
+   `gh pr merge --rebase`. Branch protection requires both statuses (ADR 0006).
 8. Final report in plain language: merged, waiting for a human, failed and why, cost indicators.
 
-`run` can also be scheduled in GitHub Actions (headless) for nightly batches, with the same config.
+`run` can also be scheduled headless (`claude -p`) for nightly batches, with the same config: by a
+local scheduler (cron, systemd timer, launchd), a cloud scheduled task, or GitHub Actions in
+`actions` mode.
 
 ## 11. GitHub model
 
@@ -188,7 +191,10 @@ Run loop per ticket:
 - **Branches:** short-lived, one per ticket, from the default branch.
 - **Commits:** Conventional Commits, atomic, enforced by a `commit-msg` git hook and a CI check.
 - **Merge:** rebase only, linear history, required checks (ADR 0005).
-- **Release:** release-please opens the release PR; changelog and semver from commits.
+- **Release:** `senior-mode release` runs the release-please CLI locally after merges (the official
+  action in `actions` mode); changelog and semver from commits.
+- **Checks:** commit statuses `senior-mode/ci` (published by `senior-mode check`) and
+  `senior-mode/review`, required by branch protection (ADR 0006).
 - **Titles:** issue and PR titles say what the user gets, in plain words, in the project language.
 
 ## 12. Documents in an adopted repository
@@ -222,6 +228,7 @@ Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
   "project": { "owner": "...", "number": 1, "id": "PVT_...", "fields": { "Status": {"id": "...", "options": {}} } },
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "autoMerge": true },
   "protected": { "migrations": [], "security": [], "infra": [] },
+  "ci": { "mode": "local" },
   "limits": { "prLines": 400 }
 }
 ```
@@ -241,9 +248,12 @@ once, then stored).
 | rust | rustfmt, clippy `-D warnings` | compiler | cargo test / nextest | cargo-deny |
 | generic | asked | asked | asked | |
 
-Every preset's CI: install with cache, lint, typecheck, tests, build, Conventional Commits check, spec
-drift check, secret scanning, dependency review; dependabot (or Renovate when present); release-please.
-An existing CI is extended, never replaced.
+Every preset defines one check list: lint, typecheck, tests, build, Conventional Commits, spec drift,
+secret scanning. `senior-mode check` runs it locally (pre-push hook, and before every merge in `run`)
+and publishes the commit status `senior-mode/ci`. `ci.mode` is `local` by default; `actions` also emits
+the same list as a GitHub Actions workflow, with dependency review and caching. Dependabot (or
+Renovate when present) and release-please are configured in both modes. An existing CI is extended,
+never replaced; existing workflows are disabled, not deleted, in `local` mode (ADR 0006).
 
 ## 15. Token economy
 
@@ -322,7 +332,7 @@ plugin's hooks, which cover every agent.
 | `.claude/rules/*.md` with `paths` | Stack conventions from the preset, so `CLAUDE.md` stays under 80 lines |
 | Sandbox | `setup` offers to enable it for runs where available |
 | Headless (`claude -p`) | `run` without a session: `--max-turns`, `--max-budget-usd`, `--output-format json` for the cost report |
-| GitHub Action (`claude-code-action`) | Nightly scheduled `run` with the plugin installed; `@claude` in an issue lets a non-technical user answer `needs-info` or ask for framing from GitHub, including on mobile |
+| GitHub Action (`claude-code-action`) | `actions` mode only (ADR 0006): nightly scheduled `run` with the plugin installed; `@claude` in an issue lets a non-technical user answer `needs-info` or ask for framing from GitHub, including on mobile |
 | Cloud scheduled tasks | Alternative to Actions for nightly runs, where the plan allows it |
 | `claude plugin validate`, `claude plugin eval` | Plugin CI (section 18) |
 | Checkpoints, `/loop`, agent teams | Not relied upon: subagent and Bash edits are not restored by checkpoints (commits are the checkpoints), monitors replace polling loops, agent teams are experimental |
@@ -350,7 +360,8 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 
 ## 18. Quality of the plugin itself
 
-- CI: `claude plugin validate --strict` on both plugins and the marketplace, shellcheck on hooks and
+- Checks (`senior-mode check`, run locally; the workflows in `.github/` are the disabled `actions`
+  mode): `claude plugin validate --strict` on both plugins and the marketplace, shellcheck on hooks and
   `bin/`, unit tests of `bin/senior-mode` and of each hook (JSON in, decision out), size budget per
   skill, Conventional Commits, spec drift.
 - Evals (`claude plugin eval`, with a cost cap): fixed cases for triage (S/M/L), Definition of Ready,

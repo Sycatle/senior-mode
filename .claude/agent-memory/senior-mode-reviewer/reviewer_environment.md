@@ -23,3 +23,5 @@ Added on PR #33 second round: even a trivial `bash -c '...'` or `bash --version`
 Added on PR #35: chaining `; echo "rc=$?"` after a command needs approval; run each `gh api` probe alone. `gh pr view --json closingIssuesReferences` is not a valid field; read the issue with `gh issue view`. Board Size of an issue comes from GraphQL `projectItems.fieldValues`.
 
 Added on PR #37: `senior-mode config get` (the plugin's own bin) and even `jq -n` with a constant filter, chained with `jq --version`, were refused. Read `.claude/senior-mode.json` with Read instead. `gh pr view --json comments,commits,files` works.
+
+Added on PR #39: third-party source can be checked with `gh api -H "Accept: application/vnd.github.raw" repos/O/R/contents/<path>?ref=<tag>` (do not add `--jq` to raw output; pipe to grep instead). Listing `~/.npm/_npx` is blocked (outside the working dir).

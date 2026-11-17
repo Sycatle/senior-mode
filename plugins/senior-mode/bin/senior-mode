@@ -157,15 +157,29 @@ BOARD='{
 }'
 
 # Options to give a field: the wanted ones, keeping the id, colour and description of an existing
-# option with the same name (any case) or an alias, then the field's other options unchanged.
+# option with the same name (any case), else of an alias, then the field's other options unchanged.
 # shellcheck disable=SC2016 # a jq program, not shell
 MERGE_OPTIONS='.options as $cur
-  | [$want[] | . as $w
-      | ([$cur[] | (.name | ascii_downcase) as $n
-          | select($n == ($w.name | ascii_downcase) or (($w.aliases // []) | index($n)))][0]) as $m
-      | {name: $w.name, color: ($m.color // $w.color), description: ($m.description // "")}
-        + (if $m then {id: $m.id} else {} end)] as $ours
-  | $ours + [$cur[] | select(.id as $i | $ours | map(.id) | index($i) | not) | {id, name, color, description}]'
+  | (reduce $want[] as $w ([];
+      (map(.id)) as $taken
+      | ([$cur[] | select((.id | IN($taken[]) | not) and (.name | ascii_downcase) == ($w.name | ascii_downcase))][0]
+         // [$cur[] | select((.id | IN($taken[]) | not) and ((.name | ascii_downcase) | IN(($w.aliases // [])[])))][0]) as $m
+      | . + [{name: $w.name, color: ($m.color // $w.color), description: ($m.description // "")}
+             + (if $m then {id: $m.id} else {} end)])) as $ours
+  | $ours + [$cur[] | select(.id | IN($ours[].id) | not) | {id, name, color, description}]'
+
+# The rules senior-mode owns on the default branch (ADR 0006), as a ruleset of its own: it adds to
+# whatever protection the repository has and never rewrites it. Admins may bypass, explicitly.
+RULESET='{"name": "senior-mode", "target": "branch", "enforcement": "active",
+  "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+  "bypass_actors": [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}],
+  "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}, {"type": "required_linear_history"},
+    {"type": "pull_request", "parameters": {"required_approving_review_count": 0, "dismiss_stale_reviews_on_push": false,
+      "require_code_owner_review": false, "require_last_push_approval": false,
+      "required_review_thread_resolution": false, "allowed_merge_methods": ["rebase"]}},
+    {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true,
+      "do_not_enforce_on_create": false,
+      "required_status_checks": [{"context": "senior-mode/ci"}, {"context": "senior-mode/review"}]}}]}'
 
 # Single-select fields of a Project, with their options.
 board_fields() {
@@ -177,9 +191,17 @@ board_fields() {
 # Finds the Project of the repository (cached number, else same title) or creates it; prints
 # "<number> <id>".
 setup_project() {
-  local file=$1 owner=$2 name=$3 slug=$4 number id
+  local file=$1 owner=$2 name=$3 slug=$4 number id err
   number=$(jq -r '.project.number // empty' "$file")
-  if [ -z "$number" ] || ! id=$(gh project view "$number" --owner "$owner" --format json --jq .id 2>/dev/null); then
+  if [ -n "$number" ]; then
+    err=$(mktemp)
+    if ! id=$(gh_retry project view "$number" --owner "$owner" --format json --jq .id 2>"$err"); then
+      grep -q "Could not resolve to a ProjectV2" "$err" || die "cannot read Project #$number: $(cat "$err")"
+      number=""
+    fi
+    rm -f "$err"
+  fi
+  if [ -z "$number" ]; then
     number=$(gh_retry project list --owner "$owner" --limit 100 --format json \
       --jq "[.projects[] | select(.title == \"$name\")][0].number // empty")
     if [ -z "$number" ]; then
@@ -192,19 +214,23 @@ setup_project() {
   echo "$number $id"
 }
 
-# Creates missing board fields, repairs the options of existing ones.
+# Creates missing board fields with their colours, repairs the options of existing ones.
 setup_fields() {
-  local number=$1 owner=$2 id=$3 fields field current options
+  local id=$1 fields field want current options
   fields=$(board_fields "$id")
   for field in Status Priority Size; do
+    want=$(jq -c --arg f "$field" '.[$f]' <<<"$BOARD")
     current=$(jq -c --arg f "$field" '.[] | select(.name == $f)' <<<"$fields")
     if [ -z "$current" ]; then
-      gh_retry project field-create "$number" --owner "$owner" --name "$field" --data-type SINGLE_SELECT \
-        --single-select-options "$(jq -r --arg f "$field" '.[$f] | map(.name) | join(",")' <<<"$BOARD")" >/dev/null
+      jq -nc --arg p "$id" --arg n "$field" --argjson w "$want" '{variables: {project: $p, name: $n,
+        options: ($w | map({name, color, description: ""}))}, query: "mutation($project: ID!, $name: String!,
+        $options: [ProjectV2SingleSelectFieldOptionInput!]!) { createProjectV2Field(input: {projectId: $project,
+        dataType: SINGLE_SELECT, name: $name, singleSelectOptions: $options}) { clientMutationId } }"}' |
+        gh_retry api graphql --input - >/dev/null
       echo "field $field: created"
       continue
     fi
-    options=$(jq -c --argjson want "$(jq -c --arg f "$field" '.[$f]' <<<"$BOARD")" "$MERGE_OPTIONS" <<<"$current")
+    options=$(jq -c --argjson want "$want" "$MERGE_OPTIONS" <<<"$current")
     [ "$(jq -c 'map(.name)' <<<"$options")" != "$(jq -c '.options | map(.name)' <<<"$current")" ] || continue
     jq -nc --arg f "$(jq -r .id <<<"$current")" --argjson o "$options" '{variables: {field: $f, options: $o},
       query: "mutation($field: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]!) {
@@ -214,27 +240,40 @@ setup_fields() {
   done
 }
 
+# Creates the senior-mode ruleset of the repository, or updates it.
+setup_ruleset() {
+  local id
+  id=$(gh_retry api "repos/$1/rulesets" \
+    --jq '[.[] | select(.name == "senior-mode" and .source_type == "Repository")][0].id // empty') || return 1
+  if [ -n "$id" ]; then
+    gh_retry api -X PUT "repos/$1/rulesets/$id" --input - <<<"$RULESET"
+  else
+    gh_retry api -X POST "repos/$1/rulesets" --input - <<<"$RULESET"
+  fi
+}
+
 # The GitHub side of a project (spec 0001 §11, #11), idempotent: Project linked to the repository with
-# Status, Priority and Size; labels; rebase-only merges; branch protection requiring both statuses
+# Status, Priority and Size; labels; rebase-only merges; a ruleset requiring both statuses
 # (ADR 0006); ids cached in the config.
 setup_github() {
-  local root file slug owner name info owner_type default number id labels label color description body err
+  local root file slug owner name owner_type project number id fields labels label color description err
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   mkdir -p "$root/.claude"
   [ -f "$file" ] || echo '{}' >"$file"
   jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; fix or remove it, then run setup again"
   slug=$(repo_slug) owner=${slug%%/*} name=${slug#*/}
-  info=$(gh_retry api "repos/$slug" --jq '"\(.owner.type) \(.default_branch)"') || die "cannot read $slug on GitHub"
-  owner_type=${info% *} default=${info#* }
+  owner_type=$(gh_retry api "repos/$slug" --jq .owner.type) || die "cannot read $slug on GitHub"
 
-  read -r number id < <(setup_project "$file" "$owner" "$name" "$slug")
-  [ -n "$id" ] || die "could not find or create the Project"
-  setup_fields "$number" "$owner" "$id"
-  jq --arg o "$owner" --argjson n "$number" --arg id "$id" --argjson f "$(board_fields "$id")" \
+  project=$(setup_project "$file" "$owner" "$name" "$slug") || die "could not find or create the Project"
+  read -r number id <<<"$project"
+  setup_fields "$id"
+  fields=$(board_fields "$id") || die "could not read the fields of Project #$number"
+  jq --arg o "$owner" --argjson n "$number" --arg id "$id" --argjson f "$fields" \
     '.project = {owner: $o, number: $n, id: $id, fields: ($f | map(select(.name | IN("Status", "Priority", "Size"))
       | {key: .name, value: {id, options: (.options | map({key: .name, value: .id}) | from_entries)}}) | from_entries)}' \
-    "$file" >"$file.tmp" && mv "$file.tmp" "$file"
+    "$file" >"$file.tmp" || die "could not write .claude/senior-mode.json"
+  mv "$file.tmp" "$file"
   echo "Project #$number $name: linked, fields Status, Priority, Size; ids cached in .claude/senior-mode.json"
 
   labels='needs-human|d93f0b|Waiting for a human decision or merge
@@ -254,15 +293,12 @@ type:chore|ededed|Maintenance with no user-visible change'
     --delete-branch-on-merge >/dev/null
   echo "merges: rebase only, branches deleted after merge"
 
-  body=$(jq -nc '{required_status_checks: {strict: true, contexts: ["senior-mode/ci", "senior-mode/review"]},
-    enforce_admins: false, required_pull_request_reviews: null, restrictions: null,
-    required_linear_history: true, allow_force_pushes: false, allow_deletions: false}')
-  if err=$(gh_retry api -X PUT "repos/$slug/branches/$default/protection" --input - <<<"$body" 2>&1 >/dev/null); then
-    echo "protection on $default: pull requests need senior-mode/ci and senior-mode/review, linear history; admins may override with gh pr merge --admin"
+  if err=$(setup_ruleset "$slug" 2>&1 >/dev/null); then
+    echo "default branch: ruleset senior-mode, pull requests only, rebase, senior-mode/ci and senior-mode/review on an up-to-date branch, linear history; admins may bypass with gh pr merge --admin; other protection untouched"
   elif grep -q "Upgrade to GitHub Pro" <<<"$err"; then
-    echo "protection on $default: not available on this plan for a private repository; the git hooks and the guard hook still apply"
+    echo "default branch: rulesets are not available on this plan for a private repository; the git hooks and the guard hook still apply"
   else
-    die "branch protection on $default: $err"
+    die "ruleset on the default branch: $err"
   fi
 }
 

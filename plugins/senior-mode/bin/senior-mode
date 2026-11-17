@@ -16,7 +16,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | check | publish [commit] | release [--dry-run] | frame end | context | setup github | setup repo [--command <name>=<command>]..."
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | check | publish [commit] | release [--dry-run] | frame end | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]..."
 }
 
 config_file() {
@@ -390,13 +390,39 @@ setup_ruleset() {
 # The GitHub side of a project (spec 0001 §11, #11), idempotent: Project linked to the repository with
 # Status, Priority and Size; labels; rebase-only merges; a ruleset requiring both statuses
 # (ADR 0006); ids cached in the config.
+# ci.mode local: the checks run before each push, so the repository's own workflows are disabled
+# (files kept) and spend no Actions budget. GitHub's built-in ones (dynamic/: Dependabot, Pages)
+# are left alone. ci.mode actions: our workflow is turned back on if an earlier local run disabled it.
+setup_workflows() { # slug mode
+  local list id wname path state disabled=""
+  list=$(gh_retry workflow list --all --limit 1000 --repo "$1" --json id,name,path,state \
+    --jq '.[] | select(.path | startswith(".github/workflows/")) | "\(.id)\t\(.path)\t\(.state)\t\(.name)"') ||
+    die "cannot list the workflows of $1"
+  while IFS=$'\t' read -r id path state wname; do
+    [ -n "$id" ] || continue
+    if [ "$2" = local ] && [ "$state" = active ]; then
+      gh_retry workflow disable "$id" --repo "$1" >/dev/null || die "cannot disable workflow $wname"
+      disabled+="${disabled:+, }$wname"
+    elif [ "$2" = actions ] && [ "$path" = .github/workflows/senior-mode.yml ] && [ "$state" != active ]; then
+      gh_retry workflow enable "$id" --repo "$1" >/dev/null || die "cannot enable workflow $wname"
+      echo "workflows: $wname enabled again (ci.mode actions)"
+    fi
+  done <<<"$list"
+  [ -z "$disabled" ] || echo "workflows: disabled $disabled (ci.mode local: checks run before each push; files kept; every setup disables them again until ci.mode actions: senior-mode setup github --ci actions)"
+}
+
 setup_github() {
-  local root file slug owner name owner_type project number id fields labels label color description err
+  local root file slug owner name owner_type project number id fields labels label color description err ci=""
+  case "$*" in "") ;; "--ci local" | "--ci actions") ci=$2 ;; *) usage ;; esac
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   mkdir -p "$root/.claude"
   [ -f "$file" ] || echo '{}' >"$file"
   jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; fix or remove it, then run setup again"
+  if [ -n "$ci" ]; then
+    { jq --arg m "$ci" '.ci.mode = $m' "$file" >"$file.tmp" && mv "$file.tmp" "$file"; } ||
+      die "could not write .claude/senior-mode.json"
+  fi
   slug=$(repo_slug) owner=${slug%%/*} name=${slug#*/}
   owner_type=$(gh_retry api "repos/$slug" --jq .owner.type) || die "cannot read $slug on GitHub"
 
@@ -428,18 +454,7 @@ type:chore|ededed|Maintenance with no user-visible change'
     --delete-branch-on-merge >/dev/null
   echo "merges: rebase only, branches deleted after merge"
 
-  if [ "$(jq -r '.ci.mode // "local"' "$file")" = local ]; then
-    # Checks run before each push instead: running workflows would spend the Actions budget.
-    local active wid wname disabled=""
-    active=$(gh_retry workflow list --all --repo "$slug" --json id,name,state \
-      --jq '.[] | select(.state == "active") | "\(.id)\t\(.name)"') || die "cannot list the workflows of $slug"
-    while IFS=$'\t' read -r wid wname; do
-      [ -n "$wid" ] || continue
-      gh_retry workflow disable "$wid" --repo "$slug" >/dev/null || die "cannot disable workflow $wname"
-      disabled+="${disabled:+, }$wname"
-    done <<<"$active"
-    [ -z "$disabled" ] || echo "workflows: disabled $disabled (ci.mode local: checks run before each push; files kept, \`gh workflow enable <name>\` undoes it)"
-  fi
+  setup_workflows "$slug" "$(jq -r '.ci.mode // "local"' "$file")"
 
   if err=$(setup_ruleset "$slug" 2>&1 >/dev/null); then
     echo "default branch: ruleset senior-mode, pull requests only, rebase, senior-mode/ci and senior-mode/review on an up-to-date branch, linear history; admins may bypass with gh pr merge --admin; other protection untouched"
@@ -681,7 +696,7 @@ case "${1:-}" in
     ;;
   setup)
     case "${2:-}" in
-      github) [ $# -eq 2 ] || usage; setup_github ;;
+      github) shift 2; setup_github "$@" ;;
       repo) shift 2; setup_repo "$@" ;;
       *) usage ;;
     esac

@@ -207,6 +207,22 @@ for want in "senior-mode/ci" ".claude/senior-mode.json" "dependency-review-actio
   grep -qF "$want" "$wf" 2>/dev/null || fail "workflow lacks $want"
 done
 [ "$(cat "$act/.github/workflows/ci.yml")" = "name: Theirs" ] || fail "an existing workflow was changed"
+# The workflow's Checks step runs exactly the configured commands, all of them, and fails closed.
+awk '/- name: Checks$/ { on = 1; next } on && /- name:/ { exit } on && /run: \|/ { body = 1; next }
+  body { sub(/^          /, ""); print }' "$wf" >"$work/checks.sh"
+runs() { # expected-exit config-json
+  local d=$work/ci rc=0
+  rm -rf "$d" && mkdir -p "$d/.claude" && echo "$2" >"$d/.claude/senior-mode.json" && printf 'a.b\n' >"$d/f"
+  (cd "$d" && GITHUB_ENV=$d/env bash "$work/checks.sh") >/dev/null 2>&1 || rc=$?
+  if [ "$1" = 0 ]; then [ "$rc" = 0 ]; else [ "$rc" != 0 ]; fi
+}
+runs 0 '{"checks": [{"name": "eats", "run": "cat >/dev/null"}, {"name": "next", "run": "touch ran"}]}' &&
+  [ -f "$work/ci/ran" ] || fail "a check reading stdin swallows the next ones"
+runs 0 '{"checks": [{"name": "re", "run": "grep -q '"'"'a\\.b'"'"' f"}]}' || fail "a backslash in a check is changed"
+runs 1 '{"checks": []}' || fail "no checks reported as success"
+runs 1 '{}' || fail "a config without checks reported as success"
+runs 1 '{"checks": [{"name": "ok", "run": "true"}, {"name": "bad", "run": "false"}]}' || fail "a failing check passes"
+grep -q '^FAILED=bad$' "$work/ci/env" 2>/dev/null || fail "failed checks not passed to the status step"
 echo 'name: Mine' >"$wf"
 setup "$act"
 [ "$(cat "$wf")" = "name: Mine" ] || fail "an existing senior-mode workflow was replaced"

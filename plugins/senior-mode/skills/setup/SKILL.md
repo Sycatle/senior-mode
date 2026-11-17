@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Setup
 
-Idempotent: running it again creates nothing twice and repairs what is missing.
+Safe to rerun: it repairs, never duplicates.
 
 ## Before
 
@@ -15,25 +15,25 @@ Idempotent: running it again creates nothing twice and repairs what is missing.
    have a default branch: commit what is there, then `gh repo create <name> --private --source . --push`.
 2. `gh auth status` succeeds. If the token lacks the `project` scope, ask the user to run
    `gh auth refresh -s project` (it opens a browser) and wait.
-3. Tell the user, in one short table, what will change on GitHub: a Project board linked to the
-   repository, labels, rebase-only merges, a ruleset on the default branch, and the files of
-   Repository below. Proceed on their yes.
+3. Ask once: checks before each push only (`local`, free) or also on GitHub Actions (`actions`,
+   spends the Actions budget). Then tell the user, in one short table, what will change on GitHub:
+   a Project board linked to the repository, labels, rebase-only merges, a ruleset on the default
+   branch, in `local` the repository's workflows disabled (files kept), and the files of Repository
+   below. Proceed on their yes.
 
 ## GitHub
 
-Run `senior-mode setup github`. It:
+Run `senior-mode setup github --ci <local|actions>`. It:
 
-- finds (cached number, else same title) or creates the Project, links it, ensures the fields Status (Backlog, Ready, In progress, In review, Done), Priority (P0 now, P1 next, P2 later,
-  P3 someday) and Size (S, M, L), keeping options and values already there;
-- caches every id in `.claude/senior-mode.json`, other keys untouched;
-- creates or updates the labels `needs-human`, `needs-info`, `blocked`, and on a personal account the
-  type labels `type:feature|bug|task|chore` (organizations use issue types);
+- finds (cached number, else same title) or creates the Project, links it, ensures the fields
+  Status, Priority and Size, keeping options and values already there;
+- creates the labels `needs-human`, `needs-info`, `blocked` (and `type:*` on a personal account);
 - allows rebase merges only and deletes branches after merge;
 - creates or updates a ruleset `senior-mode` on the default branch: pull requests only, rebase,
-  `senior-mode/ci` and `senior-mode/review` on an up-to-date branch, linear history, no force-push or
-  deletion; existing protection is left as is; an admin can bypass it with `gh pr merge --admin`.
-
-GitHub refuses rulesets on a private repository of a free plan: it says so and goes on.
+  `senior-mode/ci` and `senior-mode/review` required, linear history; existing protection is kept;
+  an admin can bypass it with `gh pr merge --admin`;
+- `local`: disables the repository's workflows (files kept); `actions`: `setup repo` then adds
+  `.github/workflows/senior-mode.yml`, which runs the checks and sets `senior-mode/ci`.
 
 ## Repository
 

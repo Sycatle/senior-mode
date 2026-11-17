@@ -19,3 +19,11 @@ Recurring review findings in senior-mode (first noted on PR #29, 2026-11-17):
   **How to apply:** for every find-then-create step, check that the lookup covers all pages.
 
 Related: [[reviewer-environment]]
+
+Added on PR #31 (2026-11-17, guard-bash `--admin` rule):
+
+- **Guard hook parsing holes.** `guard-bash.sh` reads segments with `read -r` after `tr`, so a backslash-newline continuation splits one command in two. Rules that need two words to be adjacent (`pr merge`) miss flags placed between them (`gh pr -R x merge`). Quoted flags become `Q`.
+  **How to apply:** for every new guard rule, test a multi-line form, flags between subcommand words, and the `gh api` equivalent of the denied CLI path.
+- **Doc or comment references to the wrong ADR.** The admin bypass decision is in spec 0001 §11 (#11), not in ADR 0006.
+  **How to apply:** grep the cited ADR for the claim before you accept the citation.
+- **Hooks count as the security zone.** No `protected` key is set in `.claude/senior-mode.json`. I treated agent guard hooks as security and added `needs-human` on #31.

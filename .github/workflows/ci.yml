@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: git ls-files -z '*.sh' | xargs -0 --no-run-if-empty shellcheck
+        run: .github/scripts/shellcheck.sh
       - name: tests
         run: |
           status=0

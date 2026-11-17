@@ -306,7 +306,7 @@ headless, GitHub Actions), November 2026.
 | `argument-hint`, `arguments` | `frame <idea>`, `run [n]`, `next [#issue]` |
 | `model`, `effort` on skills | `status` on haiku/low |
 | `context: fork` | `status` and `retro` run in a forked context and return a summary, keeping the main context clean |
-| `allowed-tools`, `disallowed-tools` | Read-only for `status`; no edits in `frame` outside `docs/` |
+| `allowed-tools`, `disallowed-tools` | Read-only for `status`; no edits in `frame` outside `docs/` (#36) |
 | `paths` | Disciplines loaded only near relevant files (`spec` near `docs/specs/**`, `adr` near `docs/adr/**`) |
 | Agent `model`, `effort` | Pinned per role (ADR 0004) |
 | Agent `tools`, `disallowedTools` | Least privilege per role (section 9) |

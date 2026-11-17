@@ -5,10 +5,15 @@
   "tag-separator": "--",
   "packages": {
     "plugins/senior-mode": {
+      "initial-version": "0.1.0",
       "component": "senior-mode",
       "include-component-in-tag": true,
       "extra-files": [
-        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" }
+        {
+          "type": "json",
+          "path": ".claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        }
       ]
     }
   }

@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  plugin:
+    name: Plugin manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --global @anthropic-ai/claude-code
+      - run: claude plugin validate --strict .
+      - run: claude plugin validate --strict plugins/senior-mode
+
+  scripts:
+    name: Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: git ls-files -z '*.sh' | xargs -0 --no-run-if-empty shellcheck
+      - name: tests
+        run: |
+          status=0
+          for t in $(git ls-files '*/test-*.sh'); do "$t" || status=1; done
+          exit "$status"
+
+  commits:
+    name: Conventional Commits
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: >-
+          git log --no-merges --format=%s
+          ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+          | .github/scripts/check-commits.sh

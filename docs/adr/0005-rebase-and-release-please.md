@@ -1,7 +1,7 @@
 ---
 id: 0005
 title: Atomic conventional commits, rebase merges, release-please
-status: proposed
+status: accepted
 spec: 0001
 ---
 

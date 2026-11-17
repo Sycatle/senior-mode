@@ -1,7 +1,7 @@
 ---
 id: 0002
 title: GitHub holds state, the repository holds specs and decisions
-status: proposed
+status: accepted
 spec: 0001
 ---
 

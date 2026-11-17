@@ -317,7 +317,7 @@ headless, GitHub Actions), November 2026.
 | `argument-hint`, `arguments` | `frame <idea>`, `run [n]`, `next [#issue]` |
 | `model`, `effort` on skills | `status` on haiku/low |
 | `context: fork` | `status` and `retro` run in a forked context and return a summary, keeping the main context clean |
-| `allowed-tools`, `disallowed-tools` | Read-only for `status`; no edits in `frame` outside `docs/` (#36) |
+| `allowed-tools`, `disallowed-tools` | Read-only for `status`. Not for `frame`: `allowed-tools` only pre-approves and `disallowed-tools` lapses at the next message, so a hook keeps frame to `docs/` (#36) |
 | `paths` | Disciplines loaded only near relevant files (`spec` near `docs/specs/**`, `adr` near `docs/adr/**`) |
 | Agent `model`, `effort` | Pinned per role (ADR 0004) |
 | Agent `tools`, `disallowedTools` | Least privilege per role (section 9) |
@@ -337,7 +337,8 @@ plugin's hooks, which cover every agent.
 |---|---|---|
 | `SessionStart` | command | Inject a ~15-line router and, from the branch name, the current ticket, its spec and its state |
 | `PreToolUse` Bash | command | Deny `--no-verify`, force-push, push to the default branch, `reset --hard` on shared branches |
-| `PreToolUse` Edit/Write | command | During a run, deny protected and self-protecting paths (section 10) |
+| `PreToolUse` Edit/Write | command | During a run, deny protected and self-protecting paths (section 10); in a frame session, deny the main conversation's edits outside `docs/` |
+| `UserPromptExpansion`, `PreToolUse` Skill, `SessionEnd` | command | Mark a frame session when `frame` starts; clear it on another senior-mode command or skill, at session end, or with `senior-mode frame end` |
 | `PermissionRequest` | command | During a run, allow the project's verification commands from config, so autonomy does not stall on prompts |
 | `PostToolUse` Edit/Write | command | Run the preset's formatter on the edited file; mark "verification needed" |
 | `Stop`, `SubagentStop` | command | Block `implementer` and `next` from ending with edits made since the last successful verification (proof before claims, mechanised) |

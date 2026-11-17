@@ -16,7 +16,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | check | publish [commit] | release [--dry-run] | context | setup github | setup repo [--command <name>=<command>]..."
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | check | publish [commit] | release [--dry-run] | frame end | context | setup github | setup repo [--command <name>=<command>]..."
 }
 
 config_file() {
@@ -695,6 +695,12 @@ case "${1:-}" in
     [ "${2:-}" = create ] || usage
     shift 2
     issue_create "$@"
+    ;;
+  frame)
+    # Lifts the docs/-only guard of every frame session in this repository (hooks/frame-guard.sh).
+    [ $# -eq 2 ] && [ "$2" = end ] || usage
+    rm -rf "$(git rev-parse --path-format=absolute --git-common-dir)/senior-mode/frame" || exit 1
+    echo "frame: ended, edits outside docs/ allowed again"
     ;;
   *) usage ;;
 esac

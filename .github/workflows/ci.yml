@@ -43,6 +43,6 @@ jobs:
         with:
           fetch-depth: 0
       - run: >-
-          git log --no-merges --format=%s
+          git log --format=%s
           ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
-          | .github/scripts/check-commits.sh
+          | plugins/senior-mode/templates/githooks/commit-msg --subjects

@@ -56,6 +56,13 @@ commit "$new" "fixup! feat(ui): add the menu" || fail "fixup commit refused"
 printf 'feat: ok\nbad subject\n' | "$new/.githooks/commit-msg" --subjects 2>/dev/null && fail "--subjects accepts a bad subject"
 printf 'fixup! feat: x\n' | "$new/.githooks/commit-msg" --subjects 2>/dev/null &&
   fail "--subjects accepts a fixup commit, which a rebase merge would land as is"
+for s in "fix(hooks): deny force-push" "feat(api)!: drop v1 config" "docs(adr): record decisions 0001-0005" \
+  "$(printf 'chore: one\nci: two')"; do
+  printf '%s\n' "$s" | "$new/.githooks/commit-msg" --subjects 2>/dev/null || fail "--subjects refuses: $s"
+done
+for s in "feat:missing space" "feature: unknown type" "feat(): empty scope" "$(printf 'feat: fine\nwip')"; do
+  printf '%s\n' "$s" | "$new/.githooks/commit-msg" --subjects 2>/dev/null && fail "--subjects accepts: $s"
+done
 
 # The commit subjects check reads the branch against the default branch, whatever its name.
 check_subjects() { (cd "$new" && bash -c "$(jq -r '.checks[] | select(.name == "commit subjects") | .run' .claude/senior-mode.json)") 2>&1; }

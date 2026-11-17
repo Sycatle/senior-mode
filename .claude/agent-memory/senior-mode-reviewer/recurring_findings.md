@@ -82,3 +82,9 @@ Added on PR #39 (2026-11-17, `senior-mode release`):
 Added on PR #39 re-review (2026-11-17):
 - **Both earlier findings fixed in one round** (EXIT trap plus INT/TERM traps that call exit, with a TERM test that failed on the old code). This is the pattern to accept for secret temp files: trap string expanded at install time (a `local` is gone by EXIT), and `( )` subshells do not inherit it. **How to apply:** a TERM-only test is enough; INT cannot be trapped in a background job of a non-interactive shell.
 - **Human-merge notes are not findings, so they stay unaddressed.** The npx pin comment was left as is. **How to apply:** repeat them briefly under "For the human merge"; do not escalate them.
+
+Added on PR #40 (2026-11-17, typescript preset):
+- **Spec prose inserted inside a markdown table.** A paragraph added after one row of the §14 presets table broke the rest of it into plain text. **How to apply:** when a spec diff adds text next to a table, check that it is not between rows.
+- **New release types with an old version seed.** Switching release-please to `node` kept the manifest at 0.0.0, which conflicts with an existing `package.json` version. **How to apply:** when a preset changes the release type, check where the current version comes from.
+- **`npx <bin>` in non-interactive checks.** With stdin not a TTY, npm 7+ assumes yes and downloads a package named like the bin (`tsc` is a placeholder package). **How to apply:** prefer `npx --no --` or the package manager's exec for generated check commands.
+- **Detection by one marker file** (`package.json` → typescript) also catches tooling-only package.json in other stacks. Flagged as a follow-up note, not blocking, since the spec says so.

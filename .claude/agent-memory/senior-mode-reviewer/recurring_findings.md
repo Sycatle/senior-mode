@@ -88,3 +88,6 @@ Added on PR #40 (2026-11-17, typescript preset):
 - **New release types with an old version seed.** Switching release-please to `node` kept the manifest at 0.0.0, which conflicts with an existing `package.json` version. **How to apply:** when a preset changes the release type, check where the current version comes from.
 - **`npx <bin>` in non-interactive checks.** With stdin not a TTY, npm 7+ assumes yes and downloads a package named like the bin (`tsc` is a placeholder package). **How to apply:** prefer `npx --no --` or the package manager's exec for generated check commands.
 - **Detection by one marker file** (`package.json` → typescript) also catches tooling-only package.json in other stacks. Flagged as a follow-up note, not blocking, since the spec says so.
+
+Added on PR #40 re-review (2026-11-17):
+- **"Dependency declared" is not "installed".** The npx fix gated the tsc fallback on `typescript` in package.json, which still downloads the `tsc` placeholder on a fresh clone without node_modules. **How to apply:** for fallbacks that run a local bin, ask whether the gate checks the manifest or the install; the robust fix is a runner flag that refuses downloads (`npx --no`).

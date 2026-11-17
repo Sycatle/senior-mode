@@ -16,7 +16,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | check | publish [commit] | context | setup github | setup repo [--command <name>=<command>]..."
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | check | publish [commit] | release [--dry-run] | context | setup github | setup repo [--command <name>=<command>]..."
 }
 
 config_file() {
@@ -194,6 +194,33 @@ issue_create() {
     link "$slug" "$parent" sub_issues sub_issue_id "$number"
     echo "#$number under #$parent"
   fi
+}
+
+# Pinned so a release does not change with the CLI's latest version; it needs Node 22 or later.
+RELEASE_PLEASE=17.11.2
+
+# Runs release-please locally (ADR 0006): tags and publishes a merged release PR, then opens or
+# updates the next one. The token goes through a private file, out of the process list.
+release() {
+  local dry="" root slug token step
+  case ${1:-} in "") ;; --dry-run) dry=--dry-run ;; *) usage ;; esac
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  [ -f "$root/release-please-config.json" ] ||
+    die "no release-please-config.json; run senior-mode setup repo"
+  slug=$(repo_slug)
+  token=$(mktemp)
+  if ! gh auth token >"$token"; then
+    rm -f "$token"
+    die "gh is not logged in; run gh auth login"
+  fi
+  for step in github-release release-pr; do
+    if ! (cd "$root" && npx --yes "release-please@$RELEASE_PLEASE" "$step" \
+      --token "$token" --repo-url "$slug" ${dry:+"$dry"}); then
+      rm -f "$token"
+      die "release-please $step failed"
+    fi
+  done
+  rm -f "$token"
 }
 
 # Where the result of `check` is kept for a commit, until `publish` sends it (ADR 0006).
@@ -645,6 +672,10 @@ case "${1:-}" in
     [ "${2:-}" = set ] || usage
     shift 2
     item_set "$@"
+    ;;
+  release)
+    [ $# -le 2 ] || usage
+    release "${2:-}"
     ;;
   issue)
     [ "${2:-}" = create ] || usage

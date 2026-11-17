@@ -13,8 +13,7 @@ Idea: $ARGUMENTS (ask for it in one line if empty). Write to the user in the pro
 1. **Size.** Apply skill `triage`. Size S needs no framing: say so and stop.
 2. **Facts.** Ask the `scout` agent what the repository files settle: stack, related code, specs,
    ADRs. Read GitHub yourself: `gh issue list --state open --limit 200` and
-   `gh api 'repos/{owner}/{repo}/milestones?state=all' --paginate --jq '.[]|"\(.state) \(.title)"'`
-   (reopen a closed one, never recreate it: `-X PATCH .../milestones/<n> -f state=open`). Never ask the
+   `gh api 'repos/{owner}/{repo}/milestones?state=all' --paginate --jq '.[]|"\(.number) \(.state) \(.title)"'`. Never ask the
    user any of it.
 3. **Decisions.** Run skill `grill` until no open decision blocks the spec. When an option depends
    on outside facts (a library, a service, a price, a limit), get them from the `researcher` agent
@@ -26,14 +25,15 @@ Idea: $ARGUMENTS (ask for it in one line if empty). Write to the user in the pro
 5. **Acceptance.** Show the user the problem, the criteria and each ADR's decision in a few lines,
    and ask to accept. Accepted: spec `accepted`, ADRs `accepted`. Otherwise they stay `draft` and
    `proposed`; a size L is never accepted without an explicit yes.
-6. **Tickets.** Have the `ops` agent create them, blockers first, one call each, the body in a quoted heredoc:
+6. **Tickets.** Have the `ops` agent create them, blockers first, one call each, body in `<<'SENIOR_MODE_BODY'`:
    `senior-mode issue create --title <t> --body-file - --size <S|M|L> --priority "<option>"
    --milestone "<title>" --type <feature|bug|task|chore> [--blocked-by <n>]... [--parent <n>]`.
    The body holds what it gives (plain words), a link to the spec, the acceptance criteria as
    Given / When / Then and the test seams. A size L first gets an epic issue (size L, the spec's
-   summary); every slice takes `--parent <epic>`. A milestone absent from step 2 is created first
+   summary); every slice takes `--parent <epic>`. A chosen milestone that is closed is reopened
+   (`-X PATCH .../milestones/<n> -f state=open`); one absent from step 2 is created first
    with `gh api repos/{owner}/{repo}/milestones -f title=<title>`. Rerunning is safe: an open
-   issue with the same title is reused and keeps its Status.
+   issue of the same title is reused, Status kept.
 7. **Record.** Commit the spec and ADRs (skill `commit`, `docs(spec): ...`) on a branch
    `docs/<first issue>-<slug>` and open a pull request; it merges like any other.
 8. **Ready.** Once that pull request is merged and the spec accepted, apply skill `ready` to each

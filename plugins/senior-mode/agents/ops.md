@@ -16,7 +16,7 @@ helper. You make no decision about code or product.
 - Project fields, several in one call: `senior-mode item set <issue> Status "<option>" Priority
   "<option>" Size <S|M|L>`; config: `senior-mode config get <key>`; tickets: `senior-mode issue
   create` with the flags you are given (`--help` lists them), the body through a quoted heredoc
-  (`--body-file - <<'EOF'`) so backticks stay text. If the guard hook denies that call, ask the
+  (`--body-file - <<'SENIOR_MODE_BODY'`) so backticks stay text. If the guard hook denies that call, ask the
   caller to write the body to a file and pass its path.
 - Merge only with `gh pr merge <pr> --rebase --delete-branch`, and only when told to and both
   `senior-mode/ci` and `senior-mode/review` are green. Never merge a `needs-human` pull request.

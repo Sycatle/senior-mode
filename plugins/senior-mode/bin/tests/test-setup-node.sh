@@ -40,10 +40,18 @@ grep -qi biome "$d/package.json" && fail "package.json changed"
   fail "release-please not set up for a node package"
 [ "$(jq -r '.packages["."]["initial-version"]' "$d/release-please-config.json")" = 0.1.0 ] ||
   fail "first release not 0.1.0 without a package.json version"
+grep -q "first release follows" "$work/out" && fail "version notice without a package.json version"
+# A package.json version is the last release: the next one bumps it, never repeats it.
 v=$(project versioned '{"version": "2.4.1", "scripts": {"test": "vitest run"}}')
 setup "$v"
-[ "$(jq -r '.packages["."]["initial-version"]' "$v/release-please-config.json")" = 2.4.1 ] ||
-  fail "first release ignores the package.json version"
+[ "$(jq -r '."."' "$v/.release-please-manifest.json")" = 2.4.1 ] || fail "manifest not seeded from package.json"
+[ "$(jq -r '.packages["."]["initial-version"]' "$v/release-please-config.json")" = 0.1.0 ] ||
+  fail "initial-version taken from package.json, which would release it again"
+grep -q "first release follows 2.4.1" "$work/out" || fail "seeded version not reported: $(cat "$work/out")"
+# npm init's 1.0.0 with no release tag: the user learns how to start lower.
+v=$(project npminit '{"version": "1.0.0"}')
+setup "$v"
+grep -q 'first release follows 1.0.0.*"0.0.0"' "$work/out" || fail "no way to start below 1.0.0 given: $(cat "$work/out")"
 
 # Run again: same config.
 cp "$d/.claude/senior-mode.json" "$work/before"

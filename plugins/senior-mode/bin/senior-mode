@@ -607,11 +607,19 @@ setup_repo() {
 
   if [ ! -e "$root/release-please-config.json" ]; then
     # Without a previous release, release-please would start at 1.0.0: a new project starts at 0.1.0.
-    local first=0.1.0
-    [ ! -f "$root/package.json" ] || first=$(jq -r '.version // "0.1.0"' "$root/package.json" 2>/dev/null) || first=0.1.0
-    jq --arg n "$name" --arg v "$first" '.release | .packages["."] += {component: $n, "initial-version": $v}' \
+    # A package.json version counts as the last release, so the manifest holds it and the next
+    # release bumps it (initial-version would publish it again).
+    local last=0.0.0
+    [ ! -f "$root/package.json" ] || last=$(jq -r '.version // "0.0.0"' "$root/package.json" 2>/dev/null) || last=0.0.0
+    jq --arg n "$name" '.release | .packages["."] += {component: $n, "initial-version": "0.1.0"}' \
       "$preset" >"$root/release-please-config.json"
-    [ -e "$root/.release-please-manifest.json" ] || echo '{".": "0.0.0"}' >"$root/.release-please-manifest.json"
+    if [ ! -e "$root/.release-please-manifest.json" ]; then
+      jq -n --arg v "$last" '{".": $v}' >"$root/.release-please-manifest.json"
+      if [ "$last" != 0.0.0 ] && [ -z "$(git -C "$root" tag --list)" ]; then
+        echo "releases: first release follows $last (package.json)$([ "$last" != 1.0.0 ] ||
+          echo '; to start at 0.1.0, set "." to "0.0.0" in .release-please-manifest.json')"
+      fi
+    fi
     echo "releases: release-please configured"
   fi
 }

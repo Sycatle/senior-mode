@@ -41,3 +41,8 @@ Added on PR #33 (2026-11-17):
   **How to apply:** require both markers before rewriting, and write back with `cat >`.
 - **Spec drift was handled correctly on #33** (spec §12/§14 updated in the PR), so the Spec-Unchanged finding is not systematic any more. Check before flagging it.
 - **Guard hook blocks review comments.** `hooks/guard-bash.sh` denies any Bash command whose text contains the commit short skip flag, even inside a heredoc. Say it in words in review comments.
+
+Added on PR #33 second round (2026-11-17):
+- **Fix claims without tests regress.** The N7 fix (sed replaced by `${s//pat/$var}`) was claimed as tested but had no case, and it still breaks on `&` because bash 5.2+ has `patsub_replacement` on (only an inner-quoted `"$var"` protects). **How to apply:** for each "fixed" item, find its test; flag `${x//p/$var}` with an unquoted var.
+- **Validation by count, not by shape.** Marker checks with `grep -c` (one open, one close) still allow the wrong order. **How to apply:** prefer validating inside the rewriting awk (`END { exit skip }`) to separate pre-checks.
+- **"Default branch" guesses.** Fallbacks to origin/main|master miss `develop` or `trunk` when `origin/HEAD` is unset (`git remote add` never sets it). **How to apply:** ask what happens with a remote but an unknown base.

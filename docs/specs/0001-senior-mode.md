@@ -173,7 +173,7 @@ Run loop per ticket:
    at most 2 fix rounds.
 7. Protected zone → `needs-human`, stop there. Otherwise `senior-mode check` runs on the PR head and
    publishes `senior-mode/ci`; once it and `senior-mode/review` are green, `ops` merges with
-   `gh pr merge --rebase`. Branch protection requires both statuses (ADR 0006).
+   `gh pr merge --rebase`. The `senior-mode` ruleset requires both statuses (ADR 0006).
 8. Final report in plain language: merged, waiting for a human, failed and why, cost indicators.
 
 `run` can also be scheduled headless (`claude -p`) for nightly batches, with the same config: by a
@@ -195,7 +195,10 @@ local scheduler (cron, systemd timer, launchd), a cloud scheduled task, or GitHu
 - **Release:** `senior-mode release` runs the release-please CLI locally after merges (the official
   action in `actions` mode); changelog and semver from commits.
 - **Checks:** commit statuses `senior-mode/ci` (published by `senior-mode check`) and
-  `senior-mode/review`, required by branch protection (ADR 0006).
+  `senior-mode/review`, required on an up-to-date branch by a repository ruleset named `senior-mode`
+  on the default branch (ADR 0006), which adds to any existing protection without rewriting it. A
+  rebase onto a newer default branch drops `senior-mode/review`, so `run` reviews again after each
+  merge. Admins may bypass the ruleset, explicitly (`gh pr merge --admin`).
 - **Titles:** issue and PR titles say what the user gets, in plain words, in the project language.
 
 ## 12. Documents in an adopted repository

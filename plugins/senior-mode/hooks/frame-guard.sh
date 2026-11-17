@@ -39,7 +39,10 @@ case $event in
     [ -f "$mark" ] || exit 0
     [[ $path == /* ]] || path=$cwd/$path
     # No path resolution (GNU-only realpath -m): a ".." segment is simply never under docs/.
-    [[ $path == "$root"/docs/* && $path != */../* && $path != */.. ]] && exit 0
+    # git resolves symlinks in the root, Claude Code sends paths as reached from the cwd: try both.
+    here=$(cd "$cwd/$(git -C "$cwd" rev-parse --show-cdup)" 2>/dev/null && pwd) || here=$root
+    [[ $path != */../* && $path != */.. ]] &&
+      [[ $path == "$root"/docs/* || $path == "$here"/docs/* ]] && exit 0
     jq -nc --arg r "senior-mode: framing only writes under docs/ (specs, ADRs); ${path#"$root"/} is code or config. Do not work around this: stop and tell the user. They leave framing by starting another senior-mode command, or by running \`! senior-mode frame end\` themselves." \
       '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
     ;;

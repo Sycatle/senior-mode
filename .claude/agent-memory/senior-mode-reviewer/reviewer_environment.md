@@ -14,3 +14,4 @@ In reviewer sessions (seen 2026-11-17, PR #29, two rounds):
 
 **How to apply:** say in the review comment that the tests were read and not run. Use GraphQL introspection to check API assumptions instead of trusting the PR body.
 - PR #31: a `gh pr comment` heredoc that contains a backslash followed by a space is refused, and so is ANSI-C `$'...'` quoting. Describe such commands in words. Probing a hook with `jq ... | hook` is refused too.
+- PR #31 re-review: a Bash call with a `for` loop over several `gh api` calls was refused; the same calls run one by one work.

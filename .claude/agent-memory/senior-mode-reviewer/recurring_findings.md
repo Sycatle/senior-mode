@@ -27,3 +27,10 @@ Added on PR #31 (2026-11-17, guard-bash `--admin` rule):
 - **Doc or comment references to the wrong ADR.** The admin bypass decision is in spec 0001 §11 (#11), not in ADR 0006.
   **How to apply:** grep the cited ADR for the claim before you accept the citation.
 - **Hooks count as the security zone.** No `protected` key is set in `.claude/senior-mode.json`. I treated agent guard hooks as security and added `needs-human` on #31.
+
+Added on PR #31 re-review (2026-11-17):
+
+- **Quote replacement hides what a guard rule matches.** `guard-bash.sh` turns quoted text into `Q`, so a quoted `gh api` endpoint or a single-quoted GraphQL query (`mergePullRequest`) gets past rules that match on paths or query text. A fix round closed the REST path only, and the spec sentence was widened beyond it ("a merge through gh api").
+  **How to apply:** for every rule that matches an argument value (not a flag), test the quoted form, and check that the spec wording matches exactly what the hook denies.
+- **Fix rounds skip the non-blocking items.** On #31 the ADR citation (N3) was left as is after the fix commit.
+  **How to apply:** list each earlier finding with fixed / not addressed in the re-review.

@@ -68,3 +68,17 @@ Added on PR #37 (2026-11-17, follow-up of #35 notes):
 - **Write actions placed in a read-only step.** The "reopen a closed milestone" rule sat in frame's Facts step, before any milestone was chosen. **How to apply:** check that each write runs in the step where its target is known.
 - **Skill rule changed, spec definition not.** `ready` gained "on the default branch", but spec 0001 §6 (Definition of Ready) was not updated, and `Spec-Unchanged` cited §11 instead. **How to apply:** for skill wording changes, grep the spec for the definition the skill implements, not only the section the PR cites.
 - **Space-joined lists split again with an unquoted `for`.** Label names went through jq `join(" ")` and then `for b in $stale`, so names with spaces or globs break. Also, `join` on numbers needs jq 1.6 or later. **How to apply:** prefer one item per line with `while IFS= read -r`, and `tostring` before `join`.
+
+Added on PR #38 (2026-11-17, follow-up of #37 notes):
+- **"Is it on main" checks that test existence, not content.** `ready` checked the spec with `contents/<path> --jq .path`, which passes for an older version of an amended spec while the criteria and `accepted` status are read from the local docs branch. **How to apply:** when a check must use the default-branch version, the content it judges must come from there too (raw contents API), not only the path.
+- **Tests that log `"$*"` cannot pin argument boundaries.** The gh stub in `test-issue.sh` joins arguments with spaces, so a quoting regression (`$b` unquoted) passes a test meant for "label kept whole". **How to apply:** for quoting/splitting fixes, ask for a stub that records one argument per line and an exact-line assert.
+
+Added on PR #39 (2026-11-17, `senior-mode release`):
+- **Temp files holding secrets cleaned by per-branch `rm -f`.** `release()` wrote the gh token to a mktemp file and removed it in three places, but no `trap`, so a Ctrl-C during npx left it in $TMPDIR. **How to apply:** for every mktemp holding a secret, ask for `trap 'rm -f ...' EXIT` right after creation.
+- **"Pinned" npx tools.** `npx pkg@x.y.z` pins only the top package; transitive deps float without a lockfile. **How to apply:** challenge comments that promise reproducibility from an npx pin.
+- **Protected-zone call:** release tooling that hands the gh token to an npm package was treated as security/infrastructure (`needs-human`, status pending).
+- **Spec-Unchanged in prose only.** The body said why the spec was unchanged but without the `Spec-Unchanged:` line; still flag (cheap).
+
+Added on PR #39 re-review (2026-11-17):
+- **Both earlier findings fixed in one round** (EXIT trap plus INT/TERM traps that call exit, with a TERM test that failed on the old code). This is the pattern to accept for secret temp files: trap string expanded at install time (a `local` is gone by EXIT), and `( )` subshells do not inherit it. **How to apply:** a TERM-only test is enough; INT cannot be trapped in a background job of a non-interactive shell.
+- **Human-merge notes are not findings, so they stay unaddressed.** The npx pin comment was left as is. **How to apply:** repeat them briefly under "For the human merge"; do not escalate them.

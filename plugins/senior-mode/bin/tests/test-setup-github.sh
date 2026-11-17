@@ -15,27 +15,35 @@ echo "$*" >>"$GH_LOG"
 jqf="" prev=""
 for a in "$@"; do [ "$prev" = --jq ] && jqf=$a; prev=$a; done
 respond() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
+plan_limit() {
+  [ -z "${PROTECTION_403:-}" ] || { echo "HTTP 403: Upgrade to GitHub Pro or make this repository public to enable this feature." >&2; exit 1; }
+}
 case "$*" in
   "api repos/acme/app --jq"*) respond <"$FIX/repo.json" ;;
-  "project view"*) [ -f "$FIX/project.json" ] || { echo "Could not resolve to a ProjectV2" >&2; exit 1; }
+  "api repos/acme/app/rulesets --jq"*) plan_limit
+    if [ -f "$FIX/rulesets.json" ]; then respond <"$FIX/rulesets.json"; else echo '[]' | respond; fi ;;
+  "api -X POST repos/acme/app/rulesets"*) plan_limit; cat >>"$GH_LOG"
+    echo '[{"id": 9, "name": "senior-mode", "source_type": "Repository"}]' >"$FIX/rulesets.json" ;;
+  "api -X PUT repos/acme/app/rulesets/"*) cat >>"$GH_LOG" ;;
+  "project view"*)
+    [ -z "${VIEW_ERR:-}" ] || { echo "$VIEW_ERR" >&2; exit 1; }
+    jq -e --argjson n "$3" '.number == $n' "$FIX/project.json" >/dev/null 2>&1 ||
+      { echo "Could not resolve to a ProjectV2 with the number $3." >&2; exit 1; }
     respond <"$FIX/project.json" ;;
   "project list"*) respond <"$FIX/projects.json" ;;
   "project create"*) echo '{"number":7,"id":"PVT_NEW","title":"app"}' | tee "$FIX/project.json" | respond ;;
-  "project field-create"*)
-    name=$(sed -E 's/.*--name ([A-Za-z]+).*/\1/' <<<"$*")
-    opts=$(sed -E 's/.*--single-select-options ([^-]+[^ ]).*/\1/' <<<"$*")
-    jq --arg n "$name" --arg o "$opts" '.data.node.fields.nodes += [{id: ("F_" + $n), name: $n,
-      options: ($o | split(",") | map({id: ("O_" + .), name: ., color: "GRAY", description: ""}))}]' \
-      "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json" ;;
   "api graphql"*)
     body=$(cat); echo "$body" >>"$GH_LOG"
-    if grep -q mutation <<<"$body"; then
-      jq --argjson v "$(jq .variables <<<"$body")" '(.data.node.fields.nodes[] | select(.id == $v.field)
+    v=$(jq -c .variables <<<"$body")
+    if grep -q createProjectV2Field <<<"$body"; then
+      jq --argjson v "$v" '.data.node.fields.nodes += [{id: ("F_" + $v.name), name: $v.name,
+        options: ($v.options | map(. + {id: ("O_" + .name)}))}]' "$FIX/fields.json" >"$FIX/f" &&
+        mv "$FIX/f" "$FIX/fields.json"
+    elif grep -q updateProjectV2Field <<<"$body"; then
+      jq --argjson v "$v" '(.data.node.fields.nodes[] | select(.id == $v.field)
         | .options) = ($v.options | map(.id //= ("O_" + .name)))' "$FIX/fields.json" >"$FIX/f" &&
         mv "$FIX/f" "$FIX/fields.json"
     else respond <"$FIX/fields.json"; fi ;;
-  "api -X PUT"*) cat >>"$GH_LOG"
-    [ -z "${PROTECTION_403:-}" ] || { echo "HTTP 403: Upgrade to GitHub Pro or make this repository public to enable this feature." >&2; exit 1; } ;;
 esac
 STUB
 chmod +x "$work/stub/gh"
@@ -46,7 +54,7 @@ git init -q "$repo"
 git -C "$repo" remote add origin git@github.com:acme/app.git
 mkdir -p "$repo/.claude" "$FIX"
 echo '{"language": "fr"}' >"$repo/.claude/senior-mode.json"
-echo '{"owner": {"type": "User"}, "default_branch": "main"}' >"$FIX/repo.json"
+echo '{"owner": {"type": "User"}}' >"$FIX/repo.json"
 echo '{"projects": [{"number": 2, "title": "other"}]}' >"$FIX/projects.json"
 echo '{"data": {"node": {"fields": {"nodes": [{}, {"id": "F_Status", "name": "Status", "options": [
   {"id": "O_todo", "name": "Todo", "color": "GRAY", "description": ""},
@@ -59,6 +67,10 @@ setup() {
 }
 cfg() { jq -r "$1" "$repo/.claude/senior-mode.json"; }
 logged() { grep -qF -- "$1" "$GH_LOG"; }
+status_field() {
+  jq --argjson o "$1" '(.data.node.fields.nodes[] | select(.name == "Status") | .options) = $o' \
+    "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"
+}
 
 # A repository without senior-mode.
 setup
@@ -73,40 +85,68 @@ logged "project link 7 --owner acme --repo acme/app" || fail "Project not linked
 [ "$(cfg '.project.fields.Priority.options | keys_unsorted | join(",")')" = "P0 now,P1 next,P2 later,P3 someday" ] ||
   fail "Priority: $(cfg .project.fields.Priority)"
 [ "$(cfg '.project.fields.Size.options | keys_unsorted | join(",")')" = "S,M,L" ] || fail "Size: $(cfg .project.fields.Size)"
+logged '"name":"P0 now","color":"RED"' || fail "created fields without their colours"
 for label in needs-human needs-info blocked type:feature type:bug type:task type:chore; do
   logged "label create $label" || fail "label $label not created"
 done
 logged "--enable-rebase-merge --enable-merge-commit=false --enable-squash-merge=false --delete-branch-on-merge" ||
   fail "merge settings not set"
-logged "api -X PUT repos/acme/app/branches/main/protection" || fail "no branch protection"
-logged '"contexts":["senior-mode/ci","senior-mode/review"]' || fail "protection does not require both statuses"
-logged '"required_linear_history":true' || fail "protection without linear history"
-logged '"enforce_admins":false' || fail "admins cannot override explicitly"
+logged "api -X POST repos/acme/app/rulesets" || fail "no ruleset created"
+for rule in '"include":["~DEFAULT_BRANCH"]' '{"context":"senior-mode/ci"},{"context":"senior-mode/review"}' \
+  '"strict_required_status_checks_policy":true' '{"type":"required_linear_history"}' '"bypass_mode":"always"' \
+  '"allowed_merge_methods":["rebase"]'; do
+  tr -d ' \n' <"$GH_LOG" | grep -qF -- "$rule" || fail "ruleset without $rule"
+done
+logged "/protection" && fail "classic branch protection rewritten"
 
 # Running it again changes nothing that exists.
 before=$(cat "$repo/.claude/senior-mode.json")
 setup
 logged "project create" && fail "second run creates a Project"
-logged "field-create" && fail "second run creates a field"
-logged "mutation" && fail "second run rewrites field options"
+logged "createProjectV2Field" && fail "second run creates a field"
+logged "updateProjectV2Field" && fail "second run rewrites field options"
+logged "api -X POST repos/acme/app/rulesets" && fail "second run creates another ruleset"
+logged "api -X PUT repos/acme/app/rulesets/9" || fail "second run does not update the ruleset"
 [ "$(cat "$repo/.claude/senior-mode.json")" = "$before" ] || fail "second run changes the config"
 
-# A Project with an option of its own, found by title, in an organization.
-rm "$FIX/project.json"
-echo '{"language": "fr"}' >"$repo/.claude/senior-mode.json"
+# A field deleted on the board is created again.
+jq 'del(.data.node.fields.nodes[] | select(.name == "Size"))' "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"
+setup
+logged '"name":"Size"' || fail "deleted Size field not recreated"
+[ "$(cfg '.project.fields.Size.options | keys_unsorted | join(",")')" = "S,M,L" ] || fail "Size after repair: $(cfg .project.fields.Size)"
+
+# A Status with both the name and its alias: the exact name keeps its id, the alias stays as an extra.
+status_field '[{"id": "O_todo2", "name": "Todo", "color": "GRAY", "description": ""},
+  {"id": "O_todo", "name": "Backlog", "color": "GRAY", "description": ""},
+  {"id": "O_prog", "name": "In progress", "color": "YELLOW", "description": ""},
+  {"id": "O_done", "name": "Done", "color": "PURPLE", "description": ""}]'
+setup
+[ "$(cfg '.project.fields.Status.options | [.Backlog, .Todo] | join(",")')" = O_todo,O_todo2 ] ||
+  fail "name and alias mixed up: $(cfg .project.fields.Status.options)"
+
+# A cached Project that cannot be read for another reason stops setup without creating one.
+: >"$GH_LOG"
+(cd "$repo" && VIEW_ERR="HTTP 401: Bad credentials" "$cli" setup github) >"$work/out" 2>"$work/err" &&
+  fail "setup succeeds although the Project cannot be read"
+grep -q "Bad credentials" "$work/err" || fail "view error not reported: $(cat "$work/err")"
+logged "project create" && fail "creates a Project after a view error"
+logged "project list" && fail "looks the Project up by title after a view error"
+
+# A cached Project that no longer exists falls back to the one with the repository's title, in an organization.
+echo '{"language": "fr", "project": {"number": 99}}' >"$repo/.claude/senior-mode.json"
 echo '{"projects": [{"number": 5, "title": "app"}]}' >"$FIX/projects.json"
 echo '{"number": 5, "id": "PVT_5"}' >"$FIX/project.json"
 jq '(.data.node.fields.nodes[] | select(.name == "Status") | .options) += [{"id": "O_ice", "name": "Icebox", "color": "BLUE", "description": ""}]' \
   "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"
-echo '{"owner": {"type": "Organization"}, "default_branch": "trunk"}' >"$FIX/repo.json"
+echo '{"owner": {"type": "Organization"}}' >"$FIX/repo.json"
 setup
 logged "project create" && fail "creates a Project although one has the repository's title"
 [ "$(cfg .project.number)" = 5 ] || fail "Project found by title not used: $(cfg .project.number)"
 [ "$(cfg '.project.fields.Status.options.Icebox')" = O_ice ] || fail "a Project's own option was dropped"
 logged "label create type:" && fail "type labels in an organization (issue types instead)"
-logged "branches/trunk/protection" || fail "protection not on the default branch"
 
-# Branch protection unavailable on the plan.
+# Rulesets unavailable on the plan.
+rm "$FIX/rulesets.json"
 PROTECTION_403=1 setup
 grep -qi "not available" "$work/out" || fail "plan limit not reported: $(cat "$work/out")"
 

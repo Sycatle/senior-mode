@@ -43,8 +43,8 @@ hooks and the plugin's guard still apply.
 2. Run `senior-mode setup repo --command lint="<cmd>" ...` (one `--command` per answer). It adds
    checks, git hooks, Principles in `CLAUDE.md`, PR and issue templates in the project language,
    permissions and the release-please config; what exists is kept and extended.
-3. If it created `CLAUDE.md`, ask the scout agent for commands, code map and pitfalls, then fill the
-   skeleton, 80 lines at most.
+3. If it created `CLAUDE.md`, fill the skeleton from the scout agent's commands, code map and
+   pitfalls. If it reports over 80 lines, propose cuts to the user.
 
 ## Report
 

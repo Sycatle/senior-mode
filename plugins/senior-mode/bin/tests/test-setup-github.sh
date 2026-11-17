@@ -174,7 +174,8 @@ logged "workflow disable 11 --repo acme/app" || fail "an active workflow is left
 logged "workflow disable 12" && fail "an already disabled workflow is disabled again"
 logged "workflow disable 13" && fail "a GitHub built-in workflow (Dependabot) is disabled"
 grep -q "workflows: disabled CI, senior-mode" "$work/out" || fail "disabled workflows not reported: $(cat "$work/out")"
-grep -q "ci.mode actions" "$work/out" || fail "no lasting way back given: $(cat "$work/out")"
+grep -q "gh workflow enable" "$work/out" || fail "no way back given: $(cat "$work/out")"
+grep -q "setup github --ci actions" "$work/out" || fail "no lasting way back given: $(cat "$work/out")"
 [ "$(cfg .ci.mode)" = null ] || fail "ci.mode written without --ci"
 
 # --ci actions: stored, nothing disabled, and our own workflow turned back on.

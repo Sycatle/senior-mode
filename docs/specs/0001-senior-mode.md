@@ -158,8 +158,9 @@ it does not read code at length.
   merged by an agent.
 - **Self-protection:** during a run, hooks deny edits to `.github/workflows/**`, `.claude/**`,
   `.githooks/**` and the protected-zone list itself, so an agent cannot weaken its own barriers.
-- **Always denied:** `--no-verify`, force-push, direct push to the default branch, `gh pr merge --admin`, history rewrite on
-  shared branches, deleting files outside the ticket's worktree.
+- **Always denied:** `--no-verify`, force-push, direct push to the default branch,
+  `gh pr merge --admin` or a merge through `gh api`, history rewrite on shared branches, deleting
+  files outside the ticket's worktree.
 
 Run loop per ticket:
 1. `ops` selects the top Ready item (Priority, then milestone due date), unblocked, size ≤ M.

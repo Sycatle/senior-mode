@@ -56,6 +56,12 @@ expect deny 'gh pr merge 3 --rebase --admin'
 expect deny 'gh pr merge --admin 3 --rebase'
 expect deny 'GH_REPO=a/b gh -R a/b pr merge 3 --admin; echo done'
 expect deny '/usr/bin/gh pr merge 3 --admin=true'
+expect deny 'gh pr --repo a/b merge 3 --admin'
+expect deny $'gh pr merge 3 \\\n  --rebase \\\n  --admin'
+expect deny $'git push \\\n  --force'
+expect deny 'gh api -X PUT repos/a/b/pulls/3/merge -f merge_method=rebase'
+expect deny 'gh api --method=PUT repos/a/b/pulls/3/merge'
+expect allow 'gh api repos/a/b/pulls/3/merge'
 
 expect allow 'git status' feat/2-local
 expect allow 'git push -u origin feat/2-local'

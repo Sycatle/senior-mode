@@ -6,7 +6,8 @@
 set -o pipefail
 input=$(cat)
 # Quoted text is data (commit messages, echo), never options: replace it before parsing.
-command=$(jq -r '.tool_input.command // "" | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
+# A backslash-newline continues the line.
+command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ") | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
 cwd=$(jq -r '.cwd // empty' <<<"$input")
 
 deny() {
@@ -57,8 +58,12 @@ while IFS= read -r segment; do
   while [[ ${w[i]:-} == *=* || ${w[i]:-} == command || ${w[i]:-} == exec ]]; do i=$((i + 1)); done
   if [ "${w[i]##*/}" = gh ] 2>/dev/null; then
     # The ruleset lets admins bypass it on purpose (ADR 0006); an agent running as an admin must not.
-    [[ " ${w[*]:i+1} " =~ \ pr\ merge\  && " ${w[*]:i+1} " =~ \ --admin[=\ ] ]] &&
+    [[ " ${w[*]:i+1} " =~ \ pr\ (.*\ )?merge\  && " ${w[*]:i+1} " =~ \ --admin[=\ ] ]] &&
       deny "gh pr merge --admin bypasses the required checks and review: a human must do it."
+    # Through the API, an admin's merge bypasses the ruleset without any flag.
+    [[ ${w[i + 1]:-} == api && " ${w[*]:i+2} " =~ pulls/[0-9]+/merge[\ ?] &&
+      " ${w[*]:i+2} " =~ \ (-X|--method)[\ =]?PUT\  ]] &&
+      deny "merging through gh api can bypass the required checks: use gh pr merge without --admin."
     continue
   fi
   [ "${w[i]##*/}" = git ] 2>/dev/null || continue

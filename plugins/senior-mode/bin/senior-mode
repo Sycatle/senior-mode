@@ -189,7 +189,8 @@ board_fields() {
 }
 
 # Finds the Project of the repository (cached number, else same title) or creates it; prints
-# "<number> <id>".
+# "<number> <id>". Called as `setup_project || die`, which turns off set -e here: every command
+# checks its own status.
 setup_project() {
   local file=$1 owner=$2 name=$3 slug=$4 number id err
   number=$(jq -r '.project.number // empty' "$file")
@@ -203,14 +204,15 @@ setup_project() {
   fi
   if [ -z "$number" ]; then
     number=$(gh_retry project list --owner "$owner" --limit 100 --format json \
-      --jq "[.projects[] | select(.title == \"$name\")][0].number // empty")
+      --jq "[.projects[] | select(.title == \"$name\")][0].number // empty") || return 1
     if [ -z "$number" ]; then
-      number=$(gh_retry project create --owner "$owner" --title "$name" --format json --jq .number)
+      number=$(gh_retry project create --owner "$owner" --title "$name" --format json --jq .number) || return 1
       echo "Project #$number $name: created" >&2
     fi
-    id=$(gh_retry project view "$number" --owner "$owner" --format json --jq .id)
+    id=$(gh_retry project view "$number" --owner "$owner" --format json --jq .id) || return 1
   fi
-  gh_retry project link "$number" --owner "$owner" --repo "$slug" >/dev/null
+  [ -n "$id" ] || return 1
+  gh_retry project link "$number" --owner "$owner" --repo "$slug" >/dev/null || return 1
   echo "$number $id"
 }
 

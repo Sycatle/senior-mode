@@ -30,7 +30,9 @@ case "$*" in
     jq -e --argjson n "$3" '.number == $n' "$FIX/project.json" >/dev/null 2>&1 ||
       { echo "Could not resolve to a ProjectV2 with the number $3." >&2; exit 1; }
     respond <"$FIX/project.json" ;;
-  "project list"*) respond <"$FIX/projects.json" ;;
+  "project list"*) [ -z "${LIST_ERR:-}" ] || { echo "$LIST_ERR" >&2; exit 1; }
+    respond <"$FIX/projects.json" ;;
+  "project link"*) [ -z "${LINK_ERR:-}" ] || { echo "$LINK_ERR" >&2; exit 1; } ;;
   "project create"*) echo '{"number":7,"id":"PVT_NEW","title":"app"}' | tee "$FIX/project.json" | respond ;;
   "api graphql"*)
     body=$(cat); echo "$body" >>"$GH_LOG"
@@ -144,6 +146,20 @@ logged "project create" && fail "creates a Project although one has the reposito
 [ "$(cfg .project.number)" = 5 ] || fail "Project found by title not used: $(cfg .project.number)"
 [ "$(cfg '.project.fields.Status.options.Icebox')" = O_ice ] || fail "a Project's own option was dropped"
 logged "label create type:" && fail "type labels in an organization (issue types instead)"
+
+# A failing Project command stops setup: no duplicate Project, no empty id cached.
+failing() {
+  : >"$GH_LOG"
+  cp "$repo/.claude/senior-mode.json" "$work/before"
+  (cd "$repo" && env "$1=HTTP 401: Bad credentials" "$cli" setup github) >"$work/out" 2>"$work/err" &&
+    fail "$1: setup succeeds although a Project command failed"
+  logged "project create" && fail "$1: creates a Project after the failure"
+  cmp -s "$work/before" "$repo/.claude/senior-mode.json" || fail "$1: config rewritten after the failure"
+}
+echo '{"language": "fr", "project": {"number": 99}}' >"$repo/.claude/senior-mode.json"
+failing LIST_ERR
+echo '{"language": "fr", "project": {"number": 5}}' >"$repo/.claude/senior-mode.json"
+failing LINK_ERR
 
 # Rulesets unavailable on the plan.
 rm "$FIX/rulesets.json"

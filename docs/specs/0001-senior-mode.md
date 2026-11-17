@@ -189,6 +189,8 @@ local scheduler (cron, systemd timer, launchd), a cloud scheduled task, or GitHu
 - **Native features first:** milestones for roadmap stages (with due dates), sub-issues for epics,
   issue dependencies (blocked by) for ordering, issue types when the owner is an organization;
   on personal accounts, type labels `type:feature|bug|task|chore` replace issue types.
+  `senior-mode issue create` sets fields, milestone, type, blocked-by and parent in one call, and
+  reuses an open issue with the same title so an interrupted `frame` can be rerun.
 - **Labels:** `needs-human`, `needs-info`, `blocked`, plus type labels when needed. Nothing else by
   default.
 - **Branches:** short-lived, one per ticket, from the default branch.
@@ -356,7 +358,7 @@ plugins/senior-mode/
                                     a skill's own templates sit next to it (spec, adr)
   agents/*.md                       section 9
   hooks/hooks.json, hooks/*.sh      sections 10 and 16
-  bin/senior-mode                   index, drift check, config read, Project helpers, statusline
+  bin/senior-mode                   index, drift check, config read, Project helpers, ticket creation, statusline
   output-styles/senior-mode-plain.md
   monitors/monitors.json            ci-watch
   templates/                        spec, ADR, CLAUDE.md, rules, settings, PR and issue templates,

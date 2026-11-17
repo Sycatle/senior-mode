@@ -1,2 +1,2 @@
-- [Recurring findings](recurring_findings.md) — Spec-Unchanged omission, set -e holes, gh_retry misuse, overwrite-not-merge, unpaginated lookups, guard-hook parsing and quote holes
-- [Reviewer environment](reviewer_environment.md) — scripts/sed/python/hook probes/for loops need approval; no backslash-space in heredocs; label via REST
+- [Recurring findings](recurring_findings.md) — Spec-Unchanged omission, set -e holes, gh_retry misuse, overwrite-not-merge, unpaginated lookups, guard-hook parsing and quote holes, no-pipefail checks, marker rewrites
+- [Reviewer environment](reviewer_environment.md) — scripts/sed/python/awk/hook probes/for loops need approval; jq with $vars or --slurpfile refused; no backslash-space in heredocs; label via REST

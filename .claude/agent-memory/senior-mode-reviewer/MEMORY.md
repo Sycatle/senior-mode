@@ -1,2 +1,2 @@
-- [Recurring findings](recurring_findings.md) — Spec-Unchanged omission/miscited section, set -e holes, gh_retry misuse, overwrite-not-merge, unpaginated lookups, guard parsing, pipefail, marker rewrites, find-or-create defaults, agent tool mismatch, listings without ids, space-joined lists
+- [Recurring findings](recurring_findings.md) — Spec-Unchanged, set -e holes, gh_retry misuse, overwrite-not-merge, pagination, guard parsing, pipefail, find-or-create, spec tables, release seeds, npx in checks
 - [Reviewer environment](reviewer_environment.md) — scripts/sed/python/awk/hook probes/for loops/senior-mode bin need approval; jq refused (even -n); no backslash-space in heredocs; label via REST

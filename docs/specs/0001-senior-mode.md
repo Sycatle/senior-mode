@@ -158,7 +158,7 @@ it does not read code at length.
   merged by an agent.
 - **Self-protection:** during a run, hooks deny edits to `.github/workflows/**`, `.claude/**`,
   `.githooks/**` and the protected-zone list itself, so an agent cannot weaken its own barriers.
-- **Always denied:** `--no-verify`, force-push, direct push to the default branch, history rewrite on
+- **Always denied:** `--no-verify`, force-push, direct push to the default branch, `gh pr merge --admin`, history rewrite on
   shared branches, deleting files outside the ticket's worktree.
 
 Run loop per ticket:
@@ -198,7 +198,7 @@ local scheduler (cron, systemd timer, launchd), a cloud scheduled task, or GitHu
   `senior-mode/review`, required on an up-to-date branch by a repository ruleset named `senior-mode`
   on the default branch (ADR 0006), which adds to any existing protection without rewriting it. A
   rebase onto a newer default branch drops `senior-mode/review`, so `run` reviews again after each
-  merge. Admins may bypass the ruleset, explicitly (`gh pr merge --admin`).
+  merge. Admins may bypass the ruleset, explicitly (`gh pr merge --admin`); agents never may.
 - **Titles:** issue and PR titles say what the user gets, in plain words, in the project language.
 
 ## 12. Documents in an adopted repository

@@ -502,14 +502,15 @@ setup_claude_md() {
 
 # Commands of a package.json project (spec 0001 §14, #13): its scripts, run by the package manager
 # of its lockfile; tsc --noEmit when a tsconfig has no typecheck script and typescript is a
-# dependency (npx would otherwise fetch the unrelated "tsc" package); npm's placeholder test
-# script is no test. Prints {commands, framework}.
+# dependency (npx would otherwise fetch the unrelated "tsc" package), run without ever downloading;
+# npm's placeholder test script is no test. Prints {commands, framework}.
 # shellcheck disable=SC2016 # jq program, not shell
 typescript_detect() {
-  local root=$1 pm=npm exec=npx tsconfig=false
+  # exec runs an installed binary only: npx and bunx would download a missing one.
+  local root=$1 pm=npm exec="npx --no --" tsconfig=false
   if [ -f "$root/pnpm-lock.yaml" ]; then pm=pnpm exec="pnpm exec"
   elif [ -f "$root/yarn.lock" ]; then pm=yarn exec=yarn
-  elif [ -f "$root/bun.lock" ] || [ -f "$root/bun.lockb" ]; then pm=bun exec=bunx
+  elif [ -f "$root/bun.lock" ] || [ -f "$root/bun.lockb" ]; then pm=bun exec="bun run"
   fi
   [ ! -f "$root/tsconfig.json" ] || tsconfig=true
   jq -c --arg pm "$pm" --arg exec "$exec" --argjson tsconfig "$tsconfig" '(.scripts // {}) as $s

@@ -365,7 +365,7 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 - Checks (`senior-mode check`, run locally; the workflows in `.github/` are the disabled `actions`
   mode): `claude plugin validate --strict` on both plugins and the marketplace, shellcheck on hooks and
   `bin/`, unit tests of `bin/senior-mode` and of each hook (JSON in, decision out), size budget per
-  skill, Conventional Commits, spec drift.
+  skill, agent pins of ADR 0004, Conventional Commits, spec drift.
 - Evals (`claude plugin eval`, with a cost cap): fixed cases for triage (S/M/L), Definition of Ready,
   interview quality, and an end-to-end run on a fixture repository (setup → frame → run) checked on
   artefacts, not on prose. Run on release PRs, not on every PR.

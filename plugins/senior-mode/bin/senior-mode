@@ -428,6 +428,19 @@ type:chore|ededed|Maintenance with no user-visible change'
     --delete-branch-on-merge >/dev/null
   echo "merges: rebase only, branches deleted after merge"
 
+  if [ "$(jq -r '.ci.mode // "local"' "$file")" = local ]; then
+    # Checks run before each push instead: running workflows would spend the Actions budget.
+    local active wid wname disabled=""
+    active=$(gh_retry workflow list --all --repo "$slug" --json id,name,state \
+      --jq '.[] | select(.state == "active") | "\(.id)\t\(.name)"') || die "cannot list the workflows of $slug"
+    while IFS=$'\t' read -r wid wname; do
+      [ -n "$wid" ] || continue
+      gh_retry workflow disable "$wid" --repo "$slug" >/dev/null || die "cannot disable workflow $wname"
+      disabled+="${disabled:+, }$wname"
+    done <<<"$active"
+    [ -z "$disabled" ] || echo "workflows: disabled $disabled (ci.mode local: checks run before each push; files kept, \`gh workflow enable <name>\` undoes it)"
+  fi
+
   if err=$(setup_ruleset "$slug" 2>&1 >/dev/null); then
     echo "default branch: ruleset senior-mode, pull requests only, rebase, senior-mode/ci and senior-mode/review on an up-to-date branch, linear history; admins may bypass with gh pr merge --admin; other protection untouched"
   elif grep -q "Upgrade to GitHub Pro" <<<"$err"; then
@@ -599,6 +612,9 @@ setup_repo() {
   fi
   place "$tpl/$lang/ISSUE_TEMPLATE/feature.yml" "$root/.github/ISSUE_TEMPLATE/feature.yml" "issue form feature"
   place "$tpl/$lang/ISSUE_TEMPLATE/bug.yml" "$root/.github/ISSUE_TEMPLATE/bug.yml" "issue form bug"
+  # Other workflows are left as they are; local mode disables them on GitHub (setup github).
+  [ "$(jq -r '.ci.mode // "local"' "$file")" != actions ] ||
+    place "$tpl/workflows/senior-mode.yml" "$root/.github/workflows/senior-mode.yml" "workflow senior-mode.yml"
 
   [ -f "$root/.claude/settings.json" ] || echo '{}' >"$root/.claude/settings.json"
   out=0

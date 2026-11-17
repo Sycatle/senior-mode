@@ -26,6 +26,7 @@ for f in CLAUDE.md .githooks/commit-msg .githooks/pre-push .github/pull_request_
   release-please-config.json .release-please-manifest.json; do
   [ -f "$new/$f" ] || fail "$f not created"
 done
+[ -e "$new/.github/workflows/senior-mode.yml" ] && fail "workflow written in local CI mode"
 [ "$(wc -l <"$new/CLAUDE.md")" -le 80 ] || fail "CLAUDE.md longer than 80 lines"
 grep -q '^## Principes' "$new/CLAUDE.md" || fail "CLAUDE.md without its Principles section in French"
 grep -q '^# app' "$new/CLAUDE.md" || fail "CLAUDE.md not titled with the repository name"
@@ -191,6 +192,25 @@ grep -q '^## Principles' "$own/AGENTS.md" || fail "Principles not refreshed thro
 [ "$(jq -r '."."' "$own/.release-please-manifest.json")" = 2.3.0 ] || fail "existing release manifest reset"
 jq -e '.checks | any(.name == "commit subjects")' "$own/.claude/senior-mode.json" >/dev/null &&
   fail "commit subjects check added although the project's commit-msg hook is its own"
+
+# ci.mode actions: a workflow runs the config's checks on GitHub; an existing one is kept.
+act="$work/act"
+git init -q -b main "$act"
+mkdir -p "$act/.claude" "$act/.github/workflows"
+echo '{"ci": {"mode": "actions"}}' >"$act/.claude/senior-mode.json"
+echo 'name: Theirs' >"$act/.github/workflows/ci.yml"
+setup "$act"
+wf=$act/.github/workflows/senior-mode.yml
+[ -f "$wf" ] || fail "no workflow in actions mode: $(cat "$work/out")"
+grep -q "workflow senior-mode.yml: created" "$work/out" || fail "workflow not reported: $(cat "$work/out")"
+for want in "senior-mode/ci" ".claude/senior-mode.json" "dependency-review-action" "actions/cache" "statuses: write"; do
+  grep -qF "$want" "$wf" 2>/dev/null || fail "workflow lacks $want"
+done
+[ "$(cat "$act/.github/workflows/ci.yml")" = "name: Theirs" ] || fail "an existing workflow was changed"
+echo 'name: Mine' >"$wf"
+setup "$act"
+[ "$(cat "$wf")" = "name: Mine" ] || fail "an existing senior-mode workflow was replaced"
+grep -q "workflow senior-mode.yml: kept" "$work/out" || fail "kept workflow not reported: $(cat "$work/out")"
 
 [ "$failures" -eq 0 ] && echo "setup-repo: all cases pass"
 exit "$failures"

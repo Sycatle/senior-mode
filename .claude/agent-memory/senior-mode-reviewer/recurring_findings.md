@@ -109,3 +109,9 @@ Added on #46 review (2026-11-17, git hook env unset in check and pre-push; asked
 - **Review asked before push.** No PR and no remote commit, so no comment, label or status can be set. **How to apply:** check `gh api repos/O/R/commits/<sha>` first; report the findings and ask for a push. The local record `.git/senior-mode/checks/<sha>` (line 1 state, line 2 description) is the author's check evidence when no status exists.
 - **Memory commits that replace instead of append.** e7ba0f5 overwrote the PR #39 raw-contents note in reviewer_environment.md (restored). **How to apply:** diff memory files in each PR for removed lines.
 - **Protected-zone call:** `senior-mode check` and the pre-push template are the local CI (ADR 0006), so needs-human.
+
+Added on PR #50 (2026-11-18, frame-guard hook for #36):
+- **Guards that exempt the actor doing the work.** frame-guard skipped every subagent (`agent_id`), but frame delegates all writing to the `architect` subagent, so only the non-writing main conversation was guarded (blocking B1). **How to apply:** for every new guard, list which agent actually performs the guarded action in that workflow (skill steps + agents' `tools:`), and check the exemption list against it.
+- **Deny reasons that hand the model the off switch.** The deny text told the model to run `senior-mode frame end`, which it can do itself via Bash. **How to apply:** escape hatches in deny reasons should be addressed to the user (`!` prefix, another command), not runnable by the model.
+- **GNU-only tools in hooks** (`realpath -m`): failure yields an empty path and denies everything. Same "portability unstated" stance: non-blocking, propose a portable form.
+- **Protected-zone call:** a new PreToolUse guard hook = security zone (`needs-human`), as with #31.

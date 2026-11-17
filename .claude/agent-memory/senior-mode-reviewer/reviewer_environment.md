@@ -13,3 +13,4 @@ In reviewer sessions (seen 2026-11-17, PR #29, two rounds):
 - The review skill's status rule: `success` = approved, `failure` = changes requested, `pending` = approve with human merge (protected zone).
 
 **How to apply:** say in the review comment that the tests were read and not run. Use GraphQL introspection to check API assumptions instead of trusting the PR body.
+- PR #31: a `gh pr comment` heredoc that contains a backslash followed by a space is refused, and so is ANSI-C `$'...'` quoting. Describe such commands in words. Probing a hook with `jq ... | hook` is refused too.

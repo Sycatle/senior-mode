@@ -10,8 +10,8 @@ nothing else.
 
 ## Checklist
 
-1. **Spec:** linked spec (`docs/specs/NNNN-*.md`) whose acceptance criteria cover this ticket, written
-   as Given / When / Then. Size S needs no spec but needs a clear expected behaviour in the issue.
+1. **Spec:** linked spec (`docs/specs/NNNN-*.md`), on the default branch, whose acceptance criteria
+   cover this ticket, written as Given / When / Then. Size S needs no spec but needs a clear expected behaviour in the issue.
 2. **Size:** S or M. An L is an epic: it is never Ready itself, its sub-issues are.
 3. **No open question:** no `needs-info` label, no unanswered question in the issue or the spec's
    open questions that this ticket depends on.

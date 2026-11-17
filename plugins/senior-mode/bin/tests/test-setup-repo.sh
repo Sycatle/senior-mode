@@ -101,6 +101,9 @@ setup "$new"
 nopath=$(tr : '\n' <<<"$PATH" | grep -v senior-mode | paste -sd: -)
 (cd "$new" && PATH=$nopath .githooks/pre-push </dev/null) >"$work/out" 2>&1 ||
   fail "pre-push fails on passing checks: $(cat "$work/out")"
+jq '.checks[0].run = "env | grep -E \"^GIT_(DIR|WORK_TREE)=\" && exit 1; true"' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
+(cd "$new" && GIT_DIR="$new/.git" GIT_WORK_TREE="$new" .githooks/pre-push </dev/null) >"$work/out" 2>&1 ||
+  fail "pre-push leaks git's hook environment to the checks: $(cat "$work/out")"
 jq '.checks[0].run = "echo boom; false"' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
 (cd "$new" && .githooks/pre-push </dev/null) >"$work/out" 2>&1 && fail "pre-push passes a failing check"
 grep -q boom "$work/out" || fail "pre-push hides the failing output"

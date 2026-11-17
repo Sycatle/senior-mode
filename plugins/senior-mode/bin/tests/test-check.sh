@@ -49,6 +49,12 @@ run publish || fail "publish fails after a failing check: $(cat "$work/out")"
 grep -q -- "-f state=failure -f context=senior-mode/ci -f description=failed: tests" "$GH_LOG" ||
   fail "failure status not published as expected: $(cat "$GH_LOG")"
 
+# Git exports GIT_DIR to hooks, absolute in a linked worktree: a check must not inherit it, or a
+# test that runs git on a fixture writes into this repository.
+config '{"checks":[{"name":"env","run":"env | grep -E \"^GIT_(DIR|WORK_TREE|INDEX_FILE)=\" && exit 1; true"}]}'
+(cd "$repo" && GIT_DIR="$repo/.git" GIT_WORK_TREE="$repo" GIT_INDEX_FILE="$repo/.git/index" "$cli" check) \
+  >"$work/out" 2>&1 || fail "a check sees git's hook environment: $(cat "$work/out")"
+
 config '{"checks":[{"name":"lint","run":"true"}]}'
 : >"$GH_LOG"
 run publish && fail "publish works without a check result for this commit"

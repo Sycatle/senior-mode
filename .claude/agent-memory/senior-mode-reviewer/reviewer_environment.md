@@ -25,3 +25,7 @@ Added on PR #35: chaining `; echo "rc=$?"` after a command needs approval; run e
 Added on PR #37: `senior-mode config get` (the plugin's own bin) and even `jq -n` with a constant filter, chained with `jq --version`, were refused. Read `.claude/senior-mode.json` with Read instead. `gh pr view --json comments,commits,files` works.
 
 Added on PR #39 rebase re-review: `git show <sha>:<file> | grep ...` is refused. Run `git show` alone (large output is saved to a file) and search that file with the Grep tool.
+
+Restored (lost in e7ba0f5) from PR #39: third-party source can be checked with `gh api -H "Accept: application/vnd.github.raw" repos/O/R/contents/<path>?ref=<tag>` (do not add `--jq` to raw output; pipe to grep instead). Listing `~/.npm/_npx` is blocked (outside the working dir).
+
+Added on #46: `printenv` and `env` need approval, so the reviewer cannot see the session's GIT_* variables. Running one test script directly also needs approval. Two heredocs in one Bash call fail to parse; use one call each.

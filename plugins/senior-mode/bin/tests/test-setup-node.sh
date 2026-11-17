@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for the typescript preset of `senior-mode setup repo`: detection and commands from
+# Tests for the node preset of `senior-mode setup repo`: detection and commands from
 # package.json. Offline: nothing is installed or run; evals/run.sh runs a real project.
 set -u
 cli=$(cd "$(dirname "$0")/.." && pwd)/senior-mode
@@ -28,7 +28,8 @@ check_run() { jq -r --arg n "$2" '.checks[] | select(.name == $n) | .run' "$1/.c
 d=$(project eslint '{"scripts": {"lint": "eslint . && prettier --check .", "test": "vitest run",
   "build": "tsc -p tsconfig.build.json"}, "devDependencies": {"eslint": "9", "prettier": "3", "typescript": "5"}}' pnpm-lock.yaml tsconfig.json)
 setup "$d"
-[ "$(cfg "$d" .preset)" = typescript ] || fail "typescript preset not chosen: $(cfg "$d" .preset)"
+[ "$(cfg "$d" .preset)" = node ] || fail "node preset not chosen: $(cfg "$d" .preset)"
+grep -q "^preset: node (TypeScript)$" "$work/out" || fail "TypeScript not reported: $(cat "$work/out")"
 [ "$(check_run "$d" lint)" = "pnpm run lint" ] || fail "existing lint script not used: $(check_run "$d" lint)"
 [ "$(check_run "$d" typecheck)" = "pnpm exec tsc --noEmit" ] || fail "no tsc fallback: $(check_run "$d" typecheck)"
 [ "$(check_run "$d" test)" = "pnpm run test" ] || fail "test script not used"
@@ -51,14 +52,27 @@ cmp -s "$work/before" "$d/.claude/senior-mode.json" || fail "second run changed 
 
 # A Next.js app on npm, scripts named the usual way, the default npm test script, an e2e script.
 d=$(project next '{"scripts": {"typecheck": "tsc --noEmit", "test": "echo \"Error: no test specified\" && exit 1",
-  "build": "next build", "test:e2e": "playwright test"}, "dependencies": {"next": "16"}}' package-lock.json)
+  "build": "next build", "test:e2e": "playwright test"}, "dependencies": {"next": "16"}}' package-lock.json tsconfig.json)
 setup "$d"
 [ "$(cfg "$d" .framework)" = next ] || fail "Next.js not recorded"
+grep -q "^preset: node (TypeScript, next)$" "$work/out" || fail "Next.js not reported: $(cat "$work/out")"
 [ "$(check_run "$d" typecheck)" = "npm run typecheck" ] || fail "typecheck script not used"
 [ "$(check_run "$d" build)" = "npm run build" ] || fail "next build not through the script"
 [ "$(check_run "$d" e2e)" = "npm run test:e2e" ] || fail "e2e script not used: $(check_run "$d" e2e)"
 [ -z "$(check_run "$d" test)" ] || fail "npm's placeholder test script taken as tests"
 grep -q "missing: lint, test" "$work/out" || fail "missing tools not reported: $(cat "$work/out")"
+
+# Plain JavaScript: named as such, and no typecheck is expected.
+d=$(project js '{"scripts": {"lint": "eslint ."}}' package-lock.json)
+setup "$d"
+[ "$(cfg "$d" .preset)" = node ] || fail "node preset not chosen for JavaScript: $(cfg "$d" .preset)"
+grep -q "^preset: node (JavaScript)$" "$work/out" || fail "JavaScript not reported: $(cat "$work/out")"
+grep -q "^missing: test, build " "$work/out" || fail "typecheck expected from JavaScript: $(cat "$work/out")"
+
+# A preset stored under its former name becomes node.
+jq '.preset = "typescript"' "$d/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$d/.claude/senior-mode.json"
+setup "$d"
+[ "$(cfg "$d" .preset)" = node ] || fail "stored typescript preset not migrated: $(cfg "$d" .preset)"
 
 # A tsconfig without typescript installed: no tsc fallback (npx would fetch another package).
 d=$(project notsc '{"scripts": {"lint": "eslint ."}}' package-lock.json tsconfig.json)
@@ -83,7 +97,7 @@ done
 d=$(project override '{"scripts": {"lint": "eslint ."}}' package-lock.json)
 setup "$d" --command lint="make lint" --command e2e="npm run e2e"
 [ "$(check_run "$d" lint)" = "make lint" ] || fail "--command lost to detection"
-[ "$(check_run "$d" e2e)" = "npm run e2e" ] || fail "e2e not accepted as a typescript command"
+[ "$(check_run "$d" e2e)" = "npm run e2e" ] || fail "e2e not accepted as a node command"
 setup "$d"
 [ "$(check_run "$d" lint)" = "make lint" ] || fail "stored command replaced by detection on rerun"
 
@@ -94,5 +108,5 @@ setup "$d"
 [ "$(cfg "$d" .preset)" = generic ] || fail "generic preset not kept for a plain repository"
 (cd "$d" && "$cli" setup repo --command e2e=x) 2>/dev/null && fail "generic preset accepts e2e"
 
-[ "$failures" -eq 0 ] && echo "setup-typescript: all cases pass"
+[ "$failures" -eq 0 ] && echo "setup-node: all cases pass"
 exit "$failures"

@@ -76,6 +76,13 @@ setup "$new" --command test="echo changed"
   fail "changed command not applied to its check"
 (cd "$new" && "$cli" setup repo --command tests="x") >/dev/null 2>&1 && fail "unknown command name accepted"
 
+# A bare re-run keeps a derived check edited by hand.
+jq '(.checks[] | select(.name == "test") | .run) = "echo changed --coverage" | (.checks[] | select(.name == "test")).timeout = 5' \
+  "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
+setup "$new"
+[ "$(jq -c '.checks[] | select(.name == "test") | [.run, .timeout]' "$new/.claude/senior-mode.json")" = '["echo changed --coverage",5]' ] ||
+  fail "bare re-run reverted a check edited by hand"
+
 # A hook that lost its exec bit is repaired.
 chmod -x "$new/.githooks/pre-push"
 setup "$new"
@@ -126,6 +133,32 @@ sed -i '/\/senior-mode:principles/d; s/^## Principles/## Old principles/' "$old/
 setup "$old"
 grep -q '^## Our notes' "$old/CLAUDE.md" || fail "user text after a broken Principles block deleted"
 grep -qi 'markers' "$work/out" || fail "broken Principles markers not reported: $(cat "$work/out")"
+
+# Markers in the wrong order: left untouched too.
+printf '# Swapped\n<!-- /senior-mode:principles -->\n<!-- senior-mode:principles -->\n## Mine\n' >"$old/CLAUDE.md"
+setup "$old"
+grep -q '^## Mine' "$old/CLAUDE.md" || fail "user text after swapped Principles markers deleted"
+
+# A long CLAUDE.md is reported.
+seq 90 >>"$old/CLAUDE.md"
+setup "$old"
+grep -q 'over 80' "$work/out" || fail "CLAUDE.md over 80 lines not reported: $(cat "$work/out")"
+
+# The repository name is plain text in the CLAUDE.md title.
+rd="$work/R&D"
+git init -q -b main "$rd"
+setup "$rd"
+grep -qx '# R&D' "$rd/CLAUDE.md" || fail "repository name with & mangled: $(head -1 "$rd/CLAUDE.md")"
+
+# commit subjects: nothing to check without commits; a remote without a known default branch fails
+# and says how to fix it, instead of reading the whole history.
+(cd "$rd" && .githooks/commit-msg --branch) 2>"$work/err" || fail "--branch fails without commits: $(cat "$work/err")"
+commit "$rd" "old style subject" --no-verify
+git init -q --bare "$work/trunk.git"
+git -C "$rd" remote add origin "$work/trunk.git"
+git -C "$rd" push -q --no-verify origin HEAD:trunk >/dev/null 2>&1
+(cd "$rd" && .githooks/commit-msg --branch) 2>"$work/err" && fail "--branch passes with an unknown default branch"
+grep -q 'set-head' "$work/err" || fail "unknown default branch not explained: $(cat "$work/err")"
 
 # CLAUDE.md as a symlink stays a symlink; an existing release manifest keeps its version.
 own="$work/own"

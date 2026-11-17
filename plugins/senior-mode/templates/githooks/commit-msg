@@ -17,18 +17,23 @@ check() {
   status=1
 }
 
-# The default branch on origin, else every commit of HEAD (no remote yet).
+# Commits that the default branch on origin lacks; every commit of HEAD when there is no origin yet.
 range() {
   local base
+  git remote get-url origin >/dev/null 2>&1 || { echo HEAD; return; }
   base=$(git symbolic-ref -q --short refs/remotes/origin/HEAD) ||
     base=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin/main refs/remotes/origin/master | head -n 1)
-  echo "${base:+$base..}HEAD"
+  [ -n "$base" ] && echo "$base..HEAD"
 }
 
 squash=""
 case "${1:-}" in
   --subjects) subjects=$(cat) ;;
-  --branch) subjects=$(git log --format=%s "$(range)") || { echo "commit-msg: cannot read the branch's commits" >&2; exit 1; } ;;
+  --branch)
+    git rev-parse -q --verify HEAD >/dev/null || exit 0
+    range=$(range) || { echo "commit-msg: default branch unknown; run git remote set-head origin --auto" >&2; exit 1; }
+    subjects=$(git log --format=%s "$range") || { echo "commit-msg: cannot read the branch's commits" >&2; exit 1; }
+    ;;
   *) squash=1 subjects=$(grep -v '^#' "$1" | sed -n '/[^[:space:]]/{p;q;}') ;;
 esac
 while IFS= read -r subject; do check "$subject"; done <<<"$subjects"

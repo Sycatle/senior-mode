@@ -346,25 +346,24 @@ setup_githooks() {
 # Adds the Principles block to CLAUDE.md, or refreshes it; a missing CLAUDE.md starts from the
 # skeleton that the setup skill fills from the code.
 setup_claude_md() {
-  local root=$1 tpl=$2 name=$3 claude=$1/CLAUDE.md block=$2/principles.md skeleton new opened closed lines
+  local root=$1 tpl=$2 name=$3 claude=$1/CLAUDE.md block=$2/principles.md skeleton new lines
   if [ ! -e "$claude" ]; then
     skeleton=$(cat "$tpl/CLAUDE.md")
-    { printf '%s\n\n' "${skeleton//\{\{name\}\}/$name}"; cat "$block"; } >"$claude"
+    { printf '%s\n\n' "${skeleton//\{\{name\}\}/"$name"}"; cat "$block"; } >"$claude"
     echo "CLAUDE.md: created from the skeleton; commands, code map and pitfalls to fill"
-  else
-    opened=$(grep -c '^<!-- senior-mode:principles' "$claude" || true)
-    closed=$(grep -c '^<!-- /senior-mode:principles -->' "$claude" || true)
-    if [ "$opened$closed" = 00 ]; then
-      { echo; cat "$block"; } >>"$claude"
-      echo "CLAUDE.md: Principles added, the rest kept"
-    elif [ "$opened$closed" != 11 ]; then
-      echo "CLAUDE.md: Principles markers broken, file left untouched; restore one opening and one closing marker"
-    else
-      new=$(awk -v f="$block" '/^<!-- senior-mode:principles/ { while ((getline l < f) > 0) print l; close(f); skip = 1; next }
-        /^<!-- \/senior-mode:principles -->/ { skip = 0; next } !skip' "$claude")
-      # Written in place, so a symlinked CLAUDE.md and its mode survive.
-      [ "$new" = "$(cat "$claude")" ] || { printf '%s\n' "$new" >"$claude" && echo "CLAUDE.md: Principles refreshed"; }
-    fi
+  elif ! grep -q '^<!-- /\?senior-mode:principles' "$claude"; then
+    { echo; cat "$block"; } >>"$claude"
+    echo "CLAUDE.md: Principles added, the rest kept"
+  # One opening marker, then one closing marker, else awk refuses and the file is left alone.
+  elif ! new=$(awk -v f="$block" '
+      /^<!-- senior-mode:principles/ { if (seen++) bad = 1; while ((getline l < f) > 0) print l; close(f); skip = 1; next }
+      /^<!-- \/senior-mode:principles -->/ { if (!skip) bad = 1; skip = 0; next }
+      !skip { print } END { exit (bad || skip) }' "$claude"); then
+    echo "CLAUDE.md: Principles markers broken, file left untouched; restore one opening and one closing marker"
+  elif [ "$new" != "$(cat "$claude")" ]; then
+    # Written in place, so a symlinked CLAUDE.md and its mode survive.
+    printf '%s\n' "$new" >"$claude"
+    echo "CLAUDE.md: Principles refreshed"
   fi
   lines=$(wc -l <"$claude")
   [ "$lines" -le 80 ] || echo "CLAUDE.md: $lines lines, over 80; trim it to what the code does not tell"
@@ -404,7 +403,7 @@ setup_repo() {
     | ($p[0].commands | map(select($all[.] != null) | {name: ., run: $all[.]})) as $derived
     | ($derived + (if $ours then $p[0].checks else [] end)) as $want
     | .checks = ((.checks // []) as $have
-      | [$have[] | .name as $n | ([$derived[] | select(.name == $n)][0] // .)]
+      | [$have[] | if $c[.name] then .run = $c[.name] else . end]
         + [$want[] | select(.name as $n | $have | any(.name == $n) | not)])' \
     --argjson c "$commands" --argjson ours "$ours" --slurpfile p "$preset" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"

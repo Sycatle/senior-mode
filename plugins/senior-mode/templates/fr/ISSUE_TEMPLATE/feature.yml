@@ -1,0 +1,23 @@
+name: Fonctionnalité
+description: Quelque chose que les utilisateurs doivent pouvoir faire
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: gives
+    attributes:
+      label: Ce que ça apporte
+      description: Qui obtient quoi, en mots simples.
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Critères d'acceptation
+      description: "Un par ligne : Étant donné ..., quand ..., alors ..."
+    validations:
+      required: true
+  - type: textarea
+    id: detail
+    attributes:
+      label: Détail technique
+      description: Facultatif. Contraintes, liens, idées.

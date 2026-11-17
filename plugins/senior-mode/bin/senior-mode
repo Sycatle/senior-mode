@@ -16,7 +16,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> | check | publish [commit] | context | setup github"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> | check | publish [commit] | context | setup github | setup repo [--command <name>=<command>]..."
 }
 
 config_file() {
@@ -304,6 +304,120 @@ type:chore|ededed|Maintenance with no user-visible change'
   fi
 }
 
+# Writes `jq <filter> <file>` back to the file only when the JSON changes, so a file without real
+# change keeps its formatting. Extra arguments go to jq.
+json_update() {
+  local file=$1 filter=$2 new
+  shift 2
+  new=$(jq "$@" "$filter" "$file") || return 1
+  [ "$(jq -S . <<<"$new")" = "$(jq -S . "$file")" ] && return 2
+  printf '%s\n' "$new" >"$file"
+}
+
+# Copies a template where nothing exists yet; never replaces a file. Prints what it did.
+place() { # template destination label
+  if [ -e "$2" ]; then echo "$3: kept"; return; fi
+  mkdir -p "$(dirname "$2")"
+  cp "$1" "$2"
+  echo "$3: created"
+}
+
+# Installs or refreshes the senior-mode git hooks; a hook of the project's own is kept.
+setup_githooks() {
+  local root=$1 tpl=$2 hook path
+  for hook in commit-msg pre-push; do
+    if [ -e "$root/.githooks/$hook" ] && ! grep -q '^# senior-mode:' "$root/.githooks/$hook"; then
+      echo "git hook $hook: yours kept"
+    elif ! cmp -s "$tpl/githooks/$hook" "$root/.githooks/$hook"; then
+      mkdir -p "$root/.githooks"
+      cp "$tpl/githooks/$hook" "$root/.githooks/$hook"
+      chmod +x "$root/.githooks/$hook"
+      echo "git hook $hook: installed"
+    fi
+  done
+  path=$(git -C "$root" config core.hooksPath || true)
+  if [ -z "$path" ]; then
+    git -C "$root" config core.hooksPath .githooks
+  elif [ "$path" != .githooks ]; then
+    echo "git hooks: core.hooksPath is $path; call .githooks/commit-msg and .githooks/pre-push from there"
+  fi
+}
+
+# Adds the Principles block to CLAUDE.md, or refreshes it; a missing CLAUDE.md starts from the
+# skeleton that the setup skill fills from the code.
+setup_claude_md() {
+  local root=$1 tpl=$2 claude=$1/CLAUDE.md block=$2/principles.md tmp
+  if [ ! -f "$claude" ]; then
+    { sed "s|{{name}}|$(basename "$root")|" "$tpl/CLAUDE.md"; echo; cat "$block"; } >"$claude"
+    echo "CLAUDE.md: created from the skeleton; commands, code map and pitfalls to fill"
+  elif grep -q '^<!-- senior-mode:principles' "$claude"; then
+    tmp=$(mktemp)
+    awk -v f="$block" '/^<!-- senior-mode:principles/ { while ((getline l < f) > 0) print l; skip = 1; next }
+      /^<!-- \/senior-mode:principles -->/ { skip = 0; next } !skip' "$claude" >"$tmp"
+    if cmp -s "$tmp" "$claude"; then rm -f "$tmp"; else mv "$tmp" "$claude" && echo "CLAUDE.md: Principles refreshed"; fi
+  else
+    { echo; cat "$block"; } >>"$claude"
+    echo "CLAUDE.md: Principles added, the rest kept"
+  fi
+}
+
+# The documents and checks of a project (spec 0001 §12, §14, #12), idempotent; whatever the project
+# already has is extended, never replaced. `--command <name>=<command>` stores a command of the
+# generic preset (lint, typecheck, test, build) and derives its check.
+# shellcheck disable=SC2016 # jq programs, not shell
+setup_repo() {
+  local root file tpl preset lang name commands='{}' out
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  while [ $# -gt 0 ]; do
+    [ "$1" = --command ] && [[ ${2:-} == ?*=?* ]] || usage
+    commands=$(jq -c --arg k "${2%%=*}" --arg v "${2#*=}" '.[$k] = $v' <<<"$commands")
+    shift 2
+  done
+  file=$root/.claude/senior-mode.json
+  mkdir -p "$root/.claude"
+  [ -f "$file" ] || echo '{}' >"$file"
+  jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; fix or remove it, then run setup again"
+  tpl=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+  preset=$tpl/presets/generic/preset.json
+  tpl=$tpl/templates
+  lang=$(jq -r '.language // "en"' "$file")
+  [ -d "$tpl/$lang" ] || lang=en
+  name=$(basename "$root")
+
+  out=0
+  json_update "$file" '.preset //= "generic" | .commands = ((.commands // {}) + $c) | .commands as $all
+    | ($p[0].commands | map(select($all[.] != null) | {name: ., run: $all[.]})) as $derived
+    | .checks = ((.checks // []) as $have | $have + [($derived + $p[0].checks)[]
+        | select(.name as $n | $have | any(.name == $n) | not)])' \
+    --argjson c "$commands" --slurpfile p "$preset" || out=$?
+  [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
+  echo "checks: $(jq -r '[.checks[].name] | join(", ")' "$file")"
+
+  setup_githooks "$root" "$tpl"
+  setup_claude_md "$root" "$tpl/$lang"
+  if [ -n "$(find "$root" "$root/.github" "$root/docs" -maxdepth 1 -iname 'pull_request_template*' 2>/dev/null)" ]; then
+    echo "pull request template: kept"
+  else
+    place "$tpl/$lang/pull_request_template.md" "$root/.github/pull_request_template.md" "pull request template"
+  fi
+  place "$tpl/$lang/ISSUE_TEMPLATE/feature.yml" "$root/.github/ISSUE_TEMPLATE/feature.yml" "issue form feature"
+  place "$tpl/$lang/ISSUE_TEMPLATE/bug.yml" "$root/.github/ISSUE_TEMPLATE/bug.yml" "issue form bug"
+
+  [ -f "$root/.claude/settings.json" ] || echo '{}' >"$root/.claude/settings.json"
+  out=0
+  json_update "$root/.claude/settings.json" 'def add($xs): reduce $xs[] as $x (. // []; if index([$x]) then . else . + [$x] end);
+    .permissions.allow |= add($s[0].permissions.allow) | .permissions.deny |= add($s[0].permissions.deny)' \
+    --slurpfile s "$tpl/settings.json" || out=$?
+  [ "$out" -ne 1 ] || die "could not update .claude/settings.json"
+  [ "$out" -ne 0 ] || echo "settings: senior-mode permissions added to .claude/settings.json"
+
+  if [ ! -e "$root/release-please-config.json" ]; then
+    jq --arg n "$name" '.release | .packages["."].component = $n' "$preset" >"$root/release-please-config.json"
+    echo '{".": "0.0.0"}' >"$root/.release-please-manifest.json"
+    echo "releases: release-please configured"
+  fi
+}
+
 # What a session needs at start (SessionStart hook, spec 0001 §15): a short router and, on a ticket
 # branch <type>/<issue>-<slug>, the ticket, its Status, its spec and acceptance criteria. Never fails.
 context() {
@@ -341,8 +455,11 @@ case "${1:-}" in
     context
     ;;
   setup)
-    [ $# -eq 2 ] && [ "$2" = github ] || usage
-    setup_github
+    case "${2:-}" in
+      github) [ $# -eq 2 ] || usage; setup_github ;;
+      repo) shift 2; setup_repo "$@" ;;
+      *) usage ;;
+    esac
     ;;
   check)
     [ $# -eq 1 ] || usage

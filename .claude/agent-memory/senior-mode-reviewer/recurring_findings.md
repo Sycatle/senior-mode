@@ -115,3 +115,19 @@ Added on PR #50 (2026-11-18, frame-guard hook for #36):
 - **Deny reasons that hand the model the off switch.** The deny text told the model to run `senior-mode frame end`, which it can do itself via Bash. **How to apply:** escape hatches in deny reasons should be addressed to the user (`!` prefix, another command), not runnable by the model.
 - **GNU-only tools in hooks** (`realpath -m`): failure yields an empty path and denies everything. Same "portability unstated" stance: non-blocking, propose a portable form.
 - **Protected-zone call:** a new PreToolUse guard hook = security zone (`needs-human`), as with #31.
+
+Added on PR #47 (2026-11-17, #46 pushed and re-reviewed):
+- **Env-leak fix accepted pattern.** Unset the names from `git rev-parse --local-env-vars` inside the check subshell, after `root` and the record path are computed. Assert on named variables only (the caller may have GIT_EXEC_PATH, GIT_EDITOR, and so on). Known trade-off, not a finding: a repository used only through an explicit GIT_DIR (dotfiles) loses repo discovery in its checks.
+- **The repository's own `.githooks/pre-push` is not the template.** It runs `senior-mode check` with `exec`. **How to apply:** for a fix in the template, check that `check()` gets it too, or this repository keeps the bug.
+
+Added on PR #48 (2026-11-17, typescript preset renamed node):
+- **Migrations that rename the key but keep the stored values.** The `typescript` to `node` migration rewrote `.preset`, but stored commands win over detection and checks are kept by name. So the old `npx tsc --noEmit` stayed on adopted projects, and the fix for the same issue did not reach them. **How to apply:** when a PR migrates stored config and fixes a generated value in the same PR, check that the migration also replaces values that are exactly the old generated default.
+
+Added on PR #49 (2026-11-17, release manifest seed, follow-up of #40/#44):
+- **Values copied from a user file into a strict consumer without a shape check.** The package.json `.version` went into `.release-please-manifest.json` as is. release-please `Version.parse` throws on non-semver, and `MinorVersionUpdate` keeps prerelease parts (`0.0.0-development` from semantic-release gives `0.1.0-development`). **How to apply:** when setup seeds a tool's state from project files, ask for a regex gate and a fallback to the neutral value.
+- **Seeds gated on a file, not on the preset.** The package.json read also fed the `generic` (simple) preset. **How to apply:** check that stack-specific reads are keyed on `pname`.
+- Third-party behaviour claims in PR bodies (release-please backfill from manifest) were true when checked at the pinned tag; keep checking at `RELEASE_PLEASE` from the bin, not the latest tag.
+
+Added on PR #50 re-review (2026-11-18):
+- **Dropping path resolution on one side only.** My N4 fix (remove `realpath -m`) left `root` from `git rev-parse --show-toplevel`, which is physical (it resolves symlinks), compared with a logical `file_path`. A symlinked project path or macOS `/var` (mktemp) then denies every docs/ write. **How to apply:** when a path check compares two paths, both must be normalised the same way. Ask for a test that uses a symlinked repo path.
+- **All six findings fixed in one round, with tests**, plus the human-merge jq note. A PR that commits the reviewer memory files along with the feature is a human-merge note, not a finding.

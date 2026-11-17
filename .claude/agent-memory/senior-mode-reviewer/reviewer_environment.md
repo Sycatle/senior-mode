@@ -31,3 +31,4 @@ Restored (lost in e7ba0f5) from PR #39: third-party source can be checked with `
 Added on #46: `printenv` and `env` need approval, so the reviewer cannot see the session's GIT_* variables. Running one test script directly also needs approval. Two heredocs in one Bash call fail to parse; use one call each.
 
 Added on PR #50: `command -v claude` and running `hooks/tests/test-*.sh` directly need approval, so Claude Code hook payload fields (`command_name` on UserPromptExpansion) cannot be checked locally. Flag them as "needs one live check".
+- PR #50 re-review: `git -C /proc/self/cwd rev-parse --show-toplevel` works as a symlink probe without creating files (prints the physical path).

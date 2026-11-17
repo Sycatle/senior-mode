@@ -96,3 +96,10 @@ Added on PR #43 (2026-11-17, repo checks its commits with the template hook):
 - **Skip rules keyed on text, not structure.** The commit-msg hook skips `Merge *` subjects instead of merge commits, so dropping `git log --no-merges` lets a regular commit titled "Merge ..." pass. **How to apply:** when a PR drops a structural filter because "the tool skips it", check how the tool recognises the case.
 - **Protected-zone call:** edits to `.github/workflows/ci.yml` or the `checks` list in `.claude/senior-mode.json` count as CI (`needs-human`, status pending), even while the workflow is disabled.
 - Spec-Unchanged was missing again on a test-only change under `plugins/**`.
+
+Added on PR #44 (2026-11-17, release-please initial-version):
+- **Version seeds: initial-version vs manifest.** release-please releases `initial-version` exactly, with no bump; a non-0.0.0 manifest version is treated as the last release and bumped. Taking `initial-version` from package.json repeats an already-published version, and `npm init` gives 1.0.0. **How to apply:** for an existing version, ask for a seeded manifest instead.
+- **"Already covered by test X" claims in PR bodies.** The `own` case cited for "existing config unchanged" had no such config. **How to apply:** open the cited test and check the fixture contains the case.
+
+Added on PR #39 rebase re-review (2026-11-17):
+- **Rebase re-reviews: prove the code is unchanged first.** `git range-diff <oldbase>..<oldhead> origin/main..<newhead>` with `=` on every code commit, plus `merge-base --is-ancestor origin/main <head>`, was enough to approve without re-reading the logic. Then only check what main added that could interact (here: other `trap`s in the CLI).

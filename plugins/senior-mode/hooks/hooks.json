@@ -2,12 +2,18 @@
   "description": "senior-mode session context, guardrails and proof before claims (spec 0001 §10, §15, §16)",
   "hooks": {
     "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/senior-mode\" context" }] }],
+    "UserPromptExpansion": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/frame-guard.sh\"" }] }],
     "PreToolUse": [
       {
         "matcher": "Bash",
         "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/guard-bash.sh\"" }]
+      },
+      {
+        "matcher": "Skill|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/frame-guard.sh\"" }]
       }
     ],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/frame-guard.sh\"" }] }],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",

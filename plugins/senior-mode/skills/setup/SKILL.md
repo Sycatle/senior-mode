@@ -23,8 +23,7 @@ Idempotent: running it again creates nothing twice and repairs what is missing.
 
 Run `senior-mode setup github`. It:
 
-- finds the repository's Project (cached number, else same title) or creates it, links it, ensures the
-  fields Status (Backlog, Ready, In progress, In review, Done), Priority (P0 now, P1 next, P2 later,
+- finds (cached number, else same title) or creates the Project, links it, ensures the fields Status (Backlog, Ready, In progress, In review, Done), Priority (P0 now, P1 next, P2 later,
   P3 someday) and Size (S, M, L), keeping options and values already there;
 - caches every id in `.claude/senior-mode.json`, other keys untouched;
 - creates or updates the labels `needs-human`, `needs-info`, `blocked`, and on a personal account the
@@ -32,22 +31,22 @@ Run `senior-mode setup github`. It:
 - allows rebase merges only and deletes branches after merge;
 - creates or updates a ruleset `senior-mode` on the default branch: pull requests only, rebase,
   `senior-mode/ci` and `senior-mode/review` on an up-to-date branch, linear history, no force-push or
-  deletion; existing protection is left as is; an admin can bypass on purpose with `gh pr merge --admin`.
+  deletion; existing protection is left as is; an admin can bypass it with `gh pr merge --admin`.
 
-On a private repository of a free plan GitHub refuses rulesets: it reports it and goes on; the git
-hooks and the plugin's guard still apply.
+GitHub refuses rulesets on a private repository of a free plan: it says so and goes on.
 
 ## Repository
 
-1. Ask once, in plain words, how to lint, typecheck, test and build; skip what the project lacks.
-2. Run `senior-mode setup repo --command lint="<cmd>" ...` (one `--command` per answer). It adds
-   checks, git hooks, Principles in `CLAUDE.md`, PR and issue templates in the project language,
-   permissions and the release-please config; what exists is kept and extended.
+1. Run `senior-mode setup repo`. With a `package.json` it takes the `typescript` preset and its
+   scripts; otherwise ask once how to lint, typecheck, test and build, and rerun with one
+   `--command lint="<cmd>"` per answer. It adds checks, git hooks, `CLAUDE.md` Principles, PR and
+   issue templates, permissions and release-please, keeping what exists.
+2. If it prints `missing:`, propose a tool for each (Biome to lint, Vitest to test), added in its
+   own commit only on a yes; then rerun it.
 3. If it created `CLAUDE.md`, fill the skeleton from the scout agent's commands, code map and
    pitfalls. If it reports over 80 lines, propose cuts to the user.
 
 ## Report
 
-Show what the command printed as a plain-language summary in the project language (or the user's), with the
-Project URL (`gh project view <number> --owner <owner> --web` opens it). On failure, quote the error
+Summarise what the commands printed in plain words, in the project language, with the Project URL (`gh project view <number> --owner <owner> --web` opens it). On failure, quote the error
 and the command to retry; setup is safe to run again.

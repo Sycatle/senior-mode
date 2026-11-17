@@ -476,15 +476,51 @@ setup_claude_md() {
   [ "$lines" -le 80 ] || echo "CLAUDE.md: $lines lines, over 80; trim it to what the code does not tell"
 }
 
+# Commands of a package.json project (spec 0001 §14, #13): its scripts, run by the package manager
+# of its lockfile; tsc --noEmit when a tsconfig has no typecheck script; npm's placeholder test
+# script is no test. Prints {commands, framework}.
+# shellcheck disable=SC2016 # jq program, not shell
+typescript_detect() {
+  local root=$1 pm=npm exec=npx tsconfig=false
+  if [ -f "$root/pnpm-lock.yaml" ]; then pm=pnpm exec="pnpm exec"
+  elif [ -f "$root/yarn.lock" ]; then pm=yarn exec=yarn
+  elif [ -f "$root/bun.lock" ] || [ -f "$root/bun.lockb" ]; then pm=bun exec=bunx
+  fi
+  [ ! -f "$root/tsconfig.json" ] || tsconfig=true
+  jq -c --arg pm "$pm" --arg exec "$exec" --argjson tsconfig "$tsconfig" '(.scripts // {}) as $s
+    | def run($n): if $s[$n] then "\($pm) run \($n)" else null end;
+    {commands: ({
+        lint: run("lint"),
+        typecheck: (run("typecheck") // run("type-check")
+          // (if $tsconfig then "\($exec) tsc --noEmit" else null end)),
+        test: (if ($s.test // "") | test("no test specified") then null else run("test") end),
+        build: run("build"),
+        e2e: (run("test:e2e") // run("e2e"))
+      } | with_entries(select(.value != null))),
+      framework: (if (.dependencies.next // .devDependencies.next) then "next" else null end)}' \
+    "$root/package.json"
+}
+
 # The documents and checks of a project (spec 0001 §12, §14, #12), idempotent; whatever the project
-# already has is extended, never replaced. `--command <name>=<command>` stores a command of the
-# generic preset (lint, typecheck, test, build) and derives its check.
+# already has is extended, never replaced. The preset is the stored one, else typescript when a
+# package.json exists, else generic. `--command <name>=<command>` stores a command of the preset
+# (lint, typecheck, test, build; e2e for typescript) and derives its check.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_repo() {
-  local root file tpl preset lang name commands='{}' out ours
+  local root file tpl pname="" preset lang name commands='{}' detected='{}' out ours
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  file=$root/.claude/senior-mode.json
   tpl=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
-  preset=$tpl/presets/generic/preset.json
+  # A preset stored earlier wins over detection.
+  [ ! -f "$file" ] || pname=$(jq -r '.preset // empty' "$file" 2>/dev/null) || true
+  if [ -z "$pname" ]; then
+    pname=generic
+    [ ! -f "$root/package.json" ] || pname=typescript
+  fi
+  preset=$tpl/presets/$pname/preset.json
+  [ -f "$preset" ] || die "unknown preset $pname in .claude/senior-mode.json"
+  [ "$pname" != typescript ] || detected=$(typescript_detect "$root") ||
+    die "could not read package.json"
   tpl=$tpl/templates
   while [ $# -gt 0 ]; do
     [ "$1" = --command ] && [[ ${2:-} == ?*=?* ]] || usage
@@ -493,7 +529,6 @@ setup_repo() {
     commands=$(jq -c --arg k "${2%%=*}" --arg v "${2#*=}" '.[$k] = $v' <<<"$commands")
     shift 2
   done
-  file=$root/.claude/senior-mode.json
   mkdir -p "$root/.claude"
   [ -f "$file" ] || echo '{}' >"$file"
   jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; fix or remove it, then run setup again"
@@ -506,15 +541,20 @@ setup_repo() {
   ours=false
   ! grep -q '^# senior-mode:' "$root/.githooks/commit-msg" 2>/dev/null || ours=true
   out=0
-  json_update "$file" '.preset //= "generic" | .commands = ((.commands // {}) + $c) | .commands as $all
+  json_update "$file" '.preset //= $pn | .commands = ($d.commands // {}) + (.commands // {}) + $c
+    | if $d.framework then .framework = $d.framework else . end | .commands as $all
     | ($p[0].commands | map(select($all[.] != null) | {name: ., run: $all[.]})) as $derived
     | ($derived + (if $ours then $p[0].checks else [] end)) as $want
     | .checks = ((.checks // []) as $have
       | [$have[] | if $c[.name] then .run = $c[.name] else . end]
         + [$want[] | select(.name as $n | $have | any(.name == $n) | not)])' \
-    --argjson c "$commands" --argjson ours "$ours" --slurpfile p "$preset" || out=$?
+    --argjson c "$commands" --argjson ours "$ours" --slurpfile p "$preset" --arg pn "$pname" \
+    --argjson d "$detected" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
+  echo "preset: $pname$(jq -r '.framework // empty | " (\(.))"' "$file")"
   echo "checks: $(jq -r '[.checks[].name] | join(", ")' "$file")"
+  [ "$pname" != typescript ] || jq -r '["lint", "typecheck", "test", "build"] - (.commands | keys)
+    | select(length > 0) | "missing: \(join(", ")) (no script; propose tools, never install without a yes)"' "$file"
 
   setup_claude_md "$root" "$tpl/$lang" "$name"
   if [ -n "$(find "$root" "$root/.github" "$root/docs" -maxdepth 1 -iname 'pull_request_template*' 2>/dev/null)" ]; then

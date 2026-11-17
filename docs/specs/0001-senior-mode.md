@@ -252,6 +252,14 @@ once, then stored).
 | Preset | Lint / format | Types | Tests | Extra |
 |---|---|---|---|---|
 | typescript | Biome or the existing ESLint/Prettier | `tsc --noEmit` | Vitest, Playwright for e2e | Next.js aware |
+
+The typescript preset applies when a `package.json` exists and no preset is stored. Its commands are
+the project's scripts (`lint`, `typecheck`, `test`, `build`, `test:e2e` or `e2e`), run with the
+package manager of the lockfile; a tsconfig without a typecheck script gets `tsc --noEmit`. A missing
+linter or test runner is reported, and `setup` proposes Biome or Vitest in a separate commit, never
+installed without a yes. Next.js is recorded as `framework`; it builds through its script. Fixtures in
+`evals/fixtures/` are adopted and checked end to end by `evals/run.sh` (network, run on demand
+before merging a change to presets).
 | python | Ruff | mypy or pyright | pytest | uv |
 | go | gofmt, golangci-lint | compiler | go test | |
 | rust | rustfmt, clippy `-D warnings` | compiler | cargo test / nextest | cargo-deny |

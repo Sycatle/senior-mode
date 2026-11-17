@@ -17,10 +17,10 @@ check() {
   status=1
 }
 
-# Commits that the default branch on origin lacks; every commit of HEAD when there is no origin yet.
+# Commits that the default branch on origin lacks; every commit of HEAD while origin has no branch.
 range() {
   local base
-  git remote get-url origin >/dev/null 2>&1 || { echo HEAD; return; }
+  [ -n "$(git for-each-ref --count=1 refs/remotes/origin)" ] || { echo HEAD; return; }
   base=$(git symbolic-ref -q --short refs/remotes/origin/HEAD) ||
     base=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin/main refs/remotes/origin/master | head -n 1)
   [ -n "$base" ] && echo "$base..HEAD"

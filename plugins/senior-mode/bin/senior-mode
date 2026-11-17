@@ -408,7 +408,7 @@ setup_workflows() { # slug mode
       echo "workflows: $wname enabled again (ci.mode actions)"
     fi
   done <<<"$list"
-  [ -z "$disabled" ] || echo "workflows: disabled $disabled (ci.mode local: checks run before each push; files kept; every setup disables them again until ci.mode actions: senior-mode setup github --ci actions)"
+  [ -z "$disabled" ] || echo "workflows: disabled $disabled (ci.mode local: checks run before each push; files kept; \`gh workflow enable <name>\` turns one back on, and senior-mode setup github --ci actions stops setup from disabling them again)"
 }
 
 setup_github() {

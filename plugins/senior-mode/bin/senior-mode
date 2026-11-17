@@ -699,7 +699,8 @@ case "${1:-}" in
   frame)
     # Lifts the docs/-only guard of every frame session in this repository (hooks/frame-guard.sh).
     [ $# -eq 2 ] && [ "$2" = end ] || usage
-    rm -rf "$(git rev-parse --path-format=absolute --git-common-dir)/senior-mode/frame" || exit 1
+    d=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "frame end: not inside a git repository"
+    rm -rf "$d/senior-mode/frame"
     echo "frame: ended, edits outside docs/ allowed again"
     ;;
   *) usage ;;

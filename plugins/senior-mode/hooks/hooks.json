@@ -1,6 +1,7 @@
 {
-  "description": "senior-mode guardrails and proof before claims (spec 0001 §10, §16)",
+  "description": "senior-mode session context, guardrails and proof before claims (spec 0001 §10, §15, §16)",
   "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/senior-mode\" context" }] }],
     "PreToolUse": [
       {
         "matcher": "Bash",

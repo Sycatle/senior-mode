@@ -16,7 +16,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> | check | publish [commit]"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> | check | publish [commit] | context"
 }
 
 config_file() {
@@ -126,7 +126,42 @@ publish() {
   echo "senior-mode/ci = $state on ${sha:0:7}: $description"
 }
 
+# What a session needs at start (SessionStart hook, spec 0001 §15): a short router and, on a ticket
+# branch <type>/<issue>-<slug>, the ticket, its Status, its spec and acceptance criteria. Never fails.
+context() {
+  local root branch issue json spec status criteria
+  cat <<'ROUTER'
+senior-mode is active: framing, specs and ADRs, test-driven delivery, atomic Conventional Commits, GitHub Project board.
+Commands are /senior-mode:<name>; "go" or "enchaîne" takes the next Ready ticket. Disciplines load by themselves; ask the scout agent for codebase facts.
+ROUTER
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  if [ ! -f "$root/.claude/senior-mode.json" ]; then
+    echo "This repository is not set up for senior-mode; /senior-mode:setup adopts it."
+    return 0
+  fi
+  branch=$(git symbolic-ref --short -q HEAD) || return 0
+  issue=$(sed -nE 's#^[a-z]+/([0-9]+)-.*#\1#p' <<<"$branch")
+  [ -n "$issue" ] || return 0
+  echo
+  if ! json=$(gh issue view "$issue" --json number,title,state,body,projectItems 2>/dev/null); then
+    echo "Current ticket: #$issue, branch $branch; details not loaded (GitHub unreachable)."
+    return 0
+  fi
+  jq -r --arg b "$branch" '"Current ticket: #\(.number) \(.title) (\(.state | ascii_downcase), Status: \(.projectItems[0].status.name // "not on the board")), branch \($b)"' <<<"$json"
+  spec=$(jq -r .body <<<"$json" | grep -oE 'docs/specs/[A-Za-z0-9._-]+\.md' | head -1) || true
+  if [ -n "$spec" ]; then
+    status=$(sed -nE 's/^status: *//p' "$root/$spec" 2>/dev/null | head -1) || true
+    echo "Spec: $spec (${status:-file not found})"
+  fi
+  criteria=$(jq -r .body <<<"$json" | awk '/^## / { on = /Acceptance criteria/; next } on && /^- /' |
+    head -6 | cut -c1-200)
+  [ -z "$criteria" ] || printf 'Acceptance criteria:\n%s\n' "$criteria"
+}
+
 case "${1:-}" in
+  context)
+    context
+    ;;
   check)
     [ $# -eq 1 ] || usage
     check

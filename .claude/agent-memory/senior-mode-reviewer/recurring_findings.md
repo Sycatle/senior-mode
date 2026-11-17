@@ -91,3 +91,8 @@ Added on PR #40 (2026-11-17, typescript preset):
 
 Added on PR #40 re-review (2026-11-17):
 - **"Dependency declared" is not "installed".** The npx fix gated the tsc fallback on `typescript` in package.json, which still downloads the `tsc` placeholder on a fresh clone without node_modules. **How to apply:** for fallbacks that run a local bin, ask whether the gate checks the manifest or the install; the robust fix is a runner flag that refuses downloads (`npx --no`).
+
+Added on PR #43 (2026-11-17, repo checks its commits with the template hook):
+- **Skip rules keyed on text, not structure.** The commit-msg hook skips `Merge *` subjects instead of merge commits, so dropping `git log --no-merges` lets a regular commit titled "Merge ..." pass. **How to apply:** when a PR drops a structural filter because "the tool skips it", check how the tool recognises the case.
+- **Protected-zone call:** edits to `.github/workflows/ci.yml` or the `checks` list in `.claude/senior-mode.json` count as CI (`needs-human`, status pending), even while the workflow is disabled.
+- Spec-Unchanged was missing again on a test-only change under `plugins/**`.

@@ -46,3 +46,7 @@ Added on PR #33 second round (2026-11-17):
 - **Fix claims without tests regress.** The N7 fix (sed replaced by `${s//pat/$var}`) was claimed as tested but had no case, and it still breaks on `&` because bash 5.2+ has `patsub_replacement` on (only an inner-quoted `"$var"` protects). **How to apply:** for each "fixed" item, find its test; flag `${x//p/$var}` with an unquoted var.
 - **Validation by count, not by shape.** Marker checks with `grep -c` (one open, one close) still allow the wrong order. **How to apply:** prefer validating inside the rewriting awk (`END { exit skip }`) to separate pre-checks.
 - **"Default branch" guesses.** Fallbacks to origin/main|master miss `develop` or `trunk` when `origin/HEAD` is unset (`git remote add` never sets it). **How to apply:** ask what happens with a remote but an unknown base.
+
+Added on PR #33 third round (2026-11-17):
+- **A reviewer's own fix suggestion can regress.** My R2 fix ("fail when origin exists but no base is found") blocked the first push to an empty origin, where no `refs/remotes/origin/*` exist yet and `set-head --auto` cannot help. **How to apply:** when proposing a "fail loudly" fallback, list the states that reach it (empty remote, unborn HEAD, nothing fetched) before posting.
+- **Portability is unstated.** The scripts use no bash 4 feature, but fixes use `"${x//p/"$v"}"` (inner quotes kept literally on bash 4.2 and earlier) and GNU BRE `\?`. **How to apply:** flag as non-blocking until a supported platform is stated; propose that the setup or README spec state it at retro.

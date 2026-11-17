@@ -1,0 +1,12 @@
+{
+  "commands": ["lint", "typecheck", "test", "build"],
+  "checks": [
+    {
+      "name": "commit subjects",
+      "run": "git log --format=%s \"$(git symbolic-ref -q --short refs/remotes/origin/HEAD || echo origin/main)..HEAD\" | .githooks/commit-msg --subjects"
+    }
+  ],
+  "release": {
+    "packages": { ".": { "release-type": "simple", "component": "{{name}}", "include-component-in-tag": true } }
+  }
+}

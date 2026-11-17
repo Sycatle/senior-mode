@@ -1,0 +1,24 @@
+{
+  "language": "en",
+  "preset": "generic",
+  "ci": { "mode": "local" },
+  "project": {
+    "owner": "Sycatle",
+    "number": 3,
+    "id": "PVT_kwHOAZfEPs4BsA45",
+    "fields": {
+      "Status": {
+        "id": "PVTSSF_lAHOAZfEPs4BsA45zhqQ62Q",
+        "options": { "Backlog": "7d62c462", "Ready": "8b193bc4", "In progress": "dc1332f9", "In review": "c779c3f8", "Done": "1cb6dd98" }
+      },
+      "Priority": {
+        "id": "PVTSSF_lAHOAZfEPs4BsA45zhqQ7KE",
+        "options": { "P0 now": "0f314413", "P1 next": "7084b777", "P2 later": "914b9638", "P3 someday": "f3696449" }
+      },
+      "Size": {
+        "id": "PVTSSF_lAHOAZfEPs4BsA45zhqQ7Ko",
+        "options": { "S": "8efd7ff1", "M": "b7f4a701", "L": "9142c53d" }
+      }
+    }
+  }
+}

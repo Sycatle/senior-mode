@@ -1,7 +1,7 @@
 ---
 id: 0004
 title: Pin a model and effort per agent role, escalate on failure
-status: proposed
+status: accepted
 spec: 0001
 ---
 

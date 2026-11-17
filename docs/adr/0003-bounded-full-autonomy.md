@@ -1,7 +1,7 @@
 ---
 id: 0003
 title: Autonomous runs merge by themselves within mechanical bounds
-status: proposed
+status: accepted
 spec: 0001
 ---
 

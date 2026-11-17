@@ -1,7 +1,7 @@
 ---
 id: 0001
 title: Ship as a Claude Code plugin with a marketplace
-status: proposed
+status: accepted
 spec: 0001
 ---
 

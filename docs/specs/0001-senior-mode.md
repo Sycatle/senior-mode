@@ -1,7 +1,7 @@
 ---
 id: 0001
 title: senior-mode, a Claude Code plugin for senior-grade delivery
-status: draft
+status: accepted
 size: L
 paths: ["plugins/**", ".claude-plugin/**", "evals/**"]
 adrs: [0001, 0002, 0003, 0004, 0005]

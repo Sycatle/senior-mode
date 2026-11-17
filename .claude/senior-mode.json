@@ -6,6 +6,7 @@
     { "name": "plugin manifests", "run": "claude plugin validate --strict . && claude plugin validate --strict plugins/senior-mode" },
     { "name": "shellcheck", "run": ".github/scripts/shellcheck.sh" },
     { "name": "skill size", "run": ".github/scripts/skill-size.sh" },
+    { "name": "agent team", "run": ".github/scripts/agent-team.sh" },
     { "name": "script tests", "run": "for t in $(git ls-files '*/test-*.sh'); do \"$t\" || exit 1; done" },
     { "name": "commit subjects", "run": "git log --format=%s origin/main..HEAD | .github/scripts/check-commits.sh" }
   ],

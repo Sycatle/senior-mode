@@ -345,7 +345,8 @@ plugin's hooks, which cover every agent.
 plugins/senior-mode/
   .claude-plugin/plugin.json
   skills/<command>/SKILL.md         setup, frame, next, run, status, retro
-  skills/<discipline>/SKILL.md      triage, ready, tdd, commit, verify, spec, adr, grill, review
+  skills/<discipline>/SKILL.md      triage, ready, tdd, commit, verify, spec, adr, grill, review;
+                                    a skill's own templates sit next to it (spec, adr)
   agents/*.md                       section 9
   hooks/hooks.json, hooks/*.sh      sections 10 and 16
   bin/senior-mode                   index, drift check, config read, Project helpers, statusline

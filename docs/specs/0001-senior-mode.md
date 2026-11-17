@@ -256,8 +256,76 @@ An existing CI is extended, never replaced.
 
 ## 16. Claude Code surface map
 
-To be completed from the inventory of Claude Code extension points: every component a plugin can
-ship, and how senior-mode uses it.
+Every extension point Claude Code offers, and what senior-mode does with it. "Not used" is a
+decision, with its reason. Source: official docs (plugins reference, skills, sub-agents, hooks,
+headless, GitHub Actions), November 2026.
+
+### Plugin components
+
+| Component | Use |
+|---|---|
+| `plugin.json` | Metadata, `dependencies` (`senior-mode-fr` depends on `senior-mode`), `userConfig` for per-user defaults (project language, autonomy defaults), `experimental.evals` |
+| Skills | Commands (section 7) and disciplines (section 8) |
+| Agents | The team (section 9) |
+| Hooks (`hooks/hooks.json`) | Guardrails and proof mechanisms (below) |
+| `bin/` | `senior-mode` script on the Bash PATH: config read, Project field helpers, spec index, drift check, run state, statusline output |
+| Output styles | `senior-mode-plain`: outcome first, plain words, decisions as tables; offered to non-technical users, never forced |
+| Monitors | `ci-watch` (`on-skill-invoke:run` and `next`): streams CI and review status of open PRs instead of polling; interactive sessions only |
+| Workflows (`workflows/*.js`) | Candidate for a deterministic `run` loop instead of prose orchestration; spike in v0.3 |
+| `${CLAUDE_PLUGIN_DATA}` | Run logs and cost reports per project, outside the repository |
+| `.mcp.json` | Not used: the `gh` CLI covers GitHub without loading tool schemas into every context |
+| `.lsp.json` | Not used: language tooling belongs to the project, not to the workflow |
+| Themes, channels | Not used: no workflow value |
+
+### Skill and agent frontmatter
+
+| Field | Use |
+|---|---|
+| `disable-model-invocation` | All commands, so they run only when asked |
+| `description`, `when_to_use` | Disciplines and natural-language triggers ("cadrons", "go", "enchaîne") |
+| `argument-hint`, `arguments` | `frame <idea>`, `run [n]`, `next [#issue]` |
+| `model`, `effort` on skills | `status` on haiku/low |
+| `context: fork` | `status` and `retro` run in a forked context and return a summary, keeping the main context clean |
+| `allowed-tools`, `disallowed-tools` | Read-only for `status`; no edits in `frame` outside `docs/` |
+| `paths` | Disciplines loaded only near relevant files (`spec` near `docs/specs/**`, `adr` near `docs/adr/**`) |
+| Agent `model`, `effort` | Pinned per role (ADR 0004) |
+| Agent `tools`, `disallowedTools` | Least privilege per role (section 9) |
+| Agent `skills` | Preloaded disciplines: implementer gets `tdd`, `commit`, `verify`; reviewer gets `review`, `spec` |
+| Agent `maxTurns` | Cost cap per role, part of the circuit breaker |
+| Agent `memory: project` | `reviewer` and `architect` keep recurring findings, fed into `retro` |
+| Agent `omitClaudeMd` | `ops` skips `CLAUDE.md`: it never needs the code map |
+| Agent `isolation: worktree` | Parallel tickets get one worktree each; agents of the same ticket share it |
+| Agent `color` | One per role, readable in the transcript |
+
+Plugin agents ignore `hooks`, `permissionMode` and `mcpServers`: guardrails therefore live in the
+plugin's hooks, which cover every agent.
+
+### Hooks
+
+| Event | Handler | Purpose |
+|---|---|---|
+| `SessionStart` | command | Inject a ~15-line router and, from the branch name, the current ticket, its spec and its state |
+| `PreToolUse` Bash | command | Deny `--no-verify`, force-push, push to the default branch, `reset --hard` on shared branches |
+| `PreToolUse` Edit/Write | command | During a run, deny protected and self-protecting paths (section 10) |
+| `PermissionRequest` | command | During a run, allow the project's verification commands from config, so autonomy does not stall on prompts |
+| `PostToolUse` Edit/Write | command | Run the preset's formatter on the edited file; mark "verification needed" |
+| `Stop`, `SubagentStop` | command | Block `implementer` and `next` from ending with edits made since the last successful verification (proof before claims, mechanised) |
+| `PreCompact` | command | Compaction keeps ticket, spec, decisions taken, verification state |
+| `Notification` | command | Optional desktop notification when a human is needed |
+| `prompt` and `agent` handlers | not used | They cost tokens on every event; command handlers suffice |
+
+### Beyond the plugin
+
+| Feature | Use |
+|---|---|
+| Project settings (`.claude/settings.json`), written by `setup` | Permission allow-list for verification and read-only `gh` commands, deny-list mirroring the hooks; optional statusline running `senior-mode statusline` (current ticket, run progress) |
+| `.claude/rules/*.md` with `paths` | Stack conventions from the preset, so `CLAUDE.md` stays under 80 lines |
+| Sandbox | `setup` offers to enable it for runs where available |
+| Headless (`claude -p`) | `run` without a session: `--max-turns`, `--max-budget-usd`, `--output-format json` for the cost report |
+| GitHub Action (`claude-code-action`) | Nightly scheduled `run` with the plugin installed; `@claude` in an issue lets a non-technical user answer `needs-info` or ask for framing from GitHub, including on mobile |
+| Cloud scheduled tasks | Alternative to Actions for nightly runs, where the plan allows it |
+| `claude plugin validate`, `claude plugin eval` | Plugin CI (section 18) |
+| Checkpoints, `/loop`, agent teams | Not relied upon: subagent and Bash edits are not restored by checkpoints (commits are the checkpoints), monitors replace polling loops, agent teams are experimental |
 
 ## 17. Plugin repository layout
 
@@ -268,9 +336,12 @@ plugins/senior-mode/
   skills/<command>/SKILL.md         setup, frame, next, run, status, retro
   skills/<discipline>/SKILL.md      triage, ready, tdd, commit, verify, spec, adr, grill, review
   agents/*.md                       section 9
-  hooks/hooks.json, hooks/*.sh      section 10
-  bin/senior-mode                   index, drift check, config read, Project helpers
-  templates/                        spec, ADR, CLAUDE.md, PR and issue templates, githooks
+  hooks/hooks.json, hooks/*.sh      sections 10 and 16
+  bin/senior-mode                   index, drift check, config read, Project helpers, statusline
+  output-styles/senior-mode-plain.md
+  monitors/monitors.json            ci-watch
+  templates/                        spec, ADR, CLAUDE.md, rules, settings, PR and issue templates,
+                                    githooks, GitHub Action for scheduled runs
   presets/<stack>/                  CI workflow, commands, protected-zone defaults
 plugins/senior-mode-fr/             French aliases
 evals/                              triage, readiness, grill and end-to-end cases
@@ -279,10 +350,12 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 
 ## 18. Quality of the plugin itself
 
-- CI: manifest validation, frontmatter schema of skills and agents, shellcheck on hooks and `bin/`,
-  unit tests of `bin/senior-mode`, size budget per skill, Conventional Commits, spec drift.
-- Evals: fixed cases for triage (S/M/L), Definition of Ready, interview quality, and an end-to-end
-  run on a fixture repository (setup → frame → run) checked on artefacts, not on prose.
+- CI: `claude plugin validate --strict` on both plugins and the marketplace, shellcheck on hooks and
+  `bin/`, unit tests of `bin/senior-mode` and of each hook (JSON in, decision out), size budget per
+  skill, Conventional Commits, spec drift.
+- Evals (`claude plugin eval`, with a cost cap): fixed cases for triage (S/M/L), Definition of Ready,
+  interview quality, and an end-to-end run on a fixture repository (setup → frame → run) checked on
+  artefacts, not on prose. Run on release PRs, not on every PR.
 - Dogfooding: senior-mode is built with senior-mode from v0.1 on.
 
 ## 19. Delivery plan
@@ -297,5 +370,10 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 
 ## 20. Open questions
 
-- Exact behaviour of scheduled headless runs (credentials, cost caps) once the surface inventory is in.
+- `run` orchestration: prose skill driving agents, or a `workflows/*.js` script (spike in v0.3).
+- Statusline: plugins cannot ship one, and `bin/` is on the PATH of the Bash tool, not necessarily
+  of the statusline command; find a project setting that survives plugin updates (the plugin root
+  path changes on each update).
+- Credentials for scheduled runs in Actions (API key or OAuth token) and the default
+  `--max-budget-usd`.
 - Whether `status` should also write a weekly digest issue for non-technical stakeholders.

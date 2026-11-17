@@ -477,7 +477,8 @@ setup_claude_md() {
 }
 
 # Commands of a package.json project (spec 0001 §14, #13): its scripts, run by the package manager
-# of its lockfile; tsc --noEmit when a tsconfig has no typecheck script; npm's placeholder test
+# of its lockfile; tsc --noEmit when a tsconfig has no typecheck script and typescript is a
+# dependency (npx would otherwise fetch the unrelated "tsc" package); npm's placeholder test
 # script is no test. Prints {commands, framework}.
 # shellcheck disable=SC2016 # jq program, not shell
 typescript_detect() {
@@ -492,7 +493,8 @@ typescript_detect() {
     {commands: ({
         lint: run("lint"),
         typecheck: (run("typecheck") // run("type-check")
-          // (if $tsconfig then "\($exec) tsc --noEmit" else null end)),
+          // (if $tsconfig and (.dependencies.typescript // .devDependencies.typescript)
+            then "\($exec) tsc --noEmit" else null end)),
         test: (if ($s.test // "") | test("no test specified") then null else run("test") end),
         build: run("build"),
         e2e: (run("test:e2e") // run("e2e"))

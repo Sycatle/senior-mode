@@ -26,7 +26,7 @@ check_run() { jq -r --arg n "$2" '.checks[] | select(.name == $n) | .run' "$1/.c
 
 # An ESLint project on pnpm, with a tsconfig but no typecheck script.
 d=$(project eslint '{"scripts": {"lint": "eslint . && prettier --check .", "test": "vitest run",
-  "build": "tsc -p tsconfig.build.json"}, "devDependencies": {"eslint": "9", "prettier": "3"}}' pnpm-lock.yaml tsconfig.json)
+  "build": "tsc -p tsconfig.build.json"}, "devDependencies": {"eslint": "9", "prettier": "3", "typescript": "5"}}' pnpm-lock.yaml tsconfig.json)
 setup "$d"
 [ "$(cfg "$d" .preset)" = typescript ] || fail "typescript preset not chosen: $(cfg "$d" .preset)"
 [ "$(check_run "$d" lint)" = "pnpm run lint" ] || fail "existing lint script not used: $(check_run "$d" lint)"
@@ -53,6 +53,11 @@ setup "$d"
 [ "$(check_run "$d" e2e)" = "npm run test:e2e" ] || fail "e2e script not used: $(check_run "$d" e2e)"
 [ -z "$(check_run "$d" test)" ] || fail "npm's placeholder test script taken as tests"
 grep -q "missing: lint, test" "$work/out" || fail "missing tools not reported: $(cat "$work/out")"
+
+# A tsconfig without typescript installed: no tsc fallback (npx would fetch another package).
+d=$(project notsc '{"scripts": {"lint": "eslint ."}}' package-lock.json tsconfig.json)
+setup "$d"
+[ -z "$(check_run "$d" typecheck)" ] || fail "tsc fallback without typescript: $(check_run "$d" typecheck)"
 
 # Lockfiles pick the package manager.
 for pair in yarn.lock:yarn bun.lock:bun bun.lockb:bun; do

@@ -38,7 +38,10 @@ edit deny s1 "$repo/nb.ipynb" NotebookEdit "" "notebook edit while framing"
 edit allow s1 "$repo/docs/specs/0002-login.md" Write "" "spec written while framing"
 edit allow s1 "$repo/docs/adr/0003-db.md" Edit "" "ADR edited while framing"
 edit allow s1 "docs/specs/0002-login.md" Edit "" "relative docs path while framing"
-edit allow s1 "$repo/src/app.js" Edit '+ {agent_id: "a1", agent_type: "senior-mode:implementer"}' "subagent edit while framing"
+mkdir -p "$repo/web"
+dir=$repo/web edit deny s1 "docs/x.md" Edit "" "relative path taken from the repository root, not the cwd"
+edit deny s1 "$repo/src/app.js" Edit '+ {agent_id: "a1", agent_type: "senior-mode:implementer"}' "subagent edit while framing"
+edit allow s1 "$repo/docs/specs/0002-login.md" Write '+ {agent_id: "a2", agent_type: "senior-mode:architect"}' "architect writes the spec"
 edit allow s2 "$repo/src/app.js" "" "" "another session is not affected"
 
 skill s1 senior-mode:grill
@@ -56,6 +59,12 @@ edit deny s3 "$repo/src/app.js" "" "" "a foreign command keeps the lock"
 typed s3 senior-mode:verify
 edit allow s3 "$repo/src/app.js" "" "" "a typed senior-mode command ends the frame"
 
+typed s7 frame
+edit deny s7 "$repo/src/app.js" "" "" "frame typed without the plugin prefix"
+typed s7 other-plugin:frame
+typed s7 deploy
+edit deny s7 "$repo/src/app.js" "" "" "a command outside senior-mode keeps the lock"
+
 typed s4 senior-mode:frame
 send SessionEnd s4 >/dev/null
 edit allow s4 "$repo/src/app.js" "" "" "session end clears the frame"
@@ -63,6 +72,7 @@ edit allow s4 "$repo/src/app.js" "" "" "session end clears the frame"
 typed s5 senior-mode:frame
 (cd "$repo" && "$cli" frame end >/dev/null) || fail "senior-mode frame end failed"
 edit allow s5 "$repo/src/app.js" "" "" "senior-mode frame end clears the frame"
+(cd "$work" && "$cli" frame end >/dev/null 2>&1) && fail "senior-mode frame end succeeds outside a repository"
 
 dir=$bare typed s6 senior-mode:frame
 dir=$bare edit allow s6 "$bare/src/app.js" "" "" "repository without senior-mode config"

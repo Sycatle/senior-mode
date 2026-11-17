@@ -78,23 +78,31 @@ option_id() {
   printf '%s\n' "$id"
 }
 
-# Sets a single-select field of an issue's Project item, using the ids cached in the config.
+# Sets single-select fields of an issue's Project item (pairs of field and option), using the ids
+# cached in the config. Every pair is checked before the item is touched.
 item_set() {
-  [ $# -eq 3 ] || usage
-  local issue=$1 field=$2 option=$3 file project owner number field_id option_id item
+  [ $# -ge 3 ] && [ $(($# % 2)) -eq 1 ] || usage
+  local issue=$1 file project owner number item field option i
+  local ids=()
+  shift
   file=$(config_file)
   project=$(jq -r '.project.id // empty' "$file")
   owner=$(jq -r '.project.owner // empty' "$file")
   number=$(jq -r '.project.number // empty' "$file")
   [ -n "$project" ] && [ -n "$owner" ] && [ -n "$number" ] ||
     die "no Project in .claude/senior-mode.json; run /senior-mode:setup"
-  field_id=$(jq -r --arg f "$field" '.project.fields[$f].id // empty' "$file")
-  option_id=$(option_id "$file" "$field" "$option")
+  for ((i = 1; i < $#; i += 2)); do
+    field=${!i}
+    option=$(option_id "$file" "$field" "${@:i+1:1}")
+    ids+=("$(jq -r --arg f "$field" '.project.fields[$f].id' "$file")" "$option")
+  done
   item=$(gh_retry project item-add "$number" --owner "$owner" \
     --url "https://github.com/$(repo_slug)/issues/$issue" --format json --jq .id)
-  gh_retry project item-edit --project-id "$project" --id "$item" \
-    --field-id "$field_id" --single-select-option-id "$option_id" >/dev/null
-  echo "#$issue $field = $option"
+  for ((i = 0; i < ${#ids[@]}; i += 2)); do
+    gh_retry project item-edit --project-id "$project" --id "$item" \
+      --field-id "${ids[i]}" --single-select-option-id "${ids[i + 1]}" >/dev/null
+    echo "#$issue ${*:i+1:1} = ${*:i+2:1}"
+  done
 }
 
 # Numbers of the issues linked to an issue through a REST list (blocked_by, sub_issues).
@@ -112,11 +120,16 @@ link() {
 }
 
 # Creates a ticket with its board fields, milestone, type label, blocked-by links and parent epic.
-# An open issue with the same title is reused, so a run cut short can be repeated (spec 0001 §7).
+# An open issue with the same title is reused, so a run cut short can be repeated (spec 0001 §7):
+# its fields, milestone, label and links converge to the arguments, its Status only with --status.
 issue_create() {
-  local title="" body="" size="" priority="" status=Backlog milestone="" type="" parent=""
-  local blockers=() file slug number url b
+  local title="" body="" size="" priority="" status="" milestone="" type="" parent=""
+  local blockers=() file slug number url b fields
   while [ $# -gt 0 ]; do
+    case $1 in -h | --help)
+      echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> --priority <option> [--status <option>] [--milestone <title>] [--type feature|bug|task|chore] [--blocked-by <n>]... [--parent <n>]"
+      return 0 ;;
+    esac
     [ $# -ge 2 ] || usage
     case $1 in
       --title) title=$2 ;;
@@ -134,31 +147,36 @@ issue_create() {
   done
   [ -n "$title" ] && [ -n "$size" ] && [ -n "$priority" ] ||
     die "issue create needs --title, --body-file, --size and --priority"
-  [ -f "$body" ] || die "no body file: $body"
+  [ "$body" = - ] || [ -f "$body" ] || die "no body file: $body"
   case $type in "" | feature | bug | task | chore) ;; *) die "unknown type $type (feature, bug, task, chore)" ;; esac
-  for b in "${blockers[@]}" "$parent"; do
-    [[ $b =~ ^[0-9]*$ ]] || die "not an issue number: $b"
+  # ${a[@]+...}: an empty array is unbound under set -u before bash 4.4.
+  for b in ${blockers[@]+"${blockers[@]}"}; do
+    [[ $b =~ ^[1-9][0-9]*$ ]] || die "not an issue number: $b"
   done
+  [ -z "$parent" ] || [[ $parent =~ ^[1-9][0-9]*$ ]] || die "not an issue number: $parent"
   file=$(config_file)
+  fields=(Priority "$priority" Size "$size")
   option_id "$file" Size "$size" >/dev/null
   option_id "$file" Priority "$priority" >/dev/null
-  option_id "$file" Status "$status" >/dev/null
+  option_id "$file" Status "${status:-Backlog}" >/dev/null
   slug=$(repo_slug)
 
   number=$(gh_retry issue list --repo "$slug" --state open --limit 1000 --json number,title |
     jq -r --arg t "$title" 'first(.[] | select(.title == $t) | .number) // empty')
   if [ -n "$number" ]; then
     echo "#$number $title (already open)"
+    [ -z "$milestone$type" ] || gh_retry issue edit "$number" --repo "$slug" \
+      ${milestone:+--milestone "$milestone"} ${type:+--add-label "type:$type"} >/dev/null
   else
     url=$(gh issue create --repo "$slug" --title "$title" --body-file "$body" \
       ${milestone:+--milestone "$milestone"} ${type:+--label "type:$type"})
     number=${url##*/}
     echo "#$number $title (created)"
+    status=${status:-Backlog}
   fi
-  item_set "$number" Status "$status"
-  item_set "$number" Priority "$priority"
-  item_set "$number" Size "$size"
-  for b in "${blockers[@]}"; do
+  [ -z "$status" ] || fields=(Status "$status" "${fields[@]}")
+  item_set "$number" "${fields[@]}"
+  for b in ${blockers[@]+"${blockers[@]}"}; do
     link "$slug" "$number" dependencies/blocked_by issue_id "$b"
     echo "#$number blocked by #$b"
   done

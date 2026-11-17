@@ -30,6 +30,7 @@ case "$*" in
     jq --argjson n "$n" --arg t "$(FLAG=--title arg "$@")" '. + [{number: $n, title: $t}]' \
       "$FIX/issues.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issues.json"
     echo "https://github.com/acme/app/issues/$n" ;;
+  "issue edit"*) ;;
   "project item-add"*) echo "ITEM" ;;
   "project item-edit"*) ;;
   "api repos/acme/app/issues/"*"/dependencies/blocked_by --paginate"*) n=${2#repos/acme/app/issues/}; links "blocked-${n%%/*}" ;;
@@ -75,6 +76,7 @@ head -1 "$work/out" | grep -q '^#42 ' || fail "first line does not give the numb
 for f in "o1" "o4" "o6"; do
   logged "--single-select-option-id $f" || fail "board option $f not set"
 done
+[ "$(count "project item-add")" -eq 1 ] || fail "item added more than once to the board"
 logged "api -X POST repos/acme/app/issues/42/dependencies/blocked_by -F issue_id=1008" || fail "blocked-by link missing"
 logged "api -X POST repos/acme/app/issues/7/sub_issues -F sub_issue_id=1042" || fail "not added under the epic"
 
@@ -83,6 +85,21 @@ create "${slice[@]}" || fail "second run exited non-zero: $(cat "$work/err")"
 [ "$(count "issue create")" -eq 0 ] || fail "second run creates a duplicate"
 [ "$(count "-X POST")" -eq 0 ] || fail "second run adds links again: $(cat "$GH_LOG")"
 head -1 "$work/out" | grep -q '^#42 .*already open' || fail "reuse not reported: $(cat "$work/out")"
+logged "--single-select-option-id o1" && fail "reuse without --status resets Status to Backlog"
+logged "--single-select-option-id o4" || fail "reuse does not converge Priority"
+logged "issue edit 42 --repo acme/app --milestone v0.1 Bootstrap --add-label type:feature" ||
+  fail "reuse does not converge milestone and type: $(cat "$GH_LOG")"
+create "${slice[@]}" --status Ready || fail "reuse with --status failed: $(cat "$work/err")"
+logged "--single-select-option-id o2" || fail "reuse ignores an explicit --status"
+
+# The body can come from stdin.
+echo body | create --title "From stdin" --body-file - --size S --priority "P0 now" ||
+  fail "stdin body refused: $(cat "$work/err")"
+logged "--body-file -" || fail "stdin body not passed to gh"
+
+# --help prints this command's usage and succeeds.
+create --help || fail "--help exits non-zero"
+grep -q -- '--blocked-by' "$work/out" || fail "--help does not list the flags: $(cat "$work/out")"
 
 # Defaults: Status Backlog, no milestone, label or links.
 create --title "Small" --body-file "$work/body.md" --size S --priority "P0 now" ||
@@ -102,6 +119,8 @@ bad --title "X" --body-file "$work/body.md" --size S --priority "P0 now" --statu
 bad --title "X" --body-file "$work/missing.md" --size S --priority "P0 now"
 bad --title "X" --body-file "$work/body.md" --size S --priority "P0 now" --type epic
 bad --title "X" --body-file "$work/body.md" --size S --priority "P0 now" --blocked-by seven
+bad --title "X" --body-file "$work/body.md" --size S --priority "P0 now" --blocked-by ""
+bad --title "X" --body-file "$work/body.md" --size S --priority "P0 now" --parent 0
 bad --body-file "$work/body.md" --size S --priority "P0 now"
 bad --title "X" --body-file "$work/body.md" --size S --priority
 

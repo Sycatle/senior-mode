@@ -16,7 +16,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option>"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> | check | publish [commit]"
 }
 
 config_file() {
@@ -70,7 +70,71 @@ item_set() {
   echo "#$issue $field = $option"
 }
 
+# Where the result of `check` is kept for a commit, until `publish` sends it (ADR 0006).
+check_record() {
+  printf '%s/%s\n' "$(git rev-parse --git-path senior-mode/checks)" "$1"
+}
+
+# Runs the configured checks from the repository root. On a clean tree, records the result for HEAD.
+check() {
+  local file root count i name cmd output passed=0 failed="" state description
+  file=$(config_file)
+  root=$(git rev-parse --show-toplevel)
+  count=$(jq '.checks // [] | length' "$file")
+  [ "$count" -gt 0 ] || die "no checks in .claude/senior-mode.json; run /senior-mode:setup"
+  output=$(mktemp)
+  for ((i = 0; i < count; i++)); do
+    name=$(jq -r ".checks[$i].name" "$file")
+    cmd=$(jq -r ".checks[$i].run" "$file")
+    if (cd "$root" && bash -c "$cmd") >"$output" 2>&1; then
+      passed=$((passed + 1))
+      echo "ok    $name"
+    else
+      failed="${failed:+$failed, }$name"
+      echo "FAIL  $name"
+      tail -n 20 "$output" | sed 's/^/      /'
+    fi
+  done
+  rm -f "$output"
+  if [ -z "$failed" ]; then
+    state=success description="$passed/$count checks passed"
+  else
+    state=failure description="failed: $failed"
+  fi
+  description=${description:0:140}
+  if [ -z "$(git status --porcelain)" ]; then
+    mkdir -p "$(dirname "$(check_record x)")"
+    printf '%s\n%s\n' "$state" "$description" >"$(check_record "$(git rev-parse HEAD)")"
+  else
+    echo "note: uncommitted changes, result not recorded for publishing"
+  fi
+  echo "$description"
+  [ "$state" = success ]
+}
+
+# Publishes the recorded check result of a commit as the status senior-mode/ci.
+publish() {
+  local sha record state description
+  sha=$(git rev-parse --verify "${1:-HEAD}^{commit}" 2>/dev/null) || die "unknown commit: ${1:-HEAD}"
+  record=$(check_record "$sha")
+  [ -f "$record" ] || die "no check result for ${sha:0:7}; run senior-mode check on a clean tree first"
+  state=$(sed -n 1p "$record")
+  description=$(sed -n 2p "$record")
+  gh api "repos/$(repo_slug)/statuses/$sha" -f state="$state" -f context=senior-mode/ci \
+    -f description="$description" >/dev/null ||
+    die "could not publish the status of ${sha:0:7}; push the commit first"
+  echo "senior-mode/ci = $state on ${sha:0:7}: $description"
+}
+
 case "${1:-}" in
+  check)
+    [ $# -eq 1 ] || usage
+    check
+    ;;
+  publish)
+    [ $# -le 2 ] || usage
+    publish "${2:-}"
+    ;;
   config)
     [ $# -eq 3 ] && [ "$2" = get ] || usage
     config_get "$3"

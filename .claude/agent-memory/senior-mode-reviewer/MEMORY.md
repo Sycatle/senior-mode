@@ -1,2 +1,2 @@
-- [Recurring findings](recurring_findings.md) — Spec-Unchanged omission, bash set -e holes, gh outside gh_retry, overwrite-not-merge setup
-- [Reviewer environment](reviewer_environment.md) — scripts and shellcheck need approval; gh api/jq work; label via REST, not gh pr edit
+- [Recurring findings](recurring_findings.md) — Spec-Unchanged omission, set -e holes (|| context), gh_retry misuse, overwrite-not-merge, unpaginated lookups
+- [Reviewer environment](reviewer_environment.md) — scripts/sed/python need approval; gh api, jq, cat heredoc to memory work; label via REST

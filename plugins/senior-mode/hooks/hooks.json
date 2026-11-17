@@ -1,11 +1,20 @@
 {
-  "description": "senior-mode guardrails (spec 0001 §10, §16)",
+  "description": "senior-mode guardrails and proof before claims (spec 0001 §10, §16)",
   "hooks": {
     "PreToolUse": [
       {
         "matcher": "Bash",
         "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/guard-bash.sh\"" }]
       }
-    ]
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/proof.sh\"" }]
+      }
+    ],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/proof.sh\"" }] }],
+    "SubagentStop": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/proof.sh\"" }] }],
+    "PreCompact": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/proof.sh\"" }] }]
   }
 }

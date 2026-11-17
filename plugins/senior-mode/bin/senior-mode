@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# senior-mode: project config and GitHub helpers for the senior-mode plugin.
+# The config is .claude/senior-mode.json at the repository root, written by /senior-mode:setup.
+set -euo pipefail
+
+DEFAULTS='{
+  "language": "en",
+  "ci": { "mode": "local" },
+  "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "autoMerge": true },
+  "limits": { "prLines": 400 }
+}'
+
+die() {
+  echo "senior-mode: $*" >&2
+  exit 1
+}
+
+usage() {
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option>"
+}
+
+config_file() {
+  local root file
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  file="$root/.claude/senior-mode.json"
+  [ -f "$file" ] || die "no .claude/senior-mode.json here; run /senior-mode:setup"
+  jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; run /senior-mode:setup to repair it"
+  printf '%s\n' "$file"
+}
+
+# Prints a config value (strings raw, anything else as JSON), falling back to DEFAULTS.
+config_get() {
+  local key=$1 file path value
+  file=$(config_file)
+  path=$(jq -nc --arg k "$key" '$k | split(".")')
+  value=$(jq -c --argjson d "$DEFAULTS" --argjson p "$path" '($d * .) | getpath($p)' "$file" 2>/dev/null) ||
+    die "unknown config key: $key"
+  [ "$value" != null ] || die "unknown config key: $key"
+  jq -r 'if type == "string" then . else tojson end' <<<"$value"
+}
+
+# owner/name of the origin remote, from an https or ssh URL.
+repo_slug() {
+  local url
+  url=$(git remote get-url origin 2>/dev/null) || die "no origin remote"
+  url=${url%.git}
+  printf '%s\n' "${url#*github.com[:/]}"
+}
+
+# Sets a single-select field of an issue's Project item, using the ids cached in the config.
+item_set() {
+  [ $# -eq 3 ] || usage
+  local issue=$1 field=$2 option=$3 file project owner number field_id option_id item
+  file=$(config_file)
+  project=$(jq -r '.project.id // empty' "$file")
+  owner=$(jq -r '.project.owner // empty' "$file")
+  number=$(jq -r '.project.number // empty' "$file")
+  [ -n "$project" ] && [ -n "$owner" ] && [ -n "$number" ] ||
+    die "no Project in .claude/senior-mode.json; run /senior-mode:setup"
+  field_id=$(jq -r --arg f "$field" '.project.fields[$f].id // empty' "$file")
+  [ -n "$field_id" ] ||
+    die "unknown field $field (known: $(jq -r '.project.fields | keys | join(", ")' "$file"))"
+  option_id=$(jq -r --arg f "$field" --arg o "$option" '.project.fields[$f].options[$o] // empty' "$file")
+  [ -n "$option_id" ] ||
+    die "unknown option $option for $field (known: $(jq -r --arg f "$field" '.project.fields[$f].options | keys | join(", ")' "$file"))"
+  item=$(gh project item-add "$number" --owner "$owner" \
+    --url "https://github.com/$(repo_slug)/issues/$issue" --format json --jq .id)
+  gh project item-edit --project-id "$project" --id "$item" \
+    --field-id "$field_id" --single-select-option-id "$option_id" >/dev/null
+  echo "#$issue $field = $option"
+}
+
+case "${1:-}" in
+  config)
+    [ $# -eq 3 ] && [ "$2" = get ] || usage
+    config_get "$3"
+    ;;
+  item)
+    [ "${2:-}" = set ] || usage
+    shift 2
+    item_set "$@"
+    ;;
+  *) usage ;;
+esac

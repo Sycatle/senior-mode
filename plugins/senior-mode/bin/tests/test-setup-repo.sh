@@ -42,6 +42,8 @@ jq -e '.permissions.deny | index("Bash(git push --force:*)")' "$new/.claude/sett
   fail "config keys lost or commands not stored: $(cat "$new/.claude/senior-mode.json")"
 jq -e '.packages["."].component == "app"' "$new/release-please-config.json" >/dev/null ||
   fail "release-please component is not the repository name"
+jq -e '.packages["."]["initial-version"] == "0.1.0"' "$new/release-please-config.json" >/dev/null ||
+  fail "a new project's first release is not 0.1.0"
 
 # Second run: nothing changes.
 before=$(snapshot "$new")

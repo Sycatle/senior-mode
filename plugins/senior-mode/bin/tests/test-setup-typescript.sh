@@ -37,6 +37,12 @@ setup "$d"
 grep -qi biome "$d/package.json" && fail "package.json changed"
 [ "$(jq -r '.packages["."]["release-type"]' "$d/release-please-config.json")" = node ] ||
   fail "release-please not set up for a node package"
+[ "$(jq -r '.packages["."]["initial-version"]' "$d/release-please-config.json")" = 0.1.0 ] ||
+  fail "first release not 0.1.0 without a package.json version"
+v=$(project versioned '{"version": "2.4.1", "scripts": {"test": "vitest run"}}')
+setup "$v"
+[ "$(jq -r '.packages["."]["initial-version"]' "$v/release-please-config.json")" = 2.4.1 ] ||
+  fail "first release ignores the package.json version"
 
 # Run again: same config.
 cp "$d/.claude/senior-mode.json" "$work/before"

@@ -328,7 +328,7 @@ setup_githooks() {
   for hook in commit-msg pre-push; do
     if [ -e "$root/.githooks/$hook" ] && ! grep -q '^# senior-mode:' "$root/.githooks/$hook"; then
       echo "git hook $hook: yours kept"
-    elif ! cmp -s "$tpl/githooks/$hook" "$root/.githooks/$hook"; then
+    elif ! cmp -s "$tpl/githooks/$hook" "$root/.githooks/$hook" || [ ! -x "$root/.githooks/$hook" ]; then
       mkdir -p "$root/.githooks"
       cp "$tpl/githooks/$hook" "$root/.githooks/$hook"
       chmod +x "$root/.githooks/$hook"
@@ -346,19 +346,28 @@ setup_githooks() {
 # Adds the Principles block to CLAUDE.md, or refreshes it; a missing CLAUDE.md starts from the
 # skeleton that the setup skill fills from the code.
 setup_claude_md() {
-  local root=$1 tpl=$2 claude=$1/CLAUDE.md block=$2/principles.md tmp
-  if [ ! -f "$claude" ]; then
-    { sed "s|{{name}}|$(basename "$root")|" "$tpl/CLAUDE.md"; echo; cat "$block"; } >"$claude"
+  local root=$1 tpl=$2 name=$3 claude=$1/CLAUDE.md block=$2/principles.md skeleton new opened closed lines
+  if [ ! -e "$claude" ]; then
+    skeleton=$(cat "$tpl/CLAUDE.md")
+    { printf '%s\n\n' "${skeleton//\{\{name\}\}/$name}"; cat "$block"; } >"$claude"
     echo "CLAUDE.md: created from the skeleton; commands, code map and pitfalls to fill"
-  elif grep -q '^<!-- senior-mode:principles' "$claude"; then
-    tmp=$(mktemp)
-    awk -v f="$block" '/^<!-- senior-mode:principles/ { while ((getline l < f) > 0) print l; skip = 1; next }
-      /^<!-- \/senior-mode:principles -->/ { skip = 0; next } !skip' "$claude" >"$tmp"
-    if cmp -s "$tmp" "$claude"; then rm -f "$tmp"; else mv "$tmp" "$claude" && echo "CLAUDE.md: Principles refreshed"; fi
   else
-    { echo; cat "$block"; } >>"$claude"
-    echo "CLAUDE.md: Principles added, the rest kept"
+    opened=$(grep -c '^<!-- senior-mode:principles' "$claude" || true)
+    closed=$(grep -c '^<!-- /senior-mode:principles -->' "$claude" || true)
+    if [ "$opened$closed" = 00 ]; then
+      { echo; cat "$block"; } >>"$claude"
+      echo "CLAUDE.md: Principles added, the rest kept"
+    elif [ "$opened$closed" != 11 ]; then
+      echo "CLAUDE.md: Principles markers broken, file left untouched; restore one opening and one closing marker"
+    else
+      new=$(awk -v f="$block" '/^<!-- senior-mode:principles/ { while ((getline l < f) > 0) print l; close(f); skip = 1; next }
+        /^<!-- \/senior-mode:principles -->/ { skip = 0; next } !skip' "$claude")
+      # Written in place, so a symlinked CLAUDE.md and its mode survive.
+      [ "$new" = "$(cat "$claude")" ] || { printf '%s\n' "$new" >"$claude" && echo "CLAUDE.md: Principles refreshed"; }
+    fi
   fi
+  lines=$(wc -l <"$claude")
+  [ "$lines" -le 80 ] || echo "CLAUDE.md: $lines lines, over 80; trim it to what the code does not tell"
 }
 
 # The documents and checks of a project (spec 0001 §12, §14, #12), idempotent; whatever the project
@@ -366,10 +375,15 @@ setup_claude_md() {
 # generic preset (lint, typecheck, test, build) and derives its check.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_repo() {
-  local root file tpl preset lang name commands='{}' out
+  local root file tpl preset lang name commands='{}' out ours
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  tpl=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+  preset=$tpl/presets/generic/preset.json
+  tpl=$tpl/templates
   while [ $# -gt 0 ]; do
     [ "$1" = --command ] && [[ ${2:-} == ?*=?* ]] || usage
+    jq -e --arg k "${2%%=*}" '.commands | index($k)' "$preset" >/dev/null ||
+      die "unknown command ${2%%=*}; expected one of $(jq -r '.commands | join(", ")' "$preset")"
     commands=$(jq -c --arg k "${2%%=*}" --arg v "${2#*=}" '.[$k] = $v' <<<"$commands")
     shift 2
   done
@@ -377,24 +391,26 @@ setup_repo() {
   mkdir -p "$root/.claude"
   [ -f "$file" ] || echo '{}' >"$file"
   jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; fix or remove it, then run setup again"
-  tpl=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
-  preset=$tpl/presets/generic/preset.json
-  tpl=$tpl/templates
   lang=$(jq -r '.language // "en"' "$file")
   [ -d "$tpl/$lang" ] || lang=en
   name=$(basename "$root")
 
+  setup_githooks "$root" "$tpl"
+  # The commit subjects check runs our commit-msg hook; a project's own hook may not understand it.
+  ours=false
+  ! grep -q '^# senior-mode:' "$root/.githooks/commit-msg" 2>/dev/null || ours=true
   out=0
   json_update "$file" '.preset //= "generic" | .commands = ((.commands // {}) + $c) | .commands as $all
     | ($p[0].commands | map(select($all[.] != null) | {name: ., run: $all[.]})) as $derived
-    | .checks = ((.checks // []) as $have | $have + [($derived + $p[0].checks)[]
-        | select(.name as $n | $have | any(.name == $n) | not)])' \
-    --argjson c "$commands" --slurpfile p "$preset" || out=$?
+    | ($derived + (if $ours then $p[0].checks else [] end)) as $want
+    | .checks = ((.checks // []) as $have
+      | [$have[] | .name as $n | ([$derived[] | select(.name == $n)][0] // .)]
+        + [$want[] | select(.name as $n | $have | any(.name == $n) | not)])' \
+    --argjson c "$commands" --argjson ours "$ours" --slurpfile p "$preset" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
   echo "checks: $(jq -r '[.checks[].name] | join(", ")' "$file")"
 
-  setup_githooks "$root" "$tpl"
-  setup_claude_md "$root" "$tpl/$lang"
+  setup_claude_md "$root" "$tpl/$lang" "$name"
   if [ -n "$(find "$root" "$root/.github" "$root/docs" -maxdepth 1 -iname 'pull_request_template*' 2>/dev/null)" ]; then
     echo "pull request template: kept"
   else
@@ -413,7 +429,7 @@ setup_repo() {
 
   if [ ! -e "$root/release-please-config.json" ]; then
     jq --arg n "$name" '.release | .packages["."].component = $n' "$preset" >"$root/release-please-config.json"
-    echo '{".": "0.0.0"}' >"$root/.release-please-manifest.json"
+    [ -e "$root/.release-please-manifest.json" ] || echo '{".": "0.0.0"}' >"$root/.release-please-manifest.json"
     echo "releases: release-please configured"
   fi
 }

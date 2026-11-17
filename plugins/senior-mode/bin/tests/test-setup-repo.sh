@@ -13,7 +13,7 @@ setup() { # dir [args...]
   (cd "$dir" && "$cli" setup repo "$@") >"$work/out" 2>"$work/err" || fail "setup exited non-zero: $(cat "$work/err")"
 }
 snapshot() { (cd "$1" && find . -path ./.git -prune -o -type f -print0 | sort -z | xargs -0 sha1sum; git config core.hooksPath); }
-commit() { git -C "$1" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "$2" 2>"$work/err"; }
+commit() { git -C "$1" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "$2" "${@:3}" 2>"$work/err"; }
 
 # A new repository, French project.
 new="$work/app"
@@ -54,9 +54,36 @@ grep -q "Conventional Commit" "$work/err" || fail "refusal does not say why: $(c
 commit "$new" "feat(ui): add the menu" || fail "conventional commit refused: $(cat "$work/err")"
 commit "$new" "fixup! feat(ui): add the menu" || fail "fixup commit refused"
 printf 'feat: ok\nbad subject\n' | "$new/.githooks/commit-msg" --subjects 2>/dev/null && fail "--subjects accepts a bad subject"
+printf 'fixup! feat: x\n' | "$new/.githooks/commit-msg" --subjects 2>/dev/null &&
+  fail "--subjects accepts a fixup commit, which a rebase merge would land as is"
+
+# The commit subjects check reads the branch against the default branch, whatever its name.
+check_subjects() { (cd "$new" && bash -c "$(jq -r '.checks[] | select(.name == "commit subjects") | .run' .claude/senior-mode.json)") 2>&1; }
+check_subjects >/dev/null && fail "commit subjects passes a branch with a fixup commit, without remote"
+git init -q --bare "$work/origin.git"
+git -C "$new" remote add origin "$work/origin.git"
+git -C "$new" branch -q -m main master
+git -C "$new" push -q --no-verify origin master >/dev/null 2>&1
+commit "$new" "pas conventionnel" --no-verify
+check_subjects >"$work/out" && fail "commit subjects passes a bad subject on a master-based repository: $(cat "$work/out")"
+grep -q "pas conventionnel" "$work/out" || fail "commit subjects checked the wrong range: $(cat "$work/out")"
+git -C "$new" reset -q --hard origin/master
+check_subjects >"$work/out" || fail "commit subjects fails on a clean branch: $(cat "$work/out")"
+
+# A re-run with a changed command updates its check; an unknown command name is refused.
+setup "$new" --command test="echo changed"
+[ "$(jq -r '.checks[] | select(.name == "test") | .run' "$new/.claude/senior-mode.json")" = "echo changed" ] ||
+  fail "changed command not applied to its check"
+(cd "$new" && "$cli" setup repo --command tests="x") >/dev/null 2>&1 && fail "unknown command name accepted"
+
+# A hook that lost its exec bit is repaired.
+chmod -x "$new/.githooks/pre-push"
+setup "$new"
+[ -x "$new/.githooks/pre-push" ] || fail "hook without exec bit not repaired"
 
 # The pre-push hook runs the configured checks, without senior-mode on the PATH.
-(cd "$new" && PATH=/usr/bin:/bin .githooks/pre-push </dev/null) >"$work/out" 2>&1 ||
+nopath=$(tr : '\n' <<<"$PATH" | grep -v senior-mode | paste -sd: -)
+(cd "$new" && PATH=$nopath .githooks/pre-push </dev/null) >"$work/out" 2>&1 ||
   fail "pre-push fails on passing checks: $(cat "$work/out")"
 jq '.checks[0].run = "echo boom; false"' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
 (cd "$new" && .githooks/pre-push </dev/null) >"$work/out" 2>&1 && fail "pre-push passes a failing check"
@@ -92,6 +119,28 @@ sed -i 's/^## Principles/## Old principles/' "$old/CLAUDE.md"
 setup "$old"
 grep -q '^## Old principles' "$old/CLAUDE.md" && fail "outdated Principles block not refreshed"
 [ "$(grep -c 'senior-mode:principles' "$old/CLAUDE.md")" = 2 ] || fail "Principles block duplicated"
+
+# Broken markers: the file is left alone, the user's text after the block survives.
+echo '## Our notes' >>"$old/CLAUDE.md"
+sed -i '/\/senior-mode:principles/d; s/^## Principles/## Old principles/' "$old/CLAUDE.md"
+setup "$old"
+grep -q '^## Our notes' "$old/CLAUDE.md" || fail "user text after a broken Principles block deleted"
+grep -qi 'markers' "$work/out" || fail "broken Principles markers not reported: $(cat "$work/out")"
+
+# CLAUDE.md as a symlink stays a symlink; an existing release manifest keeps its version.
+own="$work/own"
+git init -q -b main "$own"
+printf '# Own\n<!-- senior-mode:principles -->\nold\n<!-- /senior-mode:principles -->\n' >"$own/AGENTS.md"
+ln -s AGENTS.md "$own/CLAUDE.md"
+echo '{".": "2.3.0"}' >"$own/.release-please-manifest.json"
+mkdir -p "$own/.githooks"
+printf '#!/bin/sh\nnpx commitlint --edit\n' >"$own/.githooks/commit-msg"
+setup "$own"
+[ -L "$own/CLAUDE.md" ] || fail "CLAUDE.md symlink replaced by a file"
+grep -q '^## Principles' "$own/AGENTS.md" || fail "Principles not refreshed through the CLAUDE.md symlink"
+[ "$(jq -r '."."' "$own/.release-please-manifest.json")" = 2.3.0 ] || fail "existing release manifest reset"
+jq -e '.checks | any(.name == "commit subjects")' "$own/.claude/senior-mode.json" >/dev/null &&
+  fail "commit subjects check added although the project's commit-msg hook is its own"
 
 [ "$failures" -eq 0 ] && echo "setup-repo: all cases pass"
 exit "$failures"

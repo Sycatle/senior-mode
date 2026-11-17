@@ -26,7 +26,8 @@ case "$*" in
   "issue list"*) respond <"$FIX/issues.json" ;;
   "issue create"*)
     [ -z "${CREATE_ERR:-}" ] || { echo "$CREATE_ERR" >&2; exit 1; }
-    n=$(($(jq length "$FIX/issues.json") + 40))
+    [ "$(FLAG=--body-file arg "$@")" != - ] || cat >"$FIX/stdin-body"
+    n=$(jq '[42, (.[].number + 1)] | max' "$FIX/issues.json")
     jq --argjson n "$n" --arg t "$(FLAG=--title arg "$@")" '. + [{number: $n, title: $t}]' \
       "$FIX/issues.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issues.json"
     echo "https://github.com/acme/app/issues/$n" ;;
@@ -93,9 +94,19 @@ create "${slice[@]}" --status Ready || fail "reuse with --status failed: $(cat "
 logged "--single-select-option-id o2" || fail "reuse ignores an explicit --status"
 
 # The body can come from stdin.
-echo body | create --title "From stdin" --body-file - --size S --priority "P0 now" ||
+# shellcheck disable=SC2016 # the backticks must stay text
+stdin_body='Given `x`, then y.'
+echo "$stdin_body" | create --title "From stdin" --body-file - --size S --priority "P0 now" ||
   fail "stdin body refused: $(cat "$work/err")"
-logged "--body-file -" || fail "stdin body not passed to gh"
+[ "$(cat "$FIX/stdin-body" 2>/dev/null)" = "$stdin_body" ] || fail "stdin body not passed whole to gh"
+
+# A reused issue of another type swaps its type label.
+echo '[{"number": 9, "title": "Typed", "labels": [{"name": "type:bug"}, {"name": "needs-info"}]}]' >"$FIX/issues.json"
+create --title "Typed" --body-file "$work/body.md" --size S --priority "P0 now" --type feature ||
+  fail "typed reuse failed: $(cat "$work/err")"
+logged "issue edit 9 --repo acme/app --add-label type:feature --remove-label type:bug" ||
+  fail "old type label kept: $(cat "$GH_LOG")"
+logged "--remove-label needs-info" && fail "a non-type label removed"
 
 # --help prints this command's usage and succeeds.
 create --help || fail "--help exits non-zero"

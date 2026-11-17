@@ -15,3 +15,5 @@ In reviewer sessions (seen 2026-11-17, PR #29, two rounds):
 **How to apply:** say in the review comment that the tests were read and not run. Use GraphQL introspection to check API assumptions instead of trusting the PR body.
 - PR #31: a `gh pr comment` heredoc that contains a backslash followed by a space is refused, and so is ANSI-C `$'...'` quoting. Describe such commands in words. Probing a hook with `jq ... | hook` is refused too.
 - PR #31 re-review: a Bash call with a `for` loop over several `gh api` calls was refused; the same calls run one by one work.
+
+Added on PR #33: `awk` with process substitution, and `jq` with `--slurpfile` or `$var` inside the filter, are refused. jq experiments are only possible with constant filters. The plugin's own guard hook (`guard-bash.sh`) scans heredoc bodies too.

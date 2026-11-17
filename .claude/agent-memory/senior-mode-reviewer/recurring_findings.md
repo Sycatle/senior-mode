@@ -34,3 +34,10 @@ Added on PR #31 re-review (2026-11-17):
   **How to apply:** for every rule that matches an argument value (not a flag), test the quoted form, and check that the spec wording matches exactly what the hook denies.
 - **Fix rounds skip the non-blocking items.** On #31 the ADR citation (N3) was left as is after the fix commit.
   **How to apply:** list each earlier finding with fixed / not addressed in the re-review.
+Added on PR #33 (2026-11-17):
+- **Pipeline checks without `pipefail`.** `check()` and the `pre-push` template run each check with `bash -c`, which does not inherit `pipefail`. A check like `git log <range> | validator` passes when `git log` fails (missing base ref), and the test passed only because of that.
+  **How to apply:** for every check `run` string with a pipe, ask what happens when the first command fails.
+- **Marker-block rewrites (awk skip-until-close-marker).** A missing close marker drops the rest of the user's file. `mv tmp file` replaces symlinks and leaves 0600 mode.
+  **How to apply:** require both markers before rewriting, and write back with `cat >`.
+- **Spec drift was handled correctly on #33** (spec §12/§14 updated in the PR), so the Spec-Unchanged finding is not systematic any more. Check before flagging it.
+- **Guard hook blocks review comments.** `hooks/guard-bash.sh` denies any Bash command whose text contains the commit short skip flag, even inside a heredoc. Say it in words in review comments.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # PreToolUse on Bash: denies git commands that skip checks, force-push, push to the default branch or
-# discard commits of a shared branch (spec 0001 §10). Prints a deny decision, or nothing to allow.
+# discard commits of a shared branch, and gh pr merge --admin (spec 0001 §10). Prints a deny
+# decision, or nothing to allow.
 # A guardrail for honest mistakes, not a sandbox: `bash -c "..."` and the like are not parsed.
 set -o pipefail
 input=$(cat)
@@ -54,6 +55,12 @@ while IFS= read -r segment; do
   read -ra w <<<"$segment"
   i=0
   while [[ ${w[i]:-} == *=* || ${w[i]:-} == command || ${w[i]:-} == exec ]]; do i=$((i + 1)); done
+  if [ "${w[i]##*/}" = gh ] 2>/dev/null; then
+    # The ruleset lets admins bypass it on purpose (ADR 0006); an agent running as an admin must not.
+    [[ " ${w[*]:i+1} " =~ \ pr\ merge\  && " ${w[*]:i+1} " =~ \ --admin[=\ ] ]] &&
+      deny "gh pr merge --admin bypasses the required checks and review: a human must do it."
+    continue
+  fi
   [ "${w[i]##*/}" = git ] 2>/dev/null || continue
   dir=$cwd
   i=$((i + 1))

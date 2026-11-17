@@ -52,6 +52,10 @@ expect deny 'git reset --hard origin/main' main
 expect deny 'git reset --hard HEAD~1' feat/1-shared
 expect deny 'npm test && FOO=1 git push --force; echo done'
 expect deny "git -C $repo push origin main" feat/2-local "$work"
+expect deny 'gh pr merge 3 --rebase --admin'
+expect deny 'gh pr merge --admin 3 --rebase'
+expect deny 'GH_REPO=a/b gh -R a/b pr merge 3 --admin; echo done'
+expect deny '/usr/bin/gh pr merge 3 --admin=true'
 
 expect allow 'git status' feat/2-local
 expect allow 'git push -u origin feat/2-local'
@@ -62,11 +66,16 @@ expect allow 'git reset --hard HEAD~1' feat/2-local
 expect allow 'git reset --soft HEAD~1' main
 expect allow 'echo git push --force'
 expect allow 'gh pr merge 3 --rebase --delete-branch'
+expect allow 'gh pr comment 3 --body "merge with --admin is for humans"'
+expect allow 'gh pr view 3 --admin'
 
 git -C "$repo" switch -q feat/2-local
 reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason' \
   <<<"$(jq -nc --arg d "$repo" '{tool_input: {command: "git push --force"}, cwd: $d}' | "$hook")")
 grep -qi force <<<"$reason" || fail "deny reason does not name the rule: $reason"
+reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason' \
+  <<<"$(jq -nc --arg d "$repo" '{tool_input: {command: "gh pr merge 3 --admin"}, cwd: $d}' | "$hook")")
+grep -qi human <<<"$reason" || fail "admin merge reason does not say a human must do it: $reason"
 
 [ "$failures" -eq 0 ] && echo "guard-bash: all cases pass"
 exit "$failures"

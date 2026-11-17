@@ -37,7 +37,7 @@ GitHub refuses rulesets on a private repository of a free plan: it says so and g
 
 ## Repository
 
-1. Run `senior-mode setup repo`. With a `package.json` it takes the `typescript` preset and its
+1. Run `senior-mode setup repo`. With a `package.json` it takes the `node` preset and its
    scripts; otherwise ask once how to lint, typecheck, test and build, and rerun with one
    `--command lint="<cmd>"` per answer. It adds checks, git hooks, `CLAUDE.md` Principles, PR and
    issue templates, permissions and release-please, keeping what exists.

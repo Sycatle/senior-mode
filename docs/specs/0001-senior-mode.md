@@ -232,7 +232,7 @@ Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
 ```json
 {
   "language": "fr",
-  "preset": "typescript",
+  "preset": "node",
   "commands": { "lint": "...", "typecheck": "...", "test": "...", "build": "..." },
   "project": { "owner": "...", "number": 1, "id": "PVT_...", "fields": { "Status": {"id": "...", "options": {}} } },
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "autoMerge": true },
@@ -251,16 +251,19 @@ once, then stored).
 
 | Preset | Lint / format | Types | Tests | Extra |
 |---|---|---|---|---|
-| typescript | Biome or the existing ESLint/Prettier | `tsc --noEmit` | Vitest, Playwright for e2e | Next.js aware |
+| node | Biome or the existing ESLint/Prettier | `tsc --noEmit` with TypeScript | Vitest, Playwright for e2e | Next.js aware |
 | python | Ruff | mypy or pyright | pytest | uv |
 | go | gofmt, golangci-lint | compiler | go test | |
 | rust | rustfmt, clippy `-D warnings` | compiler | cargo test / nextest | cargo-deny |
 | generic | asked | asked | asked | |
 
-The typescript preset applies when a `package.json` exists and no preset is stored. Its commands are
-the project's scripts (`lint`, `typecheck`, `test`, `build`, `test:e2e` or `e2e`), run with the
-package manager of the lockfile; a tsconfig without a typecheck script gets `tsc --noEmit` when
-`typescript` is a dependency. A missing linter or test runner is reported, and `setup` proposes Biome
+The node preset applies when a `package.json` exists and no preset is stored (a stored `typescript`,
+its former name, becomes `node`). Its commands are the project's scripts (`lint`, `typecheck`,
+`test`, `build`, `test:e2e` or `e2e`), run with the package manager of the lockfile; a tsconfig
+without a typecheck script gets `tsc --noEmit` when `typescript` is a dependency, run so that it
+never downloads a package. The report names the language: TypeScript when `typescript` is a
+dependency or a tsconfig exists, else JavaScript, which expects no typecheck. A missing linter or
+test runner is reported, and `setup` proposes Biome
 or Vitest in a separate commit, never installed without a yes. Next.js is recorded as `framework`; it
 builds through its script. Fixtures in `evals/fixtures/` are adopted and checked end to end by
 `evals/run.sh` (network, run on demand before merging a change to presets).
@@ -392,7 +395,7 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 
 | Milestone | Content |
 |---|---|
-| v0.1 Bootstrap | Plugin skeleton, `setup` (generic + typescript presets), `frame`, discipline skills, agents, hooks; written by hand, then used to plan the rest |
+| v0.1 Bootstrap | Plugin skeleton, `setup` (generic + node presets), `frame`, discipline skills, agents, hooks; written by hand, then used to plan the rest |
 | v0.2 Daily loop | `next`, `status`, spec index and drift check, git hooks |
 | v0.3 Autonomy | `run`, review status check, protected zones, circuit breaker, scheduled run in Actions |
 | v0.4 Breadth | python, go, rust presets, `retro`, `senior-mode-fr` |

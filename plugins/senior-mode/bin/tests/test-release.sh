@@ -20,6 +20,7 @@ cat >"$work/stub/npx" <<'STUB'
 echo "npx $* (in $PWD)" >>"$LOG"
 prev=""
 for a in "$@"; do [ "$prev" = --token ] && { echo "token file: $a" >>"$LOG"; cat "$a" >>"$LOG"; }; prev=$a; done
+[ -z "${SLEEP:-}" ] || sleep 1
 case "$*" in *"$FAIL_ON"*) echo "release-please failed" >&2; exit 1 ;; esac
 STUB
 chmod +x "$work/stub/gh" "$work/stub/npx"
@@ -55,6 +56,15 @@ FAIL_ON=github-release release && fail "a failed github-release exits zero"
 logged "release-pr" && fail "release-pr runs after github-release failed"
 file=$(sed -n 's/^token file: //p' "$LOG" | head -1)
 [ ! -e "$file" ] || fail "token file left behind after a failure"
+
+: >"$LOG"
+(cd "$repo" && FAIL_ON=never SLEEP=1 exec "$cli" release >/dev/null 2>&1) &
+pid=$!
+for _ in $(seq 50); do grep -q '^token file' "$LOG" && break; sleep 0.1; done
+kill -TERM "$pid" 2>/dev/null
+wait "$pid"
+file=$(sed -n 's/^token file: //p' "$LOG" | head -1)
+[ -n "$file" ] && [ ! -e "$file" ] || fail "token file left behind after an interruption: $file"
 
 NO_AUTH=1 release && fail "runs without a gh login"
 [ -s "$LOG" ] && fail "npx called without a token"

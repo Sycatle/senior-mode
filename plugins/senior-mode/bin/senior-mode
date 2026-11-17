@@ -16,7 +16,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | check | publish [commit] | context | setup github | setup repo [--command <name>=<command>]..."
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | check | publish [commit] | context | setup github | setup repo [--command <name>=<command>]..."
 }
 
 config_file() {
@@ -124,7 +124,7 @@ link() {
 # its fields, milestone, label and links converge to the arguments, its Status only with --status.
 issue_create() {
   local title="" body="" size="" priority="" status="" milestone="" type="" parent=""
-  local blockers=() file slug number url b fields
+  local blockers=() edits=() file slug found number stale url b fields
   while [ $# -gt 0 ]; do
     case $1 in -h | --help)
       echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> --priority <option> [--status <option>] [--milestone <title>] [--type feature|bug|task|chore] [--blocked-by <n>]... [--parent <n>]"
@@ -161,12 +161,19 @@ issue_create() {
   option_id "$file" Status "${status:-Backlog}" >/dev/null
   slug=$(repo_slug)
 
-  number=$(gh_retry issue list --repo "$slug" --state open --limit 1000 --json number,title |
-    jq -r --arg t "$title" 'first(.[] | select(.title == $t) | .number) // empty')
+  # The number of an open issue with this title, then its type labels other than the asked one.
+  found=$(gh_retry issue list --repo "$slug" --state open --limit 1000 --json number,title,labels |
+    jq -r --arg t "$title" --arg k "type:$type" 'first(.[] | select(.title == $t)
+      | [.number] + [.labels[]?.name | select(startswith("type:") and . != $k)] | join(" ")) // empty')
+  read -r number stale <<<"$found" || true
   if [ -n "$number" ]; then
     echo "#$number $title (already open)"
-    [ -z "$milestone$type" ] || gh_retry issue edit "$number" --repo "$slug" \
-      ${milestone:+--milestone "$milestone"} ${type:+--add-label "type:$type"} >/dev/null
+    [ -z "$milestone" ] || edits+=(--milestone "$milestone")
+    if [ -n "$type" ]; then
+      edits+=(--add-label "type:$type")
+      for b in $stale; do edits+=(--remove-label "$b"); done
+    fi
+    [ ${#edits[@]} -eq 0 ] || gh_retry issue edit "$number" --repo "$slug" "${edits[@]}" >/dev/null
   else
     url=$(gh issue create --repo "$slug" --title "$title" --body-file "$body" \
       ${milestone:+--milestone "$milestone"} ${type:+--label "type:$type"})

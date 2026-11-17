@@ -47,6 +47,26 @@ repo_slug() {
   printf '%s\n' "${url#*github.com[:/]}"
 }
 
+# Runs gh, retrying up to 3 times with a growing pause when GitHub fails transiently (#21);
+# any other error fails at once. SENIOR_MODE_RETRY_DELAY scales the pause (seconds, default 1).
+gh_retry() {
+  local attempt err out
+  err=$(mktemp)
+  for attempt in 1 2 3 4; do
+    if out=$(gh "$@" 2>"$err"); then
+      rm -f "$err"
+      [ -z "$out" ] || printf '%s\n' "$out"
+      return 0
+    fi
+    grep -qiE 'unknown owner type|HTTP 5[0-9][0-9]|timeout|timed out|connection reset|unexpected EOF|secondary rate limit' "$err" &&
+      [ "$attempt" -lt 4 ] || break
+    sleep $((attempt * ${SENIOR_MODE_RETRY_DELAY:-1}))
+  done
+  cat "$err" >&2
+  rm -f "$err"
+  return 1
+}
+
 # Sets a single-select field of an issue's Project item, using the ids cached in the config.
 item_set() {
   [ $# -eq 3 ] || usage
@@ -63,9 +83,9 @@ item_set() {
   option_id=$(jq -r --arg f "$field" --arg o "$option" '.project.fields[$f].options[$o] // empty' "$file")
   [ -n "$option_id" ] ||
     die "unknown option $option for $field (known: $(jq -r --arg f "$field" '.project.fields[$f].options | keys | join(", ")' "$file"))"
-  item=$(gh project item-add "$number" --owner "$owner" \
+  item=$(gh_retry project item-add "$number" --owner "$owner" \
     --url "https://github.com/$(repo_slug)/issues/$issue" --format json --jq .id)
-  gh project item-edit --project-id "$project" --id "$item" \
+  gh_retry project item-edit --project-id "$project" --id "$item" \
     --field-id "$field_id" --single-select-option-id "$option_id" >/dev/null
   echo "#$issue $field = $option"
 }
@@ -120,7 +140,7 @@ publish() {
   [ -f "$record" ] || die "no check result for ${sha:0:7}; run senior-mode check on a clean tree first"
   state=$(sed -n 1p "$record")
   description=$(sed -n 2p "$record")
-  gh api "repos/$(repo_slug)/statuses/$sha" -f state="$state" -f context=senior-mode/ci \
+  gh_retry api "repos/$(repo_slug)/statuses/$sha" -f state="$state" -f context=senior-mode/ci \
     -f description="$description" >/dev/null ||
     die "could not publish the status of ${sha:0:7}; push the commit first"
   echo "senior-mode/ci = $state on ${sha:0:7}: $description"

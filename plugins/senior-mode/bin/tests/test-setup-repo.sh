@@ -210,6 +210,21 @@ done
 grep -qE 'branches: *\[' "$wf" && fail "workflow pushes limited to a hardcoded branch list"
 grep -qF "github.ref_name == github.event.repository.default_branch" "$wf" ||
   fail "workflow checks pushes to branches other than the default one"
+for want in "googleapis/release-please-action@v4" "config-file: release-please-config.json" \
+  "manifest-file: .release-please-manifest.json" "contents: write" "pull-requests: write" \
+  'secrets.RELEASE_PLEASE_TOKEN || github.token'; do
+  grep -qF "$want" "$wf" 2>/dev/null || fail "release job lacks $want"
+done
+awk '/- name: Release config$/ { on = 1; next } on && /- name:|uses:/ { exit } on && /run: \|/ { body = 1; next }
+  body { sub(/^          /, ""); print }' "$wf" >"$work/relcfg.sh"
+rel() { # dir -> the found= line the step writes
+  (cd "$1" && GITHUB_OUTPUT=$work/relout bash "$work/relcfg.sh") >/dev/null 2>&1 || echo "step failed"
+  cat "$work/relout" 2>/dev/null; rm -f "$work/relout"
+}
+[ "$(rel "$act")" = found=true ] || fail "release skipped with a release-please config: $(rel "$act")"
+mkdir -p "$work/norel"
+[ "$(rel "$work/norel")" = found=false ] || fail "release not skipped without a config: $(rel "$work/norel")"
+grep -qF "steps.config.outputs.found == 'true'" "$wf" || fail "release-please runs without a config"
 # The workflow's Checks step runs exactly the configured commands, all of them, and fails closed.
 awk '/- name: Checks$/ { on = 1; next } on && /- name:/ { exit } on && /run: \|/ { body = 1; next }
   body { sub(/^          /, ""); print }' "$wf" >"$work/checks.sh"

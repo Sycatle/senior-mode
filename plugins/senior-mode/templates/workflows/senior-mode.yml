@@ -84,6 +84,30 @@ jobs:
             -f context=senior-mode/ci -f description="${desc:0:140}" \
             -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null
 
+  release:
+    name: Release
+    # Opens or updates the release PR, and tags and publishes it once merged (ADR 0006).
+    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release config
+        id: config
+        run: |
+          if [ -f release-please-config.json ]; then echo found=true; else echo found=false; fi >>"$GITHUB_OUTPUT"
+      - uses: googleapis/release-please-action@v4
+        if: steps.config.outputs.found == 'true'
+        with:
+          # With github.token, GitHub runs no workflow on the release PR, so it gets no
+          # senior-mode/ci: run `senior-mode check && senior-mode publish` on it, or store a
+          # fine-grained token (contents and pull requests: write) as RELEASE_PLEASE_TOKEN.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
   dependencies:
     name: Dependency review
     if: github.event_name == 'pull_request'

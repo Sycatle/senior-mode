@@ -27,6 +27,7 @@ case "$*" in
   "api -X PUT repos/acme/app/rulesets/"*) cat >>"$GH_LOG" ;;
   "workflow list"*) if [ -f "$FIX/workflows.json" ]; then respond <"$FIX/workflows.json"; else echo '[]' | respond; fi ;;
   "workflow disable"* | "workflow enable"*) ;;
+  "api repos/acme/app/actions/permissions/workflow"*) respond <"$FIX/actions-permissions.json" ;;
   "project view"*)
     [ -z "${VIEW_ERR:-}" ] || { echo "$VIEW_ERR" >&2; exit 1; }
     jq -e --argjson n "$3" '.number == $n' "$FIX/project.json" >/dev/null 2>&1 ||
@@ -181,12 +182,17 @@ grep -q "setup github --ci actions" "$work/out" || fail "no lasting way back giv
 # --ci actions: stored, nothing disabled, and our own workflow turned back on.
 jq '(.[] | select(.id == 14) | .state) = "disabled_manually"' "$FIX/workflows.json" >"$work/w" && mv "$work/w" "$FIX/workflows.json"
 : >"$GH_LOG"
+echo '{"can_approve_pull_request_reviews": false}' >"$FIX/actions-permissions.json"
 (cd "$repo" && "$cli" setup github --ci actions) >"$work/out" 2>"$work/err" || fail "setup --ci actions failed: $(cat "$work/err")"
+grep -q "RELEASE_PLEASE_TOKEN" "$work/out" || fail "release PRs blocked by the Actions setting, not said: $(cat "$work/out")"
+logged "api -X PUT repos/acme/app/actions/permissions" && fail "the Actions permissions are changed without consent"
 [ "$(cfg .ci.mode)" = actions ] || fail "--ci actions not stored: $(cfg .ci)"
 logged "workflow disable" && fail "workflows disabled in actions mode"
 logged "workflow enable 14 --repo acme/app" || fail "a disabled senior-mode workflow stays off in actions mode"
+echo '{"can_approve_pull_request_reviews": true}' >"$FIX/actions-permissions.json"
 setup
 logged "workflow disable" && fail "a rerun without --ci forgets the stored mode"
+grep -q "RELEASE_PLEASE_TOKEN" "$work/out" && fail "release note printed though Actions may open pull requests"
 (cd "$repo" && "$cli" setup github --ci cloud) >/dev/null 2>&1 && fail "an unknown ci mode is accepted"
 
 # Rulesets unavailable on the plan.

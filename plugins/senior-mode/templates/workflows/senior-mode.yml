@@ -14,7 +14,8 @@ permissions:
 
 concurrency:
   group: senior-mode-${{ github.ref }}
-  cancel-in-progress: true
+  # Only a newer PR push replaces a run; a run on the default branch may be releasing.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   checks:
@@ -94,12 +95,8 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      - name: Release config
-        id: config
-        run: |
-          if [ -f release-please-config.json ]; then echo found=true; else echo found=false; fi >>"$GITHUB_OUTPUT"
       - uses: googleapis/release-please-action@v4
-        if: steps.config.outputs.found == 'true'
+        if: hashFiles('release-please-config.json') != ''
         with:
           # With github.token, GitHub runs no workflow on the release PR, so it gets no
           # senior-mode/ci: run `senior-mode check && senior-mode publish` on it, or store a

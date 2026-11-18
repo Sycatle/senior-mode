@@ -28,6 +28,9 @@ case "$*" in
   "workflow list"*) if [ -f "$FIX/workflows.json" ]; then respond <"$FIX/workflows.json"; else echo '[]' | respond; fi ;;
   "workflow disable"* | "workflow enable"*) ;;
   "api repos/acme/app/actions/permissions/workflow"*) respond <"$FIX/actions-permissions.json" ;;
+  "api repos/acme/app/actions/secrets/RELEASE_PLEASE_TOKEN"*)
+    [ -f "$FIX/secret" ] || { echo "HTTP 404: Not Found" >&2; exit 1; }
+    echo '{"name": "RELEASE_PLEASE_TOKEN"}' | respond ;;
   "project view"*)
     [ -z "${VIEW_ERR:-}" ] || { echo "$VIEW_ERR" >&2; exit 1; }
     jq -e --argjson n "$3" '.number == $n' "$FIX/project.json" >/dev/null 2>&1 ||
@@ -186,6 +189,10 @@ echo '{"can_approve_pull_request_reviews": false}' >"$FIX/actions-permissions.js
 (cd "$repo" && "$cli" setup github --ci actions) >"$work/out" 2>"$work/err" || fail "setup --ci actions failed: $(cat "$work/err")"
 grep -q "RELEASE_PLEASE_TOKEN" "$work/out" || fail "release PRs blocked by the Actions setting, not said: $(cat "$work/out")"
 logged "api -X PUT repos/acme/app/actions/permissions" && fail "the Actions permissions are changed without consent"
+touch "$FIX/secret"
+(cd "$repo" && "$cli" setup github) >"$work/out" 2>&1
+grep -q "RELEASE_PLEASE_TOKEN" "$work/out" && fail "release warning repeated though the token secret is stored: $(cat "$work/out")"
+rm "$FIX/secret"
 [ "$(cfg .ci.mode)" = actions ] || fail "--ci actions not stored: $(cfg .ci)"
 logged "workflow disable" && fail "workflows disabled in actions mode"
 logged "workflow enable 14 --repo acme/app" || fail "a disabled senior-mode workflow stays off in actions mode"

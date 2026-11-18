@@ -4,8 +4,9 @@ name: senior-mode
 
 on:
   pull_request:
+  # A branch filter cannot name the default branch; each job checks it instead, so a renamed
+  # default branch keeps working and other pushes spend nothing (skipped jobs use no minutes).
   push:
-    branches: [main, master]
 
 permissions:
   contents: read
@@ -18,6 +19,7 @@ concurrency:
 jobs:
   checks:
     name: Checks
+    if: github.event_name == 'pull_request' || github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     env:
       SHA: ${{ github.event.pull_request.head.sha || github.sha }}

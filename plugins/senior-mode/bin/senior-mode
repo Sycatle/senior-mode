@@ -408,6 +408,11 @@ setup_workflows() { # slug mode
       echo "workflows: $wname enabled again (ci.mode actions)"
     fi
   done <<<"$list"
+  # Read only: the setting is the repository owner's call, and a token secret works around it.
+  if [ "$2" = actions ] && [ "$(gh_retry api "repos/$1/actions/permissions/workflow" \
+    --jq .can_approve_pull_request_reviews 2>/dev/null)" = false ]; then
+    echo "releases: GitHub Actions may not open pull requests here, so the release job cannot open its PR; allow it in Settings > Actions > General, or store a token as the RELEASE_PLEASE_TOKEN secret"
+  fi
   [ -z "$disabled" ] || echo "workflows: disabled $disabled (ci.mode local: checks run before each push; files kept; \`gh workflow enable <name>\` turns one back on, and senior-mode setup github --ci actions stops setup from disabling them again)"
 }
 

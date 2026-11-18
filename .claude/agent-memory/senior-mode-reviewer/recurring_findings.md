@@ -148,3 +148,19 @@ Added on PR #53 re-review (2026-11-18, ci.mode actions workflow for #32):
 - **A fix to a printed "way back" can drop the half that still works.** My B3 asked to say that a rerun disables workflows again; the fix replaced `gh workflow enable <name>` with "until ci.mode actions", but actions mode only re-enables its own workflow. **How to apply:** when a message tells the user how to undo something, check that the named step actually undoes it for every case, not only for the tool's own files.
 - **Accepted test pattern for workflow templates:** extract the `run:` block of a step with awk from the template and run it against fixtures (exit code plus `$GITHUB_ENV` contents). It pins the real step, not a copy.
 - **Protected-zone call:** workflow template plus code that disables workflows on GitHub = CI zone (`needs-human`, status pending), as with #43.
+
+Added on PR #57 (2026-11-18, release job in the actions workflow + default-branch push filter, #55/#56):
+- **Write jobs under a workflow-wide `cancel-in-progress: true`.** The concurrency group is per ref, so back-to-back merges on main cancel a running release-please and skip the `!cancelled()` status step. **How to apply:** when a PR adds a job that writes (release, deploy, tag), ask for `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`.
+- **Fixed-string greps that match more than one job.** The `github.ref_name == ...default_branch` grep was satisfied by the new release job's `if:`, so the checks job's condition (the AC under test) was unpinned. **How to apply:** for template greps, check the string occurs only in the place the AC is about.
+- **New automation in one mode, old manual instruction left for all modes.** `agents/ops.md` still said `senior-mode release` after merges, which races the Actions release job in actions mode. **How to apply:** when a mode gains an automated step, grep agents and skills for the manual command it replaces.
+- Protected-zone call: workflow template with a new `contents: write` job = CI zone (`needs-human`, status pending; no blocking findings).
+
+Added on PR #65 (2026-11-18, CONTRIBUTING/SECURITY/CoC, two rounds):
+- **Contributor docs written from the owner's seat.** The first draft assumed push access to upstream (`publish` posts to origin, so from a fork it writes to the fork). **How to apply:** for any contributor-facing doc, walk it as an outside contributor with a fork and no write access.
+- **"Maintainer reruns the checks on your PR" runs untrusted code.** The check list (`.claude/senior-mode.json`) and `test-*.sh` come from the checked-out PR tree, with the maintainer's gh token. Flagged non-blocking (N2): ask for "reads the diff first". **How to apply:** any process doc or skill that runs a fork PR's checks locally must say to read the diff first.
+- Docs-only community files = no protected zone (no `needs-human`); approved with status success.
+
+Added on PR #57 re-review (2026-11-18, release job in the Actions workflow, #55/#56):
+- **Docs tied to a warning that prints in one case only.** The setup skill relayed "the release PR needs a token to get CI" only when setup printed `releases:`, which happens only when Actions may not open PRs. The common case (allowed, no token) got no note, yet the release PR still gets no `senior-mode/ci`. **How to apply:** when a doc hangs advice on a printed line, list every state that needs the advice and check the line prints in each of them.
+- **Accepted pattern for workflow-level concurrency with a releasing job:** `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`. PR runs (`refs/pull/N/merge`) and push runs never share a group. A queued push run is still replaced by a newer one, which is harmless because the next release-please run covers it.
+- Protected-zone call unchanged: workflow template = CI zone (`needs-human`, status pending).

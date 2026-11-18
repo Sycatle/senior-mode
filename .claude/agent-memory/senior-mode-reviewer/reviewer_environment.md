@@ -32,3 +32,5 @@ Added on #46: `printenv` and `env` need approval, so the reviewer cannot see the
 
 Added on PR #50: `command -v claude` and running `hooks/tests/test-*.sh` directly need approval, so Claude Code hook payload fields (`command_name` on UserPromptExpansion) cannot be checked locally. Flag them as "needs one live check".
 - PR #50 re-review: `git -C /proc/self/cwd rev-parse --show-toplevel` works as a symlink probe without creating files (prints the physical path).
+
+Added on PR #57: the working tree was on another branch (the user's docs work) although the session snapshot named the PR branch. Never trust the checkout; read PR files with `git show <head-sha>:<path>`. A live GET of `repos/O/R/actions/permissions/workflow` and raw `action.yml` of a third-party action at a tag both work for checking API and input claims.

@@ -18,7 +18,7 @@ git clone https://github.com/Sycatle/senior-mode && cd senior-mode
 git config core.hooksPath .githooks
 ```
 
-You need `bash`, `jq`, `gh` (logged in), `shellcheck`, and Claude Code for `claude plugin validate`.
+You need `bash` 4.4 or later, `jq`, `gh` (logged in), `shellcheck`, and Claude Code for `claude plugin validate`.
 To try the plugin from your clone: `claude --plugin-dir plugins/senior-mode`.
 
 ## Checks run on your machine
@@ -33,6 +33,9 @@ are disabled. The same check list runs locally instead.
   the pushed commit. It needs a clean tree and a check recorded on that tree.
 - Pull requests to `main` need `senior-mode/ci` and `senior-mode/review` on an up-to-date branch,
   linear history, and are merged by rebase.
+- From a fork, `publish` can only write to your fork, so it does not reach your pull request. Run
+  the check and paste its summary in the pull request; a maintainer reruns it on your head commit
+  and publishes the status.
 
 ## Commits
 

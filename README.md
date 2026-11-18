@@ -1,5 +1,7 @@
 # senior-mode
 
+**English** · [Français](README.fr.md)
+
 A Claude Code plugin that makes AI-assisted coding work like a senior engineering team. Ideas get
 framed before anyone codes. Decisions are written down. Tests come first and commits stay small.
 The roadmap lives on a GitHub Project. Every change is reviewed, and nothing merges without passing

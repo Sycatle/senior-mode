@@ -1,11 +1,11 @@
 {
   "name": "senior-mode",
   "version": "0.1.0",
-  "description": "Senior-grade delivery for Claude Code: framing, specs and ADRs, TDD, atomic commits, GitHub Projects and a bounded autonomous agent team.",
+  "description": "Makes AI-assisted coding work like a senior engineering team: framing, specs and ADRs, TDD, atomic commits, a GitHub Projects roadmap, required reviews and bounded autonomous agents.",
   "author": {
     "name": "sycatle"
   },
-  "homepage": "https://github.com/Sycatle/senior-mode",
+  "homepage": "https://github.com/Sycatle/senior-mode/tree/main/docs/guide",
   "repository": "https://github.com/Sycatle/senior-mode",
   "license": "MIT",
   "keywords": [

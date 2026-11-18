@@ -34,8 +34,9 @@ are disabled. The same check list runs locally instead.
 - Pull requests to `main` need `senior-mode/ci` and `senior-mode/review` on an up-to-date branch,
   linear history, and are merged by rebase.
 - From a fork, `publish` can only write to your fork, so it does not reach your pull request. Run
-  the check and paste its summary in the pull request; a maintainer reruns it on your head commit
-  and publishes the status.
+  the check and paste its summary in the pull request; a maintainer reads the diff first (the check
+  runs your code with their GitHub token), then reruns it on your head commit and publishes the
+  status.
 
 ## Commits
 

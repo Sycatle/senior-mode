@@ -6,7 +6,7 @@
     {
       "name": "senior-mode",
       "source": "./plugins/senior-mode",
-      "description": "Senior-grade delivery for Claude Code: framing, specs and ADRs, TDD, atomic commits, GitHub Projects and a bounded autonomous agent team."
+      "description": "Makes AI-assisted coding work like a senior engineering team: framing, specs and ADRs, TDD, atomic commits, a GitHub Projects roadmap, required reviews and bounded autonomous agents."
     }
   ]
 }

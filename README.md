@@ -1,19 +1,136 @@
 # senior-mode
 
-A Claude Code plugin that turns AI-assisted coding into senior-grade delivery: ideas framed through a
-short interview with alternatives, specs and ADRs in the repository, a prioritised GitHub Project,
-test-first work in small conventional commits, fresh-context reviews, and an autonomous agent team
-that only merges within mechanical guardrails. Ceremony scales with the task: a typo never gets an ADR.
+A Claude Code plugin that makes AI-assisted coding work like a senior engineering team. Ideas get
+framed before anyone codes. Decisions are written down. Tests come first and commits stay small.
+The roadmap lives on a GitHub Project. Every change is reviewed, and nothing merges without passing
+checks. The process scales with the task: a typo never gets an ADR.
 
-Status: early development. The design is in [`docs/specs/0001-senior-mode.md`](docs/specs/0001-senior-mode.md).
+Status: v0.1, early. What works today and what is coming is marked below.
 
-## Install
+## Is it for me?
+
+- **You build with AI but things get messy.** senior-mode asks the questions you would forget,
+  writes the plan down and keeps a clean history, so you end up with an app you can show, hand over
+  or audit.
+- **You are a developer.** You get TDD, atomic Conventional Commits, specs and ADRs, a reviewer with
+  a fresh context, and model routing per task (haiku to read, sonnet to build, opus to decide), with
+  no extra ceremony for small tasks.
+- **You run a small team.** The board, the statuses and the protected zones make an AI teammate's
+  work visible and bounded. A human approves what touches CI, security, data or architecture.
+
+It does not fit you if you want a one-shot code generator, or if your project does not live on
+GitHub.
+
+## Start in 60 seconds
+
+In Claude Code:
 
 ```
 /plugin marketplace add Sycatle/senior-mode
 /plugin install senior-mode@senior-mode
 ```
 
+Then, in your project (an existing repository or an empty folder):
+
+```
+/senior-mode:setup
+```
+
+It shows what it will change on GitHub and waits for your yes. Then it creates the Project board,
+labels, merge rules, git hooks and the check list. Run it again at any time to repair. Then:
+
+```
+/senior-mode:frame I want users to be able to export their invoices as PDF
+```
+
+You need [`gh`](https://cli.github.com/) logged in (`gh auth refresh -s project` for the board),
+`git` and `jq`. More in [Getting started](docs/guide/getting-started.md).
+
+## A typical day
+
+1. **Frame.** `/senior-mode:frame` interviews you a few questions at a time, offers alternatives
+   with a recommendation, then writes the spec, the ADRs and tickets with acceptance criteria,
+   size, priority and milestone.
+2. **Build.** For each ticket: a branch, failing tests first, the code, small conventional commits.
+   The checks run before each push and publish `senior-mode/ci`.
+3. **Review.** A `reviewer` agent with a fresh context reviews the PR against the spec and against
+   engineering standards, then sets `senior-mode/review`.
+4. **Merge and release.** Rebase merge once both statuses are green. Changes to protected zones wait
+   for a human. release-please turns the commits into a changelog and a version.
+
+```mermaid
+flowchart LR
+  idea([Idea]) --> frame[frame: questions, spec, ADRs]
+  frame --> issues[Tickets on the board]
+  issues --> tdd[Branch, failing tests, code]
+  tdd --> pr[Pull request]
+  pr --> ci{{senior-mode/ci}}
+  pr --> review{{senior-mode/review}}
+  ci --> merge[Rebase merge]
+  review --> merge
+  merge --> release([Release])
+```
+
+The walk-through, step by step: [A typical day](docs/guide/a-typical-day.md).
+
+## Commands
+
+| Command | What it does | State |
+|---|---|---|
+| `/senior-mode:setup` | Adopt a repository: board, labels, merge rules, ruleset, checks, hooks, templates, release-please. Safe to rerun. | Available |
+| `/senior-mode:frame` | Turn an idea into decisions, a spec, ADRs and ready tickets. | Available |
+| `next` | The daily session: board state, then delivers the top ready ticket with you. | [Coming in v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
+| `status` | Plain-language dashboard: done, in progress, blocked, waiting for you. | [Coming in v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
+| `run` | Delivers up to N ready tickets on its own, within the guardrails. | [Coming in v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
+| `retro` | Weekly: reprioritise, list debt, turn repeated mistakes into checks. | [Coming in v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
+
+Behind them, nine small discipline skills load only when they apply (triage, ready, tdd, commit,
+verify, spec, adr, grill, review), and seven agents each have their own model and effort (scout,
+researcher, architect, test-author, implementer, reviewer, ops). Hooks deny force-pushes, pushes
+to the default branch and skipped checks, and keep code edits out of a framing interview. See
+[Commands](docs/guide/commands.md), [Skills](docs/guide/skills.md), [Agents](docs/guide/agents.md)
+and [Autonomy and guardrails](docs/guide/autonomy.md).
+
+## No CI budget? No problem
+
+By default the checks run on your machine before each push and publish their result as a commit
+status (`ci.mode: local`). GitHub still refuses a merge without it. If you have an Actions budget,
+`ci.mode: actions` adds a workflow that runs the same list on GitHub and releases. See
+[Configuration](docs/guide/configuration.md).
+
+## How it compares
+
+Two collections inspired senior-mode, and they are excellent. Pick the one that fits.
+
+| | senior-mode | [superpowers](https://github.com/obra/superpowers) | [mattpocock/skills](https://github.com/mattpocock/skills) |
+|---|---|---|---|
+| Focus | Delivery on GitHub, from idea to release | Development discipline inside a session | Alignment and spec-to-tickets, small composable skills |
+| Framing interview | Yes (`frame`, `grill`) | Yes (brainstorming) | Yes (`grill-me`, `grill-with-docs`) |
+| TDD, review | Yes, review sets a required status | Yes, two-stage review | Yes |
+| Issues and board | GitHub Issues and Projects (fields, milestones) | No | GitHub or GitLab issues, sub-issues, dependencies |
+| Merge rules and CI | Ruleset, required statuses, local or Actions CI | No | No |
+| Model per task | Pinned per agent | Per role, by guidance | No |
+| Autonomous multi-ticket run | Coming in v0.3 | One plan at a time | Yes (`implement-spec`) |
+| Platforms | Claude Code | Claude Code and many other agents | Claude Code and other agents |
+
+Choose **superpowers** if you want strong habits in every session across many coding agents and do
+not need GitHub process. Choose **Matt Pocock's skills** if you want small skills to adapt and
+already have your own workflow. Choose **senior-mode** if you want the whole path, from the first
+question to a reviewed, released change, enforced on GitHub. Facts checked in November 2026 against
+both repositories (superpowers v7.0.2, mattpocock/skills v1.3.2).
+
+## Documentation
+
+- [User guide](docs/guide/README.md): install, a typical day, commands, skills, agents,
+  guardrails, configuration, FAQ.
+- [Design spec](docs/specs/0001-senior-mode.md) and [decisions](docs/adr/).
+- [Changelog](plugins/senior-mode/CHANGELOG.md) and the [roadmap by milestone](https://github.com/Sycatle/senior-mode/milestones).
+
+## Contributing
+
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Report
+vulnerabilities privately: see [SECURITY.md](SECURITY.md).
+
 ## License
 
-MIT
+[MIT](LICENSE)

@@ -207,6 +207,9 @@ for want in "senior-mode/ci" ".claude/senior-mode.json" "dependency-review-actio
   grep -qF "$want" "$wf" 2>/dev/null || fail "workflow lacks $want"
 done
 [ "$(cat "$act/.github/workflows/ci.yml")" = "name: Theirs" ] || fail "an existing workflow was changed"
+grep -qE 'branches: *\[' "$wf" && fail "workflow pushes limited to a hardcoded branch list"
+grep -qF "github.ref_name == github.event.repository.default_branch" "$wf" ||
+  fail "workflow checks pushes to branches other than the default one"
 # The workflow's Checks step runs exactly the configured commands, all of them, and fails closed.
 awk '/- name: Checks$/ { on = 1; next } on && /- name:/ { exit } on && /run: \|/ { body = 1; next }
   body { sub(/^          /, ""); print }' "$wf" >"$work/checks.sh"

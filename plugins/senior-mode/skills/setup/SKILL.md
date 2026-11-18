@@ -25,15 +25,16 @@ Safe to rerun: it repairs, never duplicates.
 
 Run `senior-mode setup github --ci <local|actions>`. It:
 
-- finds (cached number, else same title) or creates the Project, links it, ensures the fields
-  Status, Priority and Size, keeping options and values already there;
+- finds or creates the Project, links it, ensures the fields Status, Priority and Size, keeping
+  options and values already there;
 - creates the labels `needs-human`, `needs-info`, `blocked` (and `type:*` on a personal account);
 - allows rebase merges only and deletes branches after merge;
 - creates or updates a ruleset `senior-mode` on the default branch: pull requests only, rebase,
   `senior-mode/ci` and `senior-mode/review` required, linear history; existing protection is kept;
   an admin can bypass it with `gh pr merge --admin`;
 - `local`: disables the repository's workflows (files kept); `actions`: `setup repo` then adds
-  `.github/workflows/senior-mode.yml`, which runs the checks and sets `senior-mode/ci`.
+  `.github/workflows/senior-mode.yml`: checks, `senior-mode/ci`, releases. If it prints
+  `releases:`, relay it: the release PR needs a `RELEASE_PLEASE_TOKEN` secret to get CI.
 
 ## Repository
 
@@ -48,5 +49,6 @@ Run `senior-mode setup github --ci <local|actions>`. It:
 
 ## Report
 
-Summarise what the commands printed in plain words, in the project language, with the Project URL (`gh project view <number> --owner <owner> --web` opens it). On failure, quote the error
-and the command to retry; setup is safe to run again.
+Summarise what the commands printed in plain words, in the project language, with the Project URL
+(`gh project view <number> --owner <owner> --web`). On failure, quote the error and the command to
+retry.

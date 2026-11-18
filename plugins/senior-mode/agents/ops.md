@@ -19,7 +19,8 @@ helper. You make no decision about code or product.
   (`--body-file - <<'SENIOR_MODE_BODY'`) so backticks stay text. If the guard hook denies that call, ask the
   caller to write the body to a file and pass its path.
 - Releases: `senior-mode release` after merges (tags a merged release PR, opens or updates the
-  next one); `--dry-run` first when asked to check.
+  next one); `--dry-run` first when asked to check. Only when `ci.mode` is not `actions`: there the
+  workflow releases, and running both makes them race for the same release.
 - Merge only with `gh pr merge <pr> --rebase --delete-branch`, and only when told to and both
   `senior-mode/ci` and `senior-mode/review` are green. Never merge a `needs-human` pull request.
 - Never force-push, push to the default branch, rewrite shared history or use `--no-verify`.

@@ -1,0 +1,95 @@
+# Skills
+
+The discipline skills are short rules Claude loads by itself when the task matches them.
+
+You do not call them. Claude loads one when its description matches what it is doing, and agents
+start with some of them preloaded (see [Agents](agents.md)). All nine are available today. The
+design is in [spec §8](../specs/0001-senior-mode.md#8-discipline-skills).
+
+## `triage`
+
+- **Rule.** Size every request S, M or L before any work, and apply only the ceremony that size
+  needs. Any one criterion is enough for the larger size. When unsure, take the larger size.
+
+  | Size | Criteria | Ceremony |
+  |---|---|---|
+  | S | One module, under ~50 lines, no new dependency, no interface change, easy to undo | Branch and PR; a bug fix still gets a regression test |
+  | M | Bounded feature or refactor, under ~400 lines, may add a dependency | Issue, light spec, tests first, PR |
+  | L | New subsystem, data migration, public interface, hard-to-reverse choice, or over ~400 lines | `frame`: ADRs, full spec, epic split into tickets of size M or less; a human accepts first |
+
+- **When.** At the start of every request, and again when a ticket grows during work. A ticket that
+  outgrows its size stops, and Claude proposes a split.
+
+## `ready`
+
+- **Rule.** A ticket is Ready only when an agent could deliver it without asking anything: a spec
+  merged on the default branch with Given/When/Then criteria (S needs only a clear expected
+  behaviour), size S or M, no `needs-info`, every blocker closed, test seams named, and for a slice
+  of an L epic, spec and ADRs `accepted`.
+- **Outcome.** All pass: status `Ready`. Something missing: `needs-info` label and a comment with a
+  recommended answer per question. Only blocked: stays in Backlog.
+- **When.** After framing, before a ticket is picked.
+
+## `tdd`
+
+- **Rule.** Tests come from the acceptance criteria. Logic and bug fixes: a failing test first, seen
+  failing for the right reason. UI and glue: one end-to-end or integration scenario per criterion.
+  Spikes are exempt, but are discarded or tested before merge. Tests go in the same commit as the
+  code. A flaky test is a bug: open an issue, never skip it silently.
+- **When.** Before writing or changing production code, and for every bug fix.
+
+## `commit`
+
+- **Rule.** Atomic Conventional Commits: one logical change, builds and passes on its own,
+  `type(scope): subject` in at most 72 characters, a body that says why. No AI co-author trailers.
+  Never `--no-verify`, never rewrite a pushed shared branch.
+- **When.** Whenever committing, and before pushing.
+
+## `verify`
+
+- **Rule.** "Done" needs fresh evidence. Run `senior-mode check`, read the output (not only the exit
+  code), and say exactly what ran. Never weaken a check to get green. A check that cannot run is
+  reported as not verified.
+- **When.** Before saying a task is done, before pushing, before opening or merging a pull request.
+  A hook also enforces it: see [Autonomy](autonomy.md#hooks).
+
+## `spec`
+
+- **Rule.** One spec per M or L feature in `docs/specs/NNNN-slug.md`, from the template. Lifecycle
+  `draft`, `accepted`, `implemented`, `superseded` (never deleted). The `paths` field lists the code
+  it governs; a PR touching those paths updates the spec or says `Spec-Unchanged: <reason>`.
+- **When.** When writing a spec, when code under a spec changes, near files in `docs/specs/`.
+- **Note.** The CI check for spec drift is coming in
+  [v0.2](https://github.com/Sycatle/senior-mode/milestone/2); today the reviewer checks it.
+
+## `adr`
+
+- **Rule.** One ADR per hard-to-reverse decision, in `docs/adr/NNNN-slug.md`, with at least two real
+  alternatives and the bad consequences too. Status `proposed`, `accepted`, `superseded`. An accepted
+  ADR is never edited: a new ADR supersedes it. No ADR for small reversible choices.
+- **When.** For a hard-to-reverse choice, for every L ticket, near files in `docs/adr/`.
+
+## `grill`
+
+- **Rule.** Settle every open decision with the fewest questions. Gather facts first (through
+  `scout`), never ask what the repository answers. Rounds of 3 to 4 questions, recommended option
+  first, each option saying what it changes. Before closing, propose what you probably did not think
+  of: risks, cheaper options, security, accessibility, cost. For non-technical users: no jargon,
+  questions about outcomes.
+- **When.** During framing, when a ticket has open questions, or when you say "let's frame" or
+  "cadrons".
+
+## `review`
+
+- **Rule.** Review from the diff, the spec and the tests, on two axes. Spec: every criterion met and
+  tested, nothing out of scope, spec and ADRs up to date. Standards: simplicity, design,
+  correctness, security, tests, readability, history. Sensitive areas (migrations, security, auth,
+  payments, CI, infrastructure, major upgrades, L tickets, ADRs) get at best "approve, human merge"
+  and the `needs-human` label.
+- **Produces.** One PR comment with the verdict and `file:line` findings, and the status
+  `senior-mode/review` (`success`, `pending` for a human merge, `failure`).
+- **When.** For every pull request, from a fresh context.
+
+## Commands are skills too
+
+`setup` and `frame` are also skills, but they only run when you type them. See [Commands](commands.md).

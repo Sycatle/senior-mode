@@ -13,7 +13,7 @@ Commands run only when you type them. The design is in [spec §7](../specs/0001-
 | `/senior-mode:next` | Daily session: deliver the top Ready ticket with you | Available |
 | `/senior-mode:status` | Plain-language dashboard | Available |
 | `/senior-mode:run` | Deliver up to N Ready tickets on its own | Available |
-| `/senior-mode:retro` | Weekly review of the board and the process | Coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
+| `/senior-mode:retro` | Weekly review of the board and the process | Available |
 | French aliases (`senior-mode-fr`) | `/cadre`, `/suivant`, `/lance`, `/etat`, `/retro`, `/installer` | Coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
 
 ## `setup`
@@ -110,10 +110,18 @@ State: **Available.** Triggers: "run", "lance", "enchaîne en autonomie".
 
 ## `retro`
 
-State: **Coming in [v0.4 Breadth](https://github.com/Sycatle/senior-mode/milestone/4).**
+State: **Available.**
 
-- **Purpose.** Weekly: reprioritise, close or rescope stale items, list debt, check spec drift, and
-  propose tickets that turn recurring mistakes into checks.
+- **Purpose.** The weekly learning step: what was done and how long it took, what needed you and why,
+  what failed, was reopened or outgrew its size. Then at most three changes to the way of working.
+- **Asks.** Nothing to start; type `/senior-mode:retro`, or ask for "a retro", "rétro" or "bilan de
+  la semaine". It then asks which of its proposals to create.
+- **Produces.** A summary in the `language` of your config, and up to three issue drafts (a
+  `CLAUDE.md` pitfall, a protected glob, a check, a ticket split rule), each with the tickets and pull
+  requests that justify it. Nothing is created or edited until you say yes.
+- **Data.** From GitHub (two calls) and from this machine: the results of `senior-mode check` and, when
+  `run` has written them, its logs in `.claude/senior-mode/runs/`. Without logs, the runs section says
+  so. `senior-mode retro --since 14d` widens the period.
 
 ## The `senior-mode` script
 
@@ -133,6 +141,7 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode run [--max N] [--parallel P]` | The autonomous run of `/senior-mode:run`: one headless session per ticket, then a plain report |
 | `senior-mode e2e-lock -- <command>` | Runs the command once one of `e2e.slots` machine-wide slots is free; `check` runs the check named `e2e` through it |
 | `senior-mode status [--json] [--since <dur>] [--watch [secs]]` | The dashboard of `/senior-mode:status`; `--since 7d` for a digest (`m`, `h`, `d`, `w`) |
+| `senior-mode retro [--json] [--since <dur>]` | The facts of `/senior-mode:retro` for the last 7 days or `--since`: done, cycle time, pull requests that needed a human, runs, reopened tickets, check failures, sizes |
 | `senior-mode statusline` | One offline line for Claude Code's status line (ticket, last check, run) |
 | `senior-mode setup statusline` | Writes the status line to the project's `.claude/settings.json` |
 | `senior-mode item set <issue> <field> <option>...` | Sets board fields of a ticket, for example `Status Ready` |

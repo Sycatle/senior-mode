@@ -84,7 +84,7 @@ The walk-through, step by step: [A typical day](docs/guide/a-typical-day.md).
 | `/senior-mode:next` | The daily session: board state, pull requests waiting for you, then delivers the top ready ticket with you. Never merges without your yes. | Available |
 | `/senior-mode:status` | Plain-language dashboard: done, in progress, blocked, waiting for you. Also a digest for readers who are not technical. | Available |
 | `/senior-mode:run` | Delivers up to N ready tickets on its own, one session and worktree per ticket, within the guardrails. Stops at reviewed pull requests unless you turn merging on. | Available |
-| `retro` | Weekly: reprioritise, list debt, turn repeated mistakes into checks. | [Coming in v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
+| `/senior-mode:retro` | Weekly: the facts of the week, then up to three process changes for you to approve. | Available |
 
 Behind them, small discipline skills load only when they apply (triage, ready, tdd, commit,
 verify, spec, adr, grill, review), and seven agents each have their own model and effort (scout,

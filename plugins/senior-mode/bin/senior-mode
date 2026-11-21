@@ -738,9 +738,13 @@ setup_repo() {
     elif $d.typescript == false then "JavaScript" else empty end, .framework // empty]
     | select(length > 0) | " (\(join(", ")))"' "$file")"
   echo "checks: $(jq -r '[.checks[].name] | join(", ")' "$file")"
-  [ "$detected" = '{}' ] || jq -r --argjson d "$detected" '["lint", "typecheck", "test", "build"] - (.commands | keys)
-    - (if $d.typescript then [] else ["typecheck"] end)
-    | select(length > 0) | "missing: \(join(", ")) (no script; propose tools, never install without a yes)"' "$file"
+  case $pname in
+    node | nextjs-supabase)
+      jq -r --argjson d "$detected" '["lint", "typecheck", "test", "build"] - (.commands | keys)
+        - (if $d.typescript then [] else ["typecheck"] end)
+        | select(length > 0) | "missing: \(join(", ")) (no script; propose tools, never install without a yes)"' "$file"
+      ;;
+  esac
 
   setup_claude_md "$root" "$tpl/$lang" "$name" "$pname"
   if [ -n "$(find "$root" "$root/.github" "$root/docs" -maxdepth 1 -iname 'pull_request_template*' 2>/dev/null)" ]; then

@@ -62,7 +62,10 @@ Before changing anything, setup:
   linear history, no deletion or force-push, and two required statuses, `senior-mode/ci` and
   `senior-mode/review`, on an up-to-date branch. It adds to your existing protection and does not
   rewrite it. Admins can bypass it with `gh pr merge --admin`; agents cannot (see
-  [Autonomy](autonomy.md)).
+  [Autonomy](autonomy.md)). On a private repository of a GitHub Free account or organization, GitHub
+  refuses rulesets: setup says so, switches to `local` mode and records `github.protection: "none"`.
+  Nothing then stops a push to the default branch on the server, only your pre-push hook; setup asks
+  you to acknowledge it. See the [FAQ](faq.md#my-repository-is-private-on-the-free-plan-what-changes).
 - **Workflows.** In `local` mode, the repository's GitHub Actions workflows are disabled. The files
   are kept; `gh workflow enable <name>` turns one back on.
 

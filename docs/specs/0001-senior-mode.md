@@ -248,6 +248,15 @@ possible alternatives (ADR 0006).
   on the default branch (ADR 0006), which adds to any existing protection without rewriting it. A
   rebase onto a newer default branch drops `senior-mode/review`, so `run` reviews again after each
   merge. Admins may bypass the ruleset, explicitly (`gh pr merge --admin`); agents never may.
+- **GitHub Free fallback:** on a private repository of a Free account or organization, the rulesets
+  API answers HTTP 403 ("Upgrade to GitHub Pro or make this repository public to enable this
+  feature."). `setup` detects it on the status and a stable fragment of that message, skips the ruleset
+  and finishes the rest. It sets `ci.mode` to `local` (the pre-push hook is then the only gate),
+  records `github.protection: "none"` (§13) and warns in plain words: protection is not enforced on
+  the server, anyone with push access can push to the default branch; make the repository public,
+  upgrade to Pro or Team, or accept the local gate. The setup skill relays the warning and asks the
+  user to acknowledge it. Any other refusal stops `setup`. A later run on a plan that allows rulesets
+  creates the ruleset and records `"ruleset"`; `ci.mode` is not changed back.
 - **Titles:** issue and PR titles say what the user gets, in plain words, in the project language.
 
 ## 12. Documents in an adopted repository
@@ -284,11 +293,15 @@ Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
   "protected": ["**/migrations/**", "**/auth/**", ".github/workflows/**", "Dockerfile*"],
   "secrets": ["config/prod.*", "**/vault/*"],
   "ci": { "mode": "local" },
+  "github": { "protection": "ruleset" },
   "limits": { "prLines": 400 }
 }
 ```
 
 Field and option ids are cached here so no agent rediscovers them with extra API calls.
+`github.protection` is written by `setup github`: `"ruleset"` when the `senior-mode` ruleset is in
+place, `"none"` when the plan refused it (§11), so status and governance documents can say whether
+the default branch is protected on the server.
 
 `secrets` lists globs the secrets guard denies on top of its defaults (section 10): a glob without a slash
 matches the file name, one with a slash matches the path from the repository root, `**/` standing for any

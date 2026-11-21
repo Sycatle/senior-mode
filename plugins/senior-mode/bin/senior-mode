@@ -16,7 +16,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | check | publish [commit] | release [--dry-run] | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]..."
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | status [--json] [--since <dur>] [--watch [secs]] | check | publish [commit] | release [--dry-run] | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]..."
 }
 
 config_file() {
@@ -874,6 +874,229 @@ protected() {
   printf '%s\n' "$matches"
 }
 
+# The Project items, and with $1 = true the repository facts that `status` adds, in one GraphQL
+# query (spec 0001 §7, §15); only a Project of more than 100 items takes a second call.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+BOARD_QUERY='query($project: ID!, $owner: String!, $name: String!, $after: String, $repo: Boolean!) {
+  node(id: $project) { ... on ProjectV2 { items(first: 100, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } } }
+      content { ... on Issue { number title url state closedAt labels(first: 20) { nodes { name } }
+        milestone { title dueOn } blockedBy(first: 20) { nodes { number state } } } } } } } }
+  repository(owner: $owner, name: $name) @include(if: $repo) {
+    latestRelease { tagName publishedAt }
+    pullRequests(states: OPEN, first: 50) { nodes { number title url isDraft headRefName labels(first: 10) { nodes { name } }
+      commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 30) { nodes { __typename
+        ... on StatusContext { context state } ... on CheckRun { name conclusion } } } } } } } } }
+    closed: issues(states: CLOSED, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title closedAt stateReason } }
+    merged: pullRequests(states: MERGED, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title mergedAt } }
+  }
+}'
+
+# Prints {items, prs, closed, merged, release}: tickets with their board fields, labels, milestone and
+# open blockers; open pull requests with their failing statuses; recent closed issues and merged pull
+# requests; the latest release. The last four are empty unless $1 is true.
+# shellcheck disable=SC2016 # a jq program, not shell
+board_data() {
+  local with_repo=${1:-false} file project slug after="" page pages="[]" more=true count=0 err
+  file=$(config_file)
+  project=$(jq -r '.project.id // empty' "$file")
+  [ -n "$project" ] || die "no Project in .claude/senior-mode.json; run /senior-mode:setup"
+  slug=$(repo_slug)
+  while [ "$more" = true ]; do
+    page=$(jq -nc --arg q "$BOARD_QUERY" --arg p "$project" --arg o "${slug%%/*}" --arg n "${slug#*/}" \
+      --arg a "$after" --argjson r "$with_repo" '{query: $q, variables: ({project: $p, owner: $o, name: $n, repo: $r}
+      + (if $a == "" then {} else {after: $a} end))}' | gh_retry api graphql --input -) ||
+      die "cannot read the Project from GitHub"
+    err=$(jq -r '.errors[0].message // empty' <<<"$page" 2>/dev/null) || die "GitHub answered something that is not JSON"
+    [ -z "$err" ] || die "GitHub refused the Project query: $err"
+    pages=$(jq -c --argjson p "$page" '. + [$p]' <<<"$pages")
+    more=$(jq -r '.data.node.items.pageInfo.hasNextPage // false' <<<"$page")
+    after=$(jq -r '.data.node.items.pageInfo.endCursor // empty' <<<"$page")
+    with_repo=false
+    count=$((count + 1))
+    [ "$count" -lt 20 ] || break
+  done
+  jq -c 'def single($f): [.fieldValues.nodes[] | select(.field.name == $f) | .name][0];
+    def failing: [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+      | select((.state // "") | IN("FAILURE", "ERROR")) // select((.conclusion // "") | IN("FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE"))
+      | .context // .name];
+    (.[0].data.repository // {}) as $r
+    | {items: [.[].data.node.items.nodes[] | select(.content.number != null) | .content as $c
+        | {number: $c.number, title: $c.title, url: $c.url, open: ($c.state == "OPEN"),
+           status: single("Status"), priority: single("Priority"), size: single("Size"),
+           labels: [$c.labels.nodes[].name], milestone: $c.milestone.title, due: $c.milestone.dueOn,
+           blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number]}],
+       prs: [$r.pullRequests.nodes[]? | {number, title, url, branch: .headRefName, labels: [.labels.nodes[].name], failing: failing}],
+       closed: [$r.closed.nodes[]? | {number, title, closedAt, reason: .stateReason}],
+       merged: [$r.merged.nodes[]? | {number, title, mergedAt}],
+       release: ($r.latestRelease | if . then {tag: .tagName, date: .publishedAt} else null end)}' <<<"$pages"
+}
+
+# The tickets `run` and `next` take (spec 0001 §7): Ready, open, not size L, not blocked (open
+# "blocked by" link, `blocked` label), not waiting for information (`needs-info`). Sorted by Priority
+# (P0 first), then milestone due date, then number.
+# shellcheck disable=SC2016 # a jq program, not shell
+PICK_DEF='def pick: [.items[] | select(.open and .status == "Ready" and .size != "L" and (.blockers | length == 0)
+    and ((.labels | index("blocked")) | not) and ((.labels | index("needs-info")) | not))]
+  | sort_by([([(.priority // "") | scan("^P([0-9]+)") | .[0] | tonumber] | first // 99), (.due // "9999"), .number]);'
+
+# senior-mode pick [--json] [--max N]
+pick() {
+  local json=false max="" data
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --json) json=true ;;
+      --max)
+        [[ ${2:-} =~ ^[1-9][0-9]*$ ]] || die "pick --max needs a positive number"
+        max=$2
+        shift
+        ;;
+      *) usage ;;
+    esac
+    shift
+  done
+  data=$(board_data false) || exit 1
+  if [ "$json" = true ]; then
+    jq -c --argjson max "${max:-0}" "$PICK_DEF"'pick | if $max > 0 then .[:$max] else . end
+      | map({number, title, url, priority, size, milestone, due})' <<<"$data"
+  else
+    jq -r --argjson max "${max:-0}" "$PICK_DEF"'pick | if $max > 0 then .[:$max] else . end
+      | if length == 0 then "No Ready ticket to pick." else .[] | "#\(.number) \(.priority // "no priority") · \(.size // "?") · \(.title)"
+        + (if .milestone then " (\(.milestone))" else "" end) end' <<<"$data"
+  fi
+}
+
+# Seconds in a duration such as 90m, 12h, 7d or 2w.
+duration_seconds() {
+  [[ $1 =~ ^([0-9]+)([mhdw])$ ]] || die "not a duration: $1 (use for example 12h, 7d or 2w)"
+  case ${BASH_REMATCH[2]} in
+    m) echo $((BASH_REMATCH[1] * 60)) ;;
+    h) echo $((BASH_REMATCH[1] * 3600)) ;;
+    d) echo $((BASH_REMATCH[1] * 86400)) ;;
+    w) echo $((BASH_REMATCH[1] * 604800)) ;;
+  esac
+}
+
+# UTC ISO 8601 time of an epoch, the format GitHub uses (GNU date, then BSD).
+iso_time() {
+  date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ
+}
+
+# The dashboard as JSON, from board_data; $1 is the start of the period, $2 now, $3 the repository.
+# shellcheck disable=SC2016 # a jq program, not shell
+STATUS_JQ='. as $d | $d.items as $items | {
+  repository: $repo, generatedAt: $now, since: $since,
+  done: [$d.closed[] | select(.closedAt >= $since and .reason != "NOT_PLANNED") | {number, title, closedAt}] | sort_by(.closedAt) | reverse,
+  mergedPullRequests: ([$d.merged[] | select(.mergedAt >= $since)] | length),
+  inProgress: [$items[] | select(.open and .status == "In progress") | {number, title}],
+  inReview: [$items[] | select(.open and .status == "In review") | . as $i
+    | {number, title, pr: ([$d.prs[] | select(.branch | test("^[a-z]+/\($i.number)-")) | .number][0])}],
+  blocked: [$items[] | select(.open) | ([
+      (if (.labels | index("blocked")) then "blocked" else empty end),
+      (if (.labels | index("needs-info")) then "needs information" else empty end),
+      (if (.blockers | length) > 0 and (.status | IN("Ready", "In progress", "In review"))
+        then "waits for " + (.blockers | map("#\(.)") | join(", ")) else empty end)]) as $r
+    | select($r | length > 0) | {number, title, reasons: $r}],
+  waiting: (([$d.prs[] | select(.labels | index("needs-human")) | {kind: "pull request", number, title, why: "needs a human decision"}]
+      + [$d.prs[] | select(.failing | length > 0) | {kind: "pull request", number, title, why: ("failing: " + (.failing | join(", ")))}]
+      + [$items[] | select(.open and (.labels | index("needs-human"))) | {kind: "ticket", number, title, why: "needs a human decision"}])
+    | group_by([.kind, .number]) | map(.[0] + {why: (map(.why) | join("; "))})),
+  next: ($d | pick | .[:3] | map({number, title, priority, size, milestone})),
+  release: {latest: $d.release, pr: ([$d.prs[] | select(.branch | startswith("release-please")) | {number, title}][0])}
+}'
+
+# The same, in plain words; $head says which period it covers.
+# shellcheck disable=SC2016 # a jq program, not shell
+STATUS_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" else ($ls[] | "  " + .) end);
+  def ticket: "#\(.number) \(.title)";
+  "senior-mode · \(.repository) · \(.generatedAt)", "",
+  sec("\($head) (\(.done | length))"; [.done[] | ticket] + (if .mergedPullRequests > 0
+    then ["\(.mergedPullRequests) pull request\(if .mergedPullRequests > 1 then "s" else "" end) merged"] else [] end)),
+  sec("In progress (\(.inProgress | length))"; [.inProgress[] | ticket]),
+  sec("In review (\(.inReview | length))"; [.inReview[] | ticket + (if .pr then " (pull request #\(.pr))" else "" end)]),
+  sec("Blocked or missing information (\(.blocked | length))"; [.blocked[] | ticket + ": " + (.reasons | join(", "))]),
+  sec("Waiting for a human (\(.waiting | length))"; [.waiting[] | "\(.kind) #\(.number) \(.title): \(.why)"]),
+  sec("Next Ready"; [.next[] | "#\(.number) \(.priority // "no priority") · \(.size // "?") · \(.title)"
+    + (if .milestone then " (\(.milestone))" else "" end)]),
+  "Release",
+  (if .release.latest then "  Last release \(.release.latest.tag), \(.release.latest.date[:10])." else "  No release yet." end)
+    + (if .release.pr then " Release pull request #\(.release.pr.number) is open." else " No release pull request open." end)'
+
+# One status report. $1 json|text, $2 --since duration or "", $3 true to move the "last time" mark.
+status_once() {
+  local json=$1 since=$2 save=$3 root cache now_s now since_iso head data out
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  cache=$root/.claude/senior-mode/status-seen
+  now_s=$(date +%s)
+  now=$(iso_time "$now_s")
+  if [ -n "$since" ]; then
+    since_iso=$(iso_time $((now_s - $(duration_seconds "$since"))))
+    head="Done in the last $since"
+  elif [ -s "$cache" ]; then
+    since_iso=$(sed -n 1p "$cache")
+    head="Done since last time"
+  else
+    since_iso=$(iso_time $((now_s - 604800)))
+    head="Done in the last 7d"
+  fi
+  data=$(board_data true) || return 1
+  out=$(jq -c --arg now "$now" --arg since "$since_iso" --arg repo "$(repo_slug)" "$PICK_DEF$STATUS_JQ" <<<"$data") ||
+    die "could not build the status"
+  if [ "$json" = true ]; then
+    printf '%s\n' "$out"
+  else
+    jq -r --arg head "$head" "$STATUS_TEXT_JQ" <<<"$out"
+  fi
+  if [ "$save" = true ]; then
+    # The directory ignores itself, so the mark never dirties the tree that `check` records.
+    mkdir -p "$(dirname "$cache")"
+    echo '*' >"$(dirname "$cache")/.gitignore"
+    printf '%s\n' "$now" >"$cache"
+  fi
+}
+
+# senior-mode status [--json] [--since <dur>] [--watch [secs]]
+# A plain run reports what is new since the previous plain run and moves that mark; --json, --since
+# and --watch only read it.
+status() {
+  local json=false since="" watch=false secs=30
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --json) json=true ;;
+      --since)
+        [ -n "${2:-}" ] || usage
+        since=$2
+        duration_seconds "$since" >/dev/null
+        shift
+        ;;
+      --watch)
+        watch=true
+        if [[ ${2:-} =~ ^[1-9][0-9]*$ ]]; then
+          secs=$2
+          shift
+        fi
+        ;;
+      *) usage ;;
+    esac
+    shift
+  done
+  if [ "$watch" = true ]; then
+    [ "$json" = false ] || die "status --watch cannot print JSON"
+    while :; do
+      if [ -t 1 ]; then printf '\033[H\033[2J'; else echo; fi
+      status_once false "$since" false || echo "GitHub did not answer; trying again in ${secs}s"
+      sleep "$secs"
+    done
+  fi
+  if [ "$json" = false ] && [ -z "$since" ]; then
+    status_once false "" true || exit 1
+  else
+    status_once "$json" "$since" false || exit 1
+  fi
+}
+
 case "${1:-}" in
   context)
     context
@@ -884,6 +1107,14 @@ case "${1:-}" in
       repo) shift 2; setup_repo "$@" ;;
       *) usage ;;
     esac
+    ;;
+  pick)
+    shift
+    pick "$@"
+    ;;
+  status)
+    shift
+    status "$@"
     ;;
   check)
     [ $# -eq 1 ] || usage

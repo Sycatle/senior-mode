@@ -44,14 +44,18 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `review.sections` | none | Project review checklists, see [below](#project-review-sections) |
 | `project` | written by setup | Board owner, number, id, and field and option ids, so no agent looks them up again |
 | `docs.extra` | none | Extra living documents the `docs` skill keeps current after a merge: a list of `{ "path", "purpose" }`; its changes are flagged for human review. Add it yourself |
+| `autonomy.maxTickets` | `3` | Tickets per [run](autonomy.md#run) |
+| `autonomy.parallel` | `1` | Tickets a run works on at once |
+| `autonomy.maxConsecutiveFailures` | `2` | Failed tickets in a row after which a run starts no new one |
+| `autonomy.merge` | `false` | Whether a run merges the pull requests that pass every bound |
+| `autonomy.escalate` | `true` | Whether a ticket that fails on Sonnet is retried once on Opus |
+| `e2e.slots` | `2` | End-to-end suites that may run at once on the machine (the check named `e2e`) |
 
 `senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`).
 
 ### Keys with defaults but no effect yet
 
-`autonomy.maxTickets` (3), `autonomy.parallel` (1), `autonomy.maxConsecutiveFailures` (2),
-`autonomy.merge` (false), `autonomy.escalate` (true) and `limits.prLines` (400) can be read, but only `run` will use them
-([v0.3](https://github.com/Sycatle/senior-mode/milestone/3)).
+`limits.prLines` (400) can be read, but nothing uses it yet.
 
 ## Project review sections
 

@@ -83,7 +83,7 @@ The walk-through, step by step: [A typical day](docs/guide/a-typical-day.md).
 | `/senior-mode:frame` | Turn an idea into decisions, a spec, ADRs and ready tickets. | Available |
 | `next` | The daily session: board state, then delivers the top ready ticket with you. | [Coming in v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
 | `/senior-mode:status` | Plain-language dashboard: done, in progress, blocked, waiting for you. Also a digest for readers who are not technical. | Available |
-| `run` | Delivers up to N ready tickets on its own, within the guardrails. | [Coming in v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
+| `/senior-mode:run` | Delivers up to N ready tickets on its own, one session and worktree per ticket, within the guardrails. Stops at reviewed pull requests unless you turn merging on. | Available |
 | `retro` | Weekly: reprioritise, list debt, turn repeated mistakes into checks. | [Coming in v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
 
 Behind them, small discipline skills load only when they apply (triage, ready, tdd, commit,
@@ -113,7 +113,7 @@ Two collections inspired senior-mode, and they are excellent. Pick the one that 
 | Issues and board | GitHub Issues and Projects (fields, milestones) | No | GitHub or GitLab issues, sub-issues, dependencies |
 | Merge rules and CI | Ruleset, required statuses, local or Actions CI | No | No |
 | Model per task | Pinned per agent | Per role, by guidance | No |
-| Autonomous multi-ticket run | Coming in v0.3 | One plan at a time | Yes (`implement-spec`) |
+| Autonomous multi-ticket run | Yes (`run`) | One plan at a time | Yes (`implement-spec`) |
 | Platforms | Claude Code | Claude Code and many other agents | Claude Code and other agents |
 
 Choose **superpowers** if you want strong habits in every session across many coding agents and do

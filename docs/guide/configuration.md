@@ -34,9 +34,10 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `language` | `en` | Language of the templates (`en` or `fr`) and of what Claude writes for you; setup does not write it, add it yourself |
 | `preset` | detected | `node` with a `package.json`, else `go`, `rust` or `python` from their manifest, else `generic`; a stored value wins |
 | `commands` | detected or asked | `lint`, `typecheck`, `test`, `build`, and `e2e` for node; `format` for python and rust |
-| `framework` | none | `next` when Next.js is a dependency (recorded only) |
+| `framework` | none | `next` when Next.js is a dependency; the node preset then adds `middleware.*` and `src/middleware.*` to `protected` |
+| `envGuard.forbidden` | none | Strings, or `/regex/` patterns, that must never appear on an agent machine; turns on the `env guard` check |
 | `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order |
-| `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list when the key is absent and keeps yours; `senior-mode protected` and the reviewer read it |
+| `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, even an empty one; `senior-mode protected` and the reviewer read it |
 | `ci.mode` | `local` | `local` or `actions` |
 | `secrets` | none | Extra globs the [secrets guard](autonomy.md#secrets-guard-guard-secretssh) denies, added to its defaults: `"*.token"` matches a file name anywhere, `"config/prod.*"` and `"**/vault/*"` match from the repository root. It never allows a default. Add it yourself; setup does not write it |
 | `github.protection` | written by setup | `ruleset` when the `senior-mode` ruleset protects the default branch, `none` when GitHub refused it (private repository on a Free plan): the branch is then not protected on the server |
@@ -61,10 +62,30 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   `commit-msg` hook is senior-mode's own.
 - Checks you add by hand are kept on re-run. `senior-mode setup repo --command test="npm test"`
   replaces the command of the check with the same name.
-- `senior-mode check` prints `ok` or `FAIL` per check, with the last 20 lines of a failure.
+- `senior-mode check` prints `ok`, `skip` or `FAIL` per check, with the last 20 lines of a failure.
+  A check whose first output line is `skipped: <reason>` passes and prints `skip <name>: <reason>`,
+  so a check that had nothing to do is visible instead of a silent `ok`.
+- When `envGuard.forbidden` lists something, setup adds the `env guard` check (below).
 
 Not in the list yet: spec drift ([v0.2](https://github.com/Sycatle/senior-mode/milestone/2)) and
 secret scanning (planned in spec §14, no milestone yet). You can add your own as a check entry.
+
+### Environment guard
+
+Agent machines use development environments only. Name what must never be there, and the check
+enforces it:
+
+```json
+{ "envGuard": { "forbidden": ["db.prod.example.com", "prod-project-ref", "/acct-[0-9]{12}/"] } }
+```
+
+An entry is a literal string, or an extended regular expression between slashes. Run
+`senior-mode setup repo` after adding the key: it copies `.githooks/env-guard.sh` (a script of your
+own with that name is kept) and adds the `env guard` check. The check fails when an entry appears in
+any `.env*` file under the repository (tracked or not, `.git` and `node_modules` left out) or in the
+environment variables of the process that runs the checks. It prints file names, variable names and
+line numbers, never a value or a pattern. Remove the key and the check shows as `skip`. It is not a
+secrets scanner: it catches the production host, ref or account you listed, not any secret.
 
 ## CI mode
 
@@ -85,7 +106,7 @@ public, then run `senior-mode setup github` again to get the ruleset and `"rules
 
 | Preset | State | Commands |
 |---|---|---|
-| `node` | Available | Your `package.json` scripts (`lint`, `typecheck` or `type-check`, `test`, `build`, `test:e2e` or `e2e`), run with the package manager of your lockfile (npm, pnpm, yarn, bun). With a `tsconfig.json`, no typecheck script and `typescript` installed: `tsc --noEmit`, never downloaded. npm's placeholder test script does not count. |
+| `node` | Available | Next.js aware (see `framework`) with no separate preset. Your `package.json` scripts (`lint`, `typecheck` or `type-check`, `test`, `build`, `test:e2e` or `e2e`), run with the package manager of your lockfile (npm, pnpm, yarn, bun). With a `tsconfig.json`, no typecheck script and `typescript` installed: `tsc --noEmit`, never downloaded. npm's placeholder test script does not count. |
 | `generic` | Available | Asked once, then stored |
 | `python` | Available | From the tools the project uses: `ruff check .` or `flake8`; `black --check .` or `ruff format --check .`; `mypy .` or `pyright`; `pytest`; `python -m build` with a `[build-system]`. Prefixed with `uv run` (with `uv.lock`) or `poetry run` (with `poetry.lock`). Detected by `pyproject.toml`, `setup.py` or `requirements.txt`. |
 | `go` | Available | `go vet ./...` (plus `golangci-lint run` when a `.golangci` config exists), `go test ./...`, `go build ./...`. Detected by `go.mod`. |
@@ -115,7 +136,8 @@ They need only `bash`, `git` and `jq`. A hook of your own with the same name is 
 Setup adds a `Principles` block between `<!-- senior-mode:principles -->` and
 `<!-- /senior-mode:principles -->` markers: keep it simple, test first, atomic Conventional Commits,
 one PR per issue of about 400 lines at most, decisions in `docs/adr/`, done means the checks pass,
-ask when a decision is open. Re-running setup refreshes the block; edit outside it. Without a
+agent machines use development environments only (`envGuard` enforces it when configured), ask when a
+decision is open. Re-running setup refreshes the block; edit outside it. Without a
 `CLAUDE.md`, setup creates a skeleton (commands, code map, pitfalls) that Claude fills from the code.
 Setup warns when the file goes over 80 lines.
 

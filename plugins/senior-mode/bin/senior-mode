@@ -519,18 +519,26 @@ place() { # template destination label
   echo "$3: created"
 }
 
+# Installs or refreshes one of our scripts in .githooks/ (marked "# senior-mode:" on its second
+# line); a file of the project's own with that name is kept.
+githooks_install() { # root source label
+  local dest
+  dest=$1/.githooks/$(basename "$2")
+  if [ -e "$dest" ] && ! grep -q '^# senior-mode:' "$dest"; then
+    echo "$3: yours kept"
+  elif ! cmp -s "$2" "$dest" || [ ! -x "$dest" ]; then
+    mkdir -p "$1/.githooks"
+    cp "$2" "$dest"
+    chmod +x "$dest"
+    echo "$3: installed"
+  fi
+}
+
 # Installs or refreshes the senior-mode git hooks; a hook of the project's own is kept.
 setup_githooks() {
   local root=$1 tpl=$2 hook path
   for hook in commit-msg pre-push; do
-    if [ -e "$root/.githooks/$hook" ] && ! grep -q '^# senior-mode:' "$root/.githooks/$hook"; then
-      echo "git hook $hook: yours kept"
-    elif ! cmp -s "$tpl/githooks/$hook" "$root/.githooks/$hook" || [ ! -x "$root/.githooks/$hook" ]; then
-      mkdir -p "$root/.githooks"
-      cp "$tpl/githooks/$hook" "$root/.githooks/$hook"
-      chmod +x "$root/.githooks/$hook"
-      echo "git hook $hook: installed"
-    fi
+    githooks_install "$root" "$tpl/githooks/$hook" "git hook $hook"
   done
   path=$(git -C "$root" config core.hooksPath || true)
   if [ -z "$path" ]; then
@@ -670,7 +678,7 @@ rust_detect() {
 # test, build; e2e for node) and derives its check.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_repo() {
-  local root file tpl pname="" preset lang name commands='{}' detected='{}' out ours
+  local root file tpl pname="" preset lang name commands='{}' detected='{}' out ours guard
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   tpl=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
@@ -709,6 +717,15 @@ setup_repo() {
   name=$(basename "$root")
 
   setup_githooks "$root" "$tpl"
+  # The environment guard: only when envGuard.forbidden lists something. The check stays when the
+  # key is removed later, and then reports itself skipped.
+  guard=false
+  jq -e '(.envGuard.forbidden // []) | type == "array" and all(type == "string")' "$file" >/dev/null ||
+    die "envGuard.forbidden in .claude/senior-mode.json must be a list of strings"
+  if jq -e '(.envGuard.forbidden // []) | length > 0' "$file" >/dev/null; then
+    guard=true
+    githooks_install "$root" "$tpl/githooks/env-guard.sh" "check script env-guard.sh"
+  fi
   # The commit subjects check runs our commit-msg hook; a project's own hook may not understand it.
   ours=false
   ! grep -q '^# senior-mode:' "$root/.githooks/commit-msg" 2>/dev/null || ours=true
@@ -716,12 +733,13 @@ setup_repo() {
   json_update "$file" '.preset = $pn | .commands = ($d.commands // {}) + (.commands // {}) + $c
     | if $d.framework then .framework = $d.framework else . end | .commands as $all
     | ($p[0].commands | map(select($all[.] != null) | {name: ., run: $all[.]})) as $derived
-    | ($derived + (if $ours then $p[0].checks else [] end)) as $want
+    | ($derived + (if $ours then $p[0].checks else [] end)
+        + (if $guard then [{name: "env guard", run: ".githooks/env-guard.sh"}] else [] end)) as $want
     | .checks = ((.checks // []) as $have
       | [$have[] | if $c[.name] then .run = $c[.name] else . end]
         + [$want[] | select(.name as $n | $have | any(.name == $n) | not)])
     | if has("protected") or ($p[0].protected | not) then . else .protected = $p[0].protected end' \
-    --argjson c "$commands" --argjson ours "$ours" --slurpfile p "$preset" --arg pn "$pname" \
+    --argjson c "$commands" --argjson ours "$ours" --argjson guard "$guard" --slurpfile p "$preset" --arg pn "$pname" \
     --argjson d "$detected" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
   echo "preset: $pname$(jq -r --argjson d "$detected" '[if $d.typescript == true then "TypeScript"

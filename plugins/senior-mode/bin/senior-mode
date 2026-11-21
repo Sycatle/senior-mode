@@ -596,6 +596,7 @@ node_detect() {
 other_preset() {
   local root=$1 f
   [ ! -f "$root/go.mod" ] || { echo go; return; }
+  [ ! -f "$root/Cargo.toml" ] || { echo rust; return; }
   for f in pyproject.toml setup.py requirements.txt; do
     [ ! -f "$root/$f" ] || { echo python; return; }
   done
@@ -650,11 +651,18 @@ go_detect() {
   jq -nc --arg lint "$lint" '{commands: {lint: $lint, test: "go test ./...", build: "go build ./..."}}'
 }
 
+# Commands of a Cargo project (spec 0001 §14, #72): clippy denying warnings, rustfmt in check mode,
+# test and build. Prints {commands}.
+rust_detect() {
+  jq -nc '{commands: {lint: "cargo clippy --all-targets -- -D warnings", format: "cargo fmt --check",
+    test: "cargo test", build: "cargo build"}}'
+}
+
 # The documents and checks of a project (spec 0001 §12, §14, #12), idempotent; whatever the project
 # already has is extended, never replaced. The preset is the stored one (typescript, its former name,
-# becomes node), else node when a package.json exists, else the one of its manifest (go, python), else
-# generic. `--command <name>=<command>` stores a command of the preset (lint, format, typecheck, test,
-# build; e2e for node) and derives its check.
+# becomes node), else node when a package.json exists, else the one of its manifest (go, rust, python),
+# else generic. `--command <name>=<command>` stores a command of the preset (lint, format, typecheck,
+# test, build; e2e for node) and derives its check.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_repo() {
   local root file tpl pname="" preset lang name commands='{}' detected='{}' out ours
@@ -678,6 +686,7 @@ setup_repo() {
     node) detected=$(node_detect "$root") || die "could not read package.json" ;;
     python) detected=$(python_detect "$root") ;;
     go) detected=$(go_detect "$root") ;;
+    rust) detected=$(rust_detect) ;;
   esac
   tpl=$tpl/templates
   while [ $# -gt 0 ]; do

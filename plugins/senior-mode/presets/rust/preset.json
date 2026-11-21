@@ -1,0 +1,17 @@
+{
+  "commands": ["lint", "format", "test", "build"],
+  "protected": [
+    "**/migrations/**",
+    "**/auth/**",
+    "**/security/**",
+    ".github/workflows/**",
+    "Dockerfile*",
+    "**/Dockerfile*",
+    "docker-compose*.yml",
+    "infra/**"
+  ],
+  "checks": [{ "name": "commit subjects", "run": ".githooks/commit-msg --branch" }],
+  "release": {
+    "packages": { ".": { "release-type": "rust", "component": "{{name}}", "include-component-in-tag": true } }
+  }
+}

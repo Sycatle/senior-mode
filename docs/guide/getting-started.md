@@ -78,6 +78,7 @@ Before changing anything, setup:
 - git hooks in `.githooks/` (`commit-msg`, `pre-push`), and `core.hooksPath` set to `.githooks`;
 - a `Principles` block in `CLAUDE.md`, or a `CLAUDE.md` skeleton that Claude fills from the code;
 - a pull request template and two issue forms (feature, bug);
+- `docs/architecture.md`, a system overview from a template that the `docs` skill keeps current;
 - permissions in `.claude/settings.json`;
 - `release-please-config.json` and `.release-please-manifest.json`;
 - in `actions` mode, `.github/workflows/senior-mode.yml`.

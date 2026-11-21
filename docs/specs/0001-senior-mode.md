@@ -119,39 +119,52 @@ Natural-language triggers in any language route to them ("let's frame", "cadrons
 | `status` | Plain-language dashboard: done since last time, in progress, blocked, next, waiting for a human, release state. Cheap. | ops |
 | `retro` | Weekly: reprioritise, close or rescope stale items, list debt, check spec drift, and turn recurring mistakes into mechanisms (a hook, a CI check, a lint rule) proposed as tickets. | architect, ops |
 
-The companion plugin `senior-mode-fr` adds French aliases (`/cadre`, `/suivant`, `/lance`, `/etat`,
-`/retro`, `/installer`), each a one-line skill delegating to the English command.
+French is served without a companion plugin (ADR 0013): French trigger phrases in the skill
+descriptions, and the `language` config key for replies and documents.
 
-## 8. Discipline skills
+## 8. Lifecycle, roles and skills
 
-Model-invoked, small (target < 3 KB each), loaded only when their description matches:
+Every skill is a step of the delivery lifecycle and a role of the team (ADR 0009). A practice that
+fits no step is a section of an existing skill, or stays out of the plugin.
+
+| Role | Step | Skills |
+|---|---|---|
+| Lead | Decide what to build and when it is ready | `triage`, `frame`, `spec`, `adr`, `grill`, `ready` |
+| Developer | Build it | `tdd` (refactoring is a mode of it), `verify`, `commit` |
+| Reviewer | Check it | `review` |
+| Release and ops | Ship it, run the day | `run`, `next`, `status`, `docs` |
+| Learning | Improve the method | `retro` |
+
+The commands of section 7 are the user-invocable entry points of these steps. The disciplines below
+are model-invoked, small (target < 3 KB each), loaded only when their description matches:
 
 | Skill | Rule it carries |
 |---|---|
 | `triage` | Section 5 criteria and what each size requires |
 | `ready` | Definition of Ready checklist; moves an item to `Ready` or labels it `needs-info` |
-| `tdd` | Red first for logic and bugs (regression test mandatory); UI and glue covered by an end-to-end scenario per acceptance criterion; spikes exempt but discarded or tested before merge |
+| `tdd` | Red first for logic and bugs (regression test mandatory); UI and glue covered by an end-to-end scenario per acceptance criterion; spikes exempt but discarded or tested before merge. Refactor mode: behaviour pinned by tests first, then structure changed in steps that each stay green |
 | `commit` | Atomic conventional commits: one logical change, builds and passes on its own, body says why |
 | `verify` | Run the project's verification commands and read the output before claiming success |
 | `spec` | Spec template, lifecycle (`draft` → `accepted` → `implemented` → `superseded`), `paths` frontmatter, update in the same PR |
 | `adr` | When an ADR is required, MADR-lite template, never edit an accepted ADR (supersede it) |
 | `grill` | Interview protocol: decision frontier, 3-4 questions per round, recommended option first, facts fetched by `scout`, never ask what the repo answers |
-| `review` | Two axes (spec conformance, standards: SOLID, KISS, DRY where it pays, naming, error handling, security, tests that test behaviour) |
+| `review` | Two axes (spec conformance, standards: SOLID, KISS, DRY where it pays, naming, error handling, security, tests that test behaviour), plus sections loaded when relevant: explain (a change put in plain words), UI, and dependencies and data (licences, personal data). Projects add their own through `review.sections` (ADR 0010) |
+| `docs` | Generic living documentation: README, architecture, user-facing changelog, ADRs; more through `docs.extra` |
 
 ## 9. Agent team
 
 Pinned model and effort per role (ADR 0004). The orchestrating session stays thin: it routes,
-it does not read code at length.
+it does not read code at length. Each agent serves one team role of section 8.
 
-| Agent | Model / effort | Role | Tools |
-|---|---|---|---|
-| `scout` | haiku / low | Read the codebase, answer factual questions for interviews and planning | read-only |
-| `researcher` | sonnet / medium | External docs, library comparison, prior art, with sources | read-only + web |
-| `architect` | opus / high | Alternatives, ADRs, specs, vertical-slice decomposition, ticket splits | read + docs write |
-| `test-author` | sonnet / medium | Failing tests from acceptance criteria, in the ticket's worktree | edit tests only |
-| `implementer` | sonnet / medium → opus / high after 2 failed attempts | Make tests green, refactor, atomic commits | edit, bash |
-| `reviewer` | opus / high | Fresh-context review on both axes, protected-zone check, merge verdict | read-only + gh |
-| `ops` | haiku / low | Issues, Project fields, labels, PRs, CI status, merges, releases | gh, git |
+| Agent | Team role | Model / effort | Task | Tools |
+|---|---|---|---|---|
+| `scout` | Lead | haiku / low | Read the codebase, answer factual questions for interviews and planning | read-only |
+| `researcher` | Lead | sonnet / medium | External docs, library comparison, prior art, with sources | read-only + web |
+| `architect` | Lead | opus / high | Alternatives, ADRs, specs, vertical-slice decomposition, ticket splits | read + docs write |
+| `test-author` | Developer | sonnet / medium | Failing tests from acceptance criteria, in the ticket's worktree | edit tests only |
+| `implementer` | Developer | sonnet / medium → opus / high after 2 failed attempts | Make tests green, refactor, atomic commits | edit, bash |
+| `reviewer` | Reviewer | opus / high | Fresh-context review on both axes, protected-zone check, merge verdict | read-only + gh |
+| `ops` | Release and ops | haiku / low | Issues, Project fields, labels, PRs, CI status, merges, releases | gh, git |
 
 ## 10. Autonomy and guardrails
 

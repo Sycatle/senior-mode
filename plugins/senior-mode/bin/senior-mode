@@ -760,6 +760,8 @@ setup_repo() {
   fi
   place "$tpl/$lang/ISSUE_TEMPLATE/feature.yml" "$root/.github/ISSUE_TEMPLATE/feature.yml" "issue form feature"
   place "$tpl/$lang/ISSUE_TEMPLATE/bug.yml" "$root/.github/ISSUE_TEMPLATE/bug.yml" "issue form bug"
+  # The system overview the docs skill keeps current (spec 0001 §8); never overwritten.
+  place "$tpl/$lang/architecture.md" "$root/docs/architecture.md" "docs/architecture.md"
   # Other workflows are left as they are; local mode disables them on GitHub (setup github).
   [ "$(jq -r '.ci.mode // "local"' "$file")" != actions ] ||
     place "$tpl/workflows/senior-mode.yml" "$root/.github/workflows/senior-mode.yml" "workflow senior-mode.yml"

@@ -387,6 +387,29 @@ setup_ruleset() {
   fi
 }
 
+# True when gh's error (stderr, on stdin) is the plan refusing rulesets: HTTP 403 and GitHub's message
+# "Upgrade to GitHub Pro or make this repository public to enable this feature." (a Free account or
+# organization, private repository). Matches the status and a stable fragment, not the whole sentence.
+ruleset_refused() {
+  local err
+  err=$(cat)
+  grep -q 'HTTP 403' <<<"$err" && grep -qiE 'upgrade to github (pro|team)|make this repository public' <<<"$err"
+}
+
+# Sets github.protection (spec 0001 §13): ruleset, or none when the plan refuses it; none also forces
+# ci.mode local, since the pre-push hook is then the only gate. Prints the plain-words warning.
+setup_protection() { # config-file ruleset|none
+  local was=""
+  [ "$(jq -r '.ci.mode' "$1")" != actions ] || was=" (changed from actions)"
+  if [ "$2" = none ]; then
+    json_update "$1" '.github.protection = "none" | .ci.mode = "local"' || [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
+    echo "protection: NOT enforced on the server. GitHub offers no rulesets or branch protection on a private repository of a Free account or organization, so anyone with push access can push to the default branch. ci.mode is local$was: the pre-push hook is the only gate."
+    echo "protection: to enforce it, make the repository public, or upgrade to GitHub Pro or Team and run setup again; otherwise accept it and keep the local gate."
+  else
+    json_update "$1" '.github.protection = "ruleset"' || [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
+  fi
+}
+
 # The GitHub side of a project (spec 0001 §11, #11), idempotent: Project linked to the repository with
 # Status, Priority and Size; labels; rebase-only merges; a ruleset requiring both statuses
 # (ADR 0006); ids cached in the config.
@@ -460,15 +483,17 @@ type:chore|ededed|Maintenance with no user-visible change'
     --delete-branch-on-merge >/dev/null
   echo "merges: rebase only, branches deleted after merge"
 
-  setup_workflows "$slug" "$(jq -r '.ci.mode // "local"' "$file")"
-
+  # Before the workflows: a refused ruleset forces ci.mode local, which decides what happens to them.
   if err=$(setup_ruleset "$slug" 2>&1 >/dev/null); then
+    setup_protection "$file" ruleset
     echo "default branch: ruleset senior-mode, pull requests only, rebase, senior-mode/ci and senior-mode/review on an up-to-date branch, linear history; admins may bypass with gh pr merge --admin; other protection untouched"
-  elif grep -q "Upgrade to GitHub Pro" <<<"$err"; then
-    echo "default branch: rulesets are not available on this plan for a private repository; the git hooks and the guard hook still apply"
+  elif ruleset_refused <<<"$err"; then
+    setup_protection "$file" none
   else
     die "ruleset on the default branch: $err"
   fi
+
+  setup_workflows "$slug" "$(jq -r '.ci.mode // "local"' "$file")"
 }
 
 # Writes `jq <filter> <file>` back to the file only when the JSON changes, so a file without real

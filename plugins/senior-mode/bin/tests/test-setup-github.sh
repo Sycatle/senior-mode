@@ -15,14 +15,15 @@ echo "$*" >>"$GH_LOG"
 jqf="" prev=""
 for a in "$@"; do [ "$prev" = --jq ] && jqf=$a; prev=$a; done
 respond() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
-plan_limit() {
-  [ -z "${PROTECTION_403:-}" ] || { echo "HTTP 403: Upgrade to GitHub Pro or make this repository public to enable this feature." >&2; exit 1; }
+plan_limit() { # PROTECTION_403=1 refuses reads and writes, =write only the write; real gh error line
+  [ -z "${PROTECTION_403:-}" ] || { [ "$1" = read ] && [ "$PROTECTION_403" = write ]; } && return 0
+  echo "${PROTECTION_ERR:-gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)}" >&2; exit 1
 }
 case "$*" in
   "api repos/acme/app --jq"*) respond <"$FIX/repo.json" ;;
-  "api repos/acme/app/rulesets --jq"*) plan_limit
+  "api repos/acme/app/rulesets --jq"*) plan_limit read
     if [ -f "$FIX/rulesets.json" ]; then respond <"$FIX/rulesets.json"; else echo '[]' | respond; fi ;;
-  "api -X POST repos/acme/app/rulesets"*) plan_limit; cat >>"$GH_LOG"
+  "api -X POST repos/acme/app/rulesets"*) plan_limit write; cat >>"$GH_LOG"
     echo '[{"id": 9, "name": "senior-mode", "source_type": "Repository"}]' >"$FIX/rulesets.json" ;;
   "api -X PUT repos/acme/app/rulesets/"*) cat >>"$GH_LOG" ;;
   "workflow list"*) if [ -f "$FIX/workflows.json" ]; then respond <"$FIX/workflows.json"; else echo '[]' | respond; fi ;;
@@ -202,10 +203,47 @@ logged "workflow disable" && fail "a rerun without --ci forgets the stored mode"
 grep -q "RELEASE_PLEASE_TOKEN" "$work/out" && fail "release note printed though Actions may open pull requests"
 (cd "$repo" && "$cli" setup github --ci cloud) >/dev/null 2>&1 && fail "an unknown ci mode is accepted"
 
-# Rulesets unavailable on the plan.
-rm "$FIX/rulesets.json"
-PROTECTION_403=1 setup
-grep -qi "not available" "$work/out" || fail "plan limit not reported: $(cat "$work/out")"
+# The ruleset is recorded as the protection when it is in place.
+[ "$(cfg .github.protection)" = ruleset ] || fail "protection not recorded as ruleset: $(cfg .github)"
+
+# Private repository on GitHub Free: the API refuses rulesets (real response of GET and POST, HTTP 403).
+# Setup finishes, forces ci.mode local, records protection none and warns in plain words.
+rm -f "$FIX/rulesets.json"
+echo '[{"id": 14, "name": "senior-mode", "path": ".github/workflows/senior-mode.yml", "state": "disabled_manually"}]' >"$FIX/workflows.json"
+for where in 1 write; do
+  rm -f "$FIX/rulesets.json"
+  jq '.ci.mode = "actions"' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+  PROTECTION_403=$where setup
+  [ "$(cfg .github.protection)" = none ] || fail "$where: protection not recorded as none: $(cfg .github)"
+  [ "$(cfg .ci.mode)" = local ] || fail "$where: ci.mode not forced to local: $(cfg .ci)"
+  [ "$(cfg .project.number)" = 5 ] || fail "$where: the rest of the setup is lost: $(cfg .project)"
+  grep -q "NOT enforced" "$work/out" || fail "$where: no plain warning: $(cat "$work/out")"
+  grep -q "push to the default branch" "$work/out" || fail "$where: risk not spelled out: $(cat "$work/out")"
+  for option in "public" "Pro" "local"; do
+    grep -qi "$option" "$work/out" || fail "$where: option $option missing from the warning"
+  done
+  logged "workflow enable" && fail "$where: a workflow turned on although ci.mode is local"
+  logged "api -X PUT" && fail "$where: ruleset updated although the plan refuses it"
+done
+[ "$(grep -c "NOT enforced" "$work/out")" = 1 ] || fail "warning repeated: $(cat "$work/out")"
+
+# The plan changes (public, Pro): the next run puts the ruleset back and says so.
+setup
+[ "$(cfg .github.protection)" = ruleset ] || fail "protection not back to ruleset: $(cfg .github)"
+grep -q "NOT enforced" "$work/out" && fail "warning printed although the ruleset is in place"
+[ "$(cfg .ci.mode)" = local ] || fail "ci.mode changed back by itself: $(cfg .ci)"
+
+# Any other refusal (403 for a missing permission, 404) still stops setup, and records nothing.
+rm -f "$FIX/rulesets.json"
+for err in "gh: Resource not accessible by personal access token (HTTP 403)" "gh: Not Found (HTTP 404)" \
+  "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 500)"; do
+  jq '.github.protection = "ruleset"' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+  : >"$GH_LOG"
+  (cd "$repo" && PROTECTION_403=1 PROTECTION_ERR="$err" "$cli" setup github) >"$work/out" 2>"$work/err" &&
+    fail "setup succeeds on: $err"
+  grep -qF "${err#gh: }" "$work/err" || fail "error not reported for: $err"
+  [ "$(cfg .github.protection)" = ruleset ] || fail "protection rewritten on: $err"
+done
 
 [ "$failures" -eq 0 ] && echo "setup-github: all cases pass"
 exit "$failures"

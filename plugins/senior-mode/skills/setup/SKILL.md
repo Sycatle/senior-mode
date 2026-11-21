@@ -10,31 +10,31 @@ Safe to rerun: it repairs, never duplicates.
 
 ## Before
 
-1. The folder is a git repository with an `origin` remote on GitHub. If not, explain in plain words
-   and offer to create one, private by default, never without a yes. GitHub needs a first commit to
-   have a default branch: commit what is there, then `gh repo create <name> --private --source . --push`.
+1. The folder is a git repository with an `origin` remote on GitHub. If not, explain and offer to
+   create one, private by default, never without a yes. GitHub needs a first commit: commit what is
+   there, then `gh repo create <name> --private --source . --push`.
 2. `gh auth status` succeeds. If the token lacks the `project` scope, ask the user to run
    `gh auth refresh -s project` (it opens a browser) and wait.
 3. Ask once: checks before each push only (`local`, free) or also on GitHub Actions (`actions`,
    spends the Actions budget). Then tell the user, in one short table, what will change on GitHub:
    a Project board linked to the repository, labels, rebase-only merges, a ruleset on the default
-   branch, in `local` the repository's workflows disabled (files kept), and the files of Repository
-   below. Proceed on their yes.
+   branch, in `local` the workflows disabled (files kept), and the files below. Proceed on their yes.
 
 ## GitHub
 
 Run `senior-mode setup github --ci <local|actions>`. It:
 
-- finds or creates the Project, links it, ensures the fields Status, Priority and Size, keeping
-  options and values already there;
+- finds or creates the Project, links it, ensures the fields Status, Priority and Size (options
+  and values kept);
 - creates the labels `needs-human`, `needs-info`, `blocked` (and `type:*` on a personal account);
 - allows rebase merges only and deletes branches after merge;
 - creates or updates a ruleset `senior-mode` on the default branch: pull requests only, rebase,
-  `senior-mode/ci` and `senior-mode/review` required, linear history; existing protection is kept;
-  an admin can bypass it with `gh pr merge --admin`;
+  `senior-mode/ci` and `senior-mode/review` required, linear history; other protection kept;
+  an admin can bypass it with `gh pr merge --admin`. If it prints `protection: NOT enforced`
+  (private repo, GitHub Free), relay it and get the user's acknowledgement;
 - `local`: disables the repository's workflows (files kept); `actions`: `setup repo` then adds
-  `.github/workflows/senior-mode.yml`: checks, `senior-mode/ci`, releases. If it prints
-  `releases:`, relay it: the release PR needs a `RELEASE_PLEASE_TOKEN` secret to get CI.
+  `.github/workflows/senior-mode.yml` (checks, `senior-mode/ci`, releases); relay `releases:`
+  (the release PR needs a `RELEASE_PLEASE_TOKEN` secret to get CI).
 
 ## Repository
 

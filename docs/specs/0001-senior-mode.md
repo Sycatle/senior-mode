@@ -116,11 +116,42 @@ Natural-language triggers in any language route to them ("let's frame", "cadrons
 | `frame` | Idea → interview rounds → alternatives → spec → ADR(s) → tickets as vertical slices with acceptance criteria, dependencies, size, priority, milestone. Ends with a summary of proactive suggestions the user did not ask for. | scout, researcher, architect, ops |
 | `next` | The daily session: short state of the board, open PRs needing a human, then picks the top Ready ticket and delivers it with the user in the loop (TDD, commits, PR). | ops, test-author, implementer, reviewer |
 | `run` | Autonomous delivery of up to N Ready tickets (section 9). | all |
-| `status` | Plain-language dashboard: done since last time, in progress, blocked, next, waiting for a human, release state. Cheap. | ops |
+| `status` | Plain-language dashboard: done since last time, in progress, blocked, next, waiting for a human, release state. Cheap: one GraphQL call. | none (runs `senior-mode status`) |
 | `retro` | Weekly: reprioritise, close or rescope stale items, list debt, check spec drift, and turn recurring mistakes into mechanisms (a hook, a CI check, a lint rule) proposed as tickets. | architect, ops |
 
 French is served without a companion plugin (ADR 0013): French trigger phrases in the skill
 descriptions, and the `language` config key for replies and documents.
+
+### `pick`, `status` and the statusline
+
+- `senior-mode pick [--json] [--max N]` is the one ticket selection that `next` and `run` share. It lists
+  the Ready items of the Project, open, ordered by Priority (P0 first), then milestone due date (none
+  last), then number. It leaves out size L, tickets with an open "blocked by" link or the `blocked`
+  label, and tickets with `needs-info` (a Ready ticket should not have it; the label wins).
+- `senior-mode status [--json] [--since <dur>] [--watch [secs]]` reads the Project items and the
+  repository facts (open pull requests with their statuses, recently closed issues and merged pull
+  requests, the latest release) in one GraphQL query; only a Project of more than 100 items takes
+  another call. Sections: done, in progress, in review, blocked or missing information (`blocked` or
+  `needs-info` label, an open dependency on a ticket already started), waiting for a human
+  (`needs-human` pull requests and tickets, failing statuses), next Ready (top three of `pick`),
+  release (latest release, open release pull request).
+- A plain run reports what is new since the previous plain run (first run: seven days) and then moves
+  that mark, kept in `.claude/senior-mode/status-seen`, a directory that ignores itself so `check` still
+  sees a clean tree. `--since 7d` (`m`, `h`, `d`, `w`) is the digest for a reader who is not
+  technical, and, like `--json` and `--watch`, leaves the mark alone. `--watch` redraws every 30
+  seconds (or `secs`) for a terminal or tmux pane. A weekly digest issue is not created: the
+  digest is on demand, and `docs/changelog.md` keeps the history.
+- `senior-mode statusline` prints one line, offline: ticket of the branch (or the branch), last check
+  recorded for the tree (`check ok`, `check FAILED`, `check stale` after an edit, `no check`) and
+  `run in progress` when `SENIOR_MODE_RUN` is set. Claude Code runs it from the project's
+  `.claude/settings.json`, written by `senior-mode setup statusline` (offered by `setup`).
+  A plugin cannot ship a status line, and `bin/` is on the PATH of the Bash tool, not of the status
+  line command, so the setting holds a short command that finds the script at each run: the
+  `installPath` of `senior-mode@*` in `~/.claude/plugins/installed_plugins.json`, else the newest
+  `~/.claude/plugins/cache/*/senior-mode/*/bin/senior-mode`. No path or version is stored, so plugin
+  updates do not break it; it prints nothing if the plugin is not installed (a plugin loaded with
+  `--plugin-dir` is in neither place). A project setting hides the user's own status line in that
+  project, so `setup` asks first and keeps a status line the project already has.
 
 ## 8. Lifecycle, roles and skills
 
@@ -444,7 +475,7 @@ plugin's hooks, which cover every agent.
 
 | Feature | Use |
 |---|---|
-| Project settings (`.claude/settings.json`), written by `setup` | Permission allow-list for verification and read-only `gh` commands, deny-list mirroring the hooks; optional statusline running `senior-mode statusline` (current ticket, run progress) |
+| Project settings (`.claude/settings.json`), written by `setup` | Permission allow-list for verification and read-only `gh` commands, deny-list mirroring the hooks; optional statusline running `senior-mode statusline` (current ticket, last check, run in progress), written by `senior-mode setup statusline` (§7) |
 | `.claude/rules/*.md` with `paths` | Stack conventions from the preset, so `CLAUDE.md` stays under 80 lines |
 | Sandbox | `setup` offers to enable it for runs where available |
 | Headless (`claude -p`) | `run` without a session: `--max-turns`, `--max-budget-usd`, `--output-format json` for the cost report |
@@ -496,7 +527,3 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 ## 20. Open questions
 
 - `run` orchestration: prose skill driving agents, or a `workflows/*.js` script (spike in v0.3).
-- Statusline: plugins cannot ship one, and `bin/` is on the PATH of the Bash tool, not necessarily
-  of the statusline command; find a project setting that survives plugin updates (the plugin root
-  path changes on each update).
-- Whether `status` should also write a weekly digest issue for non-technical stakeholders.

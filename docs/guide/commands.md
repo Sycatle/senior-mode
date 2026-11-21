@@ -11,7 +11,7 @@ Commands run only when you type them. The design is in [spec §7](../specs/0001-
 | `/senior-mode:setup` | Adopt a repository, or repair it | Available |
 | `/senior-mode:frame` | Turn an idea into a spec, ADRs and tickets | Available |
 | `/senior-mode:next` | Daily session: deliver the top Ready ticket with you | Coming in [v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
-| `/senior-mode:status` | Plain-language dashboard | Coming in [v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
+| `/senior-mode:status` | Plain-language dashboard | Available |
 | `/senior-mode:run` | Deliver up to N Ready tickets on its own | Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
 | `/senior-mode:retro` | Weekly review of the board and the process | Coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
 | French aliases (`senior-mode-fr`) | `/cadre`, `/suivant`, `/lance`, `/etat`, `/retro`, `/installer` | Coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
@@ -62,11 +62,26 @@ State: **Coming in [v0.2 Daily loop](https://github.com/Sycatle/senior-mode/mile
 
 ## `status`
 
-State: **Coming in [v0.2 Daily loop](https://github.com/Sycatle/senior-mode/milestone/2).**
+State: **Available.**
 
-- **Purpose.** A cheap, plain-language dashboard: done since last time, in progress, blocked, next,
-  waiting for a human, release state.
-- Until then, open the board: `gh project view <number> --owner <owner> --web`.
+- **Purpose.** A cheap, plain-language dashboard: done since last time, in progress, in review,
+  blocked or missing information, waiting for a human (`needs-human` pull requests, failing
+  statuses), the next Ready tickets, and the release state. One GitHub call.
+- **Asks.** Nothing. Ask "where are we?" or "état", or type `/senior-mode:status`.
+- **Produces.** A summary in the `language` of your config, with what needs you first. Ask for "the
+  week for the client" and it runs `senior-mode status --since 7d`, a digest without jargon.
+- **Live view.** `senior-mode status --watch` in a terminal or tmux pane redraws every 30 seconds.
+- Only the plain run moves the "since last time" mark (kept in `.claude/senior-mode/`, ignored by git);
+  `--since`, `--json` and `--watch` leave it alone.
+
+### Status line
+
+`/senior-mode:setup` offers a line at the bottom of Claude Code: the ticket of your branch, the last
+check recorded for it (`check ok`, `check FAILED`, `check stale` after an edit) and `run in progress`.
+It is offline and instant. To add it yourself, run `senior-mode setup statusline`: it writes a
+`statusLine` command to `.claude/settings.json` that finds the plugin at each run, so plugin updates
+do not break it. A project status line replaces your personal one in that project; one the project
+already has is kept. If the plugin is loaded with `--plugin-dir`, the line stays empty.
 
 ## `run`
 
@@ -97,6 +112,10 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode publish [commit]` | Sends the recorded result to GitHub as `senior-mode/ci` (the commit must be pushed) |
 | `senior-mode release [--dry-run]` | Runs release-please 17.11.2 locally: tags a merged release PR, opens or updates the next one |
 | `senior-mode issue create --title ... --body-file ... --size ... --priority ...` | Creates a ticket with board fields, and optionally `--status`, `--milestone`, `--type`, `--blocked-by`, `--parent`; reuses an open issue with the same title |
+| `senior-mode pick [--json] [--max N]` | The Ready tickets in delivery order: Priority, then milestone due date; leaves out size L, blocked tickets and `needs-info` |
+| `senior-mode status [--json] [--since <dur>] [--watch [secs]]` | The dashboard of `/senior-mode:status`; `--since 7d` for a digest (`m`, `h`, `d`, `w`) |
+| `senior-mode statusline` | One offline line for Claude Code's status line (ticket, last check, run) |
+| `senior-mode setup statusline` | Writes the status line to the project's `.claude/settings.json` |
 | `senior-mode item set <issue> <field> <option>...` | Sets board fields of a ticket, for example `Status Ready` |
 | `senior-mode config get <key>` | Prints a config value, with defaults (see [Configuration](configuration.md)) |
 | `senior-mode protected [--base <ref>]` | Lists the files changed on the branch that match a `protected` glob (exit 0), or nothing (exit 1); used by the reviewer |

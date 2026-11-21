@@ -317,7 +317,7 @@ headless, GitHub Actions), November 2026.
 
 | Component | Use |
 |---|---|
-| `plugin.json` | Metadata, `dependencies` (`senior-mode-fr` depends on `senior-mode`), `userConfig` for per-user defaults (project language, autonomy defaults), `experimental.evals` |
+| `plugin.json` | Metadata, `userConfig` for per-user defaults (project language, autonomy defaults), `experimental.evals` |
 | Skills | Commands (section 7) and disciplines (section 8) |
 | Agents | The team (section 9) |
 | Hooks (`hooks/hooks.json`) | Guardrails and proof mechanisms (below) |
@@ -384,7 +384,7 @@ plugin's hooks, which cover every agent.
 ## 17. Plugin repository layout
 
 ```
-.claude-plugin/marketplace.json     marketplace listing both plugins
+.claude-plugin/marketplace.json     marketplace listing
 plugins/senior-mode/
   .claude-plugin/plugin.json
   skills/<command>/SKILL.md         setup, frame, next, run, status, retro
@@ -398,7 +398,6 @@ plugins/senior-mode/
   templates/                        spec, ADR, CLAUDE.md, rules, settings, PR and issue templates,
                                     githooks, GitHub Action for scheduled runs
   presets/<stack>/                  CI workflow, commands, protected-zone defaults
-plugins/senior-mode-fr/             French aliases
 evals/                              triage, readiness, grill and end-to-end cases
 docs/specs/, docs/adr/              this project's own specs and ADRs
 ```
@@ -406,7 +405,7 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 ## 18. Quality of the plugin itself
 
 - Checks (`senior-mode check`, run locally; the workflows in `.github/` are the disabled `actions`
-  mode): `claude plugin validate --strict` on both plugins and the marketplace, shellcheck on hooks and
+  mode): `claude plugin validate --strict` on the plugin and the marketplace, shellcheck on hooks and
   `bin/`, unit tests of `bin/senior-mode` and of each hook (JSON in, decision out), size budget per
   skill, agent pins of ADR 0004, Conventional Commits, spec drift.
 - Evals (`claude plugin eval`, with a cost cap): fixed cases for triage (S/M/L), Definition of Ready,

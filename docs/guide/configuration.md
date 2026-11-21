@@ -41,6 +41,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `ci.mode` | `local` | `local` or `actions` |
 | `secrets` | none | Extra globs the [secrets guard](autonomy.md#secrets-guard-guard-secretssh) denies, added to its defaults: `"*.token"` matches a file name anywhere, `"config/prod.*"` and `"**/vault/*"` match from the repository root. It never allows a default. Add it yourself; setup does not write it |
 | `github.protection` | written by setup | `ruleset` when the `senior-mode` ruleset protects the default branch, `none` when GitHub refused it (private repository on a Free plan): the branch is then not protected on the server |
+| `review.sections` | none | Project review checklists, see [below](#project-review-sections) |
 | `project` | written by setup | Board owner, number, id, and field and option ids, so no agent looks them up again |
 
 `senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`).
@@ -50,6 +51,34 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 `autonomy.maxTickets` (3), `autonomy.parallel` (1), `autonomy.maxConsecutiveFailures` (2),
 `autonomy.autoMerge` (true) and `limits.prLines` (400) can be read, but only `run` will use them
 ([v0.3](https://github.com/Sycatle/senior-mode/milestone/3)).
+
+## Project review sections
+
+`review.sections` is a list of Markdown checklist files, relative to the repository root. The
+`review` skill reads each one and applies it as an extra section of its review. This is where a
+project puts checks the plugin cannot know: a regulated activity, a stack, a company rule.
+
+```json
+{ "review": { "sections": ["docs/review/payments.md", "docs/review/api.md"] } }
+```
+
+```markdown
+# Payments
+
+Apply when the diff touches `src/billing/`.
+
+- Amounts are integers in cents, never floats.
+- Every webhook handler verifies the signature before reading the body.
+- A new provider call has a timeout and a retry that cannot charge twice.
+```
+
+- Write each file as a checklist a reviewer can answer from the diff, with the condition for
+  applying it on top. Findings come out in the review comment like any other.
+- The reviewer reads the files from the base branch, so a pull request cannot weaken its own checks;
+  a section file added or changed by the pull request applies from the next one.
+- A missing file is reported by the review, not skipped silently. A section adds checks; it does not
+  lift the rule for protected zones.
+- Setup does not write this key. Add it by hand; without it, no extra section applies.
 
 ## Checks
 

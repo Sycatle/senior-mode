@@ -89,7 +89,7 @@ Le déroulé pas à pas : [A typical day](docs/guide/a-typical-day.md) (en angla
 | `run` | Livre seule jusqu'à N tickets prêts, dans les garde-fous. | [Prévue en v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
 | `retro` | Chaque semaine : repriorise, liste la dette, change les erreurs répétées en contrôles. | [Prévue en v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
 
-Derrière elles, neuf petits skills de discipline ne se chargent que quand ils s'appliquent (triage,
+Derrière elles, de petits skills de discipline ne se chargent que quand ils s'appliquent (triage,
 ready, tdd, commit, verify, spec, adr, grill, review), et sept agents ont chacun leur modèle et leur
 effort (scout, researcher, architect, test-author, implementer, reviewer, ops). Des hooks refusent
 les force-push, les push sur la branche par défaut, les contrôles sautés et la lecture des fichiers

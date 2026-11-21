@@ -3,7 +3,7 @@
 The discipline skills are short rules Claude loads by itself when the task matches them.
 
 You do not call them. Claude loads one when its description matches what it is doing, and agents
-start with some of them preloaded (see [Agents](agents.md)). All nine are available today. The
+start with some of them preloaded (see [Agents](agents.md)). All of them are available today. The
 design is in [spec §8](../specs/0001-senior-mode.md#8-discipline-skills).
 
 ## `triage`
@@ -36,7 +36,12 @@ design is in [spec §8](../specs/0001-senior-mode.md#8-discipline-skills).
   failing for the right reason. UI and glue: one end-to-end or integration scenario per criterion.
   Spikes are exempt, but are discarded or tested before merge. Tests go in the same commit as the
   code. A flaky test is a bug: open an issue, never skip it silently.
-- **When.** Before writing or changing production code, and for every bug fix.
+- **Refactor-only ticket.** Structure changes, behaviour does not. State the goal and the invariant
+  first; when coverage is weak, write characterization tests that pin today's behaviour and commit
+  them before any change; then small steps, tests after each, one `refactor:` commit per step.
+  A test that has to change means behaviour changed: revert. Features and fixes do not ride along.
+- **When.** Before writing or changing production code, for every bug fix, and for "refactor",
+  "refacto", "nettoie".
 
 ## `commit`
 
@@ -87,7 +92,17 @@ design is in [spec §8](../specs/0001-senior-mode.md#8-discipline-skills).
   (`senior-mode protected`), or another sensitive area (migrations, security, auth, payments, CI,
   infrastructure, major upgrades, L tickets, ADRs), gets at best "approve, human merge" and the
   `needs-human` label.
-- **Produces.** One PR comment with the verdict and `file:line` findings, and the status
+- **Sections.** Loaded only when they apply:
+  - the brief for the person who merges, always: what changes for users, risks and protected zones
+    touched, what was tested and what was not, and questions to ask the author, in plain language;
+  - UI, when the diff touches front-end files: screenshots of the touched pages if the project's
+    Playwright is there, accessibility basics, component consistency, empty, loading and error
+    states;
+  - dependencies and data, when dependencies or data handling change: licences from the ecosystem's
+    own tool, secrets and personal data in logs and exports, new third-party services. It flags
+    facts for a human and does not rule on them;
+  - your own, from [`review.sections`](configuration.md#project-review-sections).
+- **Produces.** One PR comment with the verdict, the brief and `file:line` findings, and the status
   `senior-mode/review` (`success`, `pending` for a human merge, `failure`).
 - **When.** For every pull request, from a fresh context.
 

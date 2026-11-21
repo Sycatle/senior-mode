@@ -241,7 +241,12 @@ check() {
     if (cd "$root" && for v in $(git rev-parse --local-env-vars); do unset "$v"; done && bash -c "$cmd") \
       >"$output" 2>&1; then
       passed=$((passed + 1))
-      echo "ok    $name"
+      # A check with nothing to do says so on its first line; show why instead of a bare ok.
+      if [[ $(head -n 1 "$output") == "skipped: "* ]]; then
+        echo "skip  $name: $(head -n 1 "$output" | cut -c10-)"
+      else
+        echo "ok    $name"
+      fi
     else
       failed="${failed:+$failed, }$name"
       echo "FAIL  $name"

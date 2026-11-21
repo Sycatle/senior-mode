@@ -82,7 +82,7 @@ The walk-through, step by step: [A typical day](docs/guide/a-typical-day.md).
 | `/senior-mode:setup` | Adopt a repository: board, labels, merge rules, ruleset, checks, hooks, templates, release-please. Safe to rerun. | Available |
 | `/senior-mode:frame` | Turn an idea into decisions, a spec, ADRs and ready tickets. | Available |
 | `next` | The daily session: board state, then delivers the top ready ticket with you. | [Coming in v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
-| `status` | Plain-language dashboard: done, in progress, blocked, waiting for you. | [Coming in v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
+| `/senior-mode:status` | Plain-language dashboard: done, in progress, blocked, waiting for you. Also a digest for readers who are not technical. | Available |
 | `run` | Delivers up to N ready tickets on its own, within the guardrails. | [Coming in v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
 | `retro` | Weekly: reprioritise, list debt, turn repeated mistakes into checks. | [Coming in v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
 

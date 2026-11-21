@@ -85,7 +85,7 @@ Le déroulé pas à pas : [A typical day](docs/guide/a-typical-day.md) (en angla
 | `/senior-mode:setup` | Adopte un dépôt : board, labels, règles de fusion, ruleset, contrôles, hooks, modèles, release-please. Se relance sans risque. | Disponible |
 | `/senior-mode:frame` | Transforme une idée en décisions, spec, ADR et tickets prêts. | Disponible |
 | `next` | La session du jour : état du board, puis livre avec vous le premier ticket prêt. | [Prévue en v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
-| `status` | Tableau de bord en clair : fait, en cours, bloqué, en attente de vous. | [Prévue en v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
+| `/senior-mode:status` | Tableau de bord en clair : fait, en cours, bloqué, en attente de vous. Peut produire un résumé de la semaine pour un lecteur non technique. | Disponible |
 | `run` | Livre seule jusqu'à N tickets prêts, dans les garde-fous. | [Prévue en v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
 | `retro` | Chaque semaine : repriorise, liste la dette, change les erreurs répétées en contrôles. | [Prévue en v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
 

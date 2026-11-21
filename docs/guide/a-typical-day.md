@@ -109,7 +109,7 @@ senior-mode release
 
 | Step | Today | Later |
 |---|---|---|
-| Read where things stand | Open the board | `status`, a plain-language dashboard. Coming in [v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
+| Read where things stand | `status`, a plain-language dashboard | Same, shipped in v0.2 |
 | Steps 3 to 7, with you in the loop | Ask Claude step by step | `next` picks the top Ready ticket and delivers it with you. Coming in [v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
 | Steps 3 to 7, without you | Not available | `run` delivers up to N Ready tickets and merges within guardrails. Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
 | Weekly cleanup | By hand | `retro` reprioritises and turns recurring mistakes into checks. Coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |

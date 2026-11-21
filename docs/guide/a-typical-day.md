@@ -112,8 +112,8 @@ senior-mode release
 |---|---|---|
 | Read where things stand | `status`, a plain-language dashboard | Same |
 | Steps 3 to 7, with you in the loop | `/senior-mode:next` picks the top Ready ticket and delivers it with you | Same |
-| Steps 3 to 7, without you | Not available | `run` delivers up to N Ready tickets and merges within guardrails. Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
-| Weekly cleanup | By hand | `retro` reprioritises and turns recurring mistakes into checks. Coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
+| Steps 3 to 7, without you | `/senior-mode:run` delivers up to N Ready tickets, and merges within guardrails when you turn merging on | Same |
+| Weekly cleanup | `/senior-mode:retro` gives the facts of the week and up to three process changes to approve | Same |
 
 Note: Claude's session greeting and the end of `frame` mention "go" and `/senior-mode:next`: "go"
 starts `next`.

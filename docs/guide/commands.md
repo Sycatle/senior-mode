@@ -14,7 +14,6 @@ Commands run only when you type them. The design is in [spec §7](../specs/0001-
 | `/senior-mode:status` | Plain-language dashboard | Available |
 | `/senior-mode:run` | Deliver up to N Ready tickets on its own | Available |
 | `/senior-mode:retro` | Weekly review of the board and the process | Available |
-| French aliases (`senior-mode-fr`) | `/cadre`, `/suivant`, `/lance`, `/etat`, `/retro`, `/installer` | Coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
 
 ## `setup`
 

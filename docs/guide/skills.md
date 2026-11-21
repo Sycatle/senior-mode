@@ -1,10 +1,20 @@
 # Skills
 
-The discipline skills are short rules Claude loads by itself when the task matches them.
+Every skill is a step of the delivery lifecycle and a role of the team
+([ADR 0009](../adr/0009-lifecycle-and-roles.md)):
 
-You do not call them. Claude loads one when its description matches what it is doing, and agents
-start with some of them preloaded (see [Agents](agents.md)). All of them are available today. The
-design is in [spec §8](../specs/0001-senior-mode.md#8-discipline-skills).
+| Role | Skills |
+|---|---|
+| Lead | `triage`, `frame`, `spec`, `adr`, `grill`, `ready` |
+| Developer | `tdd` (refactoring is a mode of it), `verify`, `commit` |
+| Reviewer | `review`, with explain, UI and dependencies-and-data sections |
+| Release and ops | `run`, `next`, `status`, `docs` |
+| Learning | `retro` |
+
+The rules below are the ones Claude loads by itself when the task matches them; the others are
+[commands](commands.md). You do not call the rules. Claude loads one when its description matches what
+it is doing, and agents start with some of them preloaded (see [Agents](agents.md)). The design is in
+[spec §8](../specs/0001-senior-mode.md#8-lifecycle-roles-and-skills).
 
 ## `triage`
 
@@ -125,4 +135,5 @@ design is in [spec §8](../specs/0001-senior-mode.md#8-discipline-skills).
 
 ## Commands are skills too
 
-`setup` and `frame` are also skills, but they only run when you type them. See [Commands](commands.md).
+`setup`, `frame`, `next`, `run`, `status` and `retro` are also skills, but they only run when you type
+them. See [Commands](commands.md).

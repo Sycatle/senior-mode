@@ -21,8 +21,7 @@ Other savings that ship today ([spec §15](../specs/0001-senior-mode.md#15-token
 - `senior-mode check` shows only the last 20 lines of a failing check;
 - each agent has a turn cap (`maxTurns`, from 15 to 60).
 
-The planned per-ticket fresh contexts and cost reports arrive with `run`
-([v0.3](https://github.com/Sycatle/senior-mode/milestone/3)).
+`run` gives each ticket its own fresh headless session.
 
 ## I have no GitHub Actions budget. Can I use it?
 
@@ -95,5 +94,5 @@ Partly, today:
 - "cadrons" is listed in the descriptions of `frame` and `grill`. Commands run only when typed,
   so type `/senior-mode:frame` to be sure framing starts.
 
-The French command aliases (`/cadre`, `/suivant`, `/lance`, `/etat`, `/retro`, `/installer`) come with
-the companion plugin `senior-mode-fr`, coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4).
+There is no French companion plugin ([ADR 0013](../adr/0013-no-french-companion-plugin.md)): commands stay
+in English, and French is served by trigger phrases and the `language` config key.

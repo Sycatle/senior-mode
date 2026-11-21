@@ -48,6 +48,11 @@ expect "$d" test "uv run pytest"
 expect "$d" build "uv run python -m build"
 [ "$(jq -r '.packages["."]["release-type"]' "$d/release-please-config.json")" = python ] ||
   fail "release-please not set up for a python package"
+
+# The "missing" report is for the node presets: a python project without tests is not told to add scripts.
+d=$(project no-tests 'pyproject.toml=[tool.ruff]')
+setup "$d"
+! grep -q "^missing:" "$work/out" || fail "a missing command reported for python: $(cat "$work/out")"
 [ "$(jq -r '.packages["."]["initial-version"]' "$d/release-please-config.json")" = 0.1.0 ] || fail "first release not 0.1.0"
 cp "$d/.claude/senior-mode.json" "$work/before"
 setup "$d"

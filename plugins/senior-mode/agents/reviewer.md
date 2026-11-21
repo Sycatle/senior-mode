@@ -15,8 +15,9 @@ You judge a pull request you did not write. You never change the code.
 
 - Read the diff (`gh pr diff`), the linked issue and spec, and the tests, not only the PR body.
   Check out the branch when you need to run something.
-- Apply skill `review`: spec axis, standards axis, protected zones, then post one comment and set
-  `senior-mode/review` on the head commit.
+- Apply skill `review`: spec axis, standards axis, protected zones (`senior-mode protected`: a match
+  means `needs-human` and a `pending` status), then post one comment and set `senior-mode/review`
+  on the head commit.
 - Be concrete: `file:line`, why it matters, the fix. Mark each finding blocking or not; do not block
   on taste.
 - Never approve what you did not verify: say what you ran and what you only read.

@@ -98,7 +98,7 @@ and GraphQL calls are not parsed.
 
 ### Self-protection (`self-protect.sh`)
 
-Active only while the environment variable `SENIOR_MODE_RUN=1` is set, which `run` will do for the
+Active only while the environment variable `SENIOR_MODE_RUN=1` is set, which `run` does for the
 sessions it starts. Outside a run it does nothing. It denies Edit, Write, MultiEdit and NotebookEdit
 on `.github/workflows/**`, `.claude/**` and `.githooks/**` at the repository root, and Bash
 commands that obviously write there: redirections, `tee`, `cp`, `mv`, `rm`, `touch`, `truncate`,
@@ -153,6 +153,28 @@ At session start, a short router explains senior-mode. On a ticket branch (`<typ
 it adds the ticket, its status, its spec and the first acceptance criteria. In a repository not yet
 adopted, it suggests `/senior-mode:setup`.
 
+## Run
+
+`/senior-mode:run` ([ADR 0007](../adr/0007-hybrid-run-orchestration.md)) starts one headless Claude
+session per ticket, each in its own worktree, with `SENIOR_MODE_RUN=1`. The `senior-mode run`
+command, not a model, applies these bounds:
+
+- **Batch:** at most `autonomy.maxTickets` tickets (default 3), `autonomy.parallel` at a time
+  (default 1), taken in the order of `senior-mode pick`.
+- **Retry on Opus:** a ticket that fails on Sonnet is tried once more on Opus, from the same worktree
+  (`autonomy.escalate`, default true).
+- **Circuit breaker:** after `autonomy.maxConsecutiveFailures` failed tickets in a row (default 2), or
+  as soon as a ticket outgrows its size, no new ticket starts. A failed ticket goes back to Backlog
+  with a comment that says why; its branch and worktree are kept.
+- **Proof:** a session counts as delivered only if a pull request is open for its branch.
+- **Merge** ([ADR 0008](../adr/0008-merge-off-by-default.md)): off by default. With
+  `autonomy.merge: true`, a pull request merges (`gh pr merge --rebase`) only when `senior-mode/ci`
+  and `senior-mode/review` are both `success` on its head, it has no `needs-human` label, and the
+  server enforces protection (`github.protection` is not `none`). Everything else waits for a human,
+  and the report says why.
+- **End-to-end suites** share `e2e.slots` slots per machine (default 2): `check` runs the check named
+  `e2e` through `senior-mode e2e-lock`, which exports the slot number as `SENIOR_MODE_E2E_SLOT`.
+
 ## Other mechanisms
 
 - **Git hooks.** `commit-msg` refuses a subject that is not a Conventional Commit. `pre-push` runs the
@@ -164,11 +186,9 @@ adopted, it suggests `/senior-mode:setup`.
 
 | Feature | State |
 |---|---|
-| `run`: autonomous delivery and merge of up to N tickets | Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
-| Circuit breaker (stop after 2 failed tickets, or when a ticket outgrows its size) | Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
-| Scheduled runs (cron, cloud task, Actions) | Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
+| Scheduled runs (systemd timer, cron) | Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
 | Spec drift check in the check list | Coming in [v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
-| Automatic retry of the implementer on Opus | Arrives with `next` and `run` |
+| Retry on Opus in `next` (it exists in `run`) | Arrives with `next` |
 | Formatter after each edit, desktop notifications, auto-allowed check commands during a run | Planned in [spec §16](../specs/0001-senior-mode.md#hooks), no milestone yet |
 
-Until `run` ships, nothing merges unless you ask for it.
+Nothing merges unless you ask for it: by hand, or with `autonomy.merge: true` for `run`.

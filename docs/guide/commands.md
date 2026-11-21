@@ -12,7 +12,7 @@ Commands run only when you type them. The design is in [spec §7](../specs/0001-
 | `/senior-mode:frame` | Turn an idea into a spec, ADRs and tickets | Available |
 | `/senior-mode:next` | Daily session: deliver the top Ready ticket with you | Coming in [v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
 | `/senior-mode:status` | Plain-language dashboard | Available |
-| `/senior-mode:run` | Deliver up to N Ready tickets on its own | Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
+| `/senior-mode:run` | Deliver up to N Ready tickets on its own | Available |
 | `/senior-mode:retro` | Weekly review of the board and the process | Coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
 | French aliases (`senior-mode-fr`) | `/cadre`, `/suivant`, `/lance`, `/etat`, `/retro`, `/installer` | Coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
 
@@ -85,12 +85,20 @@ already has is kept. If the plugin is loaded with `--plugin-dir`, the line stays
 
 ## `run`
 
-State: **Coming in [v0.3 Autonomy](https://github.com/Sycatle/senior-mode/milestone/3).**
+State: **Available.** Triggers: "run", "lance", "enchaîne en autonomie".
 
-- **Purpose.** Deliver up to N Ready tickets (default 3) without you, merging only within the
-  guardrails of [spec §10](../specs/0001-senior-mode.md#10-autonomy-and-guardrails), and report in
-  plain language.
-- See [Autonomy](autonomy.md#what-is-not-automated-yet).
+- **Purpose.** Deliver up to N Ready tickets (`autonomy.maxTickets`, default 3) without you, P at a
+  time (`autonomy.parallel`, default 1), and report in plain language: merged, waiting for a human,
+  failed and why, not started.
+- **Asks you.** To confirm the tickets, N, P and whether the run merges.
+- **How.** `senior-mode run [--max N] [--parallel P]` starts one headless `claude -p` session per
+  ticket, in its own worktree next to the repository (`<repo>-run-<n>`, branch `<type>/<n>-<slug>`)
+  and, when tmux is installed, in a window of `tmux attach -t senior-mode-run`. A ticket that fails on
+  Sonnet is retried once on Opus (`autonomy.escalate`). Logs stay in `.git/senior-mode/runs/`.
+- **Merging** is off by default: the run stops at pull requests with `senior-mode/ci` and
+  `senior-mode/review` set. With `autonomy.merge: true` it merges what is green, not `needs-human`,
+  on a repository with server-side protection. See [Autonomy](autonomy.md#run).
+- **Needs** `claude` on PATH or in `~/.local/bin`, and a user that is not root.
 
 ## `retro`
 
@@ -113,6 +121,8 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode release [--dry-run]` | Runs release-please 17.11.2 locally: tags a merged release PR, opens or updates the next one |
 | `senior-mode issue create --title ... --body-file ... --size ... --priority ...` | Creates a ticket with board fields, and optionally `--status`, `--milestone`, `--type`, `--blocked-by`, `--parent`; reuses an open issue with the same title |
 | `senior-mode pick [--json] [--max N]` | The Ready tickets in delivery order: Priority, then milestone due date; leaves out size L, blocked tickets and `needs-info` |
+| `senior-mode run [--max N] [--parallel P]` | The autonomous run of `/senior-mode:run`: one headless session per ticket, then a plain report |
+| `senior-mode e2e-lock -- <command>` | Runs the command once one of `e2e.slots` machine-wide slots is free; `check` runs the check named `e2e` through it |
 | `senior-mode status [--json] [--since <dur>] [--watch [secs]]` | The dashboard of `/senior-mode:status`; `--since 7d` for a digest (`m`, `h`, `d`, `w`) |
 | `senior-mode statusline` | One offline line for Claude Code's status line (ticket, last check, run) |
 | `senior-mode setup statusline` | Writes the status line to the project's `.claude/settings.json` |

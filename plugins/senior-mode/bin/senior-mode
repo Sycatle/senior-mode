@@ -738,7 +738,9 @@ setup_repo() {
     | .checks = ((.checks // []) as $have
       | [$have[] | if $c[.name] then .run = $c[.name] else . end]
         + [$want[] | select(.name as $n | $have | any(.name == $n) | not)])
-    | if has("protected") or ($p[0].protected | not) then . else .protected = $p[0].protected end' \
+    | if has("protected") then .
+      else (($p[0].protected // []) + ($p[0].frameworks[.framework // ""].protected // [])) as $g
+        | if ($g | length) > 0 then .protected = $g else . end end' \
     --argjson c "$commands" --argjson ours "$ours" --argjson guard "$guard" --slurpfile p "$preset" --arg pn "$pname" \
     --argjson d "$detected" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"

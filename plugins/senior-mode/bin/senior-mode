@@ -7,8 +7,10 @@ DEFAULTS='{
   "language": "en",
   "ci": { "mode": "local" },
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "autoMerge": true },
+  "e2e": { "slots": 2 },
   "limits": { "prLines": 400 }
 }'
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
 
 die() {
   echo "senior-mode: $*" >&2
@@ -236,6 +238,8 @@ check() {
   for ((i = 0; i < count; i++)); do
     name=$(jq -r ".checks[$i].name" "$file")
     cmd=$(jq -r ".checks[$i].run" "$file")
+    # End-to-end suites are heavy: parallel tickets share e2e.slots of them per machine.
+    [ "$name" != e2e ] || cmd="$(printf '%q' "$SELF") e2e-lock -- bash -c $(printf '%q' "$cmd")"
     # Git exports GIT_DIR to hooks, absolute in a linked worktree: a check that runs git on a test
     # fixture would write into this repository.
     if (cd "$root" && for v in $(git rev-parse --local-env-vars); do unset "$v"; done && bash -c "$cmd") \
@@ -268,6 +272,35 @@ check() {
   fi
   echo "$description"
   [ "$state" = success ]
+}
+
+# senior-mode e2e-lock -- <command>...: runs the command once one of `e2e.slots` machine-wide slots
+# is free (flock), so parallel tickets never run more end-to-end suites at once than the machine
+# holds. The command sees its slot number in SENIOR_MODE_E2E_SLOT (for example to pick a port).
+e2e_lock() {
+  [ "${1:-}" = -- ] && [ $# -ge 2 ] || usage
+  shift
+  local slots dir i fd waited=false rc
+  slots=$(config_get e2e.slots 2>/dev/null) || slots=2
+  [[ $slots =~ ^[1-9][0-9]*$ ]] || die "e2e.slots must be a positive number, not $slots"
+  command -v flock >/dev/null || die "e2e-lock needs flock (util-linux)"
+  dir=${XDG_RUNTIME_DIR:-/tmp}/senior-mode-e2e
+  [ -d "$dir" ] || { mkdir -p "$dir" && chmod 1777 "$dir" 2>/dev/null || true; }
+  while :; do
+    for ((i = 1; i <= slots; i++)); do
+      exec {fd}>>"$dir/slot-$i"
+      if flock -n "$fd"; then
+        set +e
+        SENIOR_MODE_E2E_SLOT=$i "$@"
+        rc=$?
+        exit "$rc"
+      fi
+      exec {fd}>&-
+    done
+    [ "$waited" = true ] || echo "senior-mode: waiting for a free e2e slot ($slots in use)" >&2
+    waited=true
+    sleep "${SENIOR_MODE_LOCK_POLL:-2}"
+  done
 }
 
 # Publishes the recorded check result of a commit as the status senior-mode/ci.
@@ -1186,6 +1219,10 @@ case "${1:-}" in
   check)
     [ $# -eq 1 ] || usage
     check
+    ;;
+  e2e-lock)
+    shift
+    e2e_lock "$@"
     ;;
   publish)
     [ $# -le 2 ] || usage

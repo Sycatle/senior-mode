@@ -18,7 +18,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | run [--max N] [--parallel P] | status [--json] [--since <dur>] [--watch [secs]] | statusline | check | publish [commit] | release [--dry-run] | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | status [--json] [--since <dur>] [--watch [secs]] | statusline | check | publish [commit] | release [--dry-run] | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -1003,6 +1003,63 @@ pick() {
   fi
 }
 
+# Lowercase words of a title joined by dashes, at most 40 characters cut at a word; a leading
+# `type(scope): ` of a Conventional Commit title is dropped.
+slugify() {
+  local full=${1,,} s
+  full=$(sed -E 's/^[a-z]+(\([^)]*\))?!?: //; s/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' <<<"$full")
+  s=${full:0:40}
+  [ ${#full} -le 40 ] || [ "${full:40:1}" = - ] || s=${s%-*}
+  printf '%s\n' "${s%-}"
+}
+
+# senior-mode start <issue>: the worktree and the branch `<type>/<issue>-<slug>` of a ticket, then Status
+# In progress. Shared by `next` and `run`. The branch type follows the `type:` label (feature: feat, bug:
+# fix, task and chore: chore; feat without a label). The branch starts from the default branch, fetched
+# first when origin answers; the worktree sits next to the main checkout, as `<repository>-<issue>`.
+# Rerunning reuses the branch and the worktree. Prints `branch <name>` and `worktree <path>`.
+start() {
+  [ $# -eq 1 ] && [[ $1 =~ ^[1-9][0-9]*$ ]] || usage
+  local issue=$1 slug info state title labels type main name base branch path existing
+  slug=$(repo_slug)
+  info=$(gh_retry issue view "$issue" --repo "$slug" --json title,labels,state) || die "cannot read issue #$issue"
+  state=$(jq -r '.state' <<<"$info")
+  [ "$state" = OPEN ] || die "issue #$issue is ${state,,}"
+  title=$(jq -r '.title' <<<"$info")
+  labels=$(jq -r '.labels[].name' <<<"$info")
+  case $(sed -n 's/^type://p' <<<"$labels" | head -1) in
+    bug) type=fix ;;
+    task | chore) type=chore ;;
+    *) type=feat ;;
+  esac
+  main=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
+  main=${main%/.git}
+  name=$(slugify "$title")
+  # The branch of an earlier start wins, whatever its slug.
+  branch=$(git -C "$main" for-each-ref --format='%(refname:short)' "refs/heads/$type/$issue-*" | head -1)
+  branch=${branch:-$type/$issue${name:+-$name}}
+  existing=$(git -C "$main" worktree list --porcelain | awk -v b="refs/heads/$branch" '$1 == "worktree" {p = substr($0, 10)} $1 == "branch" && $2 == b {print p}')
+  if [ -n "$existing" ]; then
+    path=$existing
+  else
+    path=$(dirname "$main")/$(basename "$main")-$issue
+    [ ! -e "$path" ] || die "$path exists and is not the worktree of $branch"
+    if ! git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
+      git -C "$main" fetch -q origin 2>/dev/null || true
+      base=$(git -C "$main" symbolic-ref -q --short refs/remotes/origin/HEAD) ||
+        base=$(git -C "$main" for-each-ref --format='%(refname:short)' refs/remotes/origin/main refs/remotes/origin/master | head -1)
+      [ -n "$base" ] || base=$(git -C "$main" for-each-ref --format='%(refname:short)' refs/heads/main refs/heads/master | head -1)
+      [ -n "$base" ] || die "no default branch to start $branch from"
+      git -C "$main" worktree add -q --no-track -b "$branch" "$path" "$base" >/dev/null || die "cannot create the worktree"
+    else
+      git -C "$main" worktree add -q "$path" "$branch" >/dev/null || die "cannot create the worktree"
+    fi
+  fi
+  echo "branch $branch"
+  echo "worktree $path"
+  item_set "$issue" Status "In progress"
+}
+
 # Seconds in a duration such as 90m, 12h, 7d or 2w.
 duration_seconds() {
   [[ $1 =~ ^([0-9]+)([mhdw])$ ]] || die "not a duration: $1 (use for example 12h, 7d or 2w)"
@@ -1458,6 +1515,10 @@ case "${1:-}" in
   pick)
     shift
     pick "$@"
+    ;;
+  start)
+    shift
+    start "$@"
     ;;
   status)
     shift

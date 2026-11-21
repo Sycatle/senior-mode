@@ -43,6 +43,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `github.protection` | written by setup | `ruleset` when the `senior-mode` ruleset protects the default branch, `none` when GitHub refused it (private repository on a Free plan): the branch is then not protected on the server |
 | `review.sections` | none | Project review checklists, see [below](#project-review-sections) |
 | `project` | written by setup | Board owner, number, id, and field and option ids, so no agent looks them up again |
+| `docs.extra` | none | Extra living documents the `docs` skill keeps current after a merge: a list of `{ "path", "purpose" }`; its changes are flagged for human review. Add it yourself |
 
 `senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`).
 

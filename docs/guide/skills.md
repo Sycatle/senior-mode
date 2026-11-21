@@ -106,6 +106,23 @@ design is in [spec §8](../specs/0001-senior-mode.md#8-discipline-skills).
   `senior-mode/review` (`success`, `pending` for a human merge, `failure`).
 - **When.** For every pull request, from a fresh context.
 
+## `docs`
+
+- **Rule.** Docs stay true because updating them is a step of delivery. After a merged pull request,
+  change only what that change made stale: the README (usage, setup), `docs/architecture.md` (system
+  overview, components, data flow, external services, links to new ADRs) and `docs/changelog.md` (one
+  plain-language entry per pull request: what changed for users, date, link). It never invents a
+  fact: unknowns become "To confirm".
+- **Extra documents.** Documents listed under `docs.extra` in the configuration (a path and a one-line
+  purpose each) are kept current too, with changes flagged for human review.
+- **Produces.** Its own small `docs:` pull request, or new commits on the docs pull request already
+  open; it never pushes to the default branch. Setup creates `docs/architecture.md` from a template
+  (`en` or `fr`) when it is absent.
+- **When.** After a merge (`run` and `next` call it), and when you say "update the docs" or
+  "mets à jour la doc". Ask "what changed this week" for a digest of `docs/changelog.md`; nothing is
+  written.
+- **Note.** `docs/changelog.md` is for readers of the product; `CHANGELOG.md` is release-please's.
+
 ## Commands are skills too
 
 `setup` and `frame` are also skills, but they only run when you type them. See [Commands](commands.md).

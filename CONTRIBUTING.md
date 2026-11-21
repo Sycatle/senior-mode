@@ -10,6 +10,9 @@ tour of what the plugin asks of the projects that adopt it.
 - The design lives in [`docs/specs/0001-senior-mode.md`](docs/specs/0001-senior-mode.md) and the
   decisions in [`docs/adr/`](docs/adr/). A change of behaviour updates the spec in the same pull
   request; a new decision gets an ADR. An accepted ADR is never edited: a new one supersedes it.
+- A new skill must map to a step of the lifecycle and a team role (spec section 8, ADR 0009). A
+  practice that fits no step is a section of an existing skill, or it stays out. Client, stack-vendor
+  or regulation specifics do not belong in the core: they go through the extension points (ADR 0010).
 
 ## Set up
 
@@ -53,6 +56,9 @@ The body gives:
 - what it gives, in plain words;
 - the red run: the output of the new tests failing before the fix;
 - what you verified, and what you could not;
+- for a command, skill or hook: the dogfooding evidence (ADR 0011), that is the real `claude -p`
+  session you ran on the sandbox repository (`Sycatle/senior-mode-sandbox`), what you ran and what
+  you saw. `check` alone does not prove behaviour, and a PR without this is not merged;
 - either the spec change, or a `Spec-Unchanged: <reason>` line.
 
 A fresh-context `reviewer` agent reviews each pull request and sets `senior-mode/review`. Changes to

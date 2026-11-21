@@ -663,6 +663,7 @@ setup_repo() {
     fi
     echo "releases: release-please configured"
   fi
+  echo "secrets: keep only dev-only secrets on a machine where agents run; the secrets guard stops honest mistakes, not a determined reader"
 }
 
 # What a session needs at start (SessionStart hook, spec 0001 §15): a short router and, on a ticket

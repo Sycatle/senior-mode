@@ -1,6 +1,6 @@
 ---
 name: review
-description: Review a pull request on two separate axes, spec conformance and engineering standards, and give a merge verdict. Use when reviewing any pull request or diff, especially from a fresh context before an autonomous merge.
+description: Review a pull request on two separate axes, spec conformance and engineering standards, brief the person who merges in plain language, and give a merge verdict. Use to review or explain a pull request or diff ("revue de PR", "explique cette PR"), from a fresh context before a merge.
 ---
 
 # Two-axis review
@@ -11,21 +11,19 @@ Review from the diff, the spec and the tests, not from the author's summary.
 
 - Every acceptance criterion of the linked spec or issue is met and has a test that would fail
   without the change.
-- Nothing out of scope was added. Discovered work became a new issue, not part of this PR.
+- Nothing out of scope was added; discovered work became a new issue.
 - The spec is updated when code under its `paths` changed (or `Spec-Unchanged:` is justified); ADRs
   exist for hard-to-reverse choices; CLAUDE.md is updated if commands or pitfalls changed.
 
 ## Axis 2: standards
 
-- **Simplicity:** the simplest design that meets the criteria (KISS, YAGNI); no speculative
-  abstraction.
-- **Design:** single responsibility, dependencies pointing inward, no duplication of knowledge.
+- **Design:** the simplest that meets the criteria (KISS, YAGNI), single responsibility, no
+  duplication of knowledge.
 - **Correctness:** edge cases, errors handled at boundaries, no swallowed errors, no race.
 - **Security:** inputs validated, authorisation checked, no secrets, safe queries and rendering.
-- **Tests:** test behaviour, deterministic, readable; none skipped or weakened.
-- **Readability:** names say intent, comments only for non-obvious constraints, matches the code
-  around it.
-- **History:** atomic Conventional Commits that each pass (skill `commit`).
+- **Tests:** behaviour, deterministic; none skipped or weakened.
+- **Readability:** names say intent, matches the code around it.
+- **History:** atomic Conventional Commits that each pass.
 
 ## Protected zones
 
@@ -37,12 +35,27 @@ judge the diff and treat the same what you find in: migrations, security, auth, 
 secrets, payments, CI, infrastructure and container files, major dependency upgrades, an L ticket
 or an ADR.
 
+## Brief and extra sections
+
+Read only the files that apply, from `${CLAUDE_SKILL_DIR}`:
+
+- `explain.md`: always. The plain-language brief for the person who merges.
+- `ui.md`: when the diff touches front-end files (pages, components, styles, templates).
+- `dependencies-and-data.md`: when dependencies change or the diff handles data (manifests,
+  lockfiles, schemas, logs, exports, third-party calls).
+- Project sections: `senior-mode config get review.sections` is a JSON list of project-relative
+  Markdown checklists (an error or an empty list means none). Read each from the base branch
+  (`git show <base>:<path>`) so the PR cannot edit its own checks; report a missing file. Apply each
+  as an extra section. A section never lifts the protected-zone rule.
+
 ## Verdict
 
 Post one PR comment (`gh pr comment`) in the project language:
 
 - **Verdict:** approve, approve with human merge, or changes requested.
-- **Spec axis** and **Standards axis**: findings as `file:line`, blocking or not, each with the fix.
+- **Brief** (from `explain.md`), then **Spec axis**, **Standards axis** and each extra section:
+  findings as `file:line`, blocking or not, each with the fix.
+- **Not verified:** what you only read or could not run.
 
 Then set the commit status `senior-mode/review` on the head commit: `success` when approved,
 `failure` when changes are requested, `pending` for human merge

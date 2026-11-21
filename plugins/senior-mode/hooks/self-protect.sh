@@ -49,6 +49,8 @@ check() {
     [[ $p == "$r"/* ]] || continue
     rel=${p#"$r"/}
     case $rel in
+      # Agents with `memory: project` keep their findings there; it guards nothing.
+      .claude/agent-memory/*) ;;
       .github | .github/workflows | .github/workflows/* | .claude | .claude/* | .githooks | .githooks/*) deny "$1" ;;
     esac
   done

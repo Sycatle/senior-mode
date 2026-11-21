@@ -47,7 +47,12 @@ edit deny "$repo/.github/workflows/ci.yml" Edit
 edit deny "$repo/.github/workflows/new.yml" Write
 edit deny "$repo/.claude/settings.json" MultiEdit
 edit deny "$repo/.claude/senior-mode.json" Edit
-edit deny "$repo/.claude/agent-memory/x/MEMORY.md" Write
+# Project memory of the reviewer and architect agents is theirs to write, run or not.
+edit allow "$repo/.claude/agent-memory/reviewer/MEMORY.md" Write
+edit allow "$repo/.claude/agent-memory/x/notes.md" Edit
+bash_ allow "echo finding >> .claude/agent-memory/reviewer/MEMORY.md"
+edit deny "$repo/.claude/agent-memory/../settings.json" Write
+edit deny "$repo/.claude/agent-memoryx/MEMORY.md" Write
 edit deny "$repo/.githooks/pre-push" Edit
 edit deny "$repo/.claude/n.ipynb" NotebookEdit
 edit deny ".github/workflows/ci.yml" Edit "" "relative path from the repository root"

@@ -104,7 +104,8 @@ on `.github/workflows/**`, `.claude/**` and `.githooks/**` at the repository roo
 commands that obviously write there: redirections, `tee`, `cp`, `mv`, `rm`, `touch`, `truncate`,
 `install`, `ln`, `dd of=`, `sed -i`, `perl -i`, `git rm`, `git mv`, `git checkout` and
 `git restore` on those paths. An agent therefore cannot weaken the checks, the hooks or the
-protected-zone list (which lives in `.claude/senior-mode.json`). The reason it gives tells the agent to
+protected-zone list (which lives in `.claude/senior-mode.json`). `.claude/agent-memory/**` stays
+writable: the reviewer and architect agents keep their project memory there. The reason it gives tells the agent to
 leave the change out and say in the pull request that a human must make it.
 
 Like the Bash guard, it reads commands as written: a guardrail for honest mistakes, not a sandbox.

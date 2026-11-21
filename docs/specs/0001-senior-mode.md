@@ -294,6 +294,7 @@ Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
   "secrets": ["config/prod.*", "**/vault/*"],
   "ci": { "mode": "local" },
   "github": { "protection": "ruleset" },
+  "envGuard": { "forbidden": ["db.prod.example.com", "/acct-[0-9]{12}/"] },
   "limits": { "prLines": 400 }
 }
 ```
@@ -306,6 +307,13 @@ the default branch is protected on the server.
 `secrets` lists globs the secrets guard denies on top of its defaults (section 10): a glob without a slash
 matches the file name, one with a slash matches the path from the repository root, `**/` standing for any
 directories. It only adds; there is no way to allow a default.
+
+`envGuard.forbidden` lists what must never appear on an agent machine: a production database host,
+a project ref, an account id. An entry is a literal string, or an extended regular expression
+between slashes (`/.../`). When the list is not empty, `setup` installs `.githooks/env-guard.sh` and
+adds the check `env guard` (§14); the rule itself, development environments only, is a line of the
+`Principles` block of `CLAUDE.md`. The key names no vendor and no stack: the project says what is
+forbidden.
 
 ## 14. Stack presets and CI
 
@@ -328,7 +336,9 @@ never downloads a package. The report names the language: TypeScript when `types
 dependency or a tsconfig exists, else JavaScript, which expects no typecheck. A missing linter or
 test runner is reported, and `setup` proposes Biome
 or Vitest in a separate commit, never installed without a yes. Next.js is recorded as `framework`; it
-builds through its script. Fixtures in `evals/fixtures/` are adopted and checked end to end by
+builds through its script, and `middleware.*` and `src/middleware.*` join the default `protected`
+globs: the preset declares such framework defaults under `frameworks` (its top-level `protected`
+list stays the stack-wide one). Fixtures in `evals/fixtures/` are adopted and checked end to end by
 `evals/run.sh` (network, run on demand before merging a change to presets).
 
 The other presets apply when no `package.json` exists and no preset is stored, in this order:
@@ -347,7 +357,11 @@ The release-please type is `python`, `go` or `rust`. Each preset carries default
 lockfiles are not protected) in its `preset.json`; reading them is the protected zones' job.
 
 Every preset defines one check list: lint, typecheck, tests, build, Conventional Commits, spec drift,
-secret scanning. The pre-push hook runs it in any terminal; `senior-mode check` runs it in a session
+secret scanning, plus the environment guard when `envGuard.forbidden` is set: it fails when a
+forbidden pattern appears in a `.env*` file of the worktree, tracked or not, or in the environment,
+and prints file names and variable names, never a value. A check whose first output line is
+`skipped: <reason>` passes and is shown as `skip <name>: <reason>`. The pre-push hook runs it in any
+terminal; `senior-mode check` runs it in a session
 (and before every merge in `run`) and records the result that `senior-mode publish` sends as the
 commit status `senior-mode/ci`. `ci.mode` is `local` by default; `actions` also emits
 the same list as a GitHub Actions workflow, with dependency review and caching. Dependabot (or

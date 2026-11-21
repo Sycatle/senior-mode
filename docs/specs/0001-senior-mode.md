@@ -618,3 +618,4 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 
 ## 20. Open questions
 
+None open.

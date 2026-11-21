@@ -87,7 +87,7 @@ The walk-through, step by step: [A typical day](docs/guide/a-typical-day.md).
 | `/senior-mode:retro` | Weekly: the facts of the week, then up to three process changes for you to approve. | Available |
 
 Behind them, small discipline skills load only when they apply (triage, ready, tdd, commit,
-verify, spec, adr, grill, review), and seven agents each have their own model and effort (scout,
+verify, spec, adr, grill, review, docs), and seven agents each have their own model and effort (scout,
 researcher, architect, test-author, implementer, reviewer, ops). Hooks deny force-pushes, pushes
 to the default branch, skipped checks and reading `.env` files or keys, and keep code edits out of a
 framing interview. See

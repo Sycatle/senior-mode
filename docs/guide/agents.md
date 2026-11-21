@@ -61,9 +61,9 @@ changes a test to make it pass. It runs `senior-mode check` before reporting. It
 when the work outgrows the ticket's size, or after two failed attempts at the same problem.
 
 ADR 0004 plans a retry on Opus with high effort after two failed attempts. The agent stops as
-planned, but the retry is the caller's job, and the commands that will do it (`next`, `run`) are
-coming in [v0.2](https://github.com/Sycatle/senior-mode/milestone/2) and
-[v0.3](https://github.com/Sycatle/senior-mode/milestone/3). Today, ask Claude to retry on Opus.
+planned, but the retry is the caller's job: `run` retries a failed ticket once on Opus
+(`autonomy.escalate`, [ADR 0014](../adr/0014-model-escalation-in-runs.md)); in other sessions, ask
+Claude to retry on Opus.
 
 ## `reviewer`
 
@@ -81,8 +81,7 @@ request. It skips `CLAUDE.md`, which it never needs.
 
 ## How they are used
 
-- **Today.** `frame` calls `scout`, `researcher`, `architect` and `ops`. For delivery and review, ask
+- **Framing.** `frame` calls `scout`, `researcher`, `architect` and `ops`. Outside the commands, ask
   Claude by name, for example "use the reviewer agent on PR #43".
-- **Later.** `next` will chain `ops`, `test-author`, `implementer` and `reviewer` for each ticket
-  ([v0.2](https://github.com/Sycatle/senior-mode/milestone/2)); `run` will use the whole team
-  without you ([v0.3](https://github.com/Sycatle/senior-mode/milestone/3)).
+- **Delivery.** `next` chains `ops`, `test-author`, `implementer` and `reviewer` for each ticket with
+  you in the loop; `run` uses the whole team without you.

@@ -167,19 +167,20 @@ fits no step is a section of an existing skill, or stays out of the plugin.
 | Learning | Improve the method | `retro` |
 
 The commands of section 7 are the user-invocable entry points of these steps. The disciplines below
-are model-invoked, small (target < 3 KB each), loaded only when their description matches:
+are model-invoked, small (target < 3 KB each), loaded only when their description matches. A skill keeps
+details in sibling Markdown files that it reads only when they apply:
 
 | Skill | Rule it carries |
 |---|---|
 | `triage` | Section 5 criteria and what each size requires |
 | `ready` | Definition of Ready checklist; moves an item to `Ready` or labels it `needs-info` |
-| `tdd` | Red first for logic and bugs (regression test mandatory); UI and glue covered by an end-to-end scenario per acceptance criterion; spikes exempt but discarded or tested before merge. Refactor mode: behaviour pinned by tests first, then structure changed in steps that each stay green |
+| `tdd` | Red first for logic and bugs (regression test mandatory); UI and glue covered by an end-to-end scenario per acceptance criterion; spikes exempt but discarded or tested before merge. Refactor-only ticket mode: invariant first, characterization tests when coverage is weak, small green steps, `refactor:` commits, no behaviour change |
 | `commit` | Atomic conventional commits: one logical change, builds and passes on its own, body says why |
 | `verify` | Run the project's verification commands and read the output before claiming success |
 | `spec` | Spec template, lifecycle (`draft` → `accepted` → `implemented` → `superseded`), `paths` frontmatter, update in the same PR |
 | `adr` | When an ADR is required, MADR-lite template, never edit an accepted ADR (supersede it) |
 | `grill` | Interview protocol: decision frontier, 3-4 questions per round, recommended option first, facts fetched by `scout`, never ask what the repo answers |
-| `review` | Two axes (spec conformance, standards: SOLID, KISS, DRY where it pays, naming, error handling, security, tests that test behaviour), plus sections loaded when relevant: explain (a change put in plain words), UI, and dependencies and data (licences, personal data). Projects add their own through `review.sections` (ADR 0010) |
+| `review` | Two axes (spec conformance, standards: SOLID, KISS, DRY where it pays, naming, error handling, security, tests that test behaviour), plus sections read only when they apply: the plain-language brief for the person who merges (always, in the PR comment), UI (when the diff touches front-end files), dependencies and data (licences, secrets and personal data in logs and exports, new third-party services), and the project's own `review.sections` |
 | `docs` | Generic living documentation: README, architecture, user-facing changelog, ADRs; more through `docs.extra` |
 
 ## 9. Agent team
@@ -194,7 +195,7 @@ it does not read code at length. Each agent serves one team role of section 8.
 | `architect` | Lead | opus / high | Alternatives, ADRs, specs, vertical-slice decomposition, ticket splits | read + docs write |
 | `test-author` | Developer | sonnet / medium | Failing tests from acceptance criteria, in the ticket's worktree | edit tests only |
 | `implementer` | Developer | sonnet / medium → opus / high after 2 failed attempts | Make tests green, refactor, atomic commits | edit, bash |
-| `reviewer` | Reviewer | opus / high | Fresh-context review on both axes, protected-zone check, merge verdict | read-only + gh |
+| `reviewer` | Reviewer | opus / high | Fresh-context review on both axes, brief for the person who merges, protected-zone check, applicable sections, merge verdict | read-only + gh |
 | `ops` | Release and ops | haiku / low | Issues, Project fields, labels, PRs, CI status, merges, releases | gh, git |
 
 ## 10. Autonomy and guardrails
@@ -323,6 +324,7 @@ Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "autoMerge": true },
   "protected": ["**/migrations/**", "**/auth/**", ".github/workflows/**", "Dockerfile*"],
   "secrets": ["config/prod.*", "**/vault/*"],
+  "review": { "sections": ["docs/review/payments.md"] },
   "ci": { "mode": "local" },
   "github": { "protection": "ruleset" },
   "envGuard": { "forbidden": ["db.prod.example.com", "/acct-[0-9]{12}/"] },
@@ -345,6 +347,11 @@ between slashes (`/.../`). When the list is not empty, `setup` installs `.githoo
 adds the check `env guard` (§14); the rule itself, development environments only, is a line of the
 `Principles` block of `CLAUDE.md`. The key names no vendor and no stack: the project says what is
 forbidden.
+
+`review.sections` is the extension point for checks that belong to one project (regulated, stack- or
+company-specific): a list of project-relative Markdown checklists. The `review` skill reads each one
+from the base branch and applies it as an extra section, so a pull request cannot edit the checks it
+is judged by. The plugin ships none; they live in the project's repository.
 
 ## 14. Stack presets and CI
 

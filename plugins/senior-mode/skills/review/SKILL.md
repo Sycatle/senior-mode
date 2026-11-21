@@ -29,9 +29,13 @@ Review from the diff, the spec and the tests, not from the author's summary.
 
 ## Protected zones
 
-If the diff touches a protected zone from the config (`senior-mode config get protected`):
-migrations, security, auth, payments, CI, infrastructure, major dependency upgrades, or an L ticket
-or ADR, the verdict can be at best "approve, human merge". Add the label `needs-human`.
+Run `senior-mode protected` on the branch (`--base <ref>` when the pull request does not target the
+default branch). Files listed, exit 0: a protected zone is touched, so the verdict is at best
+"approve, human merge": add the label `needs-human`, set `senior-mode/review` to `pending`, never
+`success`, and name the files in the comment. Exit 1: no glob matched; globs miss things, so still
+judge the diff and treat the same what you find in: migrations, security, auth, permissions,
+secrets, payments, CI, infrastructure and container files, major dependency upgrades, an L ticket
+or an ADR.
 
 ## Verdict
 

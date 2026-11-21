@@ -99,6 +99,7 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode issue create --title ... --body-file ... --size ... --priority ...` | Creates a ticket with board fields, and optionally `--status`, `--milestone`, `--type`, `--blocked-by`, `--parent`; reuses an open issue with the same title |
 | `senior-mode item set <issue> <field> <option>...` | Sets board fields of a ticket, for example `Status Ready` |
 | `senior-mode config get <key>` | Prints a config value, with defaults (see [Configuration](configuration.md)) |
+| `senior-mode protected [--base <ref>]` | Lists the files changed on the branch that match a `protected` glob (exit 0), or nothing (exit 1); used by the reviewer |
 | `senior-mode context` | Prints the session greeting and the current ticket (used by the `SessionStart` hook) |
 | `senior-mode frame end` | Ends every framing session in the repository, so edits outside `docs/` are allowed again |
 

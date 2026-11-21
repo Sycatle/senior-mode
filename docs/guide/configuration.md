@@ -39,6 +39,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list when the key is absent and keeps yours; `senior-mode protected` and the reviewer read it |
 | `ci.mode` | `local` | `local` or `actions` |
 | `secrets` | none | Extra globs the [secrets guard](autonomy.md#secrets-guard-guard-secretssh) denies, added to its defaults: `"*.token"` matches a file name anywhere, `"config/prod.*"` and `"**/vault/*"` match from the repository root. It never allows a default. Add it yourself; setup does not write it |
+| `github.protection` | written by setup | `ruleset` when the `senior-mode` ruleset protects the default branch, `none` when GitHub refused it (private repository on a Free plan): the branch is then not protected on the server |
 | `project` | written by setup | Board owner, number, id, and field and option ids, so no agent looks them up again |
 
 `senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`).
@@ -74,6 +75,11 @@ secret scanning (planned in spec §14, no milestone yet). You can add your own a
 
 Switch with `senior-mode setup github --ci actions` (or `local`), then `senior-mode setup repo`.
 Your other workflows stay as they are in `actions` mode; turn one back on with `gh workflow enable <name>`.
+
+When `github.protection` is `none` (private repository on GitHub Free), setup keeps or forces `local`:
+the pre-push hook is the only gate, because nothing makes GitHub wait for the statuses. Upgrade or go
+public, then run `senior-mode setup github` again to get the ruleset and `"ruleset"`; `ci.mode` stays
+`local` until you pass `--ci actions`.
 
 ## Presets
 

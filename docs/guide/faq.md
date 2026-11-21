@@ -33,10 +33,19 @@ Why: [ADR 0006](../adr/0006-local-ci.md).
 
 ## My repository is private, on the free plan. What changes?
 
-GitHub refuses rulesets on private repositories without a paid plan. Setup reports it and goes on.
-You keep the board, labels, git hooks, the Bash guard and the statuses, but GitHub does not block a
-merge when `senior-mode/ci` or `senior-mode/review` is missing or red. Check them yourself before
-merging, or make the repository public, or upgrade the plan.
+GitHub refuses rulesets and branch protection on private repositories of a Free account or
+organization (HTTP 403, "Upgrade to GitHub Pro or make this repository public"). Setup reports it and
+goes on: it skips the ruleset, sets `ci.mode` to `local` and records `github.protection: "none"` in
+`.claude/senior-mode.json`.
+
+You keep the board, labels, git hooks, the Bash guard and the statuses, but branch protection is
+**not enforced on the server**: anyone with push access can push to the default branch, and GitHub
+does not block a merge when `senior-mode/ci` or `senior-mode/review` is missing or red. Your options:
+
+- make the repository public;
+- upgrade to GitHub Pro or Team, then run `/senior-mode:setup` again to get the ruleset;
+- accept it and keep the local gate (the pre-push hook and `senior-mode check`), checking the
+  statuses yourself before merging. If a governance document describes your controls, say it this way.
 
 ## Can I use it on an existing repository?
 

@@ -228,7 +228,8 @@ it does not read code at length. Each agent serves one team role of section 8.
   `setup` writes them when the key is absent and never touches a list already there, even an empty one.
 - **Self-protection:** while `SENIOR_MODE_RUN=1`, a hook denies Edit, Write, MultiEdit and
   NotebookEdit on `.github/workflows/**`, `.claude/**` and `.githooks/**` (the config, and so the
-  protected-zone list, lives in `.claude/`), and Bash commands that obviously write there
+  protected-zone list, lives in `.claude/`) except `.claude/agent-memory/**` (the project memory of
+  the reviewer and architect agents), and Bash commands that obviously write there
   (redirections, `tee`, `cp`, `mv`, `rm`, `sed -i`, `git rm`...), so an agent cannot weaken its own
   barriers. Outside a run it does nothing. Like the Bash guard it is a guardrail for honest mistakes,
   not a sandbox.

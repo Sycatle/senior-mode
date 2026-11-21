@@ -7,5 +7,6 @@
 - Une pull request par issue, environ 400 lignes modifiées au plus.
 - Une décision qui survit à la PR va dans `docs/adr/` ; une fonctionnalité M ou L part de `docs/specs/`.
 - Fini veut dire que les vérifications ont tourné et passent (`senior-mode check`, ou `.githooks/pre-push`).
+- Les machines d'agents n'utilisent que des environnements de développement, jamais la production ; `envGuard` (dans `.claude/senior-mode.json`) le fait respecter quand il est configuré.
 - Demander quand une décision produit ou d'architecture est ouverte ; ne jamais deviner.
 <!-- /senior-mode:principles -->

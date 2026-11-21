@@ -7,5 +7,6 @@
 - One pull request per issue, about 400 changed lines at most.
 - Decisions that outlive a pull request go in `docs/adr/`; M and L features start from `docs/specs/`.
 - Done means the checks ran and pass (`senior-mode check`, or `.githooks/pre-push`).
+- Agent machines use development environments only, never production; `envGuard` (in `.claude/senior-mode.json`) enforces it when configured.
 - Ask when a product or architecture decision is open; never guess.
 <!-- /senior-mode:principles -->

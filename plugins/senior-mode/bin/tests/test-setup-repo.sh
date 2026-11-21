@@ -21,6 +21,8 @@ git init -q -b main "$new"
 mkdir -p "$new/.claude"
 echo '{"language": "fr"}' >"$new/.claude/senior-mode.json"
 setup "$new" --command test="true" --command lint="true"
+[ "$(grep -c '^secrets: ' "$work/out")" -eq 1 ] || fail "no one-line secrets advice: $(cat "$work/out")"
+grep '^secrets: ' "$work/out" | grep -q "dev-only" || fail "advice does not say agent machines hold dev-only secrets"
 for f in CLAUDE.md .githooks/commit-msg .githooks/pre-push .github/pull_request_template.md \
   .github/ISSUE_TEMPLATE/feature.yml .github/ISSUE_TEMPLATE/bug.yml .claude/settings.json \
   release-please-config.json .release-please-manifest.json; do

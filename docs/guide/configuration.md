@@ -32,11 +32,12 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | Key | Default | Used for |
 |---|---|---|
 | `language` | `en` | Language of the templates (`en` or `fr`) and of what Claude writes for you; setup does not write it, add it yourself |
-| `preset` | detected | `node` with a `package.json`, else `generic`; a stored value wins |
-| `commands` | detected or asked | `lint`, `typecheck`, `test`, `build`, and `e2e` for node |
+| `preset` | detected | `nextjs-supabase` for Next.js with Supabase, else `node` with a `package.json`, else `generic`; a stored value wins |
+| `commands` | detected or asked | `lint`, `typecheck`, `test`, `build`, and `e2e` for node and nextjs-supabase |
 | `framework` | none | `next` when Next.js is a dependency (recorded only) |
 | `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list when the key is absent and keeps yours; `senior-mode protected` and the reviewer read it |
+| `supabase.prodProjectRef` | none | Reference of the production Supabase project; the `supabase prod ref` check of the nextjs-supabase preset fails when it appears in a `.env*` file or in `SUPABASE_URL` |
 | `ci.mode` | `local` | `local` or `actions` |
 | `secrets` | none | Extra globs the [secrets guard](autonomy.md#secrets-guard-guard-secretssh) denies, added to its defaults: `"*.token"` matches a file name anywhere, `"config/prod.*"` and `"**/vault/*"` match from the repository root. It never allows a default. Add it yourself; setup does not write it |
 | `project` | written by setup | Board owner, number, id, and field and option ids, so no agent looks them up again |
@@ -60,7 +61,8 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   `commit-msg` hook is senior-mode's own.
 - Checks you add by hand are kept on re-run. `senior-mode setup repo --command test="npm test"`
   replaces the command of the check with the same name.
-- `senior-mode check` prints `ok` or `FAIL` per check, with the last 20 lines of a failure.
+- `senior-mode check` prints `ok` or `FAIL` per check, with the last 20 lines of a failure. A check
+  that has nothing to do prints `skipped: <reason>` first; it counts as passed and shows as `skip`.
 
 Not in the list yet: spec drift ([v0.2](https://github.com/Sycatle/senior-mode/milestone/2)) and
 secret scanning (planned in spec §14, no milestone yet). You can add your own as a check entry.
@@ -80,12 +82,32 @@ Your other workflows stay as they are in `actions` mode; turn one back on with `
 | Preset | State | Commands |
 |---|---|---|
 | `node` | Available | Your `package.json` scripts (`lint`, `typecheck` or `type-check`, `test`, `build`, `test:e2e` or `e2e`), run with the package manager of your lockfile (npm, pnpm, yarn, bun). With a `tsconfig.json`, no typecheck script and `typescript` installed: `tsc --noEmit`, never downloaded. npm's placeholder test script does not count. |
+| `nextjs-supabase` | Available | Those of `node`, detected the same way. Chosen instead of `node` when `next` and `@supabase/supabase-js` or `@supabase/ssr` are dependencies, or `next` and `supabase/config.toml` both exist. See below |
 | `generic` | Available | Asked once, then stored |
 | `python`, `go`, `rust` | Coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4) | |
 
 The node preset reports the language: TypeScript when `typescript` is a dependency or a tsconfig
 exists, else JavaScript (no typecheck expected). A missing linter or test runner is reported, and
 Claude proposes one (Biome, Vitest) in a separate commit, only on your yes.
+
+### The nextjs-supabase preset
+
+On top of node's checks it adds two, both after `commit subjects`:
+
+- `supabase migration lint` runs `supabase db lint --level warning --fail-on error`
+  ([Supabase CLI reference](https://supabase.com/docs/reference/cli)). That command lints the local
+  database, which `supabase start` builds from `supabase/migrations`. The check says `skip` and
+  passes when there is no `supabase/migrations`, no `supabase` CLI, or the local stack is not running.
+- `supabase prod ref` fails when `supabase.prodProjectRef` (add it to `.claude/senior-mode.json`)
+  appears in any `.env*` file of the worktree, tracked or not, or in `NEXT_PUBLIC_SUPABASE_URL` or
+  `SUPABASE_URL`. It lists file names and variable names, never a value. Setup installs its script
+  as `.githooks/supabase-prod-ref.sh`.
+
+The preset also declares default `protected` globs (`supabase/migrations/**`, `supabase/**/*.sql`,
+`middleware.ts`, `src/middleware.ts`, `**/auth/**`, `**/rls/**`, `.github/workflows/**`, `.env*`),
+used once protected zones land ([v0.3](https://github.com/Sycatle/senior-mode/milestone/3)), and
+adds a `Supabase` block to `CLAUDE.md`: tests run against a dedicated Supabase dev project, never
+prod, and e2e is limited to `e2e.slots` concurrent runs.
 
 ## Git hooks
 

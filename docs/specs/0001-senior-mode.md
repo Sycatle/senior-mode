@@ -258,6 +258,7 @@ Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "autoMerge": true },
   "protected": ["**/migrations/**", "**/auth/**", ".github/workflows/**", "Dockerfile*"],
   "secrets": ["config/prod.*", "**/vault/*"],
+  "supabase": { "prodProjectRef": "..." },
   "ci": { "mode": "local" },
   "limits": { "prLines": 400 }
 }
@@ -277,6 +278,7 @@ once, then stored).
 | Preset | Lint / format | Types | Tests | Extra |
 |---|---|---|---|---|
 | node | Biome or the existing ESLint/Prettier | `tsc --noEmit` with TypeScript | Vitest, Playwright for e2e | Next.js aware |
+| nextjs-supabase | as node | as node | as node, Playwright e2e against a dev project | `supabase db lint`, prod project guard, protected globs |
 | python | Ruff | mypy or pyright | pytest | uv |
 | go | gofmt, golangci-lint | compiler | go test | |
 | rust | rustfmt, clippy `-D warnings` | compiler | cargo test / nextest | cargo-deny |
@@ -292,6 +294,28 @@ test runner is reported, and `setup` proposes Biome
 or Vitest in a separate commit, never installed without a yes. Next.js is recorded as `framework`; it
 builds through its script. Fixtures in `evals/fixtures/` are adopted and checked end to end by
 `evals/run.sh` (network, run on demand before merging a change to presets).
+
+The nextjs-supabase preset replaces node, when no preset is stored, for a `package.json` with `next`
+and `@supabase/supabase-js` or `@supabase/ssr`, or with `next` beside `supabase/config.toml`. Its
+commands are node's (one detection, no copy). Its checks add to the list:
+
+- `supabase migration lint` runs `supabase db lint --level warning --fail-on error`, the Supabase
+  CLI's database linter ([CLI reference](https://supabase.com/docs/reference/cli)). It lints the
+  local database, which `supabase start` builds from `supabase/migrations`, so it is skipped, with
+  a `skip` line in the report, when there is no `supabase/migrations`, no `supabase` CLI, or the
+  local stack is not running;
+- `supabase prod ref` runs `.githooks/supabase-prod-ref.sh` (installed by `setup` from the preset's
+  `scripts/`, refreshed on re-run, a file of your own kept). It fails when the config key
+  `supabase.prodProjectRef` appears in any `.env*` file of the worktree, tracked or not
+  (`node_modules`, `.next` and `.git` aside), or in `NEXT_PUBLIC_SUPABASE_URL` or `SUPABASE_URL`. It
+  prints file names, variable names or line numbers, never a value, and is skipped while the key
+  is unset.
+
+The preset declares default `protected` globs: `supabase/migrations/**`, `supabase/**/*.sql`,
+`middleware.ts`, `src/middleware.ts`, `**/auth/**`, `**/rls/**`, `.github/workflows/**`, `.env*`.
+Declaring is all it does here; enforcement belongs to the protected zones. `CLAUDE.md` gets a
+`Supabase` block: tests and e2e run against a dedicated Supabase dev project, never prod, and at
+most `e2e.slots` e2e runs at once.
 
 Every preset defines one check list: lint, typecheck, tests, build, Conventional Commits, spec drift,
 secret scanning. The pre-push hook runs it in any terminal; `senior-mode check` runs it in a session

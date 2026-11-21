@@ -79,7 +79,8 @@ Before changing anything, setup:
 - `release-please-config.json` and `.release-please-manifest.json`;
 - in `actions` mode, `.github/workflows/senior-mode.yml`.
 
-With a `package.json`, the `node` preset reads your scripts. Otherwise setup asks once how to lint,
+With a `package.json`, the `node` preset reads your scripts (`nextjs-supabase`, same scripts, for
+a Next.js app on Supabase). Otherwise setup asks once how to lint,
 typecheck, test and build. If a linter or test runner is missing, it proposes one (Biome, Vitest)
 in its own commit, only if you say yes.
 

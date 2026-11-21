@@ -87,7 +87,7 @@ Le déroulé pas à pas : [A typical day](docs/guide/a-typical-day.md) (en angla
 | `/senior-mode:next` | La session du jour : état du board, pull requests qui vous attendent, puis livre avec vous le premier ticket prêt. Ne fusionne jamais sans votre accord. | Disponible |
 | `/senior-mode:status` | Tableau de bord en clair : fait, en cours, bloqué, en attente de vous. Peut produire un résumé de la semaine pour un lecteur non technique. | Disponible |
 | `/senior-mode:run` | Livre seule jusqu'à N tickets prêts, une session et un worktree par ticket, dans les garde-fous. S'arrête aux pull requests relues, sauf si vous activez la fusion. | Disponible |
-| `retro` | Chaque semaine : repriorise, liste la dette, change les erreurs répétées en contrôles. | [Prévue en v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
+| `/senior-mode:retro` | Chaque semaine : les faits de la semaine, puis jusqu'à trois changements de méthode à valider. | Disponible |
 
 Derrière elles, de petits skills de discipline ne se chargent que quand ils s'appliquent (triage,
 ready, tdd, commit, verify, spec, adr, grill, review), et sept agents ont chacun leur modèle et leur

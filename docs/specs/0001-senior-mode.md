@@ -117,7 +117,7 @@ Natural-language triggers in any language route to them ("let's frame", "cadrons
 | `next [#issue]` | The daily session: short state of the board, open PRs needing a human (offered for review or merge first), then picks the top Ready ticket and delivers it with the user in the loop (TDD, commits, PR, review). Never merges without the user's explicit yes. | ops, test-author, implementer, reviewer |
 | `run` | Autonomous delivery of up to N Ready tickets, one headless session per ticket (section 10, ADR 0007). | all |
 | `status` | Plain-language dashboard: done since last time, in progress, blocked, next, waiting for a human, release state. Cheap: one GraphQL call. | none (runs `senior-mode status`) |
-| `retro` | Weekly: reprioritise, close or rescope stale items, list debt, check spec drift, and turn recurring mistakes into mechanisms (a hook, a CI check, a lint rule) proposed as tickets. | architect, ops |
+| `retro` | The learning step, weekly by default: the facts of the period in plain language, then at most three process changes (a `CLAUDE.md` pitfall, a protected glob, a check, a ticket split rule) proposed as issue drafts the user approves. Edits nothing without a yes. | none (runs `senior-mode retro`) |
 
 French is served without a companion plugin (ADR 0013): French trigger phrases in the skill
 descriptions, and the `language` config key for replies and documents.
@@ -169,6 +169,26 @@ merge needs the user's explicit yes in the conversation, both statuses green and
 label; a `needs-human` pull request is merged by the user, never by an agent. After the merge `next`
 invokes the `docs` skill (section 8) and offers the next ticket. Its long reference sits next to the
 skill, in `skills/next/reference.md`.
+
+### `retro`
+
+- `senior-mode retro [--since <dur>] [--json]` gathers the facts of a period (default 7 days) and
+  changes nothing. It reuses the board query of `status` and adds one history query: issues updated
+  in the period with their status changes and reopenings, and recently merged pull requests with
+  their size, labels and reviews. Two GitHub calls, three for a Project of more than 100 items.
+- Facts: tickets done (not those closed as not planned); cycle time, from the first move to
+  `In progress` to the close of the ticket, as median and worst (a ticket with no recorded start is
+  left out); pull requests that needed a human, open or merged in the period (`needs-human` label, or
+  a review requesting changes, with its first words as the reason); reopened tickets; failed results
+  `check` recorded locally (ADR 0006), in the repository and its worktrees; failed or escalated runs;
+  and size against reality: a ticket's pull request lines against its size (S ~50, M ~400, section
+  5), over when above 1.5 times that.
+- Run logs are optional: `.claude/senior-mode/runs/*.json`, one object per ticket run with `ticket`,
+  `outcome` (`done` or `failed`), `escalated`, `reason`, `finishedAt`. `run` writes them (open
+  question: its log format is not settled yet; `retro` reads these keys and skips what it cannot
+  read). Without the directory, `runs.found` is false and the command still works.
+- The skill answers in the `language` of the config, then proposes at most three changes, each an
+  issue draft with its evidence; it creates an issue, edits a file or a config only after a yes.
 
 ## 8. Lifecycle, roles and skills
 

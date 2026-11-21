@@ -16,7 +16,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | check | publish [commit] | release [--dry-run] | frame end | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]..."
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | check | publish [commit] | release [--dry-run] | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]..."
 }
 
 config_file() {
@@ -241,7 +241,12 @@ check() {
     if (cd "$root" && for v in $(git rev-parse --local-env-vars); do unset "$v"; done && bash -c "$cmd") \
       >"$output" 2>&1; then
       passed=$((passed + 1))
-      echo "ok    $name"
+      # A check with nothing to do says so on its first line; show why instead of a bare ok.
+      if [[ $(head -n 1 "$output") == "skipped: "* ]]; then
+        echo "skip  $name: $(head -n 1 "$output" | cut -c10-)"
+      else
+        echo "ok    $name"
+      fi
     else
       failed="${failed:+$failed, }$name"
       echo "FAIL  $name"
@@ -489,18 +494,26 @@ place() { # template destination label
   echo "$3: created"
 }
 
+# Installs or refreshes one of our scripts in .githooks/ (marked "# senior-mode:" on its second
+# line); a file of the project's own with that name is kept.
+githooks_install() { # root source label
+  local dest
+  dest=$1/.githooks/$(basename "$2")
+  if [ -e "$dest" ] && ! grep -q '^# senior-mode:' "$dest"; then
+    echo "$3: yours kept"
+  elif ! cmp -s "$2" "$dest" || [ ! -x "$dest" ]; then
+    mkdir -p "$1/.githooks"
+    cp "$2" "$dest"
+    chmod +x "$dest"
+    echo "$3: installed"
+  fi
+}
+
 # Installs or refreshes the senior-mode git hooks; a hook of the project's own is kept.
 setup_githooks() {
   local root=$1 tpl=$2 hook path
   for hook in commit-msg pre-push; do
-    if [ -e "$root/.githooks/$hook" ] && ! grep -q '^# senior-mode:' "$root/.githooks/$hook"; then
-      echo "git hook $hook: yours kept"
-    elif ! cmp -s "$tpl/githooks/$hook" "$root/.githooks/$hook" || [ ! -x "$root/.githooks/$hook" ]; then
-      mkdir -p "$root/.githooks"
-      cp "$tpl/githooks/$hook" "$root/.githooks/$hook"
-      chmod +x "$root/.githooks/$hook"
-      echo "git hook $hook: installed"
-    fi
+    githooks_install "$root" "$tpl/githooks/$hook" "git hook $hook"
   done
   path=$(git -C "$root" config core.hooksPath || true)
   if [ -z "$path" ]; then
@@ -510,29 +523,38 @@ setup_githooks() {
   fi
 }
 
-# Adds the Principles block to CLAUDE.md, or refreshes it; a missing CLAUDE.md starts from the
-# skeleton that the setup skill fills from the code.
+# Adds a marked block to CLAUDE.md, or refreshes it; label names the block in what it prints.
+claude_md_block() { # claude block marker label
+  local claude=$1 block=$2 marker=$3 label=$4 new
+  if ! grep -qE "^<!-- /?senior-mode:$marker" "$claude"; then
+    { echo; cat "$block"; } >>"$claude"
+    echo "CLAUDE.md: $label added, the rest kept"
+  # One opening marker, then one closing marker, else awk refuses and the file is left alone.
+  elif ! new=$(awk -v f="$block" -v m="$marker" '
+      index($0, "<!-- senior-mode:" m) == 1 { if (seen++) bad = 1; while ((getline l < f) > 0) print l; close(f); skip = 1; next }
+      index($0, "<!-- /senior-mode:" m " -->") == 1 { if (!skip) bad = 1; skip = 0; next }
+      !skip { print } END { exit (bad || skip) }' "$claude"); then
+    echo "CLAUDE.md: $label markers broken, file left untouched; restore one opening and one closing marker"
+  elif [ "$new" != "$(cat "$claude")" ]; then
+    # Written in place, so a symlinked CLAUDE.md and its mode survive.
+    printf '%s\n' "$new" >"$claude"
+    echo "CLAUDE.md: $label refreshed"
+  fi
+}
+
+# Adds the Principles block to CLAUDE.md, then the note of the preset when it has one; a missing
+# CLAUDE.md starts from the skeleton that the setup skill fills from the code.
 setup_claude_md() {
-  local root=$1 tpl=$2 name=$3 claude=$1/CLAUDE.md block=$2/principles.md skeleton new lines
+  local root=$1 tpl=$2 name=$3 pname=$4 claude=$1/CLAUDE.md block=$2/principles.md skeleton lines
   if [ ! -e "$claude" ]; then
     skeleton=$(cat "$tpl/CLAUDE.md")
     # Split around the one placeholder: a pattern substitution would read & in the name (bash 5.2).
     { printf '%s\n\n' "${skeleton%%\{\{name\}\}*}$name${skeleton#*\{\{name\}\}}"; cat "$block"; } >"$claude"
     echo "CLAUDE.md: created from the skeleton; commands, code map and pitfalls to fill"
-  elif ! grep -qE '^<!-- /?senior-mode:principles' "$claude"; then
-    { echo; cat "$block"; } >>"$claude"
-    echo "CLAUDE.md: Principles added, the rest kept"
-  # One opening marker, then one closing marker, else awk refuses and the file is left alone.
-  elif ! new=$(awk -v f="$block" '
-      /^<!-- senior-mode:principles/ { if (seen++) bad = 1; while ((getline l < f) > 0) print l; close(f); skip = 1; next }
-      /^<!-- \/senior-mode:principles -->/ { if (!skip) bad = 1; skip = 0; next }
-      !skip { print } END { exit (bad || skip) }' "$claude"); then
-    echo "CLAUDE.md: Principles markers broken, file left untouched; restore one opening and one closing marker"
-  elif [ "$new" != "$(cat "$claude")" ]; then
-    # Written in place, so a symlinked CLAUDE.md and its mode survive.
-    printf '%s\n' "$new" >"$claude"
-    echo "CLAUDE.md: Principles refreshed"
+  else
+    claude_md_block "$claude" "$block" principles Principles
   fi
+  [ ! -f "$tpl/$pname.md" ] || claude_md_block "$claude" "$tpl/$pname.md" "$pname" "$pname note"
   lines=$(wc -l <"$claude")
   [ "$lines" -le 80 ] || echo "CLAUDE.md: $lines lines, over 80; trim it to what the code does not tell"
 }
@@ -541,6 +563,7 @@ setup_claude_md() {
 # manager of its lockfile; tsc --noEmit when a tsconfig has no typecheck script and typescript is a
 # dependency (npx would otherwise fetch the unrelated "tsc" package), run without ever downloading;
 # npm's placeholder test script is no test. Prints {commands, framework, typescript}.
+# Shared by the node and nextjs-supabase presets.
 # shellcheck disable=SC2016 # jq program, not shell
 node_detect() {
   # exec runs an installed binary only: npx and bunx would download a missing one.
@@ -566,13 +589,93 @@ node_detect() {
     "$root/package.json"
 }
 
+# Succeeds for a Next.js app backed by Supabase (#74): `next` and a Supabase client library, or
+# `next` next to supabase/config.toml.
+# shellcheck disable=SC2016 # jq program, not shell
+nextjs_supabase_detect() {
+  local root=$1 config=false
+  [ ! -f "$root/supabase/config.toml" ] || config=true
+  jq -e --argjson config "$config" '((.dependencies // {}) + (.devDependencies // {})) as $d
+    | $d.next != null and ($config or $d["@supabase/supabase-js"] != null or $d["@supabase/ssr"] != null)' \
+    "$root/package.json" >/dev/null 2>&1
+}
+
+# The preset of a project that has no package.json and no stored preset (spec 0001 §14): the
+# manifests that name one language first, then Python's files (a requirements.txt is common anywhere).
+other_preset() {
+  local root=$1 f
+  [ ! -f "$root/go.mod" ] || { echo go; return; }
+  [ ! -f "$root/Cargo.toml" ] || { echo rust; return; }
+  for f in pyproject.toml setup.py requirements.txt; do
+    [ ! -f "$root/$f" ] || { echo python; return; }
+  done
+  echo generic
+}
+
+# Whether a Python project uses a tool: a config file of its own, or its name as a word in the
+# manifests (pytest-cov is not pytest).
+py_uses() { # root tool [config-file...]
+  local root=$1 tool=$2 f
+  shift 2
+  for f in "$@"; do [ ! -f "$root/$f" ] || return 0; done
+  for f in "$root"/pyproject.toml "$root"/setup.cfg "$root"/setup.py "$root"/tox.ini "$root"/Pipfile "$root"/requirements*.txt; do
+    if [ -f "$f" ] && grep -qiE "(^|[^A-Za-z0-9_-])$tool([^A-Za-z0-9_-]|\$)" "$f"; then return 0; fi
+  done
+  return 1
+}
+
+# Commands of a Python project (spec 0001 §14, #72): the tools it uses, run through uv or poetry
+# when their lockfile exists. Ruff before flake8; black's format check before ruff's, as black is only
+# named by projects that format with it; mypy before pyright; build when pyproject.toml has a
+# build-system. Prints {commands}.
+# shellcheck disable=SC2016 # jq program, not shell
+python_detect() {
+  local root=$1 run="" lint="" format="" typecheck="" test="" build=""
+  if [ -f "$root/uv.lock" ]; then run="uv run "
+  elif [ -f "$root/poetry.lock" ]; then run="poetry run "
+  fi
+  if py_uses "$root" ruff ruff.toml .ruff.toml; then lint="${run}ruff check ."
+  elif py_uses "$root" flake8 .flake8; then lint="${run}flake8"
+  fi
+  if py_uses "$root" black; then format="${run}black --check ."
+  elif py_uses "$root" ruff ruff.toml .ruff.toml; then format="${run}ruff format --check ."
+  fi
+  if py_uses "$root" mypy mypy.ini .mypy.ini; then typecheck="${run}mypy ."
+  elif py_uses "$root" pyright pyrightconfig.json; then typecheck="${run}pyright"
+  fi
+  ! py_uses "$root" pytest pytest.ini conftest.py || test="${run}pytest"
+  ! grep -qs '^\[build-system\]' "$root/pyproject.toml" || build="${run}python -m build"
+  jq -nc --arg lint "$lint" --arg format "$format" --arg typecheck "$typecheck" --arg test "$test" \
+    --arg build "$build" '{commands: ({lint: $lint, format: $format, typecheck: $typecheck, test: $test,
+      build: $build} | with_entries(select(.value != "")))}'
+}
+
+# Commands of a Go module (spec 0001 §14, #72): vet, joined by golangci-lint when its config exists,
+# then test and build over every package. Prints {commands}.
+go_detect() {
+  local root=$1 lint="go vet ./..." f
+  for f in "$root"/.golangci.yml "$root"/.golangci.yaml "$root"/.golangci.toml "$root"/.golangci.json; do
+    [ ! -f "$f" ] || lint="go vet ./... && golangci-lint run"
+  done
+  jq -nc --arg lint "$lint" '{commands: {lint: $lint, test: "go test ./...", build: "go build ./..."}}'
+}
+
+# Commands of a Cargo project (spec 0001 §14, #72): clippy denying warnings, rustfmt in check mode,
+# test and build. Prints {commands}.
+rust_detect() {
+  jq -nc '{commands: {lint: "cargo clippy --all-targets -- -D warnings", format: "cargo fmt --check",
+    test: "cargo test", build: "cargo build"}}'
+}
+
 # The documents and checks of a project (spec 0001 §12, §14, #12), idempotent; whatever the project
 # already has is extended, never replaced. The preset is the stored one (typescript, its former name,
-# becomes node), else node when a package.json exists, else generic. `--command <name>=<command>`
-# stores a command of the preset (lint, typecheck, test, build; e2e for node) and derives its check.
+# becomes node), else nextjs-supabase for a Next.js app on Supabase, else node when a package.json
+# exists, else the one of its manifest (go, rust, python), else generic. `--command <name>=<command>` stores a
+# command of the preset (lint, format, typecheck, test, build; e2e for node and nextjs-supabase) and
+# derives its check.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_repo() {
-  local root file tpl pname="" preset lang name commands='{}' detected='{}' out ours
+  local root file tpl pname="" preset lang name commands='{}' detected='{}' out ours script
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   tpl=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
@@ -581,12 +684,21 @@ setup_repo() {
   [ "$pname" != typescript ] || pname=node
   if [ -z "$pname" ]; then
     pname=generic
-    [ ! -f "$root/package.json" ] || pname=node
+    if [ -f "$root/package.json" ]; then
+      pname=node
+      ! nextjs_supabase_detect "$root" || pname=nextjs-supabase
+    else
+      pname=$(other_preset "$root")
+    fi
   fi
   preset=$tpl/presets/$pname/preset.json
   [ -f "$preset" ] || die "unknown preset $pname in .claude/senior-mode.json"
-  [ "$pname" != node ] || detected=$(node_detect "$root") ||
-    die "could not read package.json"
+  case $pname in
+    node | nextjs-supabase) detected=$(node_detect "$root") || die "could not read package.json" ;;
+    python) detected=$(python_detect "$root") ;;
+    go) detected=$(go_detect "$root") ;;
+    rust) detected=$(rust_detect) ;;
+  esac
   tpl=$tpl/templates
   while [ $# -gt 0 ]; do
     [ "$1" = --command ] && [[ ${2:-} == ?*=?* ]] || usage
@@ -603,6 +715,10 @@ setup_repo() {
   name=$(basename "$root")
 
   setup_githooks "$root" "$tpl"
+  # Scripts of the preset that its checks run, kept next to the hooks (they are standalone too).
+  for script in "$(dirname "$preset")"/scripts/*; do
+    [ ! -f "$script" ] || githooks_install "$root" "$script" "check script $(basename "$script")"
+  done
   # The commit subjects check runs our commit-msg hook; a project's own hook may not understand it.
   ours=false
   ! grep -q '^# senior-mode:' "$root/.githooks/commit-msg" 2>/dev/null || ours=true
@@ -610,10 +726,11 @@ setup_repo() {
   json_update "$file" '.preset = $pn | .commands = ($d.commands // {}) + (.commands // {}) + $c
     | if $d.framework then .framework = $d.framework else . end | .commands as $all
     | ($p[0].commands | map(select($all[.] != null) | {name: ., run: $all[.]})) as $derived
-    | ($derived + (if $ours then $p[0].checks else [] end)) as $want
+    | ($derived + [$p[0].checks[] | select($ours or (.run | startswith(".githooks/commit-msg") | not))]) as $want
     | .checks = ((.checks // []) as $have
       | [$have[] | if $c[.name] then .run = $c[.name] else . end]
-        + [$want[] | select(.name as $n | $have | any(.name == $n) | not)])' \
+        + [$want[] | select(.name as $n | $have | any(.name == $n) | not)])
+    | if has("protected") or ($p[0].protected | not) then . else .protected = $p[0].protected end' \
     --argjson c "$commands" --argjson ours "$ours" --slurpfile p "$preset" --arg pn "$pname" \
     --argjson d "$detected" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
@@ -621,11 +738,15 @@ setup_repo() {
     elif $d.typescript == false then "JavaScript" else empty end, .framework // empty]
     | select(length > 0) | " (\(join(", ")))"' "$file")"
   echo "checks: $(jq -r '[.checks[].name] | join(", ")' "$file")"
-  [ "$pname" != node ] || jq -r --argjson d "$detected" '["lint", "typecheck", "test", "build"] - (.commands | keys)
-    - (if $d.typescript then [] else ["typecheck"] end)
-    | select(length > 0) | "missing: \(join(", ")) (no script; propose tools, never install without a yes)"' "$file"
+  case $pname in
+    node | nextjs-supabase)
+      jq -r --argjson d "$detected" '["lint", "typecheck", "test", "build"] - (.commands | keys)
+        - (if $d.typescript then [] else ["typecheck"] end)
+        | select(length > 0) | "missing: \(join(", ")) (no script; propose tools, never install without a yes)"' "$file"
+      ;;
+  esac
 
-  setup_claude_md "$root" "$tpl/$lang" "$name"
+  setup_claude_md "$root" "$tpl/$lang" "$name" "$pname"
   if [ -n "$(find "$root" "$root/.github" "$root/docs" -maxdepth 1 -iname 'pull_request_template*' 2>/dev/null)" ]; then
     echo "pull request template: kept"
   else
@@ -662,6 +783,7 @@ setup_repo() {
     fi
     echo "releases: release-please configured"
   fi
+  echo "secrets: keep only dev-only secrets on a machine where agents run; the secrets guard stops honest mistakes, not a determined reader"
 }
 
 # What a session needs at start (SessionStart hook, spec 0001 §15): a short router and, on a ticket
@@ -694,6 +816,56 @@ ROUTER
   criteria=$(jq -r .body <<<"$json" | awk '/^## / { on = /Acceptance criteria/; next } on && /^- /' |
     head -6 | cut -c1-200)
   [ -z "$criteria" ] || printf 'Acceptance criteria:\n%s\n' "$criteria"
+}
+
+# The default branch to compare with: origin's HEAD, else the usual names, remote first.
+default_branch() {
+  local ref b
+  if ref=$(git symbolic-ref --short -q refs/remotes/origin/HEAD); then
+    printf '%s\n' "$ref"
+    return 0
+  fi
+  for b in origin/main origin/master main master; do
+    if git rev-parse -q --verify "$b^{commit}" >/dev/null; then
+      printf '%s\n' "$b"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Files changed on this branch since it left the base (default: the default branch) that match a
+# glob of `protected` in the config (spec 0001 §10). Prints them; exit 1 when there is none.
+# A glob without a slash matches a name at any depth; with a slash it is anchored at the repository
+# root: `*` stays in one path segment, `**/` spans any number of directories, `?` is one character.
+# shellcheck disable=SC2016 # a jq program, not shell
+protected() {
+  local base="" file globs files matches
+  while [ $# -gt 0 ]; do
+    [ "$1" = --base ] && [ $# -ge 2 ] || usage
+    base=$2
+    shift 2
+  done
+  file=$(config_file)
+  globs=$(jq -c '.protected // []' "$file")
+  jq -e 'type == "array" and all(type == "string")' <<<"$globs" >/dev/null ||
+    die "protected in .claude/senior-mode.json must be an array of globs"
+  [ "$globs" != "[]" ] || return 1
+  [ -n "$base" ] || base=$(default_branch) || die "no default branch found; pass --base <ref>"
+  git rev-parse -q --verify "$base^{commit}" >/dev/null || die "unknown ref: $base"
+  # --no-renames: a file moved out of a protected zone is listed under its old path too.
+  files=$(git -c core.quotePath=false diff --name-only --no-renames "$base...HEAD") ||
+    die "cannot compare with $base"
+  matches=$(jq -Rrn --argjson g "$globs" '
+    def re:
+      (if startswith("/") then .[1:] elif contains("/") then . else "**/" + . end) as $g
+      | "^" + ([$g | match("\\*\\*/|\\*\\*|\\*|\\?|[^*?]+"; "g").string
+          | if . == "**/" then "(.*/)?" elif . == "**" then ".*" elif . == "*" then "[^/]*" elif . == "?" then "[^/]"
+            else gsub("(?<c>[.+^$(){}|\\[\\]\\\\])"; "\\" + .c) end] | join("")) + "$";
+    ($g | map(re)) as $res
+    | inputs | select(. as $f | any($res[]; . as $r | $f | test($r)))' <<<"$files")
+  [ -n "$matches" ] || return 1
+  printf '%s\n' "$matches"
 }
 
 case "${1:-}" in
@@ -732,6 +904,10 @@ case "${1:-}" in
     [ "${2:-}" = create ] || usage
     shift 2
     issue_create "$@"
+    ;;
+  protected)
+    shift
+    protected "$@"
     ;;
   frame)
     # Lifts the docs/-only guard of every frame session in this repository (hooks/frame-guard.sh).

@@ -83,9 +83,10 @@ design is in [spec §8](../specs/0001-senior-mode.md#8-discipline-skills).
 
 - **Rule.** Review from the diff, the spec and the tests, on two axes. Spec: every criterion met and
   tested, nothing out of scope, spec and ADRs up to date. Standards: simplicity, design,
-  correctness, security, tests, readability, history. Sensitive areas (migrations, security, auth,
-  payments, CI, infrastructure, major upgrades, L tickets, ADRs) get at best "approve, human merge"
-  and the `needs-human` label.
+  correctness, security, tests, readability, history. A file matching a `protected` glob
+  (`senior-mode protected`), or another sensitive area (migrations, security, auth, payments, CI,
+  infrastructure, major upgrades, L tickets, ADRs), gets at best "approve, human merge" and the
+  `needs-human` label.
 - **Produces.** One PR comment with the verdict and `file:line` findings, and the status
   `senior-mode/review` (`success`, `pending` for a human merge, `failure`).
 - **When.** For every pull request, from a fresh context.

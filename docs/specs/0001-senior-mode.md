@@ -152,16 +152,36 @@ it does not read code at length.
   only for tickets with no dependency between them (`autonomy.parallel`, default 1).
 - **Circuit breaker:** stop after `autonomy.maxConsecutiveFailures` (default 2) failed tickets, or when
   a ticket outgrows its size; failed tickets go back to `Backlog` with a comment explaining why.
-- **Protected zones** (globs in config, defaults per preset): data migrations; security, auth,
-  permissions, secrets, payments; CI, infrastructure, container files, major dependency upgrades;
+- **Protected zones** (`protected`, globs in config, defaults per preset): data migrations; security,
+  auth, permissions, secrets, payments; CI, infrastructure, container files, major dependency upgrades;
   any L ticket or ADR. Work there is implemented and reviewed but labelled `needs-human` and never
-  merged by an agent.
-- **Self-protection:** during a run, hooks deny edits to `.github/workflows/**`, `.claude/**`,
-  `.githooks/**` and the protected-zone list itself, so an agent cannot weaken its own barriers.
+  merged by an agent. `senior-mode protected [--base <ref>]` lists the files of the branch (changed
+  since the merge-base with the base, by default the default branch) that match a glob: exit 0 with
+  the matches, 1 with none. The `reviewer` runs it: a match means `needs-human` and `senior-mode/review`
+  stays `pending`; the globs are a floor, and the reviewer still judges what they miss (major
+  upgrades, L tickets, ADRs). A glob without a slash matches a name at any depth; one with a slash is
+  anchored at the repository root, where `*` stays in one segment, `**/` spans directories and `?` is
+  one character. The presets `node` and `generic` declare defaults under `protected` in `preset.json`;
+  `setup` writes them when the key is absent and never touches a list already there, even an empty one.
+- **Self-protection:** while `SENIOR_MODE_RUN=1`, a hook denies Edit, Write, MultiEdit and
+  NotebookEdit on `.github/workflows/**`, `.claude/**` and `.githooks/**` (the config, and so the
+  protected-zone list, lives in `.claude/`), and Bash commands that obviously write there
+  (redirections, `tee`, `cp`, `mv`, `rm`, `sed -i`, `git rm`...), so an agent cannot weaken its own
+  barriers. Outside a run it does nothing. Like the Bash guard it is a guardrail for honest mistakes,
+  not a sandbox.
 - **Always denied:** `--no-verify`, force-push, direct push to the default branch,
   `gh pr merge --admin` or a PUT to the REST merge endpoint, history rewrite on shared branches,
   deleting files outside the ticket's worktree. The guard reads commands as written; it is a
   guardrail for honest mistakes, not a sandbox (GraphQL or `bash -c` are not parsed).
+- **Secrets guard:** always on, run or not. A `PreToolUse` hook (`guard-secrets.sh`) denies `Read`, `Grep`
+  and `Glob` on `.env`, `.env.*` (except `.env.example`, `.env.sample`, `.env.template`), `*.pem`, `*.key`,
+  `id_rsa*`, `id_ed25519*` (public `.pub` keys are fine), `*.p12`, `*.pfx`, `.npmrc`, `.netrc`,
+  `credentials*.json`, `service-account*.json` and the globs of the config key `secrets`; and Bash commands
+  that dump them (`cat`, `less`, `head`, `tail`, `grep`, `source`, `.` and similar) or the environment
+  (`printenv`, bare `env`, bare `set`, `export -p`, `declare -x`, `/proc/*/environ`). The deny reason says
+  why and what to do instead: ask the human, read `.env.example`. Same stance as the Bash guard: honest
+  mistakes, not a sandbox (`bash -c`, scripts and `cat *` are not parsed). `setup` advises keeping only
+  dev-only secrets on a machine where agents run.
 
 Run loop per ticket:
 1. `ops` selects the top Ready item (Priority, then milestone due date), unblocked, size ≤ M.
@@ -236,13 +256,19 @@ Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
   "commands": { "lint": "...", "typecheck": "...", "test": "...", "build": "..." },
   "project": { "owner": "...", "number": 1, "id": "PVT_...", "fields": { "Status": {"id": "...", "options": {}} } },
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "autoMerge": true },
-  "protected": { "migrations": [], "security": [], "infra": [] },
+  "protected": ["**/migrations/**", "**/auth/**", ".github/workflows/**", "Dockerfile*"],
+  "secrets": ["config/prod.*", "**/vault/*"],
+  "supabase": { "prodProjectRef": "..." },
   "ci": { "mode": "local" },
   "limits": { "prLines": 400 }
 }
 ```
 
 Field and option ids are cached here so no agent rediscovers them with extra API calls.
+
+`secrets` lists globs the secrets guard denies on top of its defaults (section 10): a glob without a slash
+matches the file name, one with a slash matches the path from the repository root, `**/` standing for any
+directories. It only adds; there is no way to allow a default.
 
 ## 14. Stack presets and CI
 
@@ -252,9 +278,10 @@ once, then stored).
 | Preset | Lint / format | Types | Tests | Extra |
 |---|---|---|---|---|
 | node | Biome or the existing ESLint/Prettier | `tsc --noEmit` with TypeScript | Vitest, Playwright for e2e | Next.js aware |
-| python | Ruff | mypy or pyright | pytest | uv |
-| go | gofmt, golangci-lint | compiler | go test | |
-| rust | rustfmt, clippy `-D warnings` | compiler | cargo test / nextest | cargo-deny |
+| nextjs-supabase | as node | as node | as node, Playwright e2e against a dev project | `supabase db lint`, prod project guard, protected globs |
+| python | Ruff or flake8; black or `ruff format` | mypy or pyright | pytest | `python -m build`; uv, poetry |
+| go | `go vet`, golangci-lint when configured | compiler | go test | `go build` |
+| rust | `cargo fmt --check`, clippy `-D warnings` | compiler | cargo test | `cargo build` |
 | generic | asked | asked | asked | |
 
 The node preset applies when a `package.json` exists and no preset is stored (a stored `typescript`,
@@ -267,6 +294,43 @@ test runner is reported, and `setup` proposes Biome
 or Vitest in a separate commit, never installed without a yes. Next.js is recorded as `framework`; it
 builds through its script. Fixtures in `evals/fixtures/` are adopted and checked end to end by
 `evals/run.sh` (network, run on demand before merging a change to presets).
+
+The nextjs-supabase preset replaces node, when no preset is stored, for a `package.json` with `next`
+and `@supabase/supabase-js` or `@supabase/ssr`, or with `next` beside `supabase/config.toml`. Its
+commands are node's (one detection, no copy). Its checks add to the list:
+
+- `supabase migration lint` runs `supabase db lint --level warning --fail-on error`, the Supabase
+  CLI's database linter ([CLI reference](https://supabase.com/docs/reference/cli)). It lints the
+  local database, which `supabase start` builds from `supabase/migrations`, so it is skipped, with
+  a `skip` line in the report, when there is no `supabase/migrations`, no `supabase` CLI, or the
+  local stack is not running;
+- `supabase prod ref` runs `.githooks/supabase-prod-ref.sh` (installed by `setup` from the preset's
+  `scripts/`, refreshed on re-run, a file of your own kept). It fails when the config key
+  `supabase.prodProjectRef` appears in any `.env*` file of the worktree, tracked or not
+  (`node_modules`, `.next` and `.git` aside), or in `NEXT_PUBLIC_SUPABASE_URL` or `SUPABASE_URL`. It
+  prints file names, variable names or line numbers, never a value, and is skipped while the key
+  is unset.
+
+The preset declares default `protected` globs: `supabase/migrations/**`, `supabase/**/*.sql`,
+`middleware.ts`, `src/middleware.ts`, `**/auth/**`, `**/rls/**`, `.github/workflows/**`, `.env*`.
+Declaring is all it does here; enforcement belongs to the protected zones. `CLAUDE.md` gets a
+`Supabase` block: tests and e2e run against a dedicated Supabase dev project, never prod, and at
+most `e2e.slots` e2e runs at once.
+
+The other presets apply when no `package.json` exists and no preset is stored, in this order:
+`go.mod` (go), `Cargo.toml` (rust), then `pyproject.toml`, `setup.py` or `requirements.txt` (python);
+a `requirements.txt` is common in any repository, so Python's files come last. A stored preset wins.
+Their commands come from what the project uses, and a tool the project does not use gets no check.
+python: `ruff check .` or `flake8`; `black --check .`, else `ruff format --check .` when Ruff is used;
+`mypy .` or `pyright`; `pytest`; `python -m build` when `pyproject.toml` has a `[build-system]`.
+Each is prefixed with `uv run` when `uv.lock` exists, `poetry run` when `poetry.lock` exists. A tool
+counts as used when its config file exists or its name is a word of the manifests (`pyproject.toml`,
+`setup.cfg`, `setup.py`, `tox.ini`, `Pipfile`, `requirements*.txt`). go: `go vet ./...`, joined by
+`golangci-lint run` when a `.golangci.{yml,yaml,toml,json}` exists; `go test ./...`; `go build ./...`.
+rust: `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test`, `cargo build`.
+The release-please type is `python`, `go` or `rust`. Each preset carries default `protected` globs
+(migrations, auth and security directories, CI workflows, Dockerfiles, compose files and `infra/`;
+lockfiles are not protected) in its `preset.json`; reading them is the protected zones' job.
 
 Every preset defines one check list: lint, typecheck, tests, build, Conventional Commits, spec drift,
 secret scanning. The pre-push hook runs it in any terminal; `senior-mode check` runs it in a session
@@ -337,7 +401,9 @@ plugin's hooks, which cover every agent.
 |---|---|---|
 | `SessionStart` | command | Inject a ~15-line router and, from the branch name, the current ticket, its spec and its state |
 | `PreToolUse` Bash | command | Deny `--no-verify`, force-push, push to the default branch, `reset --hard` on shared branches |
-| `PreToolUse` Edit/Write | command | During a run, deny protected and self-protecting paths (section 10); in a frame session, deny edits outside `docs/`, subagents included |
+| `PreToolUse` Edit/Write/Bash | command | During a run (`SENIOR_MODE_RUN=1`), deny writes to `.github/workflows/**`, `.claude/**`, `.githooks/**` (section 10, `self-protect.sh`) |
+| `PreToolUse` Edit/Write | command | In a frame session, deny edits outside `docs/`, subagents included |
+| `PreToolUse` Read/Grep/Glob/Bash | command | Deny reading `.env` files, keys and credential files, and dumping the environment, in every session (section 10) |
 | `UserPromptExpansion`, `PreToolUse` Skill, `SessionEnd` | command | Mark a frame session when `frame` starts; clear it on another senior-mode command or skill, at session end, or with `senior-mode frame end` |
 | `PermissionRequest` | command | During a run, allow the project's verification commands from config, so autonomy does not stall on prompts |
 | `PostToolUse` Edit/Write | command | Run the preset's formatter on the edited file; mark "verification needed" |
@@ -399,7 +465,7 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 | v0.1 Bootstrap | Plugin skeleton, `setup` (generic + node presets), `frame`, discipline skills, agents, hooks; written by hand, then used to plan the rest |
 | v0.2 Daily loop | `next`, `status`, spec index and drift check, git hooks |
 | v0.3 Autonomy | `run`, review status check, protected zones, circuit breaker, scheduled run in Actions |
-| v0.4 Breadth | python, go, rust presets, `retro`, `senior-mode-fr` |
+| v0.4 Breadth | python, go, rust presets (#72), `retro`, `senior-mode-fr` |
 | v1.0 | Evals green, docs, marketplace publication |
 
 ## 20. Open questions

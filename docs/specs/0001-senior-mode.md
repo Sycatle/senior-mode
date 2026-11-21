@@ -173,6 +173,15 @@ it does not read code at length.
   `gh pr merge --admin` or a PUT to the REST merge endpoint, history rewrite on shared branches,
   deleting files outside the ticket's worktree. The guard reads commands as written; it is a
   guardrail for honest mistakes, not a sandbox (GraphQL or `bash -c` are not parsed).
+- **Secrets guard:** always on, run or not. A `PreToolUse` hook (`guard-secrets.sh`) denies `Read`, `Grep`
+  and `Glob` on `.env`, `.env.*` (except `.env.example`, `.env.sample`, `.env.template`), `*.pem`, `*.key`,
+  `id_rsa*`, `id_ed25519*` (public `.pub` keys are fine), `*.p12`, `*.pfx`, `.npmrc`, `.netrc`,
+  `credentials*.json`, `service-account*.json` and the globs of the config key `secrets`; and Bash commands
+  that dump them (`cat`, `less`, `head`, `tail`, `grep`, `source`, `.` and similar) or the environment
+  (`printenv`, bare `env`, bare `set`, `export -p`, `declare -x`, `/proc/*/environ`). The deny reason says
+  why and what to do instead: ask the human, read `.env.example`. Same stance as the Bash guard: honest
+  mistakes, not a sandbox (`bash -c`, scripts and `cat *` are not parsed). `setup` advises keeping only
+  dev-only secrets on a machine where agents run.
 
 Run loop per ticket:
 1. `ops` selects the top Ready item (Priority, then milestone due date), unblocked, size ≤ M.
@@ -248,12 +257,17 @@ Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
   "project": { "owner": "...", "number": 1, "id": "PVT_...", "fields": { "Status": {"id": "...", "options": {}} } },
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "autoMerge": true },
   "protected": ["**/migrations/**", "**/auth/**", ".github/workflows/**", "Dockerfile*"],
+  "secrets": ["config/prod.*", "**/vault/*"],
   "ci": { "mode": "local" },
   "limits": { "prLines": 400 }
 }
 ```
 
 Field and option ids are cached here so no agent rediscovers them with extra API calls.
+
+`secrets` lists globs the secrets guard denies on top of its defaults (section 10): a glob without a slash
+matches the file name, one with a slash matches the path from the repository root, `**/` standing for any
+directories. It only adds; there is no way to allow a default.
 
 ## 14. Stack presets and CI
 
@@ -350,6 +364,7 @@ plugin's hooks, which cover every agent.
 | `PreToolUse` Bash | command | Deny `--no-verify`, force-push, push to the default branch, `reset --hard` on shared branches |
 | `PreToolUse` Edit/Write/Bash | command | During a run (`SENIOR_MODE_RUN=1`), deny writes to `.github/workflows/**`, `.claude/**`, `.githooks/**` (section 10, `self-protect.sh`) |
 | `PreToolUse` Edit/Write | command | In a frame session, deny edits outside `docs/`, subagents included |
+| `PreToolUse` Read/Grep/Glob/Bash | command | Deny reading `.env` files, keys and credential files, and dumping the environment, in every session (section 10) |
 | `UserPromptExpansion`, `PreToolUse` Skill, `SessionEnd` | command | Mark a frame session when `frame` starts; clear it on another senior-mode command or skill, at session end, or with `senior-mode frame end` |
 | `PermissionRequest` | command | During a run, allow the project's verification commands from config, so autonomy does not stall on prompts |
 | `PostToolUse` Edit/Write | command | Run the preset's formatter on the edited file; mark "verification needed" |

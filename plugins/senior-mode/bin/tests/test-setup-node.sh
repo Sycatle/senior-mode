@@ -85,12 +85,33 @@ grep -q "^preset: node (TypeScript, next)$" "$work/out" || fail "Next.js not rep
 [ -z "$(check_run "$d" test)" ] || fail "npm's placeholder test script taken as tests"
 grep -q "missing: lint, test" "$work/out" || fail "missing tools not reported: $(cat "$work/out")"
 
+# Next.js awareness: the middleware is a protected zone, written when the config has no list yet.
+# Only a Next.js project gets it; a list already in the config, even an empty one, is never touched.
+for zone in 'middleware.*' 'src/middleware.*'; do
+  jq -e --arg z "$zone" '.protected | index($z)' "$d/.claude/senior-mode.json" >/dev/null ||
+    fail "Next.js project does not protect $zone: $(cfg "$d" '.protected')"
+done
+[ "$(check_run "$d" e2e)" = "npm run test:e2e" ] || fail "framework awareness changed the e2e command"
+jq '.protected = ["only/mine/**"]' "$d/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$d/.claude/senior-mode.json"
+setup "$d"
+[ "$(cfg "$d" '.protected | join(",")')" = "only/mine/**" ] || fail "user's protected list overwritten: $(cfg "$d" '.protected')"
+jq '.protected = []' "$d/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$d/.claude/senior-mode.json"
+setup "$d"
+[ "$(cfg "$d" '.protected | length')" = 0 ] || fail "an empty protected list, chosen on purpose, was refilled"
+jq 'del(.protected)' "$d/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$d/.claude/senior-mode.json"
+setup "$d"
+jq -e '.protected | index("middleware.*")' "$d/.claude/senior-mode.json" >/dev/null || fail "protected not written back when the key is absent"
+d=$(project dev-next '{"devDependencies": {"next": "16"}}' package-lock.json)
+setup "$d"
+jq -e '.protected | index("src/middleware.*")' "$d/.claude/senior-mode.json" >/dev/null || fail "next as a devDependency not recognised"
+
 # Plain JavaScript: named as such, and no typecheck is expected.
 d=$(project js '{"scripts": {"lint": "eslint ."}}' package-lock.json)
 setup "$d"
 [ "$(cfg "$d" .preset)" = node ] || fail "node preset not chosen for JavaScript: $(cfg "$d" .preset)"
 grep -q "^preset: node (JavaScript)$" "$work/out" || fail "JavaScript not reported: $(cat "$work/out")"
 grep -q "^missing: test, build " "$work/out" || fail "typecheck expected from JavaScript: $(cat "$work/out")"
+[ "$(cfg "$d" '.protected // [] | map(select(test("middleware")))| length')" = 0 ] || fail "middleware protected without Next.js"
 
 # A preset stored under its former name becomes node.
 jq '.preset = "typescript"' "$d/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$d/.claude/senior-mode.json"

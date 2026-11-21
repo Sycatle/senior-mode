@@ -4,7 +4,7 @@ title: senior-mode, a Claude Code plugin for senior-grade delivery
 status: accepted
 size: L
 paths: ["plugins/**", ".claude-plugin/**", "evals/**"]
-adrs: [0001, 0002, 0003, 0004, 0005, 0006, 0009, 0010, 0011, 0012, 0013, 0014]
+adrs: [0001, 0002, 0003, 0004, 0005, 0006, 0007, 0008, 0009, 0010, 0011, 0012, 0013, 0014]
 ---
 
 # senior-mode
@@ -115,7 +115,7 @@ Natural-language triggers in any language route to them ("let's frame", "cadrons
 | `setup` | Adopt a repo (new or existing): detect stack, choose preset, create the Project and its fields, labels, branch protection, CI, release-please, git hooks, issue and PR templates, `CLAUDE.md` with Principles, `.claude/senior-mode.json`. Idempotent; re-run to repair. | scout, ops |
 | `frame` | Idea → interview rounds → alternatives → spec → ADR(s) → tickets as vertical slices with acceptance criteria, dependencies, size, priority, milestone. Ends with a summary of proactive suggestions the user did not ask for. | scout, researcher, architect, ops |
 | `next` | The daily session: short state of the board, open PRs needing a human, then picks the top Ready ticket and delivers it with the user in the loop (TDD, commits, PR). | ops, test-author, implementer, reviewer |
-| `run` | Autonomous delivery of up to N Ready tickets (section 9). | all |
+| `run` | Autonomous delivery of up to N Ready tickets, one headless session per ticket (section 10, ADR 0007). | all |
 | `status` | Plain-language dashboard: done since last time, in progress, blocked, next, waiting for a human, release state. Cheap: one GraphQL call. | none (runs `senior-mode status`) |
 | `retro` | Weekly: reprioritise, close or rescope stale items, list debt, check spec drift, and turn recurring mistakes into mechanisms (a hook, a CI check, a lint rule) proposed as tickets. | architect, ops |
 
@@ -249,9 +249,35 @@ these bounds:
   mistakes, not a sandbox (`bash -c`, scripts and `cat *` are not parsed). `setup` advises keeping only
   dev-only secrets on a machine where agents run.
 
-Run loop per ticket:
-1. `ops` selects the top Ready item (Priority, then milestone due date), unblocked, size ≤ M.
-2. Worktree and branch `<type>/<issue>-<slug>`; status `In progress`.
+`senior-mode run [--max N] [--parallel P]` orchestrates (ADR 0007): the bounds above, the retries and
+the merge are applied by the command, not by a model. It takes the first N tickets of `pick`, and
+for each, at most P at a time:
+
+- creates the worktree `<repo>-run-<n>` (a sibling of the main checkout) and the branch
+  `<type>/<issue>-<slug>` from the default branch (`fix` for `type:bug`, `chore` for `type:chore`,
+  else `feat`), or reuses them, and sets the status `In progress`;
+- starts `claude -p --model sonnet --permission-mode bypassPermissions` in it, with
+  `SENIOR_MODE_RUN=1` and `SENIOR_MODE_RUN_OUTCOME` (and `--plugin-dir` from
+  `SENIOR_MODE_PLUGIN_DIR`), in a window of the tmux session `senior-mode-run`, or in the background
+  without tmux; scripts, prompts and logs go to `.git/senior-mode/runs/<stamp>/`;
+- reads the outcome line the session writes: `delivered` (it counts only with an open pull request
+  for the branch), `outgrown: <reason>` (stops the run) or `failed: <reason>`; a missing line is a
+  failure. A failure on Sonnet is retried once on Opus from the same worktree when
+  `autonomy.escalate` is true (default). A ticket given up goes back to `Backlog` with a comment;
+- merges a delivered pull request only when `autonomy.merge` is true, `senior-mode/ci` and
+  `senior-mode/review` are both `success` on its head, it has no `needs-human` label and
+  `github.protection` is not `none`; after any merge, one more session updates the living docs on a
+  branch of its own;
+- the check named `e2e` runs through `senior-mode e2e-lock`, at most `e2e.slots` (default 2) at once
+  per machine, the slot number in `SENIOR_MODE_E2E_SLOT`.
+
+`run` refuses to work as root (Claude Code does not skip permission prompts for root) and finds
+`claude` on PATH or in `~/.local/bin`.
+
+Each ticket session:
+1. Reads the ticket, its spec and acceptance criteria (the command already picked it and set it
+   `In progress`).
+2. Works in its worktree on branch `<type>/<issue>-<slug>`.
 3. `test-author` writes failing tests from the acceptance criteria and records the failing output.
 4. `implementer` makes them pass and refactors; tests land in the same commit as the code they cover,
    so every commit passes on its own (ADR 0005); the PR quotes the red run; `verify` before each push.
@@ -259,10 +285,11 @@ Run loop per ticket:
    `In review`.
 6. `reviewer` (fresh context) posts its review and sets the commit status `senior-mode/review`;
    at most 2 fix rounds.
-7. Protected zone → `needs-human`, stop there. Otherwise `senior-mode check` runs on the PR head and
-   publishes `senior-mode/ci`; once it and `senior-mode/review` are green, `ops` merges with
-   `gh pr merge --rebase`. The `senior-mode` ruleset requires both statuses (ADR 0006).
-8. Final report in plain language: merged, waiting for a human, failed and why, cost indicators.
+7. Protected zone → `needs-human`, stop there. `senior-mode check` runs on the PR head and publishes
+   `senior-mode/ci`; the session writes its outcome line and never merges. The `senior-mode` ruleset
+   requires both statuses (ADR 0006).
+8. The command's final report in plain language: merged, waiting for a human and why, failed and
+   why, not started.
 
 `run` can also be scheduled headless (`claude -p`) for nightly batches, with the same config: by a
 systemd user timer or cron entry on the agent machine, using the machine's subscription login: no API
@@ -554,4 +581,3 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 
 ## 20. Open questions
 
-- `run` orchestration: prose skill driving agents, or a `workflows/*.js` script (spike in v0.3).

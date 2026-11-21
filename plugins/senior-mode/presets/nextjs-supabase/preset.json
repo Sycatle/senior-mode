@@ -1,0 +1,24 @@
+{
+  "commands": ["lint", "typecheck", "test", "build", "e2e"],
+  "checks": [
+    { "name": "commit subjects", "run": ".githooks/commit-msg --branch" },
+    {
+      "name": "supabase migration lint",
+      "run": "[ -d supabase/migrations ] || { echo 'skipped: no supabase/migrations'; exit 0; }; command -v supabase >/dev/null || { echo 'skipped: supabase CLI not installed'; exit 0; }; supabase status >/dev/null 2>&1 || { echo 'skipped: local Supabase stack not running (supabase start)'; exit 0; }; supabase db lint --level warning --fail-on error"
+    },
+    { "name": "supabase prod ref", "run": ".githooks/supabase-prod-ref.sh" }
+  ],
+  "protected": [
+    "supabase/migrations/**",
+    "supabase/**/*.sql",
+    "middleware.ts",
+    "src/middleware.ts",
+    "**/auth/**",
+    "**/rls/**",
+    ".github/workflows/**",
+    ".env*"
+  ],
+  "release": {
+    "packages": { ".": { "release-type": "node", "component": "{{name}}", "include-component-in-tag": true } }
+  }
+}

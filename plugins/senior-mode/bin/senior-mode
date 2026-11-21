@@ -16,7 +16,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | check | publish [commit] | release [--dry-run] | frame end | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]..."
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | check | publish [commit] | release [--dry-run] | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]..."
 }
 
 config_file() {
@@ -696,6 +696,56 @@ ROUTER
   [ -z "$criteria" ] || printf 'Acceptance criteria:\n%s\n' "$criteria"
 }
 
+# The default branch to compare with: origin's HEAD, else the usual names, remote first.
+default_branch() {
+  local ref b
+  if ref=$(git symbolic-ref --short -q refs/remotes/origin/HEAD); then
+    printf '%s\n' "$ref"
+    return 0
+  fi
+  for b in origin/main origin/master main master; do
+    if git rev-parse -q --verify "$b^{commit}" >/dev/null; then
+      printf '%s\n' "$b"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Files changed on this branch since it left the base (default: the default branch) that match a
+# glob of `protected` in the config (spec 0001 §10). Prints them; exit 1 when there is none.
+# A glob without a slash matches a name at any depth; with a slash it is anchored at the repository
+# root: `*` stays in one path segment, `**/` spans any number of directories, `?` is one character.
+# shellcheck disable=SC2016 # a jq program, not shell
+protected() {
+  local base="" file globs files matches
+  while [ $# -gt 0 ]; do
+    [ "$1" = --base ] && [ $# -ge 2 ] || usage
+    base=$2
+    shift 2
+  done
+  file=$(config_file)
+  globs=$(jq -c '.protected // []' "$file")
+  jq -e 'type == "array" and all(type == "string")' <<<"$globs" >/dev/null ||
+    die "protected in .claude/senior-mode.json must be an array of globs"
+  [ "$globs" != "[]" ] || return 1
+  [ -n "$base" ] || base=$(default_branch) || die "no default branch found; pass --base <ref>"
+  git rev-parse -q --verify "$base^{commit}" >/dev/null || die "unknown ref: $base"
+  # --no-renames: a file moved out of a protected zone is listed under its old path too.
+  files=$(git -c core.quotePath=false diff --name-only --no-renames "$base...HEAD") ||
+    die "cannot compare with $base"
+  matches=$(jq -Rrn --argjson g "$globs" '
+    def re:
+      (if startswith("/") then .[1:] elif contains("/") then . else "**/" + . end) as $g
+      | "^" + ([$g | match("\\*\\*/|\\*\\*|\\*|\\?|[^*?]+"; "g").string
+          | if . == "**/" then "(.*/)?" elif . == "**" then ".*" elif . == "*" then "[^/]*" elif . == "?" then "[^/]"
+            else gsub("(?<c>[.+^$(){}|\\[\\]\\\\])"; "\\" + .c) end] | join("")) + "$";
+    ($g | map(re)) as $res
+    | inputs | select(. as $f | any($res[]; . as $r | $f | test($r)))' <<<"$files")
+  [ -n "$matches" ] || return 1
+  printf '%s\n' "$matches"
+}
+
 case "${1:-}" in
   context)
     context
@@ -732,6 +782,10 @@ case "${1:-}" in
     [ "${2:-}" = create ] || usage
     shift 2
     issue_create "$@"
+    ;;
+  protected)
+    shift
+    protected "$@"
     ;;
   frame)
     # Lifts the docs/-only guard of every frame session in this repository (hooks/frame-guard.sh).

@@ -421,10 +421,8 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 | Milestone | Content |
 |---|---|
 | v0.1 Bootstrap | Plugin skeleton, `setup` (generic + node presets), `frame`, discipline skills, agents, hooks; written by hand, then used to plan the rest |
-| v0.2 Daily loop | `next`, `status`, spec index and drift check, git hooks |
-| v0.3 Autonomy | `run`, review status check, protected zones, circuit breaker, scheduled run in Actions |
-| v0.4 Breadth | python, go, rust presets, `retro`, `senior-mode-fr` |
-| v1.0 | Evals green, docs, marketplace publication |
+| v0.2 to v0.4, shipped together | Daily loop: `next`, `status`, spec index and drift check, git hooks. Autonomy: `run`, review status check, protected zones, circuit breaker, model escalation, scheduled runs on the agent machine. Breadth: python, go, rust presets, `retro`, generic `docs`, French triggers. Each piece passes the dogfooding gate (ADR 0011) before it is merged |
+| v1.0 | Evals green, marketplace publication |
 
 ## 20. Open questions
 
@@ -432,6 +430,4 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 - Statusline: plugins cannot ship one, and `bin/` is on the PATH of the Bash tool, not necessarily
   of the statusline command; find a project setting that survives plugin updates (the plugin root
   path changes on each update).
-- Credentials for scheduled runs in Actions (API key or OAuth token) and the default
-  `--max-budget-usd`.
 - Whether `status` should also write a weekly digest issue for non-technical stakeholders.

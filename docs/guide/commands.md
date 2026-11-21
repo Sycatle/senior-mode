@@ -10,7 +10,7 @@ Commands run only when you type them. The design is in [spec §7](../specs/0001-
 |---|---|---|
 | `/senior-mode:setup` | Adopt a repository, or repair it | Available |
 | `/senior-mode:frame` | Turn an idea into a spec, ADRs and tickets | Available |
-| `/senior-mode:next` | Daily session: deliver the top Ready ticket with you | Coming in [v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
+| `/senior-mode:next` | Daily session: deliver the top Ready ticket with you | Available |
 | `/senior-mode:status` | Plain-language dashboard | Available |
 | `/senior-mode:run` | Deliver up to N Ready tickets on its own | Available |
 | `/senior-mode:retro` | Weekly review of the board and the process | Coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
@@ -54,11 +54,19 @@ State: **Available.**
 
 ## `next`
 
-State: **Coming in [v0.2 Daily loop](https://github.com/Sycatle/senior-mode/milestone/2).**
+State: **Available.**
 
 - **Purpose.** The daily session: a short state of the board, open pull requests needing a human,
   then the top Ready ticket delivered with you in the loop (tests first, commits, pull request).
-- Until then, follow [A typical day](a-typical-day.md) steps 3 to 7.
+- **Runs.** `senior-mode status`; the pull requests that need you, each offered for review or merge;
+  `senior-mode pick --max 1`, which you confirm (or `/senior-mode:next #42` for a Ready ticket of your
+  choice); `senior-mode start`, which makes the worktree and branch and moves the ticket to In
+  progress; then the `test-author`, the `implementer`, `senior-mode check`, the pull request with
+  `Closes #n`, and a fresh-context review, as in [A typical day](a-typical-day.md) steps 3 to 7.
+- **Asks.** To take the ticket it picked, and whether to merge once the review is done. It never
+  merges without your explicit yes, and a `needs-human` pull request is yours to merge. After a
+  merge it runs the `docs` skill and offers the next ticket.
+- Ask "suivant", "on enchaîne" or "prochain ticket", or type `/senior-mode:next`.
 
 ## `status`
 
@@ -121,6 +129,7 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode release [--dry-run]` | Runs release-please 17.11.2 locally: tags a merged release PR, opens or updates the next one |
 | `senior-mode issue create --title ... --body-file ... --size ... --priority ...` | Creates a ticket with board fields, and optionally `--status`, `--milestone`, `--type`, `--blocked-by`, `--parent`; reuses an open issue with the same title |
 | `senior-mode pick [--json] [--max N]` | The Ready tickets in delivery order: Priority, then milestone due date; leaves out size L, blocked tickets and `needs-info` |
+| `senior-mode start <issue>` | Creates the worktree (`<repository>-<issue>`) and the branch `<type>/<issue>-<slug>` for a ticket, from the default branch, and sets Status `In progress`; safe to rerun |
 | `senior-mode run [--max N] [--parallel P]` | The autonomous run of `/senior-mode:run`: one headless session per ticket, then a plain report |
 | `senior-mode e2e-lock -- <command>` | Runs the command once one of `e2e.slots` machine-wide slots is free; `check` runs the check named `e2e` through it |
 | `senior-mode status [--json] [--since <dur>] [--watch [secs]]` | The dashboard of `/senior-mode:status`; `--since 7d` for a digest (`m`, `h`, `d`, `w`) |

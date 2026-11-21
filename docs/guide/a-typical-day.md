@@ -3,9 +3,9 @@
 A walk-through from an idea to a merged pull request with the tools of version 0.1, and where the
 coming commands will take over.
 
-Today, `frame` is the only command that runs a whole flow. After it, you ask Claude for each step
-in plain words, and the skills, agents and hooks keep the work disciplined. The daily commands
-`next`, `run` and `status` will chain these steps for you later.
+`frame` and `next` run a whole flow. Without them, you ask Claude for each step in plain words, and
+the skills, agents and hooks keep the work disciplined. The daily commands
+`next` and `status` chain these steps for you; `run` will do it without you later.
 
 ## 1. Frame the idea
 
@@ -35,8 +35,9 @@ Claude to check the tickets: the [`ready`](skills.md#ready) skill moves each one
 
 ## 3. Start a ticket
 
-Pick the top `Ready` ticket on the board and ask Claude to start it, for example "start #42". Work
-happens on a branch named `<type>/<issue>-<slug>`, such as `feat/42-overdue-warning`.
+Pick the top `Ready` ticket on the board and ask Claude to start it, for example "start #42", or let
+`/senior-mode:next` do it. `senior-mode start 42` makes a worktree next to your checkout and a branch
+named `<type>/<issue>-<slug>`, such as `feat/42-overdue-warning`, and moves the ticket to In progress.
 
 On that branch, each new Claude Code session starts with the ticket's title, status, spec and
 acceptance criteria (the `SessionStart` hook).
@@ -105,14 +106,14 @@ senior-mode release --dry-run
 senior-mode release
 ```
 
-## Where the coming commands fit
+## Where the commands fit
 
 | Step | Today | Later |
 |---|---|---|
-| Read where things stand | `status`, a plain-language dashboard | Same, shipped in v0.2 |
-| Steps 3 to 7, with you in the loop | Ask Claude step by step | `next` picks the top Ready ticket and delivers it with you. Coming in [v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
+| Read where things stand | `status`, a plain-language dashboard | Same |
+| Steps 3 to 7, with you in the loop | `/senior-mode:next` picks the top Ready ticket and delivers it with you | Same |
 | Steps 3 to 7, without you | Not available | `run` delivers up to N Ready tickets and merges within guardrails. Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
 | Weekly cleanup | By hand | `retro` reprioritises and turns recurring mistakes into checks. Coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4) |
 
-Note: Claude's session greeting and the end of `frame` already mention "go" and `/senior-mode:next`.
-That command does not exist yet; until v0.2, "go" means asking Claude for step 3 yourself.
+Note: Claude's session greeting and the end of `frame` mention "go" and `/senior-mode:next`: "go"
+starts `next`.

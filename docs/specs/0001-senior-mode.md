@@ -176,12 +176,23 @@ it does not read code at length. Each agent serves one team role of section 8.
   a ticket outgrows its size; failed tickets go back to `Backlog` with a comment explaining why.
 - **Model escalation:** a ticket that fails on Sonnet is retried once on Opus before it counts as a
   failure for the circuit breaker (`autonomy.escalate`, default true, ADR 0014).
-- **Protected zones** (globs in config, defaults per preset): data migrations; security, auth,
-  permissions, secrets, payments; CI, infrastructure, container files, major dependency upgrades;
+- **Protected zones** (`protected`, globs in config, defaults per preset): data migrations; security,
+  auth, permissions, secrets, payments; CI, infrastructure, container files, major dependency upgrades;
   any L ticket or ADR. Work there is implemented and reviewed but labelled `needs-human` and never
-  merged by an agent.
-- **Self-protection:** during a run, hooks deny edits to `.github/workflows/**`, `.claude/**`,
-  `.githooks/**` and the protected-zone list itself, so an agent cannot weaken its own barriers.
+  merged by an agent. `senior-mode protected [--base <ref>]` lists the files of the branch (changed
+  since the merge-base with the base, by default the default branch) that match a glob: exit 0 with
+  the matches, 1 with none. The `reviewer` runs it: a match means `needs-human` and `senior-mode/review`
+  stays `pending`; the globs are a floor, and the reviewer still judges what they miss (major
+  upgrades, L tickets, ADRs). A glob without a slash matches a name at any depth; one with a slash is
+  anchored at the repository root, where `*` stays in one segment, `**/` spans directories and `?` is
+  one character. The presets `node` and `generic` declare defaults under `protected` in `preset.json`;
+  `setup` writes them when the key is absent and never touches a list already there, even an empty one.
+- **Self-protection:** while `SENIOR_MODE_RUN=1`, a hook denies Edit, Write, MultiEdit and
+  NotebookEdit on `.github/workflows/**`, `.claude/**` and `.githooks/**` (the config, and so the
+  protected-zone list, lives in `.claude/`), and Bash commands that obviously write there
+  (redirections, `tee`, `cp`, `mv`, `rm`, `sed -i`, `git rm`...), so an agent cannot weaken its own
+  barriers. Outside a run it does nothing. Like the Bash guard it is a guardrail for honest mistakes,
+  not a sandbox.
 - **Always denied:** `--no-verify`, force-push, direct push to the default branch,
   `gh pr merge --admin` or a PUT to the REST merge endpoint, history rewrite on shared branches,
   deleting files outside the ticket's worktree. The guard reads commands as written; it is a
@@ -261,7 +272,7 @@ Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
   "commands": { "lint": "...", "typecheck": "...", "test": "...", "build": "..." },
   "project": { "owner": "...", "number": 1, "id": "PVT_...", "fields": { "Status": {"id": "...", "options": {}} } },
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "autoMerge": true },
-  "protected": { "migrations": [], "security": [], "infra": [] },
+  "protected": ["**/migrations/**", "**/auth/**", ".github/workflows/**", "Dockerfile*"],
   "ci": { "mode": "local" },
   "limits": { "prLines": 400 }
 }
@@ -362,7 +373,8 @@ plugin's hooks, which cover every agent.
 |---|---|---|
 | `SessionStart` | command | Inject a ~15-line router and, from the branch name, the current ticket, its spec and its state |
 | `PreToolUse` Bash | command | Deny `--no-verify`, force-push, push to the default branch, `reset --hard` on shared branches |
-| `PreToolUse` Edit/Write | command | During a run, deny protected and self-protecting paths (section 10); in a frame session, deny edits outside `docs/`, subagents included |
+| `PreToolUse` Edit/Write/Bash | command | During a run (`SENIOR_MODE_RUN=1`), deny writes to `.github/workflows/**`, `.claude/**`, `.githooks/**` (section 10, `self-protect.sh`) |
+| `PreToolUse` Edit/Write | command | In a frame session, deny edits outside `docs/`, subagents included |
 | `UserPromptExpansion`, `PreToolUse` Skill, `SessionEnd` | command | Mark a frame session when `frame` starts; clear it on another senior-mode command or skill, at session end, or with `senior-mode frame end` |
 | `PermissionRequest` | command | During a run, allow the project's verification commands from config, so autonomy does not stall on prompts |
 | `PostToolUse` Edit/Write | command | Run the preset's formatter on the edited file; mark "verification needed" |

@@ -18,7 +18,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | status [--json] [--since <dur>] [--watch [secs]] | statusline | check | publish [commit] | release [--dry-run] | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | status [--json] [--since <dur>] [--watch [secs]] | statusline | retro [--since <dur>] [--json] | check | publish [commit] | release [--dry-run] | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -1189,6 +1189,158 @@ status() {
   fi
 }
 
+# What `retro` needs beyond the board (spec 0001 §7): the status changes and reopenings of recently
+# updated issues, and recently merged pull requests with their size and reviews. One more query.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+HISTORY_QUERY='query($owner: String!, $name: String!, $since: DateTime!) {
+  repository(owner: $owner, name: $name) {
+    issues(first: 100, filterBy: {since: $since}, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title
+      timelineItems(first: 50, itemTypes: [PROJECT_V2_ITEM_STATUS_CHANGED_EVENT, REOPENED_EVENT]) { nodes { __typename
+        ... on ProjectV2ItemStatusChangedEvent { createdAt status } ... on ReopenedEvent { createdAt } } } } }
+    pullRequests(states: MERGED, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title headRefName
+      additions deletions mergedAt labels(first: 10) { nodes { name } }
+      reviews(first: 20) { nodes { state bodyText author { login } } } } }
+  }
+}'
+
+# Modification time of a file, in epoch seconds (GNU stat, then BSD).
+file_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+}
+
+# The run logs of this repository (.claude/senior-mode/runs/*.json, one object per ticket run with
+# `ticket`, `outcome`, `escalated`, `reason`, `finishedAt`), as {found, failed, escalated} for the
+# period starting at $2. Absent or unreadable logs are not an error.
+retro_runs() {
+  local dir=$1/.claude/senior-mode/runs f
+  if [ ! -d "$dir" ]; then
+    echo '{"found":false,"failed":[],"escalated":[]}'
+    return 0
+  fi
+  {
+    for f in "$dir"/*.json; do
+      [ -f "$f" ] || continue
+      jq -c --arg m "$(iso_time "$(file_mtime "$f")")" 'if type == "object"
+        then {ticket, outcome, escalated, reason, at: (.finishedAt // $m)} else empty end' "$f" 2>/dev/null || true
+    done
+  } | jq -sc --arg since "$2" '[.[] | select(.at >= $since)] as $l | {found: true,
+    failed: [$l[] | select(.outcome == "failed") | {ticket, reason, at}] | sort_by(.ticket),
+    escalated: [$l[] | select(.escalated == true or .outcome == "escalated") | {ticket, reason, at}] | sort_by(.ticket)}'
+}
+
+# The failed results `check` recorded since the epoch $1, in this repository and its worktrees (ADR 0006).
+retro_checks() {
+  local common d f mt
+  common=$(git rev-parse --path-format=absolute --git-common-dir)
+  {
+    for d in "$common/senior-mode/checks" "$common"/worktrees/*/senior-mode/checks; do
+      [ -d "$d" ] || continue
+      for f in "$d"/*; do
+        [ -f "$f" ] && [ "$(sed -n 1p "$f")" = failure ] || continue
+        mt=$(file_mtime "$f")
+        [ "$mt" -ge "$1" ] || continue
+        jq -nc --arg c "$(basename "$f" | cut -c1-7)" --arg d "$(sed -n 2p "$f")" --arg at "$(iso_time "$mt")" \
+          '{commit: $c, description: $d, at: $at}'
+      done
+    done
+  } | jq -sc 'sort_by(.at)'
+}
+
+# The facts of a period as JSON. Inputs: $d board_data, $h the history, $runs, $checks; $since, $now, $repo.
+# Cycle time runs from the first move to In progress to the close of the ticket; a ticket with no
+# recorded start is left out of it. A size is over when the pull request holds more than 1.5 times the
+# lines its size allows (S ~50, M ~400, spec §5), since those are approximate.
+# shellcheck disable=SC2016 # a jq program, not shell
+RETRO_JQ='def branch_ticket: [capture("^[a-z]+/(?<n>[0-9]+)-") | .n | tonumber] | first;
+  def round1: . * 10 | round / 10;
+  . as $d | $h.data.repository.issues.nodes as $iss | $h.data.repository.pullRequests.nodes as $prs
+  | ($d.items | map({key: (.number | tostring), value: .}) | from_entries) as $byn
+  | def lines($n): [$prs[] | select((.headRefName | branch_ticket) == $n) | .additions + .deletions] | if length == 0 then null else add end;
+  def cycle($c): ([$iss[] | select(.number == $c.number) | .timelineItems.nodes[]
+      | select(.__typename == "ProjectV2ItemStatusChangedEvent" and .status == "In progress") | .createdAt] | sort | first) as $start
+    | if $start == null then null else (($c.closedAt | fromdateiso8601) - ($start | fromdateiso8601)) / 3600
+      | if . < 0 then null else round1 end end;
+  def excerpt: gsub("\\s+"; " ") | gsub("^ | $"; "") | .[:160];
+  def why: (if (.labels | index("needs-human")) then ["needs-human label"] else [] end)
+    + ([.reviews[]? | select(.state == "CHANGES_REQUESTED")] | last
+      | if . then ["changes requested by \(.author.login // "someone")" + (if (.bodyText | test("\\S")) then ": " + (.bodyText | excerpt) else "" end)] else [] end);
+  [$d.closed[] | select(.closedAt >= $since and .reason != "NOT_PLANNED") | . as $c | ($byn[($c.number | tostring)] // {}) as $i
+    | {number, title, size: $i.size, closedAt, cycleHours: cycle($c), lines: lines($c.number)}] | sort_by(.number) as $done
+  | [$done[] | select(.cycleHours != null) | .cycleHours] | sort as $hs
+  | {repository: $repo, generatedAt: $now, since: $since, done: $done,
+     cycle: {measured: ($hs | length),
+       medianHours: (if ($hs | length) == 0 then null else (($hs[(($hs | length) - 1) / 2 | floor] + $hs[($hs | length) / 2 | floor]) / 2) | round1 end),
+       worst: ([$done[] | select(.cycleHours != null)] | max_by(.cycleHours) | if . then {number, title, hours: .cycleHours} else null end)},
+     humanPullRequests: (([$d.prs[] | select(.labels | index("needs-human")) | {number, title, state: "open", why: ["needs-human label"]}]
+       + [$prs[] | select(.mergedAt >= $since) | .labels = [.labels.nodes[].name] | .reviews = .reviews.nodes
+         | {number, title, state: "merged", why: why} | select(.why | length > 0)]) | sort_by(.number)),
+     runs: $runs,
+     reopened: [$iss[] | . as $i | ([.timelineItems.nodes[] | select(.__typename == "ReopenedEvent" and .createdAt >= $since)] | last) as $e
+       | select($e != null) | {number: $i.number, title: $i.title, at: $e.createdAt}] | sort_by(.number),
+     checkFailures: $checks,
+     sizes: [$done[] | select((.size | IN("S", "M")) and .lines != null) | (if .size == "S" then 50 else 400 end) as $l
+       | {number, title, size, lines, limit: $l, over: (.lines > $l * 1.5)}]}'
+
+# The same, in plain words; $head says which period it covers.
+# shellcheck disable=SC2016 # a jq program, not shell
+RETRO_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" else ($ls[] | "  " + .) end);
+  def ticket: "#\(.number) \(.title)";
+  "senior-mode retro · \(.repository) · \(.generatedAt)", "",
+  sec("\($head) (\(.done | length))"; [.done[] | ticket + (if .cycleHours then " · \(.cycleHours)h" else "" end)]),
+  "Cycle time (In progress to Done)",
+  (if .cycle.measured == 0 then "  nothing measured"
+   else "  median \(.cycle.medianHours)h, worst \(.cycle.worst.hours)h (\(.cycle.worst | ticket)), over \(.cycle.measured) ticket\(if .cycle.measured > 1 then "s" else "" end)" end),
+  sec("Needed a human (\(.humanPullRequests | length))"; [.humanPullRequests[]
+    | "pull request #\(.number) \(.title)\(if .state == "open" then " (still open)" else "" end): \(.why | join("; "))"]),
+  (if .runs.found then sec("Failed or escalated runs (\((.runs.failed | length) + (.runs.escalated | length)))";
+     [.runs.failed[] | "#\(.ticket): failed: \(.reason // "no reason recorded")"]
+     + [.runs.escalated[] | "#\(.ticket): escalated: \(.reason // "no reason recorded")"])
+   else "Failed or escalated runs", "  no run logs" end),
+  sec("Reopened (\(.reopened | length))"; [.reopened[] | ticket]),
+  sec("Check failures (\(.checkFailures | length))"; [.checkFailures[] | "\(.commit): \(.description)"]),
+  sec("Estimates against reality"; [.sizes[] | select(.over) | "#\(.number) \(.size): \(.lines) lines, the size allows about \(.limit)"]
+    + (if (.sizes | length) > 0 and all(.sizes[]; .over | not) then ["all within their size"] else [] end))'
+
+# senior-mode retro [--since <dur>] [--json]
+# The facts of the weekly review (default period: 7 days). Reads only; the skill turns them into proposals.
+retro() {
+  local json=false since="7d" root now_s now since_s since_iso data history runs checks slug
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --json) json=true ;;
+      --since)
+        [ -n "${2:-}" ] || usage
+        since=$2
+        duration_seconds "$since" >/dev/null
+        shift
+        ;;
+      *) usage ;;
+    esac
+    shift
+  done
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  now_s=$(date +%s)
+  now=$(iso_time "$now_s")
+  since_s=$((now_s - $(duration_seconds "$since")))
+  since_iso=$(iso_time "$since_s")
+  slug=$(repo_slug)
+  data=$(board_data true) || exit 1
+  history=$(jq -nc --arg q "$HISTORY_QUERY" --arg o "${slug%%/*}" --arg n "${slug#*/}" --arg s "$since_iso" \
+    '{query: $q, variables: {owner: $o, name: $n, since: $s}}' | gh_retry api graphql --input -) ||
+    die "cannot read the history from GitHub"
+  [ -z "$(jq -r '.errors[0].message // empty' <<<"$history" 2>/dev/null)" ] ||
+    die "GitHub refused the history query: $(jq -r '.errors[0].message' <<<"$history")"
+  runs=$(retro_runs "$root" "$since_iso")
+  checks=$(retro_checks "$since_s")
+  data=$(jq -c --argjson h "$history" --argjson runs "$runs" --argjson checks "$checks" --arg now "$now" --arg since "$since_iso" \
+    --arg repo "$slug" "$RETRO_JQ" <<<"$data") || die "could not build the retro"
+  if [ "$json" = true ]; then
+    printf '%s\n' "$data"
+  else
+    jq -r --arg head "Done in the last $since" "$RETRO_TEXT_JQ" <<<"$data"
+  fi
+}
+
 # One line for Claude Code's status line (spec 0001 §20): the ticket of the branch, the last check
 # recorded for it and, during a run, a mark. Offline and fast; prints nothing where senior-mode is not
 # set up, and never fails. Claude Code sends the session as JSON on stdin; its directory is used.
@@ -1523,6 +1675,10 @@ case "${1:-}" in
   status)
     shift
     status "$@"
+    ;;
+  retro)
+    shift
+    retro "$@"
     ;;
   check)
     [ $# -eq 1 ] || usage

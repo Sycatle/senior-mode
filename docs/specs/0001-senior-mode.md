@@ -174,6 +174,8 @@ it does not read code at length. Each agent serves one team role of section 8.
   only for tickets with no dependency between them (`autonomy.parallel`, default 1).
 - **Circuit breaker:** stop after `autonomy.maxConsecutiveFailures` (default 2) failed tickets, or when
   a ticket outgrows its size; failed tickets go back to `Backlog` with a comment explaining why.
+- **Model escalation:** a ticket that fails on Sonnet is retried once on Opus before it counts as a
+  failure for the circuit breaker (`autonomy.escalate`, default true, ADR 0014).
 - **Protected zones** (globs in config, defaults per preset): data migrations; security, auth,
   permissions, secrets, payments; CI, infrastructure, container files, major dependency upgrades;
   any L ticket or ADR. Work there is implemented and reviewed but labelled `needs-human` and never
@@ -201,8 +203,9 @@ Run loop per ticket:
 8. Final report in plain language: merged, waiting for a human, failed and why, cost indicators.
 
 `run` can also be scheduled headless (`claude -p`) for nightly batches, with the same config: by a
-local scheduler (cron, systemd timer, launchd), a cloud scheduled task, or GitHub Actions in
-`actions` mode.
+systemd user timer or cron entry on the agent machine, using the machine's subscription login: no API
+key, no budget flag (ADR 0012). A cloud scheduled task, or GitHub Actions in `actions` mode, remain
+possible alternatives (ADR 0006).
 
 ## 11. GitHub model
 

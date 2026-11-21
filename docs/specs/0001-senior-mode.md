@@ -4,7 +4,7 @@ title: senior-mode, a Claude Code plugin for senior-grade delivery
 status: accepted
 size: L
 paths: ["plugins/**", ".claude-plugin/**", "evals/**"]
-adrs: [0001, 0002, 0003, 0004, 0005, 0006]
+adrs: [0001, 0002, 0003, 0004, 0005, 0006, 0009, 0010, 0011, 0012, 0013, 0014]
 ---
 
 # senior-mode
@@ -68,6 +68,15 @@ recommended option.
 7. **Small and reversible.** One PR per ticket, ~400 changed lines at most excluding generated code.
 8. **Ask, do not guess, when it matters.** Open product or architecture decisions are asked in batches
    of 3 to 4 questions, recommended option first; facts the code can answer are never asked.
+9. **Lifecycle and roles, few skills.** Every skill is a step of the delivery lifecycle and a role of
+   the team (section 8). A practice that fits no step is a section of an existing skill, or stays out
+   (ADR 0009).
+10. **Generic core, extension points.** No client, stack vendor or regulation in the core. Client
+    needs go through `checks`, project skills and agents in the project's `.claude/`,
+    `review.sections`, `docs.extra` and `envGuard.forbidden` (ADR 0010).
+11. **Dogfooding before merge.** A command or skill is merged only after a real `claude -p` session on
+    the sandbox repository exercised it; the PR records what was run and seen. `check` alone does not
+    prove behaviour (ADR 0011).
 
 ## 5. Triage
 

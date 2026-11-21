@@ -15,7 +15,7 @@ Safe to rerun: it repairs.
 2. `gh auth status` succeeds. If the token lacks the `project` scope, ask the user to run
    `gh auth refresh -s project` and wait.
 3. Ask once: checks before each push only (`local`, free) or also on GitHub Actions (`actions`,
-   spends the Actions budget). Then tell the user, in one short table, what will change: a Project
+   spends the Actions budget). Then tell the user, in a short table, what will change: a Project
    board, labels, rebase-only merges, a default-branch ruleset, in `local` the workflows disabled
    (files kept), and the Repository files below. Proceed on their yes.
 
@@ -30,7 +30,7 @@ Run `senior-mode setup github --ci <local|actions>`. It:
 - creates or updates a ruleset `senior-mode` on the default branch: pull requests only, rebase,
   `senior-mode/ci` and `senior-mode/review` required, linear history; other protection kept;
   an admin can bypass it with `gh pr merge --admin`. If it prints `protection: NOT enforced`
-  (private repo on GitHub Free), relay it and get an acknowledgement;
+  (private repo, GitHub Free), relay it and get an acknowledgement;
 - `local`: disables the repository's workflows (files kept); `actions`: `setup repo` then adds
   `.github/workflows/senior-mode.yml`: checks, `senior-mode/ci`, releases. If it prints
   `releases:`, relay it (the release PR needs a `RELEASE_PLEASE_TOKEN` secret to get CI).
@@ -42,10 +42,10 @@ Run `senior-mode setup github --ci <local|actions>`. It:
    `--command lint="<cmd>"` per answer. It adds checks, git hooks, `CLAUDE.md` Principles, PR and
    issue templates, permissions and release-please, keeping what exists.
 2. If it prints `missing:`, propose a tool for each (Biome to lint, Vitest to test), added in its
-   own commit on a yes; then rerun it.
+   own commit on a yes; then rerun.
 3. If it created `CLAUDE.md`, fill the skeleton from the scout agent's commands, code map and
    pitfalls. If it reports over 80 lines, propose cuts.
-4. Offer a status line (ticket, last check, run); it replaces the user's own in this project. On a
+4. Offer a status line (ticket, last check, run); it replaces the user's own here. On a
    yes, run `senior-mode setup statusline`.
 
 ## Report

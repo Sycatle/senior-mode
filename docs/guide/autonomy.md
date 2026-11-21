@@ -36,19 +36,46 @@ the git hooks and the Bash guard still apply, but GitHub will not enforce the st
 
 ## `needs-human`
 
-The `needs-human` label marks a pull request that waits for a person. Today it is added by the
-[`review`](skills.md#review) skill when a diff touches a sensitive area: migrations, security, auth,
-payments, CI, infrastructure, major dependency upgrades, an L ticket or an ADR. The verdict is then
+The `needs-human` label marks a pull request that waits for a person. It is added by the
+[`review`](skills.md#review) skill when a diff matches a [protected zone](#protected-zones) or touches
+another sensitive area: migrations, security, auth, payments, CI, infrastructure, major dependency
+upgrades, an L ticket or an ADR. The verdict is then
 at best "approve, human merge" and `senior-mode/review` stays `pending`. The `ops` agent never merges
 a `needs-human` pull request.
 
 ## Protected zones
 
-State: **Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3).**
+`protected` in `.claude/senior-mode.json` is a list of globs. `setup` writes the preset's defaults
+when the key is absent and never overwrites a list that is there, even an empty one (your way to
+opt out). Edit it freely.
 
-The spec plans protected zones as globs in the config, with defaults per preset. Today there is no
-`protected` key in the config written by setup, and no preset defaults: the reviewer judges
-sensitive areas from the list above.
+```
+senior-mode protected [--base <ref>]
+```
+
+Prints the files changed on the current branch since it left the base (by default the default
+branch) that match a glob, one per line. Exit 0 when there are matches, 1 when there are none.
+
+A glob without a slash matches a name at any depth (`Dockerfile*`, `.env*`). A glob with a slash is
+anchored at the repository root: `*` stays inside one path segment, `**/` spans any number of
+directories (`**/migrations/**`), `?` is one character.
+
+The `node` and `generic` presets protect:
+
+| Zone | Globs |
+|---|---|
+| Migrations | `**/migrations/**` |
+| Auth, security, permissions | `**/auth/**`, `auth.*`, `**/security/**`, `SECURITY.md`, `**/permissions/**`, `**/rbac/**` |
+| Secrets | `.env*`, `**/secrets/**`, `*.pem`, `*.key` |
+| Payments | `**/payments/**`, `**/billing/**`, `**/stripe/**` |
+| CI and git hooks | `.github/workflows/**`, `.github/actions/**`, `.github/CODEOWNERS`, `.githooks/**`, `.gitlab-ci.yml` |
+| Infrastructure, containers | `Dockerfile*`, `docker-compose*`, `compose.y*ml`, `**/infra/**`, `**/terraform/**`, `**/k8s/**`, `*.tf` |
+| senior-mode config | `.claude/settings*.json`, `.claude/senior-mode.json` |
+| Node only | `middleware.*` |
+
+The [`review`](skills.md#review) skill and the `reviewer` agent run `senior-mode protected`: a match
+means the `needs-human` label and a `pending` review status. The globs are a floor: the reviewer
+still judges what they cannot see (major dependency upgrades, an L ticket, an ADR).
 
 ## Hooks
 
@@ -68,6 +95,39 @@ Runs before every Bash command, in any repository where the plugin is enabled. I
 
 It reads commands as written. It is a guardrail for honest mistakes, not a sandbox: `bash -c "..."`
 and GraphQL calls are not parsed.
+
+### Self-protection (`self-protect.sh`)
+
+Active only while the environment variable `SENIOR_MODE_RUN=1` is set, which `run` will do for the
+sessions it starts. Outside a run it does nothing. It denies Edit, Write, MultiEdit and NotebookEdit
+on `.github/workflows/**`, `.claude/**` and `.githooks/**` at the repository root, and Bash
+commands that obviously write there: redirections, `tee`, `cp`, `mv`, `rm`, `touch`, `truncate`,
+`install`, `ln`, `dd of=`, `sed -i`, `perl -i`, `git rm`, `git mv`, `git checkout` and
+`git restore` on those paths. An agent therefore cannot weaken the checks, the hooks or the
+protected-zone list (which lives in `.claude/senior-mode.json`). The reason it gives tells the agent to
+leave the change out and say in the pull request that a human must make it.
+
+Like the Bash guard, it reads commands as written: a guardrail for honest mistakes, not a sandbox.
+
+### Secrets guard (`guard-secrets.sh`)
+
+Runs before every `Read`, `Grep`, `Glob` and Bash command, in any repository where the plugin is
+enabled, during a run or not. It keeps secrets out of the conversation. It denies:
+
+- `Read`, `Grep` and `Glob` on `.env` and `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `*.p12`,
+  `*.pfx`, `.npmrc`, `.netrc`, `credentials*.json`, `service-account*.json`, and the globs of the
+  [`secrets` key](configuration.md#keys-the-plugin-reads-today);
+- Bash commands that print such a file (`cat`, `less`, `more`, `head`, `tail`, `grep`, `rg`, `source`,
+  `.` and a few more), and ones that dump the environment: `printenv`, bare `env`, bare `set`,
+  `export -p`, `declare -x`, `/proc/<pid>/environ`.
+
+`.env.example`, `.env.sample`, `.env.template` (and `.env.local.example`) and public keys (`*.pub`) are
+allowed. The deny message says why and what to do instead: ask the human for the value you need, or read
+`.env.example` for the variable names.
+
+It reads commands as written. It is a guardrail for honest mistakes, not a sandbox: `bash -c "..."`,
+a script that reads the file, `cat *` or a variable that already holds a secret are not caught. Keep only
+dev-only secrets on a machine where agents run; `setup` says so.
 
 ### Frame guard (`frame-guard.sh`)
 
@@ -104,9 +164,7 @@ adopted, it suggests `/senior-mode:setup`.
 | Feature | State |
 |---|---|
 | `run`: autonomous delivery and merge of up to N tickets | Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
-| Protected zones from config globs, with preset defaults | Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
 | Circuit breaker (stop after 2 failed tickets, or when a ticket outgrows its size) | Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
-| Self-protection during a run (deny edits to workflows, `.claude/`, `.githooks/`) | Arrives with `run`, [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
 | Scheduled runs (cron, cloud task, Actions) | Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
 | Spec drift check in the check list | Coming in [v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
 | Automatic retry of the implementer on Opus | Arrives with `next` and `run` |

@@ -53,6 +53,21 @@ v=$(project npminit '{"version": "1.0.0"}')
 setup "$v"
 grep -q 'first release follows 1.0.0.*"0.0.0"' "$work/out" || fail "no way to start below 1.0.0 given: $(cat "$work/out")"
 
+# Protected zones: the preset's globs are written when the key is absent, a user's list is never touched.
+for zone in '**/migrations/**' '**/auth/**' '**/payments/**' '.env*' '.github/workflows/**' 'Dockerfile*' 'middleware.*'; do
+  jq -e --arg z "$zone" '.protected | index($z)' "$d/.claude/senior-mode.json" >/dev/null ||
+    fail "node preset does not protect $zone: $(cfg "$d" '.protected')"
+done
+jq '.protected = ["only/mine/**"]' "$d/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$d/.claude/senior-mode.json"
+setup "$d"
+[ "$(cfg "$d" '.protected | join(",")')" = "only/mine/**" ] || fail "user's protected list overwritten: $(cfg "$d" '.protected')"
+jq '.protected = []' "$d/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$d/.claude/senior-mode.json"
+setup "$d"
+[ "$(cfg "$d" '.protected | length')" = 0 ] || fail "an empty protected list, chosen on purpose, was refilled"
+jq 'del(.protected)' "$d/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$d/.claude/senior-mode.json"
+setup "$d"
+[ "$(cfg "$d" '.protected | length')" -gt 0 ] || fail "protected not written back when the key is absent"
+
 # Run again: same config.
 cp "$d/.claude/senior-mode.json" "$work/before"
 setup "$d"

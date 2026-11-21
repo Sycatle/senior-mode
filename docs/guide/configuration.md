@@ -21,6 +21,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
     { "name": "build", "run": "pnpm run build" },
     { "name": "commit subjects", "run": ".githooks/commit-msg --branch" }
   ],
+  "protected": ["**/migrations/**", "**/auth/**", ".github/workflows/**", "Dockerfile*"],
   "ci": { "mode": "local" },
   "project": { "owner": "acme", "number": 3, "id": "PVT_...", "fields": { "Status": { "id": "...", "options": { "Ready": "..." } } } }
 }
@@ -35,7 +36,9 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `commands` | detected or asked | `lint`, `typecheck`, `test`, `build`, and `e2e` for node |
 | `framework` | none | `next` when Next.js is a dependency (recorded only) |
 | `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order |
+| `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list when the key is absent and keeps yours; `senior-mode protected` and the reviewer read it |
 | `ci.mode` | `local` | `local` or `actions` |
+| `secrets` | none | Extra globs the [secrets guard](autonomy.md#secrets-guard-guard-secretssh) denies, added to its defaults: `"*.token"` matches a file name anywhere, `"config/prod.*"` and `"**/vault/*"` match from the repository root. It never allows a default. Add it yourself; setup does not write it |
 | `project` | written by setup | Board owner, number, id, and field and option ids, so no agent looks them up again |
 
 `senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`).
@@ -44,8 +47,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 
 `autonomy.maxTickets` (3), `autonomy.parallel` (1), `autonomy.maxConsecutiveFailures` (2),
 `autonomy.autoMerge` (true) and `limits.prLines` (400) can be read, but only `run` will use them
-([v0.3](https://github.com/Sycatle/senior-mode/milestone/3)). The `protected` key of the spec is
-not written by setup and has no default yet ([v0.3](https://github.com/Sycatle/senior-mode/milestone/3)).
+([v0.3](https://github.com/Sycatle/senior-mode/milestone/3)).
 
 ## Checks
 

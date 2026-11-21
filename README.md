@@ -89,7 +89,8 @@ The walk-through, step by step: [A typical day](docs/guide/a-typical-day.md).
 Behind them, nine small discipline skills load only when they apply (triage, ready, tdd, commit,
 verify, spec, adr, grill, review), and seven agents each have their own model and effort (scout,
 researcher, architect, test-author, implementer, reviewer, ops). Hooks deny force-pushes, pushes
-to the default branch and skipped checks, and keep code edits out of a framing interview. See
+to the default branch, skipped checks and reading `.env` files or keys, and keep code edits out of a
+framing interview. See
 [Commands](docs/guide/commands.md), [Skills](docs/guide/skills.md), [Agents](docs/guide/agents.md)
 and [Autonomy and guardrails](docs/guide/autonomy.md).
 

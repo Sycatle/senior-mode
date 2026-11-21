@@ -33,6 +33,8 @@ done
 grep -q '^## Principes' "$new/CLAUDE.md" || fail "CLAUDE.md without its Principles section in French"
 grep -q '^# app' "$new/CLAUDE.md" || fail "CLAUDE.md not titled with the repository name"
 grep -q "environnements de développement.*envGuard" "$new/CLAUDE.md" || fail "French Principles without the development-environments line"
+grep -q '^## Vue d.ensemble' "$new/docs/architecture.md" 2>/dev/null || fail "docs/architecture.md not created in the project language: $(cat "$work/out")"
+grep -q 'docs/architecture.md: created' "$work/out" || fail "architecture overview not reported: $(cat "$work/out")"
 grep -qi 'Ce que ça apporte' "$new/.github/pull_request_template.md" || fail "PR template not in the project language"
 [ -x "$new/.githooks/commit-msg" ] && [ -x "$new/.githooks/pre-push" ] || fail "git hooks not executable"
 [ "$(git -C "$new" config core.hooksPath)" = .githooks ] || fail "core.hooksPath not set"
@@ -134,12 +136,19 @@ grep -q 'development environments only.*envGuard' "$old/CLAUDE.md" || fail "Prin
 [ "$(cat "$old/.github/PULL_REQUEST_TEMPLATE.md")" = 'Our template' ] || fail "existing PR template replaced"
 [ -f "$old/.github/pull_request_template.md" ] && fail "second PR template created"
 [ "$(git -C "$old" config core.hooksPath)" = .husky ] || fail "existing hooks path replaced"
+grep -q '^## Overview' "$old/docs/architecture.md" 2>/dev/null || fail "docs/architecture.md not created in English"
 grep -q husky "$work/out" || fail "custom hooks path not reported: $(cat "$work/out")"
 [ "$(jq -c '[.checks[].name]' "$old/.claude/senior-mode.json")" = '["make","commit subjects"]' ] ||
   fail "existing checks not extended: $(jq -c .checks "$old/.claude/senior-mode.json")"
 before=$(snapshot "$old")
 setup "$old"
 [ "$(snapshot "$old")" = "$before" ] || fail "second run on an existing repository changed files"
+
+# An existing architecture document is never touched.
+echo 'Our architecture' >"$old/docs/architecture.md"
+setup "$old"
+[ "$(cat "$old/docs/architecture.md")" = 'Our architecture' ] || fail "existing docs/architecture.md replaced"
+grep -q 'docs/architecture.md: kept' "$work/out" || fail "kept architecture overview not reported: $(cat "$work/out")"
 
 # Updated Principles replace the old block, nothing else.
 sed -i 's/^## Principles/## Old principles/' "$old/CLAUDE.md"

@@ -333,6 +333,16 @@ systemd user timer or cron entry on the agent machine, using the machine's subsc
 key, no budget flag (ADR 0012). A cloud scheduled task, or GitHub Actions in `actions` mode, remain
 possible alternatives (ADR 0006).
 
+`senior-mode schedule install [--at HH:MM] [--max N]`, `remove` and `status` manage that schedule for
+the repository. The time is `--at`, else `autonomy.schedule`, else `02:00`. Install writes
+`senior-mode-run-<repo>.service` and `.timer` in `~/.config/systemd/user/` (`OnCalendar` daily,
+`Persistent=true`), runs the command through `bash -lc` so `claude` is on `PATH`, and enables the timer
+with `systemctl --user`. Where `systemctl --user` is unavailable it adds a crontab line tagged
+`# senior-mode-run:<repo>`, logging to `.git/senior-mode/schedule.log`. It refuses root, and warns with
+the exact `sudo loginctl enable-linger <user>` when linger is off, since the timer would then fire only
+during a login session. Install and remove are idempotent; `status` prints the next trigger and the
+last result.
+
 ## 11. GitHub model
 
 - **Project (v2):** fields `Status` (Backlog, Ready, In progress, In review, Done), `Priority`

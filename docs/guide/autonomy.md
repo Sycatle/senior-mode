@@ -175,6 +175,28 @@ command, not a model, applies these bounds:
 - **End-to-end suites** share `e2e.slots` slots per machine (default 2): `check` runs the check named
   `e2e` through `senior-mode e2e-lock`, which exports the slot number as `SENIOR_MODE_E2E_SLOT`.
 
+### Scheduled runs
+
+`senior-mode schedule install [--at HH:MM] [--max N]` runs `senior-mode run` every day on the machine
+you are on, with its own Claude login: no API key, no budget flag
+([ADR 0012](../adr/0012-scheduled-runs-on-the-agent-machine.md)). The time is `--at`, else
+`autonomy.schedule`, else `02:00`; `--max` is passed to `run`, which otherwise reads
+`autonomy.maxTickets`.
+
+- **systemd.** It writes `~/.config/systemd/user/senior-mode-run-<repo>.service` and `.timer`
+  (`Persistent=true`: a run missed while the machine was off starts at the next boot) and enables the
+  timer with `systemctl --user`. Without a user systemd, it adds one crontab line tagged
+  `# senior-mode-run:<repo>` instead.
+- **Login shell.** The command is `bash -lc`, so `claude` is found in `~/.local/bin` as in your
+  terminal. Like `run`, it refuses to install as root.
+- **Linger.** A user timer fires only while you have a session unless linger is on. Install warns when
+  it is off; the fix is `sudo loginctl enable-linger $USER`.
+- **Check it.** `senior-mode schedule status` prints the next trigger and the last result: from the
+  journal (`journalctl --user -u senior-mode-run-<repo>`), or from `.git/senior-mode/schedule.log`
+  for cron.
+- **Undo it.** `senior-mode schedule remove` disables and deletes the units, or the tagged line.
+  Install and remove can be repeated: they never duplicate or fail when nothing is there.
+
 ## Other mechanisms
 
 - **Git hooks.** `commit-msg` refuses a subject that is not a Conventional Commit. `pre-push` runs the
@@ -186,7 +208,6 @@ command, not a model, applies these bounds:
 
 | Feature | State |
 |---|---|
-| Scheduled runs (systemd timer, cron) | Coming in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
 | Spec drift check in the check list | Coming in [v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
 | Retry on Opus in `next` (it exists in `run`) | Arrives with `next` |
 | Formatter after each edit, desktop notifications, auto-allowed check commands during a run | Planned in [spec §16](../specs/0001-senior-mode.md#hooks), no milestone yet |

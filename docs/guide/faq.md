@@ -54,7 +54,7 @@ Run `/senior-mode:setup` and read the table of changes before you say yes.
 ## How do I turn it off, or leave senior-mode?
 
 - **Pause it in Claude Code.** Use `/plugin` to disable or uninstall the plugin. Note that the Bash
-  guard runs in every repository while the plugin is enabled; the other hooks act only in
+  and secrets guards run in every repository while the plugin is enabled; the other hooks act only in
   repositories with `.claude/senior-mode.json`.
 - **Leave it in one repository.** Undo what setup changed:
   - delete the `senior-mode` ruleset (repository Settings, Rules, Rulesets);

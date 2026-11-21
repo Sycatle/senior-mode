@@ -109,6 +109,26 @@ leave the change out and say in the pull request that a human must make it.
 
 Like the Bash guard, it reads commands as written: a guardrail for honest mistakes, not a sandbox.
 
+### Secrets guard (`guard-secrets.sh`)
+
+Runs before every `Read`, `Grep`, `Glob` and Bash command, in any repository where the plugin is
+enabled, during a run or not. It keeps secrets out of the conversation. It denies:
+
+- `Read`, `Grep` and `Glob` on `.env` and `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `*.p12`,
+  `*.pfx`, `.npmrc`, `.netrc`, `credentials*.json`, `service-account*.json`, and the globs of the
+  [`secrets` key](configuration.md#keys-the-plugin-reads-today);
+- Bash commands that print such a file (`cat`, `less`, `more`, `head`, `tail`, `grep`, `rg`, `source`,
+  `.` and a few more), and ones that dump the environment: `printenv`, bare `env`, bare `set`,
+  `export -p`, `declare -x`, `/proc/<pid>/environ`.
+
+`.env.example`, `.env.sample`, `.env.template` (and `.env.local.example`) and public keys (`*.pub`) are
+allowed. The deny message says why and what to do instead: ask the human for the value you need, or read
+`.env.example` for the variable names.
+
+It reads commands as written. It is a guardrail for honest mistakes, not a sandbox: `bash -c "..."`,
+a script that reads the file, `cat *` or a variable that already holds a secret are not caught. Keep only
+dev-only secrets on a machine where agents run; `setup` says so.
+
 ### Frame guard (`frame-guard.sh`)
 
 Starting `/senior-mode:frame` marks the session as framing. While marked, edits outside `docs/` are

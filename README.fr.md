@@ -92,8 +92,8 @@ Le déroulé pas à pas : [A typical day](docs/guide/a-typical-day.md) (en angla
 Derrière elles, neuf petits skills de discipline ne se chargent que quand ils s'appliquent (triage,
 ready, tdd, commit, verify, spec, adr, grill, review), et sept agents ont chacun leur modèle et leur
 effort (scout, researcher, architect, test-author, implementer, reviewer, ops). Des hooks refusent
-les force-push, les push sur la branche par défaut et les contrôles sautés, et tiennent les
-modifications de code hors d'un entretien de cadrage. Voir [Commands](docs/guide/commands.md),
+les force-push, les push sur la branche par défaut, les contrôles sautés et la lecture des fichiers
+`.env` ou des clés, et tiennent les modifications de code hors d'un entretien de cadrage. Voir [Commands](docs/guide/commands.md),
 [Skills](docs/guide/skills.md), [Agents](docs/guide/agents.md) et
 [Autonomy and guardrails](docs/guide/autonomy.md) (en anglais).
 

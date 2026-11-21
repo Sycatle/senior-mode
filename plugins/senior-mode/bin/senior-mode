@@ -600,11 +600,60 @@ nextjs_supabase_detect() {
     "$root/package.json" >/dev/null 2>&1
 }
 
+# The preset of a project that has no package.json and no stored preset (spec 0001 §14): the
+# manifests that name one language first, then Python's files (a requirements.txt is common anywhere).
+other_preset() {
+  local root=$1 f
+  for f in pyproject.toml setup.py requirements.txt; do
+    [ ! -f "$root/$f" ] || { echo python; return; }
+  done
+  echo generic
+}
+
+# Whether a Python project uses a tool: a config file of its own, or its name as a word in the
+# manifests (pytest-cov is not pytest).
+py_uses() { # root tool [config-file...]
+  local root=$1 tool=$2 f
+  shift 2
+  for f in "$@"; do [ ! -f "$root/$f" ] || return 0; done
+  for f in "$root"/pyproject.toml "$root"/setup.cfg "$root"/setup.py "$root"/tox.ini "$root"/Pipfile "$root"/requirements*.txt; do
+    if [ -f "$f" ] && grep -qiE "(^|[^A-Za-z0-9_-])$tool([^A-Za-z0-9_-]|\$)" "$f"; then return 0; fi
+  done
+  return 1
+}
+
+# Commands of a Python project (spec 0001 §14, #72): the tools it uses, run through uv or poetry
+# when their lockfile exists. Ruff before flake8; black's format check before ruff's, as black is only
+# named by projects that format with it; mypy before pyright; build when pyproject.toml has a
+# build-system. Prints {commands}.
+# shellcheck disable=SC2016 # jq program, not shell
+python_detect() {
+  local root=$1 run="" lint="" format="" typecheck="" test="" build=""
+  if [ -f "$root/uv.lock" ]; then run="uv run "
+  elif [ -f "$root/poetry.lock" ]; then run="poetry run "
+  fi
+  if py_uses "$root" ruff ruff.toml .ruff.toml; then lint="${run}ruff check ."
+  elif py_uses "$root" flake8 .flake8; then lint="${run}flake8"
+  fi
+  if py_uses "$root" black; then format="${run}black --check ."
+  elif py_uses "$root" ruff ruff.toml .ruff.toml; then format="${run}ruff format --check ."
+  fi
+  if py_uses "$root" mypy mypy.ini .mypy.ini; then typecheck="${run}mypy ."
+  elif py_uses "$root" pyright pyrightconfig.json; then typecheck="${run}pyright"
+  fi
+  ! py_uses "$root" pytest pytest.ini conftest.py || test="${run}pytest"
+  ! grep -qs '^\[build-system\]' "$root/pyproject.toml" || build="${run}python -m build"
+  jq -nc --arg lint "$lint" --arg format "$format" --arg typecheck "$typecheck" --arg test "$test" \
+    --arg build "$build" '{commands: ({lint: $lint, format: $format, typecheck: $typecheck, test: $test,
+      build: $build} | with_entries(select(.value != "")))}'
+}
+
 # The documents and checks of a project (spec 0001 §12, §14, #12), idempotent; whatever the project
 # already has is extended, never replaced. The preset is the stored one (typescript, its former name,
 # becomes node), else nextjs-supabase for a Next.js app on Supabase, else node when a package.json
-# exists, else generic. `--command <name>=<command>`
-# stores a command of the preset (lint, typecheck, test, build; e2e for node) and derives its check.
+# exists, else the one of its manifest (python), else generic. `--command <name>=<command>` stores a
+# command of the preset (lint, format, typecheck, test, build; e2e for node and nextjs-supabase) and
+# derives its check.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_repo() {
   local root file tpl pname="" preset lang name commands='{}' detected='{}' out ours script
@@ -619,12 +668,15 @@ setup_repo() {
     if [ -f "$root/package.json" ]; then
       pname=node
       ! nextjs_supabase_detect "$root" || pname=nextjs-supabase
+    else
+      pname=$(other_preset "$root")
     fi
   fi
   preset=$tpl/presets/$pname/preset.json
   [ -f "$preset" ] || die "unknown preset $pname in .claude/senior-mode.json"
   case $pname in
     node | nextjs-supabase) detected=$(node_detect "$root") || die "could not read package.json" ;;
+    python) detected=$(python_detect "$root") ;;
   esac
   tpl=$tpl/templates
   while [ $# -gt 0 ]; do

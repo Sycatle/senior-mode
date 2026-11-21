@@ -50,7 +50,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 ### Keys with defaults but no effect yet
 
 `autonomy.maxTickets` (3), `autonomy.parallel` (1), `autonomy.maxConsecutiveFailures` (2),
-`autonomy.autoMerge` (true) and `limits.prLines` (400) can be read, but only `run` will use them
+`autonomy.merge` (false), `autonomy.escalate` (true) and `limits.prLines` (400) can be read, but only `run` will use them
 ([v0.3](https://github.com/Sycatle/senior-mode/milestone/3)).
 
 ## Project review sections

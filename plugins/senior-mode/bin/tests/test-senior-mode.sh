@@ -43,10 +43,14 @@ expect 0 fr config get language
 expect 0 local config get ci.mode
 expect 1 - config get unknown.key
 
-config '{"autonomy":{"maxTickets":5,"autoMerge":false}}'
+config '{"autonomy":{"maxTickets":5,"merge":true}}'
 expect 0 5 config get autonomy.maxTickets
-expect 0 false config get autonomy.autoMerge
+expect 0 true config get autonomy.merge
 expect 0 2 config get autonomy.maxConsecutiveFailures
+expect 0 true config get autonomy.escalate
+config '{}'
+expect 0 false config get autonomy.merge
+expect 1 - config get autonomy.autoMerge
 
 config '{not json'
 expect 1 - config get language

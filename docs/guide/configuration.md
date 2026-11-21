@@ -32,8 +32,8 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | Key | Default | Used for |
 |---|---|---|
 | `language` | `en` | Language of the templates (`en` or `fr`) and of what Claude writes for you; setup does not write it, add it yourself |
-| `preset` | detected | `nextjs-supabase` for Next.js with Supabase, else `node` with a `package.json`, else `generic`; a stored value wins |
-| `commands` | detected or asked | `lint`, `typecheck`, `test`, `build`, and `e2e` for node and nextjs-supabase |
+| `preset` | detected | `nextjs-supabase` for Next.js with Supabase, else `node` with a `package.json`, else `go`, `rust` or `python` from their manifest, else `generic`; a stored value wins |
+| `commands` | detected or asked | `lint`, `typecheck`, `test`, `build`, and `e2e` for node and nextjs-supabase; `format` for python and rust |
 | `framework` | none | `next` when Next.js is a dependency (recorded only) |
 | `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list when the key is absent and keeps yours; `senior-mode protected` and the reviewer read it |
@@ -84,7 +84,13 @@ Your other workflows stay as they are in `actions` mode; turn one back on with `
 | `node` | Available | Your `package.json` scripts (`lint`, `typecheck` or `type-check`, `test`, `build`, `test:e2e` or `e2e`), run with the package manager of your lockfile (npm, pnpm, yarn, bun). With a `tsconfig.json`, no typecheck script and `typescript` installed: `tsc --noEmit`, never downloaded. npm's placeholder test script does not count. |
 | `nextjs-supabase` | Available | Those of `node`, detected the same way. Chosen instead of `node` when `next` and `@supabase/supabase-js` or `@supabase/ssr` are dependencies, or `next` and `supabase/config.toml` both exist. See below |
 | `generic` | Available | Asked once, then stored |
-| `python`, `go`, `rust` | Coming in [v0.4](https://github.com/Sycatle/senior-mode/milestone/4) | |
+| `python` | Available | From the tools the project uses: `ruff check .` or `flake8`; `black --check .` or `ruff format --check .`; `mypy .` or `pyright`; `pytest`; `python -m build` with a `[build-system]`. Prefixed with `uv run` (with `uv.lock`) or `poetry run` (with `poetry.lock`). Detected by `pyproject.toml`, `setup.py` or `requirements.txt`. |
+| `go` | Available | `go vet ./...` (plus `golangci-lint run` when a `.golangci` config exists), `go test ./...`, `go build ./...`. Detected by `go.mod`. |
+| `rust` | Available | `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test`, `cargo build`. Detected by `Cargo.toml`. |
+
+When several match, `package.json` wins, then `go.mod`, `Cargo.toml` and the Python files. Each of the
+python, go and rust presets also carries default `protected` globs (migrations, auth and security
+directories, CI workflows, Dockerfiles and `infra/`; never lockfiles), used by the protected zones.
 
 The node preset reports the language: TypeScript when `typescript` is a dependency or a tsconfig
 exists, else JavaScript (no typecheck expected). A missing linter or test runner is reported, and

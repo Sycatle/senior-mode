@@ -279,9 +279,9 @@ once, then stored).
 |---|---|---|---|---|
 | node | Biome or the existing ESLint/Prettier | `tsc --noEmit` with TypeScript | Vitest, Playwright for e2e | Next.js aware |
 | nextjs-supabase | as node | as node | as node, Playwright e2e against a dev project | `supabase db lint`, prod project guard, protected globs |
-| python | Ruff | mypy or pyright | pytest | uv |
-| go | gofmt, golangci-lint | compiler | go test | |
-| rust | rustfmt, clippy `-D warnings` | compiler | cargo test / nextest | cargo-deny |
+| python | Ruff or flake8; black or `ruff format` | mypy or pyright | pytest | `python -m build`; uv, poetry |
+| go | `go vet`, golangci-lint when configured | compiler | go test | `go build` |
+| rust | `cargo fmt --check`, clippy `-D warnings` | compiler | cargo test | `cargo build` |
 | generic | asked | asked | asked | |
 
 The node preset applies when a `package.json` exists and no preset is stored (a stored `typescript`,
@@ -316,6 +316,21 @@ The preset declares default `protected` globs: `supabase/migrations/**`, `supaba
 Declaring is all it does here; enforcement belongs to the protected zones. `CLAUDE.md` gets a
 `Supabase` block: tests and e2e run against a dedicated Supabase dev project, never prod, and at
 most `e2e.slots` e2e runs at once.
+
+The other presets apply when no `package.json` exists and no preset is stored, in this order:
+`go.mod` (go), `Cargo.toml` (rust), then `pyproject.toml`, `setup.py` or `requirements.txt` (python);
+a `requirements.txt` is common in any repository, so Python's files come last. A stored preset wins.
+Their commands come from what the project uses, and a tool the project does not use gets no check.
+python: `ruff check .` or `flake8`; `black --check .`, else `ruff format --check .` when Ruff is used;
+`mypy .` or `pyright`; `pytest`; `python -m build` when `pyproject.toml` has a `[build-system]`.
+Each is prefixed with `uv run` when `uv.lock` exists, `poetry run` when `poetry.lock` exists. A tool
+counts as used when its config file exists or its name is a word of the manifests (`pyproject.toml`,
+`setup.cfg`, `setup.py`, `tox.ini`, `Pipfile`, `requirements*.txt`). go: `go vet ./...`, joined by
+`golangci-lint run` when a `.golangci.{yml,yaml,toml,json}` exists; `go test ./...`; `go build ./...`.
+rust: `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test`, `cargo build`.
+The release-please type is `python`, `go` or `rust`. Each preset carries default `protected` globs
+(migrations, auth and security directories, CI workflows, Dockerfiles, compose files and `infra/`;
+lockfiles are not protected) in its `preset.json`; reading them is the protected zones' job.
 
 Every preset defines one check list: lint, typecheck, tests, build, Conventional Commits, spec drift,
 secret scanning. The pre-push hook runs it in any terminal; `senior-mode check` runs it in a session
@@ -450,7 +465,7 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 | v0.1 Bootstrap | Plugin skeleton, `setup` (generic + node presets), `frame`, discipline skills, agents, hooks; written by hand, then used to plan the rest |
 | v0.2 Daily loop | `next`, `status`, spec index and drift check, git hooks |
 | v0.3 Autonomy | `run`, review status check, protected zones, circuit breaker, scheduled run in Actions |
-| v0.4 Breadth | python, go, rust presets, `retro`, `senior-mode-fr` |
+| v0.4 Breadth | python, go, rust presets (#72), `retro`, `senior-mode-fr` |
 | v1.0 | Evals green, docs, marketplace publication |
 
 ## 20. Open questions

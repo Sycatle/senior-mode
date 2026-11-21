@@ -46,6 +46,9 @@ jq -e '.packages["."].component == "app"' "$new/release-please-config.json" >/de
 jq -e '.packages["."]["initial-version"] == "0.1.0"' "$new/release-please-config.json" >/dev/null ||
   fail "a new project's first release is not 0.1.0"
 
+jq -e '.protected | index("**/migrations/**") and index(".github/workflows/**") and index("**/secrets/**")' \
+  "$new/.claude/senior-mode.json" >/dev/null || fail "generic preset without protected zones: $(jq -c .protected "$new/.claude/senior-mode.json")"
+
 # Second run: nothing changes.
 before=$(snapshot "$new")
 setup "$new" --command test="true" --command lint="true"

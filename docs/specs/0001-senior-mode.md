@@ -114,7 +114,7 @@ Natural-language triggers in any language route to them ("let's frame", "cadrons
 |---|---|---|
 | `setup` | Adopt a repo (new or existing): detect stack, choose preset, create the Project and its fields, labels, branch protection, CI, release-please, git hooks, issue and PR templates, `CLAUDE.md` with Principles, `.claude/senior-mode.json`. Idempotent; re-run to repair. | scout, ops |
 | `frame` | Idea → interview rounds → alternatives → spec → ADR(s) → tickets as vertical slices with acceptance criteria, dependencies, size, priority, milestone. Ends with a summary of proactive suggestions the user did not ask for. | scout, researcher, architect, ops |
-| `next` | The daily session: short state of the board, open PRs needing a human, then picks the top Ready ticket and delivers it with the user in the loop (TDD, commits, PR). | ops, test-author, implementer, reviewer |
+| `next [#issue]` | The daily session: short state of the board, open PRs needing a human (offered for review or merge first), then picks the top Ready ticket and delivers it with the user in the loop (TDD, commits, PR, review). Never merges without the user's explicit yes. | ops, test-author, implementer, reviewer |
 | `run` | Autonomous delivery of up to N Ready tickets, one headless session per ticket (section 10, ADR 0007). | all |
 | `status` | Plain-language dashboard: done since last time, in progress, blocked, next, waiting for a human, release state. Cheap: one GraphQL call. | none (runs `senior-mode status`) |
 | `retro` | Weekly: reprioritise, close or rescope stale items, list debt, check spec drift, and turn recurring mistakes into mechanisms (a hook, a CI check, a lint rule) proposed as tickets. | architect, ops |
@@ -122,12 +122,19 @@ Natural-language triggers in any language route to them ("let's frame", "cadrons
 French is served without a companion plugin (ADR 0013): French trigger phrases in the skill
 descriptions, and the `language` config key for replies and documents.
 
-### `pick`, `status` and the statusline
+### `pick`, `start`, `status` and the statusline
 
 - `senior-mode pick [--json] [--max N]` is the one ticket selection that `next` and `run` share. It lists
   the Ready items of the Project, open, ordered by Priority (P0 first), then milestone due date (none
   last), then number. It leaves out size L, tickets with an open "blocked by" link or the `blocked`
   label, and tickets with `needs-info` (a Ready ticket should not have it; the label wins).
+- `senior-mode start <issue>` is the other step `next` and `run` share: it creates the worktree next to
+  the main checkout (`<repository>-<issue>`) and the branch `<type>/<issue>-<slug>`, from the default
+  branch fetched first (no upstream is set), then sets Status `In progress`. The type follows the
+  issue's `type:` label (`feature` feat, `bug` fix, `task` and `chore` chore; feat without a label); the
+  slug is the title without its Conventional prefix, cut at 40 characters on a word. It refuses a
+  closed issue or a taken path, and rerunning reuses the branch (whatever its slug) and the worktree.
+  It prints `branch <name>` and `worktree <path>`.
 - `senior-mode status [--json] [--since <dur>] [--watch [secs]]` reads the Project items and the
   repository facts (open pull requests with their statuses, recently closed issues and merged pull
   requests, the latest release) in one GraphQL query; only a Project of more than 100 items takes
@@ -152,6 +159,16 @@ descriptions, and the `language` config key for replies and documents.
   updates do not break it; it prints nothing if the plugin is not installed (a plugin loaded with
   `--plugin-dir` is in neither place). A project setting hides the user's own status line in that
   project, so `setup` asks first and keeps a status line the project already has.
+
+`next` runs in this order: `status` (five lines at most), then the pull requests that need the user
+(`needs-human`, reviewed and green, failing), each offered for review by the `reviewer` agent or for
+merge; then `pick --max 1` (or the ticket given, if Ready), confirmed by the user; `start`;
+`test-author` (red run kept), `implementer` (atomic commits, `check`), the pull request from the
+template with `Closes #n`, Status `In review`, `publish`, the `reviewer` (at most two fix rounds). A
+merge needs the user's explicit yes in the conversation, both statuses green and no `needs-human`
+label; a `needs-human` pull request is merged by the user, never by an agent. After the merge `next`
+invokes the `docs` skill (section 8) and offers the next ticket. Its long reference sits next to the
+skill, in `skills/next/reference.md`.
 
 ## 8. Lifecycle, roles and skills
 

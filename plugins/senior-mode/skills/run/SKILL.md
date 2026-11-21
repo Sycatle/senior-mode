@@ -26,6 +26,8 @@ them and prints a report. Your part is to confirm the batch, start it and explai
 takes minutes to an hour. Tell the user where to watch: `tmux attach -t senior-mode-run` (one window
 per ticket), or `senior-mode status --watch` in another terminal.
 
+To run every night, `senior-mode schedule install [--at HH:MM]` sets a systemd timer (or cron); `schedule status` shows the next trigger and the last result.
+
 Do not edit files, push or merge yourself during the run: the sessions and the command do it, inside
 the guardrails (self-protection, Bash guard, protected zones, circuit breaker).
 

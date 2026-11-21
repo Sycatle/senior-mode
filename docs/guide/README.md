@@ -28,7 +28,7 @@ plugin does today, and the spec describes where it is going.
 | Milestone | Content |
 |---|---|
 | v0.1 Bootstrap | `setup`, `frame`, discipline skills, agents, hooks (shipped) |
-| v0.2 to v0.4, shipped together | `next`, `status`, `run`, protected zones, circuit breaker, model escalation, python, go and rust presets, `retro`, generic `docs`; spec drift check and scheduled runs still to come |
+| v0.2 to v0.4, shipped together | `next`, `status`, `run`, protected zones, circuit breaker, model escalation, python, go and rust presets, `retro`, generic `docs`; `schedule`; spec drift check still to come |
 | v1.0 | Evals green, docs, marketplace publication |
 
 Source: [spec §19](../specs/0001-senior-mode.md#19-delivery-plan).

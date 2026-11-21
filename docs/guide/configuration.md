@@ -49,6 +49,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `autonomy.maxConsecutiveFailures` | `2` | Failed tickets in a row after which a run starts no new one |
 | `autonomy.merge` | `false` | Whether a run merges the pull requests that pass every bound |
 | `autonomy.escalate` | `true` | Whether a ticket that fails on Sonnet is retried once on Opus |
+| `autonomy.schedule` | `"02:00"` | Time of day (`HH:MM`) of the [scheduled run](autonomy.md#scheduled-runs), unless `senior-mode schedule install --at` says otherwise |
 | `e2e.slots` | `2` | End-to-end suites that may run at once on the machine (the check named `e2e`) |
 
 `senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`).

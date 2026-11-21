@@ -207,7 +207,9 @@ it does not read code at length. Each agent serves one team role of section 8.
 
 ## 10. Autonomy and guardrails
 
-`run` merges by itself (ADR 0003) within these bounds:
+`run` delivers tickets up to green, reviewed pull requests. It merges them by itself only when
+`autonomy.merge` is true (default false, ADR 0008, which narrows ADR 0003), and then only within
+these bounds:
 
 - **Batch:** at most `autonomy.maxTickets` tickets (default 3), sequential by default, parallel worktrees
   only for tickets with no dependency between them (`autonomy.parallel`, default 1).
@@ -333,7 +335,8 @@ Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
   "preset": "node",
   "commands": { "lint": "...", "typecheck": "...", "test": "...", "build": "..." },
   "project": { "owner": "...", "number": 1, "id": "PVT_...", "fields": { "Status": {"id": "...", "options": {}} } },
-  "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "autoMerge": true },
+  "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "merge": false, "escalate": true },
+  "e2e": { "slots": 2 },
   "protected": ["**/migrations/**", "**/auth/**", ".github/workflows/**", "Dockerfile*"],
   "secrets": ["config/prod.*", "**/vault/*"],
   "review": { "sections": ["docs/review/payments.md"] },

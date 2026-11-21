@@ -6,7 +6,7 @@ set -euo pipefail
 DEFAULTS='{
   "language": "en",
   "ci": { "mode": "local" },
-  "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "autoMerge": true },
+  "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "merge": false, "escalate": true },
   "e2e": { "slots": 2 },
   "limits": { "prLines": 400 }
 }'

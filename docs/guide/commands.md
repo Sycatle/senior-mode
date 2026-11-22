@@ -78,7 +78,8 @@ State: **Available.**
 
 - **Purpose.** A cheap, plain-language dashboard: done since last time, in progress, in review,
   blocked or missing information, waiting for a human (`needs-human` pull requests, failing
-  statuses), the next Ready tickets, and the release state. One GitHub call.
+  statuses), the next Ready tickets, and the release state. One GitHub call. Each ticket In progress
+  shows the path of its worktree.
 - **Asks.** Nothing. Ask "where are we?" or "état", or type `/senior-mode:status`.
 - **Produces.** A summary in the `language` of your config, with what needs you first. Ask for "the
   week for the client" and it runs `senior-mode status --since 7d`, a digest without jargon.
@@ -104,7 +105,7 @@ State: **Available.** Triggers: "run", "lance", "enchaîne en autonomie".
   failed and why, not started.
 - **Asks you.** To confirm the tickets, N, P and whether the run merges.
 - **How.** `senior-mode run [--max N] [--parallel P]` starts one headless `claude -p` session per
-  ticket, in the worktree `senior-mode start` opens for it (`<repo>-<n>`, branch `<type>/<n>-<slug>`)
+  ticket, in the worktree `senior-mode start` opens for it (`.git/senior-mode/worktrees/<n>`, branch `<type>/<n>-<slug>`)
   and, when tmux is installed, in a window of `tmux attach -t senior-mode-run`. A ticket that fails on
   Sonnet is retried once on Opus (`autonomy.escalate`). Logs stay in `.git/senior-mode/runs/`, with one
   `<n>.json` per ticket that says how it ended (`delivered`, `outgrown` or `failed`, whether it went
@@ -148,7 +149,7 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode release [--dry-run]` | Runs release-please 17.11.2 locally: tags a merged release PR, opens or updates the next one |
 | `senior-mode issue create --title ... --body-file ... --size ... --priority ...` | Creates a ticket with board fields, and optionally `--status`, `--milestone`, `--type`, `--blocked-by`, `--parent`, `--severity critical\|high\|moderate\|low` (sets the Severity field and the `security` label; critical implies P0 and high P1, the stricter of that and `--priority` wins, and `--priority` may then be left out); `--kind`, `--path` and `--rule` (a risk outside the ticket, with `--severity`) add the line `security-id: <sha256 of the three>` to the body and, when an open `security` issue already carries it, print that issue instead of filing another (a title match alone no longer reuses an issue then; a newline in the three is refused); a critical one in a public repository also opens a draft security advisory holding `--details-file <file\|->` (required there, never put in the issue), a private repository gets a message instead; `--no-advisory` (not with `--details-file`) skips the advisory and needs no details, for a risk that is no flaw in the project's own code, as the alerts GitHub raises that `run` and `retro` file; reuses an open issue with the same title and replaces its body |
 | `senior-mode pick [--json] [--max N]` | The Ready tickets in delivery order: Priority, a critical Severity first within a Priority (a tie-break only: a critical ticket moved by hand to P1 still sorts after a P0), then milestone due date; leaves out size L, blocked tickets and `needs-info` |
-| `senior-mode start <issue>` | Creates the worktree (`<repository>-<issue>`) and the branch `<type>/<issue>-<slug>` for a ticket, from the default branch, installs the dependencies with the `install` command of the config (`npm ci`, `pnpm install --frozen-lockfile`...), and sets Status `In progress`; safe to rerun |
+| `senior-mode start <issue>` | Creates the worktree (`.git/senior-mode/worktrees/<issue>` of the main repository, never beside it; a ticket started earlier beside the repository keeps its worktree, and `start` says where it is) and the branch `<type>/<issue>-<slug>` for a ticket, from the default branch, installs the dependencies with the `install` command of the config (`npm ci`, `pnpm install --frozen-lockfile`...), and sets Status `In progress`; safe to rerun |
 | `senior-mode run [--max N] [--parallel P]` | The autonomous run of `/senior-mode:run`: one headless session per ticket, then a plain report |
 | `senior-mode schedule install [--at HH:MM] [--max N]` | Runs `senior-mode run` every day on this machine, as a systemd user timer or a tagged crontab line ([scheduled runs](autonomy.md#scheduled-runs)) |
 | `senior-mode schedule remove` | Disables and deletes the timer, or the tagged crontab line |

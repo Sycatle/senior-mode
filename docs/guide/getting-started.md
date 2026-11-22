@@ -129,3 +129,10 @@ While framing, Claude may only write under `docs/`. Starting another senior-mode
 framing session; so does `! senior-mode frame end`.
 
 Details: [`frame`](commands.md#frame). Next: [A typical day](a-typical-day.md).
+
+## Where ticket work happens
+
+`senior-mode start <issue>` (or `/senior-mode:next`) makes each ticket a git worktree in
+`.git/senior-mode/worktrees/<issue>` of the repository, from whichever worktree you call it, and
+prints its path; `senior-mode status` lists it for every ticket In progress. Open it in an editor
+with `code .git/senior-mode/worktrees/<issue>`, or `cd` there and run `claude`.

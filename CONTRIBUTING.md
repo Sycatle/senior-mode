@@ -24,6 +24,13 @@ git config core.hooksPath .githooks
 You need `bash` 4.4 or later, `jq`, `gh` (logged in), `shellcheck`, and Claude Code for `claude plugin validate`.
 To try the plugin from your clone: `claude --plugin-dir plugins/senior-mode`.
 
+## Working on a ticket
+
+`plugins/senior-mode/bin/senior-mode start <issue>` makes the branch and a worktree for it in
+`.git/senior-mode/worktrees/<issue>` of your clone (never a sibling folder); `senior-mode status` shows
+the path of each ticket in progress. Open it with `code .git/senior-mode/worktrees/<issue>`, or `cd`
+there and start `claude`. A ticket started before this, in a sibling `<repo>-<issue>` folder, keeps it.
+
 ## Checks run on your machine
 
 There is no hosted CI here (ADR 0006): the project has no GitHub Actions budget, and its workflows

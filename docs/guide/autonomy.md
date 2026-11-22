@@ -85,15 +85,19 @@ The plugin's hooks apply to the main session and to every agent.
 
 Runs before every Bash command, in any repository where the plugin is enabled. It denies:
 
-- skipping checks: `--no-verify`, `git commit -n`, `git -c core.hooksPath=...`;
+- skipping checks: `--no-verify`, `git commit -n`, `git -c core.hooksPath=...`, and setting or
+  unsetting `core.hooksPath` with `git config` (reading it is allowed);
 - force-push: `--force`, `-f`, `--force-with-lease`, `--force-if-includes`, a `+` refspec;
 - pushing every branch: `--all`, `--mirror`, `--branches`;
 - pushing to the default branch (open a pull request instead);
 - `git reset --hard` on a shared branch (the default branch, or one that exists on `origin` or has
   an upstream);
-- `gh pr merge --admin`, and a merge through `gh api` with `PUT` on `pulls/<n>/merge`;
+- `gh pr merge --admin`, and a merge through `gh api` with `PUT` on `pulls/<n>/merge`, even when
+  the number is a variable;
 - in a `run` session (`SENIOR_MODE_RUN=1`), any merge: `gh pr merge`, and through `gh api` the
-  merge endpoints and the `mergePullRequest` and `enablePullRequestAutoMerge` mutations.
+  merge endpoints and the `mergePullRequest` and `enablePullRequestAutoMerge` mutations; and any
+  write to rulesets or branch protection, through `gh api` paths or GraphQL ruleset and
+  branch-protection mutations. `gh pr list --search merge` and other read-only calls are allowed.
 
 It reads commands as written. It is a guardrail for honest mistakes, not a sandbox: `bash -c "..."`
 and other GraphQL calls are not parsed.
@@ -102,7 +106,8 @@ and other GraphQL calls are not parsed.
 
 Active only while the environment variable `SENIOR_MODE_RUN=1` is set, which `run` does for the
 sessions it starts. Outside a run it does nothing. It denies Edit, Write, MultiEdit and NotebookEdit
-on `.github/workflows/**`, `.claude/**` and `.githooks/**` at the repository root, and Bash
+on `.github/workflows/**`, `.claude/**` and `.githooks/**` at the repository root, and on the git
+hooks and `.git/config` of the common dir (every worktree shares them), and Bash
 commands that obviously write there: redirections, `tee`, `cp`, `mv`, `rm`, `touch`, `truncate`,
 `install`, `ln`, `dd of=`, `sed -i`, `perl -i`, `git rm`, `git mv`, `git checkout` and
 `git restore` on those paths. An agent therefore cannot weaken the checks, the hooks or the

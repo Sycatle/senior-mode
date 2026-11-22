@@ -132,5 +132,15 @@ done
 jq -e '.protected | map(test("lock|requirements|pyproject")) | any' "$preset" >/dev/null &&
   fail "a lockfile or manifest is protected by default"
 
+# The install command of a new worktree (#110): uv or poetry when their lockfile exists, else none.
+for entry in "uv.lock:uv sync" "poetry.lock:poetry install"; do
+  d=$(project "inst-${entry%%.*}" "pyproject.toml=[tool.ruff]" "${entry%%:*}=")
+  setup "$d"
+  [ "$(cfg "$d" .commands.install)" = "${entry#*:}" ] || fail "${entry%%:*}: install is $(cfg "$d" .commands.install)"
+done
+d=$(project inst-none "pyproject.toml=[tool.ruff]")
+setup "$d"
+[ "$(cfg "$d" '.commands.install // "none"')" = none ] || fail "python without a lockfile has an install command"
+
 [ "$failures" -eq 0 ] && echo "setup-python: all cases pass"
 exit "$failures"

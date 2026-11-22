@@ -135,7 +135,9 @@ descriptions, and the `language` config key for replies and documents.
   slug is the title without its Conventional prefix, lowercase ASCII (accents are transliterated with
   `iconv` when it is available, any other non-ASCII character is dropped, whatever the locale), cut at 40
   characters on a word. It refuses a closed issue or a taken path, and rerunning reuses the branch (whatever its slug) and the worktree.
-  It prints `branch <name>` and `worktree <path>`.
+  A new worktree gets its dependencies: `start` runs the project's install command in it (section 14),
+  and again on a rerun when a node project has none. A failed install only warns, and `check` then says
+  what is missing. It prints `branch <name>` and `worktree <path>`.
 - `senior-mode status [--json] [--since <dur>] [--watch [secs]]` reads the Project items and the
   repository facts (open pull requests with their statuses, recently closed issues and merged pull
   requests, the latest release) in one GraphQL query; only a Project of more than 100 items takes
@@ -478,7 +480,10 @@ The node preset applies when a `package.json` exists and no preset is stored (a 
 its former name, becomes `node`). Its commands are the project's scripts (`lint`, `typecheck`,
 `test`, `build`, `test:e2e` or `e2e`), run with the package manager of the lockfile; a tsconfig
 without a typecheck script gets `tsc --noEmit` when `typescript` is a dependency, run so that it
-never downloads a package. The report names the language: TypeScript when `typescript` is a
+never downloads a package. Its install command, stored as `commands.install` (no check is derived from
+it), is the lockfile's, frozen: `npm ci`, `pnpm install --frozen-lockfile`, `yarn install
+--frozen-lockfile` (`--immutable` with a `.yarnrc.yml`), `bun install --frozen-lockfile`; `npm install`
+without a lockfile. The report names the language: TypeScript when `typescript` is a
 dependency or a tsconfig exists, else JavaScript, which expects no typecheck. A missing linter or
 test runner is reported, and `setup` proposes Biome
 or Vitest in a separate commit, never installed without a yes. Next.js is recorded as `framework`; it
@@ -498,7 +503,9 @@ counts as used when its config file exists or its name is a word of the manifest
 `setup.cfg`, `setup.py`, `tox.ini`, `Pipfile`, `requirements*.txt`). go: `go vet ./...`, joined by
 `golangci-lint run` when a `.golangci.{yml,yaml,toml,json}` exists; `go test ./...`; `go build ./...`.
 rust: `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test`, `cargo build`.
-The release-please type is `python`, `go` or `rust`. Each preset carries default `protected` globs
+Install commands: python `uv sync` with `uv.lock`, `poetry install` with `poetry.lock`, else none; go
+`go mod download`; rust `cargo fetch`; generic none. `setup repo --command install=<command>` replaces
+it, and a project without the stored key falls back to what its preset detects. The release-please type is `python`, `go` or `rust`. Each preset carries default `protected` globs
 (migrations, auth and security directories, CI workflows, Dockerfiles, compose files and `infra/`;
 lockfiles are not protected) in its `preset.json`; reading them is the protected zones' job.
 
@@ -506,7 +513,9 @@ Every preset defines one check list: lint, typecheck, tests, build, Conventional
 secret scanning, plus the environment guard when `envGuard.forbidden` is set: it fails when a
 forbidden pattern appears in a `.env*` file of the worktree, tracked or not, or in the environment,
 and prints file names and variable names, never a value. A check whose first output line is
-`skipped: <reason>` passes and is shown as `skip <name>: <reason>`. The pre-push hook runs it in any
+`skipped: <reason>` passes and is shown as `skip <name>: <reason>`. Before running the list, `check`
+stops with `FAIL  dependencies not installed: run <install command>` when a node project declares
+dependencies and has no `node_modules` (nor Plug'n'Play), instead of failing on typecheck. The pre-push hook runs it in any
 terminal; `senior-mode check` runs it in a session
 (and before every merge in `run`) and records the result that `senior-mode publish` sends as the
 commit status `senior-mode/ci`. `ci.mode` is `local` by default; `actions` also emits

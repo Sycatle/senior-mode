@@ -73,5 +73,29 @@ run check || fail "check fails on a dirty tree although every check passes"
 run publish && fail "a check on a dirty tree was recorded for HEAD"
 rm "$repo/untracked.txt"
 
+# A node project whose dependencies are not installed fails at once, naming the command that installs
+# them, instead of running a typecheck that fails on missing modules (#110).
+config '{"preset":"node","checks":[{"name":"typecheck","run":"echo cryptic error; exit 1"}]}'
+echo '{"name": "app", "devDependencies": {"typescript": "5.0.0"}}' >"$repo/package.json"
+echo '{"lockfileVersion": 3}' >"$repo/package-lock.json"
+git -C "$repo" add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: node"
+run check && fail "check passes without node_modules"
+grep -q "^FAIL  dependencies not installed: run npm ci$" "$work/out" || fail "missing dependencies not reported: $(cat "$work/out")"
+grep -q cryptic "$work/out" && fail "the checks ran without dependencies: $(cat "$work/out")"
+touch "$repo/pnpm-lock.yaml"
+git -C "$repo" add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: pnpm"
+run check
+grep -q "run pnpm install --frozen-lockfile$" "$work/out" || fail "install command ignores the lockfile: $(cat "$work/out")"
+config '{"preset":"node","commands":{"install":"make deps"},"checks":[{"name":"typecheck","run":"true"}]}'
+run check
+grep -q "run make deps$" "$work/out" || fail "configured install command not named: $(cat "$work/out")"
+mkdir "$repo/node_modules"
+run check || fail "check fails although dependencies are installed: $(cat "$work/out")"
+rm -rf "$repo/node_modules"
+echo '{"name": "app"}' >"$repo/package.json"
+run check || fail "a project with no dependencies needs no node_modules: $(cat "$work/out")"
+
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

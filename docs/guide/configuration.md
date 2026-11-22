@@ -33,7 +33,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 |---|---|---|
 | `language` | `en` | Language of the templates (`en` or `fr`) and of what Claude writes for you; setup does not write it, add it yourself |
 | `preset` | detected | `node` with a `package.json`, else `go`, `rust` or `python` from their manifest, else `generic`; a stored value wins |
-| `commands` | detected or asked | `lint`, `typecheck`, `test`, `build`, and `e2e` for node; `format` for python and rust |
+| `commands` | detected or asked | `lint`, `typecheck`, `test`, `build`, and `e2e` for node; `format` for python and rust; `install` (no check), the command `senior-mode start` runs in a new worktree: the lockfile's `npm ci`, `pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile` or `bun install --frozen-lockfile` for node, `uv sync` or `poetry install` for python, `go mod download`, `cargo fetch`; change it with `setup repo --command install=...` |
 | `framework` | none | `next` when Next.js is a dependency; the node preset then adds `middleware.*` and `src/middleware.*` to `protected` |
 | `envGuard.forbidden` | none | Strings, or `/regex/` patterns, that must never appear on an agent machine; turns on the `env guard` check |
 | `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order |
@@ -102,6 +102,8 @@ and, in `actions` mode, the workflow all run it, from the repository root.
 - `senior-mode check` prints `ok`, `skip` or `FAIL` per check, with the last 20 lines of a failure.
   A check whose first output line is `skipped: <reason>` passes and prints `skip <name>: <reason>`,
   so a check that had nothing to do is visible instead of a silent `ok`.
+- A node project that declares dependencies but has no `node_modules` fails at once with
+  `dependencies not installed: run <install command>`, before any check runs.
 - When `envGuard.forbidden` lists something, setup adds the `env guard` check (below).
 
 Not in the list yet: spec drift ([v0.2](https://github.com/Sycatle/senior-mode/milestone/2)) and

@@ -81,5 +81,8 @@ for g in '**/migrations/**' '**/auth/**' '**/security/**' '.github/workflows/**'
 done
 jq -e '.protected | map(test("go\\.(sum|mod)")) | any' "$preset" >/dev/null && fail "go.sum or go.mod is protected by default"
 
+# The install command of a new worktree (#110).
+[ "$(cfg "$d" .commands.install)" = "go mod download" ] || fail "go install is $(cfg "$d" .commands.install)"
+
 [ "$failures" -eq 0 ] && echo "setup-go: all cases pass"
 exit "$failures"

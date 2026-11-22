@@ -241,6 +241,11 @@ check() {
   root=$(git rev-parse --show-toplevel)
   count=$(jq '.checks // [] | length' "$file")
   [ "$count" -gt 0 ] || die "no checks in .claude/senior-mode.json; run /senior-mode:setup"
+  # Without its dependencies a node project fails typecheck and build with errors that do not say so (#110).
+  if deps_missing "$root"; then
+    echo "FAIL  dependencies not installed: run $(install_command "$root")"
+    return 1
+  fi
   output=$(mktemp)
   for ((i = 0; i < count; i++)); do
     name=$(jq -r ".checks[$i].name" "$file")
@@ -618,17 +623,22 @@ setup_claude_md() {
 # Commands of a package.json project (spec 0001 §14, #13, #42): its scripts, run by the package
 # manager of its lockfile; tsc --noEmit when a tsconfig has no typecheck script and typescript is a
 # dependency (npx would otherwise fetch the unrelated "tsc" package), run without ever downloading;
-# npm's placeholder test script is no test. Prints {commands, framework, typescript}.
+# npm's placeholder test script is no test. Its install command is the lockfile's, frozen (npm install
+# without one). Prints {commands, framework, typescript}.
 # shellcheck disable=SC2016 # jq program, not shell
 node_detect() {
   # exec runs an installed binary only: npx and bunx would download a missing one.
-  local root=$1 pm=npm exec="npx --no --" tsconfig=false
-  if [ -f "$root/pnpm-lock.yaml" ]; then pm=pnpm exec="pnpm exec"
-  elif [ -f "$root/yarn.lock" ]; then pm=yarn exec=yarn
-  elif [ -f "$root/bun.lock" ] || [ -f "$root/bun.lockb" ]; then pm=bun exec="bun run"
+  local root=$1 pm=npm exec="npx --no --" install="npm install" tsconfig=false
+  if [ -f "$root/pnpm-lock.yaml" ]; then pm=pnpm exec="pnpm exec" install="pnpm install --frozen-lockfile"
+  elif [ -f "$root/yarn.lock" ]; then
+    pm=yarn exec=yarn install="yarn install --frozen-lockfile"
+    # Yarn 2 and later (a .yarnrc.yml) says --immutable.
+    [ ! -f "$root/.yarnrc.yml" ] || install="yarn install --immutable"
+  elif [ -f "$root/bun.lock" ] || [ -f "$root/bun.lockb" ]; then pm=bun exec="bun run" install="bun install --frozen-lockfile"
+  elif [ -f "$root/package-lock.json" ]; then install="npm ci"
   fi
   [ ! -f "$root/tsconfig.json" ] || tsconfig=true
-  jq -c --arg pm "$pm" --arg exec "$exec" --argjson tsconfig "$tsconfig" '(.scripts // {}) as $s
+  jq -c --arg pm "$pm" --arg exec "$exec" --arg install "$install" --argjson tsconfig "$tsconfig" '(.scripts // {}) as $s
     | def run($n): if $s[$n] then "\($pm) run \($n)" else null end;
     ((.dependencies.typescript // .devDependencies.typescript) != null) as $ts
     | {commands: ({
@@ -637,7 +647,8 @@ node_detect() {
           // (if $tsconfig and $ts then "\($exec) tsc --noEmit" else null end)),
         test: (if ($s.test // "") | test("no test specified") then null else run("test") end),
         build: run("build"),
-        e2e: (run("test:e2e") // run("e2e"))
+        e2e: (run("test:e2e") // run("e2e")),
+        install: $install
       } | with_entries(select(.value != null))),
       framework: (if (.dependencies.next // .devDependencies.next) then "next" else null end),
       typescript: ($ts or $tsconfig)}' \
@@ -671,12 +682,13 @@ py_uses() { # root tool [config-file...]
 # Commands of a Python project (spec 0001 §14, #72): the tools it uses, run through uv or poetry
 # when their lockfile exists. Ruff before flake8; black's format check before ruff's, as black is only
 # named by projects that format with it; mypy before pyright; build when pyproject.toml has a
-# build-system. Prints {commands}.
+# build-system. Its install command is `uv sync` or `poetry install` with their lockfile, else none.
+# Prints {commands}.
 # shellcheck disable=SC2016 # jq program, not shell
 python_detect() {
-  local root=$1 run="" lint="" format="" typecheck="" test="" build=""
-  if [ -f "$root/uv.lock" ]; then run="uv run "
-  elif [ -f "$root/poetry.lock" ]; then run="poetry run "
+  local root=$1 run="" install="" lint="" format="" typecheck="" test="" build=""
+  if [ -f "$root/uv.lock" ]; then run="uv run " install="uv sync"
+  elif [ -f "$root/poetry.lock" ]; then run="poetry run " install="poetry install"
   fi
   if py_uses "$root" ruff ruff.toml .ruff.toml; then lint="${run}ruff check ."
   elif py_uses "$root" flake8 .flake8; then lint="${run}flake8"
@@ -690,62 +702,89 @@ python_detect() {
   ! py_uses "$root" pytest pytest.ini conftest.py || test="${run}pytest"
   ! grep -qs '^\[build-system\]' "$root/pyproject.toml" || build="${run}python -m build"
   jq -nc --arg lint "$lint" --arg format "$format" --arg typecheck "$typecheck" --arg test "$test" \
-    --arg build "$build" '{commands: ({lint: $lint, format: $format, typecheck: $typecheck, test: $test,
-      build: $build} | with_entries(select(.value != "")))}'
+    --arg build "$build" --arg install "$install" '{commands: ({lint: $lint, format: $format, typecheck: $typecheck,
+      test: $test, build: $build, install: $install} | with_entries(select(.value != "")))}'
 }
 
 # Commands of a Go module (spec 0001 §14, #72): vet, joined by golangci-lint when its config exists,
-# then test and build over every package. Prints {commands}.
+# then test and build over every package; its install command downloads the modules. Prints {commands}.
 go_detect() {
   local root=$1 lint="go vet ./..." f
   for f in "$root"/.golangci.yml "$root"/.golangci.yaml "$root"/.golangci.toml "$root"/.golangci.json; do
     [ ! -f "$f" ] || lint="go vet ./... && golangci-lint run"
   done
-  jq -nc --arg lint "$lint" '{commands: {lint: $lint, test: "go test ./...", build: "go build ./..."}}'
+  jq -nc --arg lint "$lint" '{commands: {lint: $lint, test: "go test ./...", build: "go build ./...",
+    install: "go mod download"}}'
 }
 
 # Commands of a Cargo project (spec 0001 §14, #72): clippy denying warnings, rustfmt in check mode,
-# test and build. Prints {commands}.
+# test and build; its install command fetches the crates. Prints {commands}.
 rust_detect() {
   jq -nc '{commands: {lint: "cargo clippy --all-targets -- -D warnings", format: "cargo fmt --check",
-    test: "cargo test", build: "cargo build"}}'
+    test: "cargo test", build: "cargo build", install: "cargo fetch"}}'
+}
+
+# The preset of a project: the stored one (typescript, its former name, is node), else node when a
+# package.json exists, else the one of its manifest (go, rust, python), else generic.
+project_preset() {
+  local root=$1 pname=""
+  [ ! -f "$root/.claude/senior-mode.json" ] || pname=$(jq -r '.preset // empty' "$root/.claude/senior-mode.json" 2>/dev/null) || true
+  [ "$pname" != typescript ] || pname=node
+  if [ -n "$pname" ]; then :
+  elif [ -f "$root/package.json" ]; then pname=node
+  else pname=$(other_preset "$root")
+  fi
+  printf '%s\n' "$pname"
+}
+
+# What the preset $2 detects in the project at $1, as JSON ({} for a preset that detects nothing).
+preset_detect() {
+  case $2 in
+    node) node_detect "$1" ;;
+    python) python_detect "$1" ;;
+    go) go_detect "$1" ;;
+    rust) rust_detect ;;
+    *) echo '{}' ;;
+  esac
+}
+
+# The command that installs the dependencies of the project at $1 (#110): `commands.install` of its
+# config, else the one its preset detects; empty when it has none.
+install_command() {
+  local root=$1 cmd=""
+  [ ! -f "$root/.claude/senior-mode.json" ] || cmd=$(jq -r '.commands.install // empty' "$root/.claude/senior-mode.json" 2>/dev/null) || true
+  [ -n "$cmd" ] || cmd=$(preset_detect "$root" "$(project_preset "$root")" 2>/dev/null | jq -r '.commands.install // empty') || true
+  printf '%s\n' "$cmd"
+}
+
+# Whether the node project at $1 declares dependencies and has no node_modules (nor Yarn's Plug'n'Play).
+deps_missing() {
+  [ "$(project_preset "$1")" = node ] && [ -f "$1/package.json" ] && [ ! -d "$1/node_modules" ] && [ ! -e "$1/.pnp.cjs" ] &&
+    jq -e '((.dependencies // {}) + (.devDependencies // {}) | length) > 0' "$1/package.json" >/dev/null 2>&1
 }
 
 # The documents and checks of a project (spec 0001 §12, §14, #12), idempotent; whatever the project
 # already has is extended, never replaced. The preset is the stored one (typescript, its former name,
 # becomes node), else node when a package.json exists, else the one of its manifest (go, rust, python),
 # else generic. `--command <name>=<command>` stores a command of the preset (lint, format, typecheck,
-# test, build; e2e for node) and derives its check.
+# test, build; e2e for node) and derives its check; `--command install=<command>` stores the command that
+# installs the dependencies of a new worktree, which has no check.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_repo() {
-  local root file tpl pname="" preset lang name commands='{}' detected='{}' out ours guard
+  local root file tpl pname preset lang name commands='{}' detected out ours guard
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   tpl=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
   # A preset stored earlier wins over detection.
-  [ ! -f "$file" ] || pname=$(jq -r '.preset // empty' "$file" 2>/dev/null) || true
-  [ "$pname" != typescript ] || pname=node
-  if [ -z "$pname" ]; then
-    pname=generic
-    if [ -f "$root/package.json" ]; then
-      pname=node
-    else
-      pname=$(other_preset "$root")
-    fi
-  fi
+  pname=$(project_preset "$root")
   preset=$tpl/presets/$pname/preset.json
   [ -f "$preset" ] || die "unknown preset $pname in .claude/senior-mode.json"
-  case $pname in
-    node) detected=$(node_detect "$root") || die "could not read package.json" ;;
-    python) detected=$(python_detect "$root") ;;
-    go) detected=$(go_detect "$root") ;;
-    rust) detected=$(rust_detect) ;;
-  esac
+  detected=$(preset_detect "$root" "$pname") || die "could not read package.json"
   tpl=$tpl/templates
   while [ $# -gt 0 ]; do
     [ "$1" = --command ] && [[ ${2:-} == ?*=?* ]] || usage
-    jq -e --arg k "${2%%=*}" '.commands | index($k)' "$preset" >/dev/null ||
-      die "unknown command ${2%%=*}; expected one of $(jq -r '.commands | join(", ")' "$preset")"
+    jq -e --arg k "${2%%=*}" '.commands + ["install"] | index($k)' "$preset" >/dev/null ||
+      die "unknown command ${2%%=*}; expected one of $(jq -r '.commands + ["install"] | join(", ")' "$preset")"
     commands=$(jq -c --arg k "${2%%=*}" --arg v "${2#*=}" '.[$k] = $v' <<<"$commands")
     shift 2
   done
@@ -1028,10 +1067,12 @@ slugify() {
 # In progress. Shared by `next` and `run`. The branch type follows the `type:` label (feature: feat, bug:
 # fix, task and chore: chore; feat without a label). The branch starts from the default branch, fetched
 # first when origin answers; the worktree sits next to the main checkout, as `<repository>-<issue>`.
-# Rerunning reuses the branch and the worktree. Prints `branch <name>` and `worktree <path>`.
+# Rerunning reuses the branch and the worktree. A new worktree gets its dependencies (a node one that
+# lost them too), installed with the project's install command (#110); a failed install only warns, and
+# `check` says what is missing. Prints `branch <name>` and `worktree <path>`.
 start() {
   [ $# -eq 1 ] && [[ $1 =~ ^[1-9][0-9]*$ ]] || usage
-  local issue=$1 slug info state title labels type main name base branch path existing
+  local issue=$1 slug info state title labels type main name base branch path existing created=false cmd
   slug=$(repo_slug)
   info=$(gh_retry issue view "$issue" --repo "$slug" --json title,labels,state) || die "cannot read issue #$issue"
   state=$(jq -r '.state' <<<"$info")
@@ -1053,6 +1094,7 @@ start() {
   if [ -n "$existing" ]; then
     path=$existing
   else
+    created=true
     path=$(dirname "$main")/$(basename "$main")-$issue
     [ ! -e "$path" ] || die "$path exists and is not the worktree of $branch"
     if ! git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
@@ -1068,6 +1110,14 @@ start() {
   fi
   echo "branch $branch"
   echo "worktree $path"
+  if [ "$created" = true ] || deps_missing "$path"; then
+    cmd=$(install_command "$path")
+    if [ -n "$cmd" ]; then
+      echo "senior-mode: installing dependencies: $cmd" >&2
+      (cd "$path" && bash -c "$cmd" </dev/null >&2) ||
+        echo "senior-mode: could not install dependencies in $path; run: $cmd" >&2
+    fi
+  fi
   item_set "$issue" Status "In progress"
 }
 

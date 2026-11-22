@@ -100,6 +100,17 @@ branch_is 93 feat/93-no-label-here
 issue "Make the daily session pick the first ticket and deliver it" ''
 branch_is 94 feat/94-make-the-daily-session-pick-the-first
 
+# A branch name is ASCII whatever the locale (#111): accents are transliterated when iconv can, else dropped.
+issue "Résumé de l'été: café Œuvre" ''
+LC_ALL=C.UTF-8 branch_is 99 feat/99-resume-de-l-ete-cafe-oeuvre
+issue "fix(ui): Ça déçoit" '{"name": "type:bug"}'
+LC_ALL=C branch_is 100 fix/100-ca-decoit
+mkdir "$work/noiconv"
+printf '#!/bin/sh\nexit 127\n' >"$work/noiconv/iconv"
+chmod +x "$work/noiconv/iconv"
+issue "Crème brûlée" ''
+PATH="$work/noiconv:$PATH" LC_ALL=C.UTF-8 branch_is 101 feat/101-crme-brle
+
 # A closed issue, a bad number, a taken path and a stale item all stop before the board.
 issue "Done already" '' CLOSED
 start 95 && fail "a closed issue started"

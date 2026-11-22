@@ -309,6 +309,54 @@ issue_create() {
   fi
 }
 
+# The open alerts GitHub itself raises (#172), as one JSON object per line: severity, kind, path and
+# rule for `issue create`, a title and a body. Only high and critical Dependabot alerts count (GitHub
+# says "medium" where we say moderate); a secret-scanning alert is critical. The body names the alert
+# and where to read it, never the vulnerability's details, and the secret's value is never read.
+# shellcheck disable=SC2016 # jq programs, not shell
+DEPENDABOT_ALERTS_JQ='.[] | select(.state == "open" and (.security_advisory.severity | IN("high", "critical")))
+  | .security_advisory.severity as $sev | .security_advisory.ghsa_id as $id | .dependency.package.name as $pkg
+  | (.dependency.manifest_path // "unknown") as $manifest | .html_url as $url
+  | {severity: $sev, kind: "dependabot", path: $manifest, rule: "\($id) \($pkg)",
+     title: "Update \($pkg): \($sev) Dependabot alert (\($id))",
+     body: "## Context\n\nDependabot reports an open \($sev) alert on `\($pkg)` (\(.dependency.package.ecosystem)) in `\($manifest)`: \($id).\nAlert: \($url)\n\n## Acceptance criteria\n\n- Given the alert is open, when `\($pkg)` is updated to a patched version or removed, then the alert closes.\n"}
+  | @json'
+# shellcheck disable=SC2016 # jq programs, not shell
+SECRET_ALERTS_JQ='.[] | select(.state == "open") | .number as $n | .secret_type as $type
+  | (.secret_type_display_name // $type) as $name | .html_url as $url
+  | {severity: "critical", kind: "secret-scanning", path: "alerts/\($n)", rule: $type,
+     title: "Revoke exposed secret: \($name) (alert #\($n))",
+     body: "## Context\n\nGitHub secret scanning reports an exposed \($name) in this repository. The value is not repeated here.\nAlert: \($url)\n\n## Acceptance criteria\n\n- Given the secret is exposed, when it is revoked at its provider and removed from the repository, then the alert is resolved.\n"}
+  | @json'
+
+# Files one issue for each open high or critical Dependabot alert and each open secret-scanning alert
+# (treated as critical), through `issue create` with a fingerprint, so a second pass files nothing
+# new (#144, #172). Below high nothing is filed. An alert source GitHub refuses (scanning not enabled,
+# no permission, 404) or an issue that cannot be filed is said on stderr and never stops the caller.
+security_alerts() {
+  local slug source prog alerts line sev kind path rule title body details
+  slug=$(repo_slug)
+  for source in dependabot secret-scanning; do
+    case $source in dependabot) prog=$DEPENDABOT_ALERTS_JQ ;; *) prog=$SECRET_ALERTS_JQ ;; esac
+    if ! alerts=$(gh_retry api "repos/$slug/$source/alerts?state=open&per_page=100" --paginate --jq "$prog" 2>&1); then
+      echo "security alerts: $source alerts not read ($(head -n 1 <<<"${alerts#gh: }"))" >&2
+      continue
+    fi
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      IFS=$'\t' read -r sev kind path rule title < <(jq -r '[.severity, .kind, .path, .rule, .title] | @tsv' <<<"$line")
+      body=$(mktemp)
+      jq -r .body <<<"$line" >"$body"
+      details=()
+      [ "$sev" != critical ] || details=(--details-file "$body")
+      "$SELF" issue create --title "$title" --body-file "$body" --size S --severity "$sev" \
+        --kind "$kind" --path "$path" --rule "$rule" ${details[@]+"${details[@]}"} </dev/null ||
+        echo "security alerts: $kind alert $rule not filed" >&2
+      rm -f "$body"
+    done <<<"$alerts"
+  done
+}
+
 # Pinned so a release does not change with the CLI's latest version; it needs Node 22 or later.
 RELEASE_PLEASE=17.11.2
 
@@ -2080,6 +2128,8 @@ retro() {
   since_s=$((now_s - $(duration_seconds "$since")))
   since_iso=$(iso_time "$since_s")
   slug=$(repo_slug)
+  # --json keeps stdout pure.
+  if [ "$json" = true ]; then security_alerts >&2; else security_alerts; fi
   data=$(board_data true) || exit 1
   history=$(jq -nc --arg q "$HISTORY_QUERY" --arg o "${slug%%/*}" --arg n "${slug#*/}" --arg s "$since_iso" \
     '{query: $q, variables: {owner: $o, name: $n, since: $s}}' | gh_retry api graphql --input -) ||
@@ -2504,6 +2554,7 @@ run() {
     die "protected in .claude/senior-mode.json of $RUN_BASE must be an array of globs"
   RUN_STAMP=$(date +%Y%m%d-%H%M%S)-$$
   RUN_DIR=$(git rev-parse --path-format=absolute --git-common-dir)/senior-mode/runs/$RUN_STAMP
+  security_alerts
   data=$(board_data false) || exit 1
   while IFS=$'\t' read -r n title; do
     [ -n "$n" ] || continue

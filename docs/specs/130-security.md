@@ -126,8 +126,12 @@ Guard hardening (#115-#120, #145):
   request is not concerned. Whether the pass is due is mechanical (`protected`, the ticket's Size),
   so `publish` never marks a due pass as not required. A ticket session could still post the status
   itself through `gh api` until the separate reviewer session (#150) is the only one allowed to.
-- **Secret patterns** ship in `plugins/senior-mode/secret-patterns` (provider keys, private key
-  headers, generic high-entropy assignments). There is no new dependency.
+- **Secret patterns** ship in `plugins/senior-mode/secret-patterns` (provider keys, credentialed
+  URLs, private keys, generic assignments). There is no new dependency, so the generic kind is a
+  heuristic, not an entropy measure: a value of 16 characters or more, with a letter and a digit, that
+  is not a placeholder, a bracketed expression or a dotted identifier. The secret an allowlist entry
+  hashes is the value itself: the token, the whole URL, or a private key from its `BEGIN` to its `END`
+  line, never the public header alone.
 - **Audit commands** live in each preset's checks: `npm audit --audit-level=high` or `pnpm audit
   --audit-level high`, `pip-audit`, `govulncheck ./...` and `cargo audit`. The JSON output is
   filtered to high and critical.

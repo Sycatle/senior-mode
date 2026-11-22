@@ -58,6 +58,7 @@ if [[ ${!#} == *"guard probe"* ]]; then
     honour) echo '{"type": "user", "message": {"content": "senior-mode: skipping checks is denied (core.hooksPath); fix what the check reports instead."}}' ;;
     ignore) git init -q "$(sed -nE 's#.*init -q ([^ `]+).*#\1#p' <<<"${!#}")"; echo '{"type": "result"}' ;;
     silent) echo '{"type": "result"}' ;;
+    hang) exec sleep 30 ;;
   esac
   exit 0
 fi
@@ -399,9 +400,20 @@ session 102-sonnet delivered pr
 run && fail "M: run started with the plugin disabled"
 grep -q 'enabled' "$work/out" || fail "M: the disabled plugin is not named: $(cat "$work/out")"
 grep -q 'app-102' "$CLAUDE_LOG" && fail "M: a ticket started with the plugin disabled"
+# Ticket sessions run in fresh worktrees of the base branch: an untracked settings.local.json is not there.
 echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$repo/.claude/settings.local.json"
-run || fail "M: the project's own setting did not enable the plugin: $(cat "$work/out")"
-rm -f "$repo/.claude/settings.local.json" "$CLAUDE_CONFIG_DIR/settings.json"
+run && fail "M: run started with the plugin enabled only in the untracked settings.local.json"
+grep -q 'enabled' "$work/out" || fail "M: the plugin not enabled for worktrees is not named: $(cat "$work/out")"
+grep -q 'app-102' "$CLAUDE_LOG" && fail "M: a ticket started with the plugin enabled only in settings.local.json"
+rm -f "$repo/.claude/settings.local.json"
+# Enabled in the project's tracked settings on the base branch: ticket worktrees have it.
+echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$repo/.claude/settings.json"
+git -C "$repo" add .claude/settings.json && git -C "$repo" -c user.name=t -c user.email=t@t commit -qm "chore: enable the plugin" &&
+  git -C "$repo" push -q origin main
+run || fail "M: the project's tracked setting did not enable the plugin: $(cat "$work/out")"
+git -C "$repo" rm -q .claude/settings.json && git -C "$repo" -c user.name=t -c user.email=t@t commit -qm "chore: drop settings" &&
+  git -C "$repo" push -q origin main
+rm -f "$CLAUDE_CONFIG_DIR/settings.json"
 run && fail "M: run started with no settings at all"
 echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DIR/settings.json"
 # --plugin-dir loads the plugin without enabling it; its hooks.json must still be there.
@@ -412,6 +424,21 @@ grep -q 'hooks.json' "$work/out" || fail "M: the missing hooks.json is not named
 echo '{}' >"$work/plugin/hooks/hooks.json"
 SENIOR_MODE_PLUGIN_DIR="$work/plugin" run || fail "M: a plugin dir with hooks.json was refused: $(cat "$work/out")"
 echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DIR/settings.json"
+# The probe runs in a throwaway worktree of the base branch, as ticket sessions do, and removes it.
+rm -f "$probe"
+board 103 '[]'
+session 103-sonnet delivered pr
+run || fail "M: run failed: $(cat "$work/out")"
+grep -q '^probe haiku' "$CLAUDE_LOG" || fail "M: the probe did not run in a throwaway worktree: $(cat "$CLAUDE_LOG")"
+git -C "$repo" worktree list | grep -q probe && fail "M: the probe worktree was left: $(git -C "$repo" worktree list)"
+# A probe session that never ends is stopped after SENIOR_MODE_PROBE_TIMEOUT seconds (no `timeout` needed).
+rm -f "$probe"
+echo hang >"$FIX/probe"
+SECONDS=0
+SENIOR_MODE_PROBE_TIMEOUT=1 run && fail "M: run started although the probe session never ended"
+[ "$SECONDS" -lt 20 ] || fail "M: the probe was not stopped after its timeout ($SECONDS s)"
+grep -q 'app-103' "$CLAUDE_LOG" && fail "M: a ticket started after a probe that timed out"
+echo honour >"$FIX/probe"
 
 # E: nothing Ready, bad arguments.
 config '{}'

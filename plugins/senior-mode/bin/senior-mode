@@ -1835,16 +1835,31 @@ wip_check() {
     die "work in progress is at its limit (wip $limit): $others. Finish it first (merge, or set it back to Ready), or raise wip in .claude/senior-mode.json"
 }
 
+# Where the worktree of ticket $2 is created: inside the git common dir $1 (so never a sibling of the
+# repository, and the same from any worktree), as senior-mode/worktrees/<issue>. A ticket started
+# before #224 keeps its worktree beside the repository; `ticket_worktrees` finds it by its branch.
+ticket_worktree_path() {
+  printf '%s/senior-mode/worktrees/%s\n' "$1" "$2"
+}
+
+# The worktrees of the tickets in the repository of $1, as `<issue> <path>` lines, wherever they are:
+# any worktree on a branch `<type>/<issue>-<slug>`.
+ticket_worktrees() {
+  git -C "$1" worktree list --porcelain | awk '$1 == "worktree" {p = substr($0, 10)}
+    $1 == "branch" && match($2, /^refs\/heads\/[a-z]+\/[0-9]+(-|$)/) {
+      n = substr($2, 12); sub(/^[a-z]+\//, "", n); sub(/[^0-9].*/, "", n); print n, p}'
+}
+
 # senior-mode start <issue>: the worktree and the branch `<type>/<issue>-<slug>` of a ticket, then Status
 # In progress. Shared by `next` and `run`. The branch type follows the `type:` label (feature: feat, bug:
 # fix, task and chore: chore; feat without a label). The branch starts from the default branch, fetched
-# first when origin answers; the worktree sits next to the main checkout, as `<repository>-<issue>`.
-# Rerunning reuses the branch and the worktree. A new worktree gets its dependencies (a node one that
+# first when origin answers; the worktree is `<git common dir>/senior-mode/worktrees/<issue>` (#224).
+# Rerunning reuses the branch and the worktree, wherever an earlier start put it. A new worktree gets its dependencies (a node one that
 # lost them too), installed with the project's install command (#110); a failed install only warns, and
 # `check` says what is missing. Prints `branch <name>` and `worktree <path>`.
 start() {
   [ $# -eq 1 ] && [[ $1 =~ ^[1-9][0-9]*$ ]] || usage
-  local issue=$1 slug info state title labels type main name base branch path existing created=false cmd
+  local issue=$1 slug info state title labels type common main name base branch path existing created=false cmd
   slug=$(repo_slug)
   info=$(gh_retry issue view "$issue" --repo "$slug" --json title,labels,state) || die "cannot read issue #$issue"
   state=$(jq -r '.state' <<<"$info")
@@ -1857,8 +1872,8 @@ start() {
     task | chore) type=chore ;;
     *) type=feat ;;
   esac
-  main=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
-  main=${main%/.git}
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
+  main=${common%/.git}
   name=$(slugify "$title")
   # The branch of an earlier start wins, whatever its slug.
   branch=$(git -C "$main" for-each-ref --format='%(refname:short)' "refs/heads/$type/$issue-*" | head -1)
@@ -1868,7 +1883,7 @@ start() {
     path=$existing
   else
     created=true
-    path=$(dirname "$main")/$(basename "$main")-$issue
+    path=$(ticket_worktree_path "$common" "$issue")
     [ ! -e "$path" ] || die "$path exists and is not the worktree of $branch"
     if ! git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
       git -C "$main" fetch -q origin 2>/dev/null || true
@@ -1946,7 +1961,7 @@ STATUS_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" e
   sec("\($head) (\(.done | length))"; [.done[] | ticket] + (if .mergedPullRequests > 0
     then ["\(.mergedPullRequests) pull request\(if .mergedPullRequests > 1 then "s" else "" end) merged"] else [] end)),
   sec("In progress (\(.inProgress | length)\(if .wip.count > .wip.limit then ", over the limit of \(.wip.limit)" else "" end))";
-    [.inProgress[] | ticket]),
+    [.inProgress[] | ticket + (if .worktree then " (worktree \(.worktree))" else "" end)]),
   sec("In review (\(.inReview | length))"; [.inReview[] | ticket + (if .pr then " (pull request #\(.pr))" else "" end)]),
   sec("Blocked or missing information (\(.blocked | length))"; [.blocked[] | ticket + ": " + (.reasons | join(", "))]),
   sec("Waiting for a human (\(.waiting | length))"; [.waiting[] | "\(.kind) #\(.number) \(.title): \(.why)"]),
@@ -1991,7 +2006,7 @@ status_fix() {
 # One status report. $1 json|text, $2 --since duration or "", $3 true to move the "last time" mark,
 # $4 true to repair the drift (--fix).
 status_once() {
-  local json=$1 since=$2 save=$3 fix=${4:-false} root cache now_s now since_iso head data out wip audit results fixed
+  local json=$1 since=$2 save=$3 fix=${4:-false} root cache now_s now since_iso head data out wip audit results fixed trees
   local lines="" rc=0
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   cache=$root/.claude/senior-mode/status-seen
@@ -2014,6 +2029,9 @@ status_once() {
   out=$(jq -c --arg now "$now" --arg since "$since_iso" --arg repo "$(repo_slug)" --argjson wip "$wip" \
     --argjson audit "$audit" "$PICK_DEF$STATUS_JQ" <<<"$data") ||
     die "could not build the status"
+  trees=$(ticket_worktrees "$root" | jq -Rsc 'split("\n") | map(select(length > 0) | capture("^(?<n>[0-9]+) (?<p>.*)$")) | map({(.n): .p}) | add // {}') ||
+    trees='{}'
+  out=$(jq -c --argjson t "$trees" '.inProgress |= map(. + {worktree: ($t[.number | tostring])})' <<<"$out")
   if [ "$fix" = true ]; then
     results=$(status_fix "$out") || rc=1
     fixed=$(jq -sc '[.[] | select(.fixed)]' <<<"$results")
@@ -2667,7 +2685,7 @@ run() {
   RUN_PROTECTION=$(jq -r '.github.protection // empty' "$file")
   RUN_CLAUDE=$(agent_bin)
   RUN_SLUG=$(repo_slug)
-  # The main checkout, even when run from a ticket worktree: worktrees are its siblings.
+  # The main checkout, even when run from a ticket worktree (they live in its .git, or beside it).
   RUN_ROOT=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
   git fetch -q origin || echo "senior-mode: could not fetch origin; starting from the last fetched state" >&2
   RUN_BASE=$(default_branch) || die "no default branch found"

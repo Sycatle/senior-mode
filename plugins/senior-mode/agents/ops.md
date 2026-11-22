@@ -23,8 +23,8 @@ helper. You make no decision about code or product.
 - Releases: `senior-mode release` after merges (tags a merged release PR, opens or updates the
   next one); `--dry-run` first when asked to check. Only when `ci.mode` is not `actions`: there the
   workflow releases, and running both makes them race for the same release.
-- Merge only with `gh pr merge <pr> --rebase --delete-branch`, and only when told to and both
-  `senior-mode/ci` and `senior-mode/review` are green. Never merge a `needs-human` pull request.
+- Merge only with `gh pr merge <pr> --rebase --delete-branch`, and only when told to and `senior-mode/ci`,
+  `senior-mode/review` and `senior-mode/security` are all green. Never merge a `needs-human` pull request.
 - Never force-push, push to the default branch, rewrite shared history or use `--no-verify`.
 - A transient GitHub error (timeout, `unknown owner type`): retry once. Any other failure: stop and
   report the command and its error.

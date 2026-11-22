@@ -8,12 +8,23 @@ and [ADR 0003](../adr/0003-bounded-full-autonomy.md).
 
 ## Required statuses
 
-Two commit statuses gate every merge to the default branch:
+Three commit statuses gate every merge to the default branch:
 
 | Status | Set by | Meaning |
 |---|---|---|
 | `senior-mode/ci` | `senior-mode publish` after `senior-mode check` (local mode), or the workflow (actions mode) | The check list passed on that exact commit |
 | `senior-mode/review` | The `reviewer` agent | `success` approved, `pending` approved for a human merge, `failure` changes requested |
+| `senior-mode/security` | `senior-mode publish` when the pass is not due, else the `security` agent | `success` no high or critical finding (or "not required"), `pending` due and not done, `failure` a high or critical finding |
+
+The security pass is due when the pull request touches a [protected zone](#protected-zones) (zones as
+the base branch has them) or closes a size L ticket. `publish` then leaves `senior-mode/security`
+pending, and the [`security`](agents.md#security) agent reviews the pull request on Opus: with a high or
+critical finding it sets `failure` and the pull request gets `needs-human`. Any other pull request
+gets `success` with "not required: no protected zone, not L". When `publish` cannot read the pull
+request or the Size of a ticket, it leaves the status pending rather than guess. After
+`senior-mode setup github` adds the third check to an existing repository, a pull request opened
+before needs `senior-mode publish` once more on its head. See
+[ADR 0015](../adr/0015-security-posture.md).
 
 A status published from your machine is only as trustworthy as that machine: it names the commit
 it verified ([ADR 0006](../adr/0006-local-ci.md)). Teams that need independent CI use `actions` mode.
@@ -24,7 +35,7 @@ it verified ([ADR 0006](../adr/0006-local-ci.md)). Teams that need independent C
 
 - allows changes only through pull requests, merged by rebase;
 - requires linear history, and blocks deleting the branch and force-pushing to it;
-- requires `senior-mode/ci` and `senior-mode/review` on a branch that is up to date with the default
+- requires `senior-mode/ci`, `senior-mode/review` and `senior-mode/security` on a branch that is up to date with the default
   branch;
 - requires no approving review count (the `reviewer` status replaces it), except for code owners:
   when `protected` has globs, it requires code owner review (see below).
@@ -213,8 +224,8 @@ command, not a model, applies these bounds:
   no `setsid`, as on macOS), it is not killed: `run` says so, and still labels and records the ticket.
 - **Proof:** a session counts as delivered only if a pull request is open for its branch.
 - **Merge** ([ADR 0008](../adr/0008-merge-off-by-default.md)): off by default. With
-  `autonomy.merge: true`, a pull request merges (`gh pr merge --rebase`) only when `senior-mode/ci`
-  and `senior-mode/review` are both `success` on its head, it has no `needs-human` label, the
+  `autonomy.merge: true`, a pull request merges (`gh pr merge --rebase`) only when `senior-mode/ci`,
+  `senior-mode/review` and `senior-mode/security` are all `success` on its head, it has no `needs-human` label, the
   server enforces protection (`github.protection` is `ruleset`), and none of its files matches a
   protected zone of the default branch: `run` checks that itself, it does not rely on the reviewer.
   The merge names the head it checked (`--match-head-commit`), so a later push is refused.

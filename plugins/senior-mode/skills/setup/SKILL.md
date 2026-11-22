@@ -29,7 +29,7 @@ Run `senior-mode setup github --ci <local|actions>`. It:
 - creates the labels `needs-human`, `needs-info`, `blocked`, `security` (and `type:*` on a personal account);
 - allows rebase merges only, deletes merged branches;
 - creates or updates a ruleset `senior-mode` on the default branch: pull requests only, rebase,
-  `senior-mode/ci` and `senior-mode/review` required, linear history; other rules kept. If it
+  `senior-mode/ci`, `senior-mode/review` and `senior-mode/security` required, linear history; other rules kept. If it
   prints `protection: NOT enforced`, see "No branch protection" in the reference;
 - with `protected` globs, writes the `senior-mode:begin`/`end` block of `.github/CODEOWNERS` (owner's
   entries kept) and requires code owner review. Tell the user to commit the file, and that an owner's

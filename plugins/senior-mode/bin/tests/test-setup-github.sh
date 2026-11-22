@@ -25,6 +25,7 @@ sec_limit() { # SEC_REFUSE lists the features the plan refuses (alerts fixes sca
 case "$*" in
   "api repos/acme/app --jq"*) respond <"$FIX/repo.json" ;;
   "api repos/acme/app/contents/.github/CODEOWNERS"*)
+    [ -z "${CONTENTS_ERR:-}" ] || { echo "$CONTENTS_ERR" >&2; exit 1; }
     [ -f "$FIX/default-codeowners" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
     cat "$FIX/default-codeowners" ;;
   "api user --jq"*) echo '{"login": "maintainer"}' | respond ;;
@@ -440,6 +441,15 @@ grep -q "^\*.pem @maintainer$" "$co" || fail "block not written next to a shadow
 rm -rf "$repo/.github" "$repo/docs" "$repo/CODEOWNERS"
 setup
 rm -f "$FIX/default-codeowners"
+
+# Only a 404 from the contents API means the default branch has none; any other error is reported as such.
+mkdir -p "$repo/.github"
+printf '# senior-mode:begin\n*.pem @acme\n# senior-mode:end\n' >"$co"
+CONTENTS_ERR="gh: Server Error (HTTP 500)" setup
+grep -q "the default branch has none" "$work/out" && fail "a 500 read as an absent file: $(cat "$work/out")"
+grep -q "could not read .github/CODEOWNERS on the default branch.*HTTP 500" "$work/out" || fail "a 500 not reported: $(cat "$work/out")"
+setup
+grep -q "the default branch has none" "$work/out" || fail "a 404 not read as absent: $(cat "$work/out")"
 
 # Every glob untranslatable: a block with no entry says nobody owns the zones; with no file, the
 # block is still written (docs/guide/autonomy.md), and the review is not required.

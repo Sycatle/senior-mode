@@ -204,11 +204,13 @@ command, not a model, applies these bounds:
 - **Circuit breaker:** after `autonomy.maxConsecutiveFailures` failed tickets in a row (default 2), or
   as soon as a ticket outgrows its size, no new ticket starts. A failed ticket goes back to Backlog
   with a comment that says why; its branch and worktree are kept.
-- **Session timeout:** a session still running after `autonomy.sessionTimeout` minutes (default 90) is
-  killed with every process it started. The ticket gets the `needs-human` label and a comment with the
-  log path, counts as a failure for the circuit breaker, and is not retried on Opus: a stuck session is
-  not failed work ([ADR 0014](../adr/0014-model-escalation-in-runs.md)). Its Status stays In progress;
-  the label is the signal.
+- **Session timeout:** a session still running after `autonomy.sessionTimeout` minutes (default 90,
+  at most 1440) is killed: the signal reaches its process group, so what the session started in it
+  stops too, but not a process that left the group. The ticket gets the `needs-human` label and a
+  comment with the log path, counts as a failure for the circuit breaker, and is not retried on Opus:
+  a stuck session is not failed work ([ADR 0014](../adr/0014-model-escalation-in-runs.md)). Its Status
+  stays In progress; the label is the signal. Where the session has no group of its own (no tmux and
+  no `setsid`, as on macOS), it is not killed: `run` says so, and still labels and records the ticket.
 - **Proof:** a session counts as delivered only if a pull request is open for its branch.
 - **Merge** ([ADR 0008](../adr/0008-merge-off-by-default.md)): off by default. With
   `autonomy.merge: true`, a pull request merges (`gh pr merge --rebase`) only when `senior-mode/ci`

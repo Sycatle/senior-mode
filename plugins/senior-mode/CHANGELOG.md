@@ -1,5 +1,85 @@
 # Changelog
 
+## [0.2.0](https://github.com/Sycatle/senior-mode/compare/senior-mode--v0.1.0...senior-mode--v0.2.0) (2026-11-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** autonomy.autoMerge is no longer read; use autonomy.merge.
+
+### Features
+
+* **bin:** add a statusline and let setup install it ([fbfe27f](https://github.com/Sycatle/senior-mode/commit/fbfe27f9421c580bf31a21d329dcd8f7269b796a)), refs [#75](https://github.com/Sycatle/senior-mode/issues/75)
+* **bin:** add agent.command to choose the headless CLI of run ([4620312](https://github.com/Sycatle/senior-mode/commit/46203128b7fb9ccbe2c167e2a3497bcb6073815a)), refs [#92](https://github.com/Sycatle/senior-mode/issues/92)
+* **bin:** add item get to read a ticket's board fields ([f2ef503](https://github.com/Sycatle/senior-mode/commit/f2ef503eb3639b8106e99f8c7f19c3ff2f5f11cb)), refs [#103](https://github.com/Sycatle/senior-mode/issues/103)
+* **bin:** add pick and status commands ([6593ee7](https://github.com/Sycatle/senior-mode/commit/6593ee718feaa052eb64b300e3a7853d1b1f7834)), refs [#75](https://github.com/Sycatle/senior-mode/issues/75)
+* **bin:** add start to open a ticket's worktree and branch ([78405cd](https://github.com/Sycatle/senior-mode/commit/78405cda2d99a248bc8cdbfbd200896040b91164)), refs [#89](https://github.com/Sycatle/senior-mode/issues/89)
+* **bin:** add the retro command gathering the facts of a period ([7eb6eca](https://github.com/Sycatle/senior-mode/commit/7eb6eca5ff836b411c91c6238addc9520d4d1d8d))
+* **bin:** schedule a daily run with a systemd user timer or cron ([ed82002](https://github.com/Sycatle/senior-mode/commit/ed820027943bcc67cfb18d282a4221ecb9e9a45a))
+* **check:** show why a check was skipped ([6756bb7](https://github.com/Sycatle/senior-mode/commit/6756bb7958581597a2ea5e37bc10ea5ab57c28f6)), refs [#87](https://github.com/Sycatle/senior-mode/issues/87)
+* **cli:** add senior-mode protected to list changed protected files ([7bed9b1](https://github.com/Sycatle/senior-mode/commit/7bed9b121419fa210ebddfdba3242e42d2081f88))
+* **cli:** deliver Ready tickets autonomously with senior-mode run ([bbda64f](https://github.com/Sycatle/senior-mode/commit/bbda64fa79f3a09d1c176b72e480f00bf6789778)), refs [#88](https://github.com/Sycatle/senior-mode/issues/88)
+* **cli:** share e2e.slots end-to-end runs per machine with e2e-lock ([b0215fd](https://github.com/Sycatle/senior-mode/commit/b0215fd62b0cbb71d3d373804c61f5eec84f8748)), refs [#88](https://github.com/Sycatle/senior-mode/issues/88)
+* **config:** rename autonomy.autoMerge to autonomy.merge, off by default ([6031273](https://github.com/Sycatle/senior-mode/commit/6031273de134345c8855787f2b8026289a8e797d)), refs [#88](https://github.com/Sycatle/senior-mode/issues/88)
+* **docs:** add a skill that keeps the living docs current after a merge ([70202f8](https://github.com/Sycatle/senior-mode/commit/70202f8869bd5f7df96ab73940ab60734abc3eed))
+* **hooks:** deny edits to workflows, .claude and .githooks during a run ([4127e4e](https://github.com/Sycatle/senior-mode/commit/4127e4ec3f080dbac8646385944342859242f5ce)), refs [#71](https://github.com/Sycatle/senior-mode/issues/71)
+* **hooks:** deny reading secrets with a PreToolUse guard ([e541ac6](https://github.com/Sycatle/senior-mode/commit/e541ac62b4ac21dee66c4ce5ffec355d235dcc0d)), refs [#73](https://github.com/Sycatle/senior-mode/issues/73)
+* **review:** fold explain, UI and dependencies-and-data checks into review ([0b9d3c2](https://github.com/Sycatle/senior-mode/commit/0b9d3c2df04caca2da409d888c945fc71f534e4a))
+* **review:** use senior-mode protected for the needs-human verdict ([43faf26](https://github.com/Sycatle/senior-mode/commit/43faf263dc9e3bf3bd7dbd152005c066721bde8c))
+* **run:** set the ticket Done after a merge ([ef05c60](https://github.com/Sycatle/senior-mode/commit/ef05c6072206bbc1ea3e03659429c3f0a3302b5c)), refs [#123](https://github.com/Sycatle/senior-mode/issues/123)
+* **setup:** add the environment guard ([097442f](https://github.com/Sycatle/senior-mode/commit/097442f3212aca2f9cfa96bc5eaffc57c85c1845)), refs [#87](https://github.com/Sycatle/senior-mode/issues/87)
+* **setup:** add the go preset ([a75f423](https://github.com/Sycatle/senior-mode/commit/a75f42350298471748ee52ce05a2d017b22edf29)), refs [#72](https://github.com/Sycatle/senior-mode/issues/72)
+* **setup:** add the python preset ([5f4783c](https://github.com/Sycatle/senior-mode/commit/5f4783c16545c39316abc9b2925b7b3a5a451ec6)), refs [#72](https://github.com/Sycatle/senior-mode/issues/72)
+* **setup:** add the rust preset ([290b4c1](https://github.com/Sycatle/senior-mode/commit/290b4c10a5d504557bd09b56995f5f91e94f5230)), refs [#72](https://github.com/Sycatle/senior-mode/issues/72)
+* **setup:** advise keeping only dev-only secrets on agent machines ([237c65b](https://github.com/Sycatle/senior-mode/commit/237c65b9c446ffd471cd407417c2a9692f3544c3)), refs [#73](https://github.com/Sycatle/senior-mode/issues/73)
+* **setup:** create docs/architecture.md from a template when absent ([5c5f576](https://github.com/Sycatle/senior-mode/commit/5c5f576681b403021f2bc3a002aa2d2f53f30e2e))
+* **setup:** name the Project's built-in workflows that are off ([3ec9661](https://github.com/Sycatle/senior-mode/commit/3ec9661df11c288fea26566daa28ef75614c0f81))
+* **setup:** protect the middleware in Next.js projects ([dffb09f](https://github.com/Sycatle/senior-mode/commit/dffb09faaf593eacca0a9ca74cc3256432d1f44c)), refs [#87](https://github.com/Sycatle/senior-mode/issues/87)
+* **setup:** release from the Actions workflow in actions mode ([9547a9b](https://github.com/Sycatle/senior-mode/commit/9547a9bd1efd5f2b7b1cb6b68e7064843a05faa5)), refs [#55](https://github.com/Sycatle/senior-mode/issues/55)
+* **setup:** run the checks on GitHub Actions when ci.mode is actions ([7e1b927](https://github.com/Sycatle/senior-mode/commit/7e1b9271daa96c9d4f348adb769e97c9775acefa)), refs [#32](https://github.com/Sycatle/senior-mode/issues/32)
+* **setup:** write the preset's protected globs when the config has none ([3fffe32](https://github.com/Sycatle/senior-mode/commit/3fffe3242ce7cfbea19f604d7c88051cb5562210))
+* **skills:** add the next command ([576147a](https://github.com/Sycatle/senior-mode/commit/576147a9f0ce688a7b38a83660f01c6007a763f2)), refs [#89](https://github.com/Sycatle/senior-mode/issues/89)
+* **skills:** add the retro command ([c5050b7](https://github.com/Sycatle/senior-mode/commit/c5050b73bd8b65f09ce12e31a6455e62218abc42))
+* **skills:** add the run command skill and document autonomous runs ([1d61891](https://github.com/Sycatle/senior-mode/commit/1d61891814a3c2450cf32d88872d5da634de86dd)), refs [#88](https://github.com/Sycatle/senior-mode/issues/88)
+* **skills:** add the status command ([a122ee4](https://github.com/Sycatle/senior-mode/commit/a122ee42189f9da5ac70270d4ec027893fe658aa)), refs [#75](https://github.com/Sycatle/senior-mode/issues/75)
+* **skills:** French triggers in skill descriptions ([29a9344](https://github.com/Sycatle/senior-mode/commit/29a9344fc08da7edc3acdbfee0df996a01af0432)), refs [#96](https://github.com/Sycatle/senior-mode/issues/96)
+* **skills:** one rule for sessions without a human ([f9957ca](https://github.com/Sycatle/senior-mode/commit/f9957ca1f1a519867ebe728c7adb253e8f8db5a0)), refs [#107](https://github.com/Sycatle/senior-mode/issues/107)
+* **start:** install dependencies in a new worktree ([8586768](https://github.com/Sycatle/senior-mode/commit/85867684361f321ec34c0919920b9ef0422119b6)), refs [#110](https://github.com/Sycatle/senior-mode/issues/110)
+* **start:** refuse past the wip limit, runs excepted ([0db0c1b](https://github.com/Sycatle/senior-mode/commit/0db0c1b825975c806d0bebc5c32947c998d24417)), refs [#125](https://github.com/Sycatle/senior-mode/issues/125)
+* **status:** report board drift and repair it with --fix ([7a80162](https://github.com/Sycatle/senior-mode/commit/7a80162109c4b48ac0ef35a3722f3b4ebbd3bd4d)), refs [#124](https://github.com/Sycatle/senior-mode/issues/124)
+* **status:** show work in progress against the wip limit ([9df2f74](https://github.com/Sycatle/senior-mode/commit/9df2f74bf4a70017396f10fe35fb44a914da449c)), refs [#125](https://github.com/Sycatle/senior-mode/issues/125)
+* **tdd:** add a refactor-only ticket mode ([244ad64](https://github.com/Sycatle/senior-mode/commit/244ad642fc78999f1aaec4210a08fc7d649bee3a))
+* **templates:** say agent machines use development environments only ([65aaf91](https://github.com/Sycatle/senior-mode/commit/65aaf914fbdbf091a347f9e35063247c452a1cfb)), refs [#87](https://github.com/Sycatle/senior-mode/issues/87)
+
+
+### Bug Fixes
+
+* **agents:** pass exact board values and update a reused issue's body ([c608af3](https://github.com/Sycatle/senior-mode/commit/c608af3c9a1be567ced6b7d0494bc0a91e705567)), refs [#104](https://github.com/Sycatle/senior-mode/issues/104)
+* **bin:** seed the release manifest from Cargo.toml, pyproject.toml and go tags ([e24a357](https://github.com/Sycatle/senior-mode/commit/e24a3574c4ae4105f5a2ed9104bee7054623364f)), refs [#99](https://github.com/Sycatle/senior-mode/issues/99)
+* **config:** return an empty default for optional keys ([1e12a63](https://github.com/Sycatle/senior-mode/commit/1e12a6360b5f4d2efda0e780a059e0b1aae2c550)), refs [#98](https://github.com/Sycatle/senior-mode/issues/98)
+* **frame:** a new S idea in a headless session creates its ticket ([7137409](https://github.com/Sycatle/senior-mode/commit/7137409c8c383f758d22941c5a16f412cf950b9e)), refs [#114](https://github.com/Sycatle/senior-mode/issues/114)
+* **frame:** frame in its own worktree, name specs after the issue ([a4708ba](https://github.com/Sycatle/senior-mode/commit/a4708ba5eefd6ad6ee7c8d46b8f4b5c2510e54fb)), refs [#101](https://github.com/Sycatle/senior-mode/issues/101)
+* **frame:** give an existing S issue a path to delivery ([b0b1dd4](https://github.com/Sycatle/senior-mode/commit/b0b1dd4915601e183e0476ac418affadb2bc7667)), refs [#102](https://github.com/Sycatle/senior-mode/issues/102)
+* **hooks:** let agents write their project memory during a run ([fc4864a](https://github.com/Sycatle/senior-mode/commit/fc4864a19bbd15cfc01233a908474df8d755a285)), refs [#88](https://github.com/Sycatle/senior-mode/issues/88)
+* **hooks:** let frame-guard exempt agent project memory ([6645a35](https://github.com/Sycatle/senior-mode/commit/6645a35824cd9d11df9278ebfbd89e611360e4f9)), refs [#105](https://github.com/Sycatle/senior-mode/issues/105)
+* integrate feat/75-pick-status ([e317cfa](https://github.com/Sycatle/senior-mode/commit/e317cfafc5ab32ebabb9f5534dae01b53b187843))
+* integrate feat/86-review-consolidation ([ba2c2ad](https://github.com/Sycatle/senior-mode/commit/ba2c2ada4f5979ce91e2141888dad1ce0db9601d))
+* integrate feat/87-env-guard ([1afe4bd](https://github.com/Sycatle/senior-mode/commit/1afe4bd5f0c1fd908b99b9a8e62b6956a49fee7e))
+* **presets:** protect proxy.* in Next.js projects ([3431253](https://github.com/Sycatle/senior-mode/commit/3431253486632db42b3bca984f0f687beb30f3fb)), refs [#106](https://github.com/Sycatle/senior-mode/issues/106)
+* **run:** check protected zones before merging and deny merges in ticket sessions ([3bed96e](https://github.com/Sycatle/senior-mode/commit/3bed96e562c1a3d6ab13abe25eb19c12cbbae535))
+* **run:** write per-ticket outcomes where retro reads them ([fb13854](https://github.com/Sycatle/senior-mode/commit/fb13854ecce666467f9c119a45e507282448c51c)), refs [#93](https://github.com/Sycatle/senior-mode/issues/93)
+* **setup:** check pushes to the real default branch in the Actions workflow ([b7d3fad](https://github.com/Sycatle/senior-mode/commit/b7d3fad144d5a57e1e83711002a74ef059a2e6d7)), refs [#56](https://github.com/Sycatle/senior-mode/issues/56)
+* **setup:** disable only the repository's own workflows and ask the CI mode first ([e14c834](https://github.com/Sycatle/senior-mode/commit/e14c83437323e01ce690fde5af4b6cebf1b97b48))
+* **setup:** keep releases from being cancelled and say how release PRs get CI ([01282a9](https://github.com/Sycatle/senior-mode/commit/01282a915be3a99660f0f4af250b46629a1eba43))
+* **setup:** move wording into a reference file, keep SKILL.md small ([8855bc2](https://github.com/Sycatle/senior-mode/commit/8855bc267185628a22844e11c2a9ad1df9acb453)), refs [#97](https://github.com/Sycatle/senior-mode/issues/97)
+* **setup:** propose the project language, import AGENTS.md, scope the status line ([65949da](https://github.com/Sycatle/senior-mode/commit/65949da6e21f3c3bb05f84042de0702f3a1f2bcd)), refs [#109](https://github.com/Sycatle/senior-mode/issues/109)
+* **setup:** record and warn when GitHub Free refuses the ruleset ([f9617a7](https://github.com/Sycatle/senior-mode/commit/f9617a7e1cdd0482a84b033d87e2ae54af727bde)), refs [#76](https://github.com/Sycatle/senior-mode/issues/76)
+* **setup:** report missing commands only for the node presets ([26406dd](https://github.com/Sycatle/senior-mode/commit/26406ddb49f90891f68fe98478df6ca93d4c1185)), refs [#72](https://github.com/Sycatle/senior-mode/issues/72)
+* **setup:** run next typegen before typecheck from Next.js 15.5 ([519dfa0](https://github.com/Sycatle/senior-mode/commit/519dfa06bdbacfabbbc4e4c425193edc9069806e)), refs [#112](https://github.com/Sycatle/senior-mode/issues/112)
+* **setup:** say plainly how disabled workflows come back ([d3302f1](https://github.com/Sycatle/senior-mode/commit/d3302f152e46d7dda7deb635d89b3000a999398c))
+* **start:** keep branch names ASCII whatever the locale ([d16ea03](https://github.com/Sycatle/senior-mode/commit/d16ea0399ff2aa28fe772e0c1fa4829d09efd854)), refs [#111](https://github.com/Sycatle/senior-mode/issues/111)
+* **triage:** size by risk, a read-only endpoint without data is not L ([4340fe7](https://github.com/Sycatle/senior-mode/commit/4340fe7cf5227840b008bff9ae28bfb5f36e3f69)), refs [#108](https://github.com/Sycatle/senior-mode/issues/108)
+
 ## 0.1.0 (2026-11-17)
 
 

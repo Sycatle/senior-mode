@@ -64,8 +64,9 @@ case $1 in
     ;;
 esac
 STUB
+sed 's/CLAUDE_LOG/SYACODE_LOG/' "$work/stub/claude" >"$work/stub/syacode"
 chmod +x "$work/stub/"* "$work/tmux/tmux"
-export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" CLAUDE_LOG="$work/claude.log" TMUX_LOG="$work/tmux.log" \
+export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" CLAUDE_LOG="$work/claude.log" SYACODE_LOG="$work/syacode.log" TMUX_LOG="$work/tmux.log" \
   FIX="$work/fix" SENIOR_MODE_RETRY_DELAY=0 SENIOR_MODE_POLL=0.1
 
 # A local origin whose path ends like a GitHub URL, so the slug reads acme/app.
@@ -77,7 +78,7 @@ mkdir -p "$repo/.claude"
 fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2", "In review": "o3", "Backlog": "o0"}}}'
 config() {
   jq -n --argjson f "$fields" --argjson a "$1" '{project: {id: "PVT_1", owner: "acme", number: 3, fields: $f}, autonomy: $a}
-    + $ARGS.named' ${2:+--argjson github "$2"} >"$repo/.claude/senior-mode.json"
+    + $ARGS.named' ${2:+--argjson github "$2"} ${3:+--argjson agent "$3"} >"$repo/.claude/senior-mode.json"
   git -C "$repo" add -A
   git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: config" --allow-empty
   git -C "$repo" push -q origin main
@@ -113,7 +114,7 @@ outcome_is() {
 outcome_is_delivered() {
   jq -e '.outcome == "delivered"' "$repo/.git/senior-mode/runs/"*/"$1.json" >/dev/null || fail "#$1 not recorded as delivered"
 }
-run() { : >"$GH_LOG"; : >"$CLAUDE_LOG"; (cd "$repo" && "$cli" run "$@") >"$work/out" 2>&1; }
+run() { : >"$GH_LOG"; : >"$CLAUDE_LOG"; : >"$SYACODE_LOG"; (cd "$repo" && "$cli" run "$@") >"$work/out" 2>&1; }
 
 # A: three tickets two at a time in tmux; merging on. #10 merges; #11 succeeds on Opus but its review
 # is not green; #12 fails on Sonnet and on Opus.
@@ -208,7 +209,22 @@ run || fail "F: run failed: $(cat "$work/out")"
 grep -q '^app-50 sonnet' "$CLAUDE_LOG" || fail "F: no session in the worktree of start: $(cat "$CLAUDE_LOG")"
 outcome_is_delivered 50
 
+# G: agent.command launches another headless CLI instead of claude, for the tickets and the docs session.
+config '{"merge": true}' '{"protection": "ruleset"}' '{"command": "syacode"}'
+board 60 '[]'
+session 60-sonnet delivered pr
+echo "$green" >"$FIX/status-60"
+run || fail "G: run failed: $(cat "$work/out")"
+grep -q 'app-60 sonnet run=1 -p --model sonnet' "$SYACODE_LOG" || fail "G: agent.command not used: $(cat "$SYACODE_LOG")"
+grep -q 'docs' "$SYACODE_LOG" || fail "G: the docs session did not use agent.command"
+[ -s "$CLAUDE_LOG" ] && fail "G: claude was started although agent.command is syacode: $(cat "$CLAUDE_LOG")"
+config '{}' '' '{"command": "no-such-agent"}'
+board 61 '[]'
+run && fail "G: run started with an agent command that does not exist"
+grep -q 'no-such-agent' "$work/out" || fail "G: missing agent not named: $(cat "$work/out")"
+
 # E: nothing Ready, bad arguments.
+config '{}'
 board
 run || fail "E: run with an empty board failed"
 grep -q 'No Ready ticket' "$work/out" || fail "E: empty board not reported: $(cat "$work/out")"

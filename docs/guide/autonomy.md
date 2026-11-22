@@ -172,6 +172,10 @@ command, not a model, applies these bounds:
   and `senior-mode/review` are both `success` on its head, it has no `needs-human` label, and the
   server enforces protection (`github.protection` is not `none`). Everything else waits for a human,
   and the report says why.
+- **Agent:** the headless CLI is `agent.command` (default `claude`), for the tickets and the docs
+  session, scheduled or not. Another compatible CLI, such as syacode, can replace it, but senior-mode's
+  hooks and guards do not hold under it until it implements them (Sycatle/syacode#13 to #18): use it
+  only on a machine where that is acceptable.
 - **End-to-end suites** share `e2e.slots` slots per machine (default 2): `check` runs the check named
   `e2e` through `senior-mode e2e-lock`, which exports the slot number as `SENIOR_MODE_E2E_SLOT`.
 

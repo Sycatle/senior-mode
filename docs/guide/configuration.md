@@ -50,6 +50,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `autonomy.merge` | `false` | Whether a run merges the pull requests that pass every bound |
 | `autonomy.escalate` | `true` | Whether a ticket that fails on Sonnet is retried once on Opus |
 | `autonomy.schedule` | `"02:00"` | Time of day (`HH:MM`) of the [scheduled run](autonomy.md#scheduled-runs), unless `senior-mode schedule install --at` says otherwise |
+| `agent.command` | `claude` | The headless CLI `run` starts for each ticket and for the docs session, on `PATH` or in `~/.local/bin`; the guards of senior-mode do not hold under another CLI until it supports them (see [Run](autonomy.md#run)) |
 | `e2e.slots` | `2` | End-to-end suites that may run at once on the machine (the check named `e2e`) |
 
 `senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`). The optional keys

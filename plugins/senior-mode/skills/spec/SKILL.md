@@ -25,7 +25,8 @@ why"; GitHub holds the state.
 
 `draft` → `accepted` → `implemented` → `superseded`.
 
-- `draft` while framing; `accepted` when the user approves (always a human for size L).
+- `draft` while framing; `accepted` when the user approves (always a human for size L; with nobody to ask, only an M
+  spec without ADR, on the recommendation).
 - `implemented` in the PR that delivers the last acceptance criterion.
 - `superseded` when a new spec replaces it: set `superseded-by: <id>`, never delete the file.
 

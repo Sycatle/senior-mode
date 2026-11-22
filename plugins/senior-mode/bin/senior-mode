@@ -939,6 +939,8 @@ context() {
 senior-mode is active: framing, specs and ADRs, test-driven delivery, atomic Conventional Commits, GitHub Project board.
 Commands are /senior-mode:<name>; "go" or "enchaîne" takes the next Ready ticket. Disciplines load by themselves; ask the scout agent for codebase facts.
 ROUTER
+  # Spec 0001 §10, "Sessions without a human": the one rule, stated where a run session starts.
+  [ -z "${SENIOR_MODE_RUN:-}" ] || echo "Unattended run: nobody answers questions. Take the recommended option for reversible choices; never accept an L spec or an ADR, never touch a protected zone: label needs-human and stop with a report."
   root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
   if [ ! -f "$root/.claude/senior-mode.json" ]; then
     echo "This repository is not set up for senior-mode; /senior-mode:setup adopts it."

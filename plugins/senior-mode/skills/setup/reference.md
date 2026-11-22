@@ -31,3 +31,13 @@ Offer a status line that shows the current ticket, the last check and the run in
 is set for this project only (`.claude/settings.json` of this repository): it replaces the user's own
 status line here, and their personal one stays untouched elsewhere. Say that before asking. On a yes,
 run `senior-mode setup statusline`.
+
+## Without a human
+
+Nobody can answer in `claude -p` or a session with `SENIOR_MODE_RUN=1`. Take the recommended option
+of each reversible question and say so in the report: checks `local`, the detected language, no
+status line (it edits settings). Never acknowledge `protection: NOT enforced`: finish the rest,
+report that the gap awaits a human, stop there. The permissions that `setup repo` writes to
+`.claude/settings.json` are ignored by a headless session in a workspace Claude Code does not trust
+yet: open the folder interactively once and accept the trust prompt, or pass the permissions on the
+command line.

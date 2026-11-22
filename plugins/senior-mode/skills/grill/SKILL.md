@@ -17,6 +17,9 @@ decide.
 
 ## Each round
 
+- Nobody to answer (`claude -p`, `SENIOR_MODE_RUN=1`)? Do not ask: take the recommended option of each
+  reversible question and list them in the report; an open L or ADR-worthy decision stays open: stop
+  and report it with the label `needs-human`.
 - Use AskUserQuestion with 3 to 4 questions; only questions from the current frontier.
 - The recommended option comes first. Every option states what choosing it changes (cost, risk,
   scope, reversibility), in plain words.

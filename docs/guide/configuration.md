@@ -45,7 +45,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `review.sections` | none | Project review checklists, see [below](#project-review-sections) |
 | `project` | written by setup | Board owner, number, id, and field and option ids, so no agent looks them up again |
 | `docs.extra` | none | Extra living documents the `docs` skill keeps current after a merge: a list of `{ "path", "purpose" }`; its changes are flagged for human review. Add it yourself |
-| `wip` | `1` | Open tickets In progress at once: `senior-mode start` refuses another and names the one to finish first; `status` shows the count when it is over. A [run](autonomy.md#run) is bounded by `autonomy.parallel` instead |
+| `wip` | `1` | Open tickets In progress at once: `senior-mode start` refuses another and names the one to finish first; `status` shows the count when it is over. A [run](autonomy.md#run) is bounded by `autonomy.parallel` instead, and is the only caller that skips `wip`: it proves itself with a token, so setting `SENIOR_MODE_RUN=1` by hand does not |
 | `autonomy.maxTickets` | `3` | Tickets per [run](autonomy.md#run) |
 | `autonomy.parallel` | `1` | Tickets a run works on at once |
 | `autonomy.maxConsecutiveFailures` | `2` | Failed tickets in a row after which a run starts no new one |

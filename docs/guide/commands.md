@@ -99,7 +99,7 @@ State: **Available.** Triggers: "run", "lance", "enchaîne en autonomie".
   failed and why, not started.
 - **Asks you.** To confirm the tickets, N, P and whether the run merges.
 - **How.** `senior-mode run [--max N] [--parallel P]` starts one headless `claude -p` session per
-  ticket, in its own worktree next to the repository (`<repo>-run-<n>`, branch `<type>/<n>-<slug>`)
+  ticket, in the worktree `senior-mode start` opens for it (`<repo>-<n>`, branch `<type>/<n>-<slug>`)
   and, when tmux is installed, in a window of `tmux attach -t senior-mode-run`. A ticket that fails on
   Sonnet is retried once on Opus (`autonomy.escalate`). Logs stay in `.git/senior-mode/runs/`, with one
   `<n>.json` per ticket that says how it ended (`delivered`, `outgrown` or `failed`, whether it went

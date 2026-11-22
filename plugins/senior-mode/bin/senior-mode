@@ -1464,21 +1464,19 @@ run_launch() {
   echo "#$n: session started on $model"
 }
 
-# Creates (or reuses) the ticket's worktree and branch, sets it In progress and launches it on Sonnet.
+# Opens the ticket with `senior-mode start` (worktree, branch and Status In progress, named and tracked
+# as everywhere else), then launches it on Sonnet. A ticket that cannot be opened is given up.
 run_start() {
-  local n=$1 wt=${RUN_WT[$1]} branch=${RUN_BRANCH[$1]}
-  if [ ! -d "$wt" ]; then
-    if git rev-parse -q --verify "refs/heads/$branch" >/dev/null; then
-      git worktree add -q "$wt" "$branch" 2>"$RUN_DIR/$n.err"
-    else
-      git worktree add -q -b "$branch" "$wt" "$RUN_BASE" 2>"$RUN_DIR/$n.err"
-    fi || {
-      run_giveup "$n" "no worktree: $(head -n 1 "$RUN_DIR/$n.err")"
-      return 1
-    }
+  local n=$1 out rc=0
+  out=$(start "$n" 2>"$RUN_DIR/$n.err") || rc=$?
+  RUN_BRANCH[$n]=$(sed -n 's/^branch //p' <<<"$out")
+  RUN_WT[$n]=$(sed -n 's/^worktree //p' <<<"$out")
+  if [ -z "${RUN_WT[$n]}" ]; then
+    run_giveup "$n" "no worktree: $(head -n 1 "$RUN_DIR/$n.err")"
+    return 1
   fi
-  (item_set "$n" Status "In progress") >/dev/null || echo "#$n: could not set the Status In progress" >&2
-  run_prompt "$n" "${RUN_TITLE[$n]}" "$branch" >"$RUN_DIR/$n.prompt"
+  [ "$rc" -eq 0 ] || echo "#$n: could not set the Status In progress: $(head -n 1 "$RUN_DIR/$n.err")" >&2
+  run_prompt "$n" "${RUN_TITLE[$n]}" "${RUN_BRANCH[$n]}" >"$RUN_DIR/$n.prompt"
   run_launch "$n" sonnet
 }
 
@@ -1586,7 +1584,7 @@ run_docs() {
 # senior-mode run [--max N] [--parallel P]: delivers up to N Ready tickets, P at a time, each in a
 # headless claude session in its own worktree (spec 0001 §10, ADR 0007), then reports in plain words.
 run() {
-  local max="" parallel="" root n type title slug t
+  local max="" parallel="" n title t
   local -a queue=() running=() still=() RUN_MERGED=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
   local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=()
   local RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION
@@ -1619,17 +1617,11 @@ run() {
   RUN_STAMP=$(date +%Y%m%d-%H%M%S)-$$
   RUN_DIR=$(git rev-parse --path-format=absolute --git-common-dir)/senior-mode/runs/$RUN_STAMP
   data=$(board_data false) || exit 1
-  while IFS=$'\t' read -r n type title; do
+  while IFS=$'\t' read -r n title; do
     [ -n "$n" ] || continue
-    slug=$(iconv -f UTF-8 -t ASCII//TRANSLIT <<<"$title" 2>/dev/null || printf '%s' "$title")
-    slug=$(tr '[:upper:]' '[:lower:]' <<<"$slug" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//' | cut -c1-40 | sed -E 's/-+$//')
     RUN_TITLE[$n]=$title
-    RUN_BRANCH[$n]=$type/$n-$slug
-    RUN_WT[$n]="$(dirname "$RUN_ROOT")/$(basename "$RUN_ROOT")-run-$n"
     queue+=("$n")
-  done < <(jq -r --argjson max "$max" "$PICK_DEF"'pick | .[:$max][] | [.number,
-    (if (.labels | index("type:bug")) then "fix" elif (.labels | index("type:chore")) then "chore" else "feat" end),
-    .title] | @tsv' <<<"$data")
+  done < <(jq -r --argjson max "$max" "$PICK_DEF"'pick | .[:$max][] | [.number, .title] | @tsv' <<<"$data")
   if [ ${#queue[@]} -eq 0 ]; then
     echo "No Ready ticket to run."
     return 0

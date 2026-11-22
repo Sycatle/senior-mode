@@ -69,5 +69,8 @@ for g in '**/migrations/**' '**/auth/**' '**/security/**' '.github/workflows/**'
 done
 jq -e '.protected | map(test("Cargo")) | any' "$preset" >/dev/null && fail "Cargo.lock or Cargo.toml is protected by default"
 
+# The install command of a new worktree (#110).
+[ "$(cfg "$d" .commands.install)" = "cargo fetch" ] || fail "rust install is $(cfg "$d" .commands.install)"
+
 [ "$failures" -eq 0 ] && echo "setup-rust: all cases pass"
 exit "$failures"

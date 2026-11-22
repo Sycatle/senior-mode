@@ -152,5 +152,26 @@ setup "$d"
 [ "$(cfg "$d" .preset)" = generic ] || fail "generic preset not kept for a plain repository"
 (cd "$d" && "$cli" setup repo --command e2e=x) 2>/dev/null && fail "generic preset accepts e2e"
 
+# The install command of a new worktree (#110): the lockfile's, frozen; npm install without one. It is
+# stored with the commands, and `--command install=` replaces it.
+install_of() { # name lockfile -> install command stored for a project with that lockfile
+  local dir
+  dir=$(project "inst-$1" '{"dependencies": {"a": "1"}}' ${2:+"$2"})
+  setup "$dir"
+  cfg "$dir" '.commands.install'
+}
+[ "$(install_of npm package-lock.json)" = "npm ci" ] || fail "npm: $(install_of npm package-lock.json)"
+[ "$(install_of pnpm pnpm-lock.yaml)" = "pnpm install --frozen-lockfile" ] || fail "pnpm: $(install_of pnpm pnpm-lock.yaml)"
+[ "$(install_of yarn yarn.lock)" = "yarn install --frozen-lockfile" ] || fail "yarn: $(install_of yarn yarn.lock)"
+[ "$(install_of bun bun.lock)" = "bun install --frozen-lockfile" ] || fail "bun: $(install_of bun bun.lock)"
+[ "$(install_of bunb bun.lockb)" = "bun install --frozen-lockfile" ] || fail "bun.lockb: $(install_of bunb bun.lockb)"
+[ "$(install_of none)" = "npm install" ] || fail "no lockfile: $(install_of none)"
+d=$(project berry '{"dependencies": {"a": "1"}}' yarn.lock .yarnrc.yml)
+setup "$d"
+[ "$(cfg "$d" .commands.install)" = "yarn install --immutable" ] || fail "yarn berry: $(cfg "$d" .commands.install)"
+[ -z "$(check_run "$d" install)" ] || fail "install became a check"
+(cd "$d" && "$cli" setup repo --command install="make deps") >/dev/null 2>&1 || fail "--command install refused"
+[ "$(cfg "$d" .commands.install)" = "make deps" ] || fail "--command install not stored: $(cfg "$d" .commands.install)"
+
 [ "$failures" -eq 0 ] && echo "setup-node: all cases pass"
 exit "$failures"

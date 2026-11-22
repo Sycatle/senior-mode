@@ -21,6 +21,19 @@ case "$*" in
 esac
 STUB
 chmod +x "$work/stub/gh"
+# Package managers: log the call and where it ran, and create node_modules like a real install; they fail
+# when PM_FAIL is set.
+for pm in npm pnpm; do
+  cat >"$work/stub/$pm" <<'STUB'
+#!/usr/bin/env bash
+echo "$(basename "$0") $* @ $PWD" >>"$PM_LOG"
+[ -z "${PM_FAIL:-}" ] || { echo "install exploded" >&2; exit 1; }
+mkdir -p node_modules
+STUB
+  chmod +x "$work/stub/$pm"
+done
+export PM_LOG="$work/pm.log"
+: >"$PM_LOG"
 export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" SENIOR_MODE_RETRY_DELAY=0
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
@@ -41,6 +54,8 @@ git -C "$repo" push -q origin main
 other="$work/other"
 git clone -q "$work/origin.git" "$other"
 echo new >"$other/new.txt"
+echo '{"name": "app", "dependencies": {"left-pad": "1.3.0"}}' >"$other/package.json"
+echo '{"lockfileVersion": 3}' >"$other/package-lock.json"
 git -C "$other" add -A
 git -C "$other" commit -q -m "feat: newer"
 git -C "$other" push -q origin main
@@ -72,10 +87,15 @@ logged "project item-edit --project-id PVT_1 --id ITEM --field-id F_S --single-s
   fail "Status not set to In progress: $(cat "$GH_LOG")"
 grep -q '^#89 Status = In progress' "$work/out" || fail "status line: $(cat "$work/out")"
 
+# A new worktree gets its dependencies, installed in it with the command of its lockfile (#110).
+grep -qx "npm ci @ $work/app-89" "$PM_LOG" || fail "dependencies not installed in the new worktree: $(cat "$PM_LOG")"
+[ -d "$work/app-89/node_modules" ] || fail "no node_modules in the new worktree"
+
 # Rerunning reuses the branch and the worktree.
 start 89 || fail "rerun failed: $(cat "$work/err")"
 grep -qx "worktree $work/app-89" "$work/out" || fail "rerun worktree line: $(cat "$work/out")"
 [ "$(git -C "$repo" worktree list | grep -c app-89)" -eq 1 ] || fail "rerun added a second worktree"
+[ "$(wc -l <"$PM_LOG")" -eq 1 ] || fail "rerun installed again: $(cat "$PM_LOG")"
 # A reworded title does not fork the branch.
 issue "Another title" '{"name": "type:feature"}'
 start 89 || fail "reworded title failed: $(cat "$work/err")"
@@ -99,6 +119,24 @@ branch_is 93 feat/93-no-label-here
 # A very long title is cut at a word.
 issue "Make the daily session pick the first ticket and deliver it" ''
 branch_is 94 feat/94-make-the-daily-session-pick-the-first
+
+# A project's own install command, stored in its config, wins over the lockfile's (#110); a failing one
+# does not stop the start.
+jq '.commands.install = "pnpm install --offline"' "$other/.claude/senior-mode.json" >"$work/config.json"
+mv "$work/config.json" "$other/.claude/senior-mode.json"
+git -C "$other" add -A
+git -C "$other" commit -q -m "chore: install command"
+git -C "$other" push -q origin main
+issue "Own installer" ''
+: >"$PM_LOG"
+start 97 || fail "start 97 failed: $(cat "$work/err")"
+grep -qx "pnpm install --offline @ $work/app-97" "$PM_LOG" || fail "configured install not run: $(cat "$PM_LOG")"
+grep -q '^npm' "$PM_LOG" && fail "lockfile command ran despite the configured one"
+issue "Broken installer" ''
+: >"$PM_LOG"
+PM_FAIL=1 start 98 || fail "a failing install stopped the start: $(cat "$work/err")"
+grep -qx "branch feat/98-broken-installer" "$work/out" || fail "failed install: no branch line: $(cat "$work/out")"
+grep -q "install" "$work/err" || fail "failed install not reported: $(cat "$work/err")"
 
 # A branch name is ASCII whatever the locale (#111): accents are transliterated when iconv can, else dropped.
 issue "Résumé de l'été: café Œuvre" ''

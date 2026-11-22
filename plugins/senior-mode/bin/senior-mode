@@ -10,6 +10,7 @@ DEFAULTS='{
   "agent": { "command": "claude" },
   "e2e": { "slots": 2 },
   "limits": { "prLines": 400 },
+  "wip": 1,
   "protected": [],
   "secrets": [],
   "envGuard": { "forbidden": [] },
@@ -1193,6 +1194,19 @@ frame_start() {
   echo "worktree $path"
 }
 
+# Refuses to start <issue> when the open tickets In progress, other than it, already reach `wip`.
+# A run is bounded by autonomy.parallel instead, so `start` skips this under SENIOR_MODE_RUN.
+wip_check() {
+  local limit data others
+  limit=$(config_get wip)
+  [[ $limit =~ ^[1-9][0-9]*$ ]] || die "wip must be a positive whole number, not $limit"
+  data=$(board_data false)
+  others=$(jq -r --argjson n "$1" --argjson w "$limit" '[.items[] | select(.open and .status == "In progress"
+    and .number != $n) | "#\(.number) \(.title)"] | select(length >= $w) | join(", ")' <<<"$data")
+  [ -z "$others" ] ||
+    die "work in progress is at its limit (wip $limit): $others. Finish it first (merge, or set it back to Ready), or raise wip in .claude/senior-mode.json"
+}
+
 # senior-mode start <issue>: the worktree and the branch `<type>/<issue>-<slug>` of a ticket, then Status
 # In progress. Shared by `next` and `run`. The branch type follows the `type:` label (feature: feat, bug:
 # fix, task and chore: chore; feat without a label). The branch starts from the default branch, fetched
@@ -1207,6 +1221,7 @@ start() {
   info=$(gh_retry issue view "$issue" --repo "$slug" --json title,labels,state) || die "cannot read issue #$issue"
   state=$(jq -r '.state' <<<"$info")
   [ "$state" = OPEN ] || die "issue #$issue is ${state,,}"
+  [ -n "${SENIOR_MODE_RUN:-}" ] || wip_check "$issue"
   title=$(jq -r '.title' <<<"$info")
   labels=$(jq -r '.labels[].name' <<<"$info")
   case $(sed -n 's/^type://p' <<<"$labels" | head -1) in
@@ -1659,7 +1674,7 @@ run_launch() {
 # as everywhere else), then launches it on Sonnet. A ticket that cannot be opened is given up.
 run_start() {
   local n=$1 out rc=0
-  out=$(start "$n" 2>"$RUN_DIR/$n.err") || rc=$?
+  out=$(SENIOR_MODE_RUN=1 start "$n" 2>"$RUN_DIR/$n.err") || rc=$?
   RUN_BRANCH[$n]=$(sed -n 's/^branch //p' <<<"$out")
   RUN_WT[$n]=$(sed -n 's/^worktree //p' <<<"$out")
   if [ -z "${RUN_WT[$n]}" ]; then

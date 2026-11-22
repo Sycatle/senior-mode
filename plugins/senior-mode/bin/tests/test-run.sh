@@ -2,12 +2,16 @@
 # Tests for `senior-mode run`. Offline: gh, claude and tmux are stubs. gh answers the board query and
 # the REST calls from fixtures in $FIX; claude plays a ticket session from $FIX/claude-<n>-<model>
 # (line 1: the outcome to write, empty for none; line 2: "pr" to open a pull request).
+# The per-ticket outcome files `run` leaves are checked against the records of fixture-runs.sh, the same
+# ones test-retro.sh feeds to `retro`.
 # shellcheck disable=SC2016 # jq programs and stub bodies, not expanded here
 set -u
 cli=$(cd "$(dirname "$0")/.." && pwd)/senior-mode
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 failures=0
+# shellcheck source=/dev/null
+. "$(dirname "$0")/fixture-runs.sh"
 
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 
@@ -90,6 +94,18 @@ board() {
 }
 session() { printf '%s\n%s\n' "$2" "${3:-}" >"$FIX/claude-$1"; }
 green='{"statuses": [{"context": "senior-mode/ci", "state": "success"}, {"context": "senior-mode/review", "state": "success"}]}'
+# outcome_is <ticket>: the outcome file of the ticket, in .git/senior-mode/runs/<stamp>/<n>.json, holds the
+# fixture record and a finishedAt time.
+outcome_is() {
+  local f want got
+  f=$(find "$repo/.git/senior-mode/runs" -name "$1.json" 2>/dev/null | tail -n 1)
+  [ -n "$f" ] || { fail "no outcome file for #$1"; return; }
+  want=$(jq -cS --argjson n "$1" '.[] | select(.ticket == $n)' <<<"$RUN_OUTCOMES")
+  got=$(jq -cS 'del(.finishedAt)' "$f")
+  [ "$got" = "$want" ] || fail "outcome of #$1: $got, wanted $want"
+  jq -e '.finishedAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")' "$f" >/dev/null ||
+    fail "outcome of #$1 has no ISO finishedAt: $(cat "$f")"
+}
 run() { : >"$GH_LOG"; : >"$CLAUDE_LOG"; (cd "$repo" && "$cli" run "$@") >"$work/out" 2>&1; }
 
 # A: three tickets two at a time in tmux; merging on. #10 merges; #11 succeeds on Opus but its review
@@ -126,6 +142,9 @@ grep -q 'docs' "$CLAUDE_LOG" || fail "A: no docs session after a merge"
 grep -q 'Merged.*#10' "$work/out" || fail "A: report misses the merge: $(cat "$work/out")"
 grep -q 'Waiting for a human.*#11.*senior-mode/review' "$work/out" || fail "A: report misses #11 waiting: $(cat "$work/out")"
 grep -q 'Failed.*#12.*still cannot build' "$work/out" || fail "A: report misses why #12 failed: $(cat "$work/out")"
+outcome_is 10
+outcome_is 11
+outcome_is 12
 git -C "$repo" status --porcelain | grep -q . && fail "A: run left the checkout dirty: $(git -C "$repo" status --porcelain)"
 
 # B: no tmux, merging off (default), no escalation, circuit breaker at one failure. #20 says
@@ -140,6 +159,7 @@ grep -q 'app-run-21' "$CLAUDE_LOG" && fail "B: circuit breaker did not stop the 
 grep -q 'opus' "$CLAUDE_LOG" && fail "B: escalated although autonomy.escalate is false"
 grep -q 'Failed.*#20.*no open pull request' "$work/out" || fail "B: report misses #20: $(cat "$work/out")"
 grep -q 'Not started.*#21' "$work/out" || fail "B: report misses #21 not started: $(cat "$work/out")"
+outcome_is 20
 
 # C: an outgrown ticket stops the run and is not retried on Opus.
 config '{}'
@@ -150,6 +170,7 @@ grep -q 'app-run-30 opus' "$CLAUDE_LOG" && fail "C: an outgrown ticket was retri
 grep -q 'app-run-31' "$CLAUDE_LOG" && fail "C: run went on after an outgrown ticket"
 grep -q 'issues/30/comments' "$GH_LOG" || fail "C: no comment on the outgrown ticket"
 grep -q 'needs a data migration' "$work/out" || fail "C: report misses the reason: $(cat "$work/out")"
+outcome_is 30
 
 # D: merging on but no protection on the server, and a needs-human label: nothing merges. --max 1.
 config '{"merge": true}' '{"protection": "none"}'

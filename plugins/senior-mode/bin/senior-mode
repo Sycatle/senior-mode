@@ -1208,23 +1208,25 @@ file_mtime() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
 }
 
-# The run logs of this repository (.claude/senior-mode/runs/*.json, one object per ticket run with
-# `ticket`, `outcome`, `escalated`, `reason`, `finishedAt`), as {found, failed, escalated} for the
-# period starting at $2. Absent or unreadable logs are not an error.
+# The run outcomes of this repository (one object per ticket run, `run` writes it to
+# <git common dir>/senior-mode/runs/<stamp>/<n>.json with `ticket`, `outcome`, `escalated`, `reason`,
+# `model`, `finishedAt`), as {found, failed, escalated} for the period starting at $2. $1 is the git
+# common directory. Absent or unreadable files are not an error; the session logs next to the
+# outcomes (<n>-<model>.json) are not outcomes. An outgrown ticket counts as failed.
 retro_runs() {
-  local dir=$1/.claude/senior-mode/runs f
+  local dir=$1/senior-mode/runs f
   if [ ! -d "$dir" ]; then
     echo '{"found":false,"failed":[],"escalated":[]}'
     return 0
   fi
   {
-    for f in "$dir"/*.json; do
-      [ -f "$f" ] || continue
+    for f in "$dir"/*/[0-9]*.json; do
+      [[ $f =~ /[0-9]+\.json$ ]] && [ -f "$f" ] || continue
       jq -c --arg m "$(iso_time "$(file_mtime "$f")")" 'if type == "object"
         then {ticket, outcome, escalated, reason, at: (.finishedAt // $m)} else empty end' "$f" 2>/dev/null || true
     done
   } | jq -sc --arg since "$2" '[.[] | select(.at >= $since)] as $l | {found: true,
-    failed: [$l[] | select(.outcome == "failed") | {ticket, reason, at}] | sort_by(.ticket),
+    failed: [$l[] | select(.outcome | IN("failed", "outgrown")) | {ticket, reason, at}] | sort_by(.ticket),
     escalated: [$l[] | select(.escalated == true or .outcome == "escalated") | {ticket, reason, at}] | sort_by(.ticket)}'
 }
 
@@ -1318,7 +1320,7 @@ retro() {
     esac
     shift
   done
-  root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  root=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
   now_s=$(date +%s)
   now=$(iso_time "$now_s")
   since_s=$((now_s - $(duration_seconds "$since")))
@@ -1520,6 +1522,16 @@ run_merge() {
   RUN_WAITING+=("#$n ${RUN_TITLE[$n]}: pull request #$pr, $reason")
 }
 
+# Writes the outcome of a ticket, the file `retro` reads: $RUN_DIR/<n>.json holds {ticket, outcome
+# (delivered, outgrown or failed), escalated (the ticket went to Opus), reason (the last failure the
+# session reported, null for a clean delivery), model (of the last session), finishedAt}. $2 is the
+# outcome and $3 the reason, possibly empty. Spec 0001 section 10.
+run_record() {
+  jq -nc --argjson n "$1" --arg o "$2" --arg r "$3" --arg m "${RUN_MODEL[$1]}" --arg e "${RUN_ESCALATED[$1]:-false}" \
+    --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{ticket: $n, outcome: $o, escalated: ($e == "true"),
+    reason: (if $r == "" then null else $r end), model: $m, finishedAt: $t}' >"$RUN_DIR/$1.json"
+}
+
 # Reads how a finished session went. Returns 1 when the ticket goes on (a retry on Opus).
 run_finish() {
   local n=$1 outcome pulls='[]'
@@ -1528,24 +1540,29 @@ run_finish() {
   if [ "$outcome" = delivered ]; then
     pulls=$(gh_retry api "repos/$RUN_SLUG/pulls?head=${RUN_SLUG%%/*}:${RUN_BRANCH[$n]}&state=open") || pulls='[]'
     jq -e 'length > 0' <<<"$pulls" >/dev/null ||
-      outcome="failed: the session said delivered but there is no open pull request for ${RUN_BRANCH[$n]}"
+      outcome="failed: the session said delivered but there is no open pull request for its branch"
   fi
   case $outcome in
     delivered)
       RUN_FAILS=0
+      run_record "$n" delivered "${RUN_REASON[$n]:-}"
       run_merge "$n" "$pulls"
       ;;
     outgrown:*)
       RUN_STOP="#$n outgrew its size"
+      run_record "$n" outgrown "${outcome#outgrown: }"
       run_giveup "$n" "it outgrew its size: ${outcome#outgrown: }"
       ;;
     *)
       if [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ]; then
         printf '\nA first attempt on Sonnet gave up: %s\nIts work is in this worktree; build on it or reset it.\n' \
           "${outcome#failed: }" >>"$RUN_DIR/$n.prompt"
+        RUN_ESCALATED[$n]=true
+        RUN_REASON[$n]=${outcome#failed: }
         run_launch "$n" opus
         return 1
       fi
+      run_record "$n" failed "${outcome#failed: }"
       run_giveup "$n" "${outcome#failed: }"
       ;;
   esac
@@ -1571,7 +1588,7 @@ run_docs() {
 run() {
   local max="" parallel="" root n type title slug t
   local -a queue=() running=() still=() RUN_MERGED=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
-  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=()
+  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=()
   local RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION
   local RUN_FAILS=0 RUN_STOP=""
   while [ $# -gt 0 ]; do

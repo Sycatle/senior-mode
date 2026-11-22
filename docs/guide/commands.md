@@ -101,7 +101,9 @@ State: **Available.** Triggers: "run", "lance", "enchaîne en autonomie".
 - **How.** `senior-mode run [--max N] [--parallel P]` starts one headless `claude -p` session per
   ticket, in its own worktree next to the repository (`<repo>-run-<n>`, branch `<type>/<n>-<slug>`)
   and, when tmux is installed, in a window of `tmux attach -t senior-mode-run`. A ticket that fails on
-  Sonnet is retried once on Opus (`autonomy.escalate`). Logs stay in `.git/senior-mode/runs/`.
+  Sonnet is retried once on Opus (`autonomy.escalate`). Logs stay in `.git/senior-mode/runs/`, with one
+  `<n>.json` per ticket that says how it ended (`delivered`, `outgrown` or `failed`, whether it went
+  to Opus, why, when).
 - **Merging** is off by default: the run stops at pull requests with `senior-mode/ci` and
   `senior-mode/review` set. With `autonomy.merge: true` it merges what is green, not `needs-human`,
   on a repository with server-side protection. See [Autonomy](autonomy.md#run).
@@ -119,7 +121,7 @@ State: **Available.**
   `CLAUDE.md` pitfall, a protected glob, a check, a ticket split rule), each with the tickets and pull
   requests that justify it. Nothing is created or edited until you say yes.
 - **Data.** From GitHub (two calls) and from this machine: the results of `senior-mode check` and, when
-  `run` has written them, its logs in `.claude/senior-mode/runs/`. Without logs, the runs section says
+  `run` has written them, its outcomes in `.git/senior-mode/runs/`. Without them, the runs section says
   so. `senior-mode retro --since 14d` widens the period.
 
 ## The `senior-mode` script

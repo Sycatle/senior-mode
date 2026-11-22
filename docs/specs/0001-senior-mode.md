@@ -183,10 +183,14 @@ skill, in `skills/next/reference.md`.
   `check` recorded locally (ADR 0006), in the repository and its worktrees; failed or escalated runs;
   and size against reality: a ticket's pull request lines against its size (S ~50, M ~400, section
   5), over when above 1.5 times that.
-- Run logs are optional: `.claude/senior-mode/runs/*.json`, one object per ticket run with `ticket`,
-  `outcome` (`done` or `failed`), `escalated`, `reason`, `finishedAt`. `run` writes them (open
-  question: its log format is not settled yet; `retro` reads these keys and skips what it cannot
-  read). Without the directory, `runs.found` is false and the command still works.
+- Run outcomes are optional: `run` writes one JSON object per ticket run to
+  `.git/senior-mode/runs/<stamp>/<n>.json` (in the git common directory, so `retro` finds them from
+  any worktree; no gitignore, outside the self-protected paths) with `ticket`, `outcome` (`delivered`,
+  `outgrown` or `failed`), `escalated` (the ticket went to Opus), `reason` (the last failure the session
+  reported, null for a clean delivery), `model` (of the last session) and `finishedAt`. `retro` counts
+  `failed` and `outgrown` as failed runs, and skips what it cannot read; the session logs next to the
+  outcomes (`<n>-<model>.json`) are not outcomes. Without the directory, `runs.found` is false and the
+  command still works.
 - The skill answers in the `language` of the config, then proposes at most three changes, each an
   issue draft with its evidence; it creates an issue, edits a file or a config only after a yes.
 
@@ -297,6 +301,8 @@ for each, at most P at a time:
   `SENIOR_MODE_RUN=1` and `SENIOR_MODE_RUN_OUTCOME` (and `--plugin-dir` from
   `SENIOR_MODE_PLUGIN_DIR`), in a window of the tmux session `senior-mode-run`, or in the background
   without tmux; scripts, prompts and logs go to `.git/senior-mode/runs/<stamp>/`;
+- records each ticket's result in `.git/senior-mode/runs/<stamp>/<n>.json` once it is settled (the
+  format `retro` reads, section 7);
 - reads the outcome line the session writes: `delivered` (it counts only with an open pull request
   for the branch), `outgrown: <reason>` (stops the run) or `failed: <reason>`; a missing line is a
   failure. A failure on Sonnet is retried once on Opus from the same worktree when

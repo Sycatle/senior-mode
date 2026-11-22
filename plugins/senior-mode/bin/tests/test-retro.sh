@@ -6,6 +6,8 @@ cli=$(cd "$(dirname "$0")/.." && pwd)/senior-mode
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 failures=0
+# shellcheck source=/dev/null
+. "$(dirname "$0")/fixture-runs.sh"
 
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 
@@ -94,15 +96,19 @@ merged=$(jq -sc '.' < <(
 jq -nc --argjson i "$issues" --argjson m "$merged" \
   '{data: {repository: {issues: {nodes: $i}, pullRequests: {nodes: $m}}}}' >"$FIX/history.json"
 
-# Local facts: run logs (a broken file is ignored) and recorded check results.
-runs="$repo/.claude/senior-mode/runs"
+# Local facts: run outcomes (the records of fixture-runs.sh, the same ones test-run.sh checks
+# `run` against, in the folder `run` writes them to) and recorded check results. Ticket 12 finished long
+# ago; a broken file and a session log of `run` sit next to them and are ignored.
+runs="$repo/.git/senior-mode/runs/20260101-000000-1"
 mkdir -p "$runs" "$repo/.git/senior-mode/checks"
-echo "*" >"$repo/.claude/senior-mode/.gitignore"
-jq -nc --arg at "$(ago $DAY)" '{ticket: 7, outcome: "failed", reason: "tests never went green", finishedAt: $at}' >"$runs/7.json"
-jq -nc --arg at "$(ago $DAY)" '{ticket: 5, outcome: "done", model: "sonnet", finishedAt: $at}' >"$runs/5.json"
-jq -nc --arg at "$(ago $((2 * DAY)))" '{ticket: 6, outcome: "done", escalated: true, reason: "retried on opus", finishedAt: $at}' >"$runs/6.json"
-jq -nc --arg at "$(ago $((20 * DAY)))" '{ticket: 4, outcome: "failed", reason: "old", finishedAt: $at}' >"$runs/4.json"
+while IFS= read -r rec; do
+  n=$(jq -r .ticket <<<"$rec")
+  at=$(ago $DAY)
+  [ "$n" != 12 ] || at=$(ago $((20 * DAY)))
+  jq -c --arg at "$at" '. + {finishedAt: $at}' <<<"$rec" >"$runs/$n.json"
+done < <(jq -c '.[]' <<<"$RUN_OUTCOMES")
 echo 'not json {' >"$runs/broken.json"
+jq -nc --arg at "$(ago $DAY)" '{ticket: 99, outcome: "failed", reason: "a session log, not an outcome", finishedAt: $at}' >"$runs/10-sonnet.json"
 checks="$repo/.git/senior-mode/checks"
 printf 'failure\nfailed: lint\n' >"$checks/aaaaaaa1111111111111111111111111111111111"
 printf 'success\n6/6 checks passed\n' >"$checks/bbbbbbb2222222222222222222222222222222222"
@@ -133,8 +139,9 @@ since_sent=$(jq -r '.variables.since' "$FIX/history-bodies")
   fail "merged PR why: $(json '.humanPullRequests[1]')"
 
 [ "$(json '.runs.found')" = true ] || fail "runs not found"
-[ "$(json '.runs.failed | map([.ticket, .reason])')" = '[[7,"tests never went green"]]' ] || fail "failed runs: $(json .runs)"
-[ "$(json '.runs.escalated | map(.ticket)')" = "[6]" ] || fail "escalated runs: $(json .runs)"
+[ "$(json '.runs.failed | map(.ticket)')" = "[20,30]" ] || fail "failed runs: $(json .runs)"
+[ "$(json '.runs.failed[1].reason')" = '"needs a data migration"' ] || fail "outgrown run: $(json .runs)"
+[ "$(json '.runs.escalated | map([.ticket, .reason])')" = '[[11,"tests do not pass"]]' ] || fail "escalated runs: $(json .runs)"
 [ "$(json '.reopened | map(.number)')" = "[8]" ] || fail "reopened: $(json .reopened)"
 [ "$(json '.checkFailures | map(.description)')" = '["failed: lint"]' ] || fail "check failures: $(json .checkFailures)"
 [ "$(json '.checkFailures[0].commit')" = '"aaaaaaa"' ] || fail "check failure commit: $(json .checkFailures)"
@@ -146,14 +153,15 @@ run retro --json --since 30d || fail "--since failed: $(cat "$work/err")"
 [ "$(json '.done | map(.number)')" = "[4,5,6,7]" ] || fail "--since 30d done: $(json .done)"
 [ "$(json '.humanPullRequests | map(.number)')" = "[31,41,42]" ] || fail "--since 30d human PRs: $(json .humanPullRequests)"
 [ "$(json '.reopened | map(.number)')" = "[8,9]" ] || fail "--since 30d reopened: $(json .reopened)"
-[ "$(json '.runs.failed | map(.ticket)')" = "[4,7]" ] || fail "--since 30d failed runs: $(json .runs)"
+[ "$(json '.runs.failed | map(.ticket)')" = "[12,20,30]" ] || fail "--since 30d failed runs: $(json .runs)"
+[ "$(json '.runs.escalated | map(.ticket)')" = "[11,12]" ] || fail "--since 30d escalated runs: $(json .runs)"
 [ "$(json '.checkFailures | length')" -eq 2 ] || fail "--since 30d check failures: $(json .checkFailures)"
 
 # Plain words.
 run retro || fail "retro failed: $(cat "$work/err")"
 for want in "Done in the last 7d (3)" "#5 Ticket 5" "Cycle time" "median 63h" "worst 96h (#6 Ticket 6)" \
   "Needed a human" "pull request #41 PR 41: needs-human label; changes requested by alice: Split this in two" \
-  "Failed or escalated runs" "#7: failed: tests never went green" "#6: escalated: retried on opus" \
+  "Failed or escalated runs" "#20: failed: the session said delivered but there is no open pull request" "#11: escalated: tests do not pass" \
   "Reopened" "#8 Ticket 8" "Check failures" "aaaaaaa: failed: lint" "Estimates against reality" "#6 M: 900 lines"; do
   grep -qF -- "$want" "$work/out" || fail "plain retro lacks '$want': $(cat "$work/out")"
 done
@@ -161,8 +169,14 @@ grep -qF "#4 " "$work/out" && fail "a ticket outside the period is listed: $(cat
 grep -qF "#5 S" "$work/out" && fail "a ticket within its size is flagged: $(cat "$work/out")"
 [ "$(git -C "$repo" status --porcelain | wc -l)" -eq 0 ] || fail "retro left changes in the tree: $(git -C "$repo" status --porcelain)"
 
+# From a linked worktree, retro reads the same outcomes: they live in the git common directory.
+git -C "$repo" worktree add -q -b wt "$work/app-wt"
+(cd "$work/app-wt" && "$cli" retro --json) >"$work/out" 2>"$work/err" || fail "retro from a worktree failed: $(cat "$work/err")"
+[ "$(json '.runs.failed | map(.ticket)')" = "[20,30]" ] || fail "runs seen from a worktree: $(json .runs)"
+git -C "$repo" worktree remove --force "$work/app-wt"
+
 # Without run logs, check records or cycle data, sections say nothing and the command still works.
-rm -rf "$runs" "$repo/.git/senior-mode"
+rm -rf "$repo/.git/senior-mode"
 jq -c '.data.repository.issues.nodes = [] | .data.repository.pullRequests.nodes = []' "$FIX/history.json" >"$FIX/history.empty"
 cp "$FIX/history.json" "$FIX/history.full"
 cp "$FIX/history.empty" "$FIX/history.json"

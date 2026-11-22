@@ -14,6 +14,10 @@ cat >"$work/stub/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >>"$GH_LOG"
 [ -z "${GH_FAIL:-}" ] || { echo "HTTP 401: bad credentials" >&2; exit 1; }
+case "$*" in
+  "project item-add"*) sed -E 's#.*/issues/([0-9]+).*#ITEM_\1#' <<<"$*"; exit 0 ;;
+  "project item-edit"*) exit 0 ;;
+esac
 [ "$*" = "api graphql --input -" ] || { echo "unexpected: $*" >&2; exit 1; }
 body=$(cat)
 printf '%s\n' "$body" >>"$FIX/bodies"
@@ -64,6 +68,9 @@ items=$(jq -sc '.' < <(
   item 21 "In progress" "P1 next" M null '[]' "$open99"
   item 22 "In review" "P1 next" M null '["needs-human"]' '[]'
   item 23 Ready "P0 now" S null '["needs-info"]' '[]'
+  item 24 "In review" "P1 next" S null '[]' '[]' CLOSED
+  item 25 Done "P1 next" S null '[]' '[]'
+  item 26 Backlog "P2 later" S null '[]' '[]' CLOSED
   item 5 Done "P1 next" S null '[]' '[]' CLOSED
   echo '{"fieldValues": {"nodes": []}, "content": {}}'
 ))
@@ -89,7 +96,8 @@ page() {
   jq -nc --arg next "$1" --argjson items "$2" --argjson prs "$prs" --argjson closed "$closed" --argjson merged "$merged" \
     --argjson repo "${3:-true}" '{data: ({node: {items: {pageInfo: {hasNextPage: ($next != ""), endCursor: (if $next == "" then null else $next end)},
       nodes: $items}}} + (if $repo then {repository: {latestRelease: {tagName: "v0.1.2", publishedAt: "2026-11-10T09:00:00Z"},
-      pullRequests: {nodes: $prs}, closed: {nodes: $closed}, merged: {nodes: $merged}}} else {} end))}'
+      pullRequests: {nodes: $prs}, branches: {nodes: [{name: "main"}, {name: "feat/17-thing"}, {name: "fix/210-other"}]},
+      closed: {nodes: $closed}, merged: {nodes: $merged}}} else {} end))}'
 }
 page "" "$items" >"$FIX/page-first.json"
 
@@ -174,6 +182,35 @@ run status --since 7d || fail "status with wip 2 failed: $(cat "$work/err")"
 grep -qx "In progress (2)" "$work/out" || fail "wip at the limit shown as over: $(cat "$work/out")"
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
 
+# Board drift (#124): closed but not Done (#24, #26), open but Done (#25), In progress or In review with
+# no open pull request and no branch (#21; #17 has a branch, #18 and #22 a pull request).
+run status --json --since 7d || fail "status --json failed: $(cat "$work/err")"
+[ "$(json '.drift | map([.number, .kind])')" = '[[24,"closed"],[26,"closed"],[25,"open-done"],[21,"stale"]]' ] ||
+  fail "drift: $(json .drift)"
+json 'has("fixed")' | grep -qx false || fail "fixed listed without --fix"
+run status --since 7d || fail "status failed: $(cat "$work/err")"
+for want in "Board drift (4)" "#24 Ticket 24: closed but In review" "#26 Ticket 26: closed but Backlog" \
+  "#25 Ticket 25: open but Done" "#21 Ticket 21: In progress with no open pull request and no branch"; do
+  grep -qF -- "$want" "$work/out" || fail "drift section lacks '$want': $(cat "$work/out")"
+done
+grep -q 'item-edit' "$GH_LOG" && fail "status without --fix changed the board"
+# --fix sets the closed ones Done and leaves the rest, saying why.
+cfg_fields='{"project": {"id": "PVT_1", "owner": "acme", "number": 3, "fields": {"Status": {"id": "F_S",
+  "options": {"Backlog": "o0", "In review": "o3", "Done": "o4"}}}}}'
+echo "$cfg_fields" >"$repo/.claude/senior-mode.json"
+run status --fix --since 7d || fail "status --fix failed: $(cat "$work/err")"
+[ "$(grep -c 'item-edit.*--single-select-option-id o4' "$GH_LOG")" -eq 2 ] || fail "--fix edits: $(cat "$GH_LOG")"
+[ "$(grep -cE 'issues/(24|26) ' "$GH_LOG")" -eq 2 ] || fail "--fix did not set #24 and #26: $(cat "$GH_LOG")"
+grep -qE 'issues/2[15]' "$GH_LOG" && fail "--fix touched an open ticket: $(cat "$GH_LOG")"
+grep -q '^fixed: #24 .*Done' "$work/out" || fail "--fix does not say what it fixed: $(cat "$work/out")"
+grep -q '^left: #25 .*human' "$work/out" || fail "--fix does not say why #25 is left: $(cat "$work/out")"
+grep -q '^left: #21 .*human' "$work/out" || fail "--fix does not say why #21 is left: $(cat "$work/out")"
+run status --fix --json --since 7d || fail "status --fix --json failed: $(cat "$work/err")"
+[ "$(json '.fixed | map(.number)')" = "[24,26]" ] || fail "--fix --json fixed: $(cat "$work/out")"
+run status --fix --watch && fail "--fix --watch accepted"
+grep -q 'watch' "$work/err" || fail "--fix --watch refusal not explained: $(cat "$work/err")"
+echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
+
 # Quiet board: every section says nothing rather than disappearing.
 jq -c '.data.node.items.nodes = [] | .data.repository.pullRequests.nodes = [] | .data.repository.closed.nodes = []
   | .data.repository.merged.nodes = [] | .data.repository.latestRelease = null' "$FIX/page-first.json" >"$FIX/quiet.json"
@@ -182,6 +219,9 @@ cp "$FIX/quiet.json" "$FIX/page-first.json"
 run status || fail "quiet status failed: $(cat "$work/err")"
 grep -qF "nothing" "$work/out" || fail "quiet board: $(cat "$work/out")"
 grep -q "No release yet" "$work/out" || fail "no release message: $(cat "$work/out")"
+grep -q "Board drift" "$work/out" && fail "drift section on a board without drift: $(cat "$work/out")"
+run status --json || fail "quiet status --json failed: $(cat "$work/err")"
+[ "$(json .drift)" = "[]" ] || fail "quiet board drift: $(json .drift)"
 cp "$FIX/page-first.full" "$FIX/page-first.json"
 rm -rf "$repo/.claude/senior-mode"
 

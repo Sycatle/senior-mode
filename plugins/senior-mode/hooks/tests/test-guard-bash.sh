@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Tests for guard-bash.sh (PreToolUse on Bash): JSON in, decision out.
+# shellcheck disable=SC2016 # test commands hold literal $VARIABLES, not shell expansions
 set -u
 hook=$(cd "$(dirname "$0")/.." && pwd)/guard-bash.sh
 work=$(mktemp -d)
@@ -64,6 +65,18 @@ expect deny 'gh api --method=PUT repos/a/b/pulls/3/merge'
 expect deny 'gh api -X PUT "repos/a/b/pulls/3/merge"'
 expect deny "gh pr merge 3 '--admin'"
 expect allow 'gh api repos/a/b/pulls/3/merge'
+# #116: hooks cannot be switched off through git config, and a variable does not hide the merge endpoint.
+expect deny 'git config core.hooksPath /dev/null'
+expect deny 'git config --local core.hooksPath .nohooks'
+expect deny 'git -C . config --global core.hooksPath x'
+expect deny 'git config --unset core.hooksPath'
+expect deny 'git config --replace-all core.hookspath x'
+expect deny 'gh api -X PUT repos/a/b/pulls/$PR/merge'
+expect deny 'gh api -X PUT "repos/$R/pulls/$PR/merge" -f merge_method=rebase'
+expect allow 'git config --get core.hooksPath'
+expect allow 'git config core.hooksPath'
+expect allow 'git config user.name t'
+expect allow 'gh api -X PUT repos/a/b/rulesets/1 --input r.json'
 
 expect allow 'git status' feat/2-local
 expect allow 'git push -u origin feat/2-local'
@@ -89,6 +102,17 @@ expect deny "gh api graphql -f query='mutation { enablePullRequestAutoMerge(inpu
 expect allow 'gh pr view 5 --json mergeable'
 expect allow 'gh pr create --title "fix: merge sort" --body x'
 expect allow 'gh api repos/a/b/pulls/5'
+# #116: a run session cannot rewrite the rules that bound it; only `gh pr merge` is a merge.
+expect deny 'gh api -X PUT repos/a/b/pulls/$PR/merge'
+expect deny 'gh api -X PUT repos/a/b/rulesets/1 --input r.json'
+expect deny 'gh api repos/a/b/rulesets -f name=x'
+expect deny 'gh api --method PATCH "repos/$R/rulesets/$ID" -F enforcement=disabled'
+expect deny 'gh api -X DELETE repos/a/b/branches/main/protection'
+expect deny 'gh api repos/a/b/branches/main/protection/required_status_checks -X PATCH --input c.json'
+expect allow 'gh api repos/a/b/rulesets'
+expect allow 'gh api repos/a/b/branches/main/protection'
+expect allow 'gh pr list --search merge'
+expect allow 'gh pr list --search "is:open merge" --json number'
 unset SENIOR_MODE_RUN
 
 git -C "$repo" switch -q feat/2-local

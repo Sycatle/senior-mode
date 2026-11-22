@@ -76,6 +76,11 @@ config '{"checks":[{"name":"env","run":"env | grep -E \"^GIT_(DIR|WORK_TREE|INDE
 # senior-mode/security (ADR 0015): success "not required" unless a protected zone of the base branch is
 # touched or a closing ticket is L; then pending, never success, and never a downgrade of a verdict.
 git -C "$repo" branch -M main
+# A local origin whose path ends like a GitHub URL, so the slug reads acme/app.
+origin="$work/github.com/acme/app.git"
+git init -q --bare "$origin"
+git -C "$repo" remote set-url origin "$origin"
+git -C "$repo" push -q origin main
 git -C "$repo" checkout -q -b feat/9-x
 sec() { grep -- "context=senior-mode/security" "$GH_LOG" | sed 's/.* -f state=\([a-z]*\) .*description=\(.*\)$/\1 \2/'; }
 assoc() { # numbers of the issues the open pull request closes
@@ -98,6 +103,22 @@ proj='"project":{"id":"PVT_1","owner":"acme","number":3,"fields":{}}'
 assoc ""
 published "{$ok}"
 [ "$(sec)" = "success not required: no protected zone, not L" ] || fail "not required not published: $(sec)"
+# A pull request that closes no issue is not required either (release and framing pull requests).
+# A status the security agent set on the commit is never overwritten; publish's own is.
+status() { printf '{"statuses": [{"context": "senior-mode/security", "state": "%s", "description": "%s"}]}\n' "$1" "$2" >"$FIX/status"; }
+status failure "1 high"
+: >"$GH_LOG"; run publish || fail "publish: $(cat "$work/out")"
+[ -z "$(sec)" ] || fail "not required overwrote a failure of the security agent: $(sec)"
+status success "no high or critical finding"
+: >"$GH_LOG"; run publish || fail "publish: $(cat "$work/out")"
+[ -z "$(sec)" ] || fail "not required overwrote a success of the security agent: $(sec)"
+status pending "agent could not finish"
+: >"$GH_LOG"; run publish || fail "publish: $(cat "$work/out")"
+[ -z "$(sec)" ] || fail "not required overwrote a pending of the security agent: $(sec)"
+status pending "required: protected zone (a)"
+: >"$GH_LOG"; run publish || fail "publish: $(cat "$work/out")"
+[ "$(sec | cut -d' ' -f1)" = success ] || fail "publish's own pending not replaced when the pass stops being due: $(sec)"
+rm -f "$FIX/status"
 assoc 9; item S
 published "{$ok,$proj}"
 [ "$(sec | cut -d' ' -f1)" = success ] || fail "an S ticket needs the security pass: $(sec)"
@@ -115,6 +136,7 @@ assoc ""
 # The zones are the base branch's: a branch cannot lift its own.
 git -C "$repo" checkout -q main
 config "{$ok,\"protected\":[\"auth/**\"]}"
+git -C "$repo" push -q origin main
 git -C "$repo" checkout -q -b feat/10-y
 config "{$ok,\"protected\":[]}"
 mkdir -p "$repo/auth" && echo x >"$repo/auth/a.txt" && git -C "$repo" add -A
@@ -125,15 +147,39 @@ run publish || fail "publish: $(cat "$work/out")"
 [ "$(sec | cut -d' ' -f1)" = pending ] || fail "a protected zone does not leave security pending: $(sec)"
 sec | grep -q "auth/a.txt" || fail "the zone is not named: $(sec)"
 # A verdict the security agent already set on this commit stays; a "not required" on a due pass goes.
-echo '{"statuses": [{"context": "senior-mode/security", "state": "failure", "description": "1 high"}]}' >"$FIX/status"
+status failure "1 high"
 : >"$GH_LOG"
 run publish || fail "publish: $(cat "$work/out")"
 [ -z "$(sec)" ] || fail "publish overwrote the verdict of the security agent: $(sec)"
+status success "no high or critical finding"
+: >"$GH_LOG"
+run publish || fail "publish: $(cat "$work/out")"
+[ -z "$(sec)" ] || fail "publish replaced a success of the security agent: $(sec)"
 echo '{"statuses": [{"context": "senior-mode/security", "state": "success", "description": "not required: no protected zone, not L"}]}' >"$FIX/status"
 : >"$GH_LOG"
 run publish || fail "publish: $(cat "$work/out")"
 [ "$(sec | cut -d' ' -f1)" = pending ] || fail "a due pass stays marked not required: $(sec)"
 rm -f "$FIX/status"
+# The base branch is fetched first: the globs are those of the default branch as it is now, not as it
+# was at the last fetch. Offline, publish goes on with what it has.
+git -C "$repo" push -q origin main
+git -C "$repo" checkout -q -b feat/11-z main
+mkdir -p "$repo/gen" && echo x >"$repo/gen/x.txt" && git -C "$repo" add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "feat: gen"
+git clone -q "$origin" "$work/other"
+printf '%s\n' "{$ok,\"protected\":[\"gen/**\"]}" >"$work/other/.claude/senior-mode.json"
+git -C "$work/other" -c user.name=t -c user.email=t@t commit -q -am "chore: protect gen"
+git -C "$work/other" push -q origin HEAD:main
+run check || fail "check: $(cat "$work/out")"
+git -C "$repo" remote set-url origin "$work/github.com/acme/gone.git"
+: >"$GH_LOG"
+run publish || fail "publish fails offline: $(cat "$work/out")"
+[ "$(sec | cut -d' ' -f1)" = success ] || fail "setup of the test: the stale base should not know gen/: $(sec)"
+git -C "$repo" remote set-url origin "$origin"
+: >"$GH_LOG"
+run publish || fail "publish: $(cat "$work/out")"
+[ "$(sec | cut -d' ' -f1)" = pending ] || fail "the base branch was not fetched before its globs were read: $(sec)"
+sec | grep -q "gen/x.txt" || fail "the zone is not named: $(sec)"
 
 config '{"checks":[{"name":"lint","run":"true"}]}'
 : >"$GH_LOG"

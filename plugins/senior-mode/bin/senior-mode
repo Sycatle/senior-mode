@@ -479,6 +479,7 @@ ASSOC_QUERY='query($owner: String!, $name: String!, $sha: GitObjectID!) { reposi
 # the base branch, so a branch cannot lift its own zone.
 security_verdict() {
   local sha=$1 base globs files zones slug answer issues n size
+  GIT_TERMINAL_PROMPT=0 git fetch -q origin 2>/dev/null || true # the base as it is now; offline, the last fetch stands
   base=$(default_branch) || { echo "pending required: no default branch to compare with"; return; }
   if git cat-file -e "$base:.claude/senior-mode.json" 2>/dev/null; then
     globs=$(git show "$base:.claude/senior-mode.json" | jq -c '.protected // []') || globs=null
@@ -509,8 +510,8 @@ security_verdict() {
 }
 
 # Publishes the recorded check result of a commit as the status senior-mode/ci, and senior-mode/security
-# when the pull request does not need the security pass. A due pass is left pending, and a verdict
-# the security agent already set on the commit is left alone.
+# when the pull request does not need the security pass. A due pass is left pending, and a status the
+# security agent already set on the commit is never overwritten.
 publish() {
   local sha record state description slug verdict current
   sha=$(git rev-parse --verify "${1:-HEAD}^{commit}" 2>/dev/null) || die "unknown commit: ${1:-HEAD}"
@@ -525,11 +526,12 @@ publish() {
   echo "senior-mode/ci = $state on ${sha:0:7}: $description"
   verdict=$(security_verdict "$sha")
   state=${verdict%% *} description=${verdict#* }
-  if [ "$state" = pending ]; then
-    current=$(gh_retry api "repos/$slug/commits/$sha/status" --jq '[.statuses[] | select(.context == "senior-mode/security")
-      | select(.state != "success" or (.description | startswith("not required") | not)) | .state][0] // empty') || current=""
-    [ -z "$current" ] || { echo "senior-mode/security = $current on ${sha:0:7}: left as it is"; return 0; }
-  fi
+  # Only publish's own words are replaced: a success "not required", a pending "required: ...". Any
+  # other state of the context is the security agent's (or a person's) and stays.
+  current=$(gh_retry api "repos/$slug/commits/$sha/status" --jq '[.statuses[] | select(.context == "senior-mode/security")
+    | select(((.state == "success" and (.description // "" | startswith("not required")))
+      or (.state == "pending" and (.description // "" | startswith("required:")))) | not) | .state][0] // empty') || die "could not read the security status of ${sha:0:7}"
+  [ -z "$current" ] || { echo "senior-mode/security = $current on ${sha:0:7}: left as it is"; return 0; }
   gh_retry api "repos/$slug/statuses/$sha" -f state="$state" -f context=senior-mode/security \
     -f description="${description:0:140}" >/dev/null || die "could not publish the security status of ${sha:0:7}"
   echo "senior-mode/security = $state on ${sha:0:7}: $description"
@@ -699,12 +701,17 @@ setup_codeowners() { # root owner globs-json
 # Creates the senior-mode ruleset of the repository, or updates it; $2 is whether it requires code
 # owner review (true when CODEOWNERS owns the protected zones).
 setup_ruleset() {
-  local id body
+  local id body cur
   body=$(jq -c --argjson r "$2" '(.rules[] | select(.type == "pull_request") | .parameters.require_code_owner_review) = $r' \
     <<<"$RULESET")
   id=$(gh_retry api "repos/$1/rulesets" \
     --jq '[.[] | select(.name == "senior-mode" and .source_type == "Repository")][0].id // empty') || return 1
   if [ -n "$id" ]; then
+    # Required checks someone added by hand stay: ours are merged into them.
+    cur=$(gh_retry api "repos/$1/rulesets/$id" \
+      --jq '[.rules[]? | select(.type == "required_status_checks") | .parameters.required_status_checks[]?]') || return 1
+    body=$(jq -c --argjson c "${cur:-[]}" '(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks) |=
+      (. as $ours | $ours + [$c[] | select(.context | IN($ours[].context) | not)])' <<<"$body")
     gh_retry api -X PUT "repos/$1/rulesets/$id" --input - <<<"$body"
   else
     gh_retry api -X POST "repos/$1/rulesets" --input - <<<"$body"

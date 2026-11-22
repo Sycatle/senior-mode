@@ -7,6 +7,16 @@ gh issue list --state open --limit 200
 gh api 'repos/{owner}/{repo}/milestones?state=all' --paginate --jq '.[]|"\(.number) \(.state) \(.title)"'
 ```
 
+## Size S
+
+An S issue needs no spec but must reach Ready, or it never gets picked:
+
+1. `senior-mode item set <n> Size S`: it adds the issue to the board. Add `Priority "<option>"` only
+   when the user gave one.
+2. Read its acceptance criteria: each must be a testable Given / When / Then. Missing or vague:
+   draft them from the issue text and offer to add them to the issue body.
+3. Apply skill `ready`: it sets Status Ready, or says what is missing.
+
 ## Tickets
 
 One `ops` call per ticket, body in `<<'SENIOR_MODE_BODY'`:

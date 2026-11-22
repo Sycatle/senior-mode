@@ -130,6 +130,17 @@ It reads commands as written. It is a guardrail for honest mistakes, not a sandb
 a script that reads the file, `cat *` or a variable that already holds a secret are not caught. Keep only
 dev-only secrets on a machine where agents run; `setup` says so.
 
+### Sessions without a human
+
+A headless session (`claude -p`, a `run` session, a scheduled batch) cannot be asked anything. The
+rule: a reversible choice takes the recommended option, and the report says so; an L spec, any ADR,
+a missing branch protection or a protected zone is never accepted or touched: the document stays
+`draft` or `proposed`, the issue or pull request gets `needs-human`, and that step stops with a
+report. A headless session in a workspace Claude Code does not trust yet ignores the project's
+permissions in `.claude/settings.json`: open the folder once interactively and accept the trust
+prompt, or pass the permissions on the command line. `senior-mode run` passes
+`--permission-mode bypassPermissions` and relies on the guard hooks.
+
 ### Frame guard (`frame-guard.sh`)
 
 Starting `/senior-mode:frame` marks the session as framing. While marked, edits outside `docs/` and

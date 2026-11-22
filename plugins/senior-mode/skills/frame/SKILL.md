@@ -27,7 +27,8 @@ Idea: $ARGUMENTS (ask for it in one line if empty). Write to the user in the pro
    vertical slices: title, size S or M, priority, milestone, acceptance criteria, test seams, blocked-by.
 6. **Acceptance.** Show the problem, the criteria and each ADR's decision in a few lines and ask to
    accept: spec and ADRs become `accepted`, else they stay `draft` and `proposed`. Size L needs an
-   explicit yes.
+   explicit yes. Nobody to ask: accept an M spec without ADR; an L spec or any ADR stays `draft` /
+   `proposed`, the anchor gets `needs-human`, stop with a report.
 7. **Tickets.** Have the `ops` agent create them as in the reference, blockers first, one call each.
    Rerunning is safe: an open issue of the same title is reused, Status kept, body replaced.
 8. **Record.** Number the ADRs from `origin/main` (reference), commit the spec and ADRs (skill

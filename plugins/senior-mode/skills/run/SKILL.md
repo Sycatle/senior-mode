@@ -26,6 +26,12 @@ them and prints a report. Your part is to confirm the batch, start it and explai
 takes minutes to an hour. Tell the user where to watch: `tmux attach -t senior-mode-run` (one window
 per ticket), or `senior-mode status --watch` in another terminal.
 
+Each session runs with `--permission-mode bypassPermissions`: in a workspace Claude Code does not
+trust yet, headless sessions ignore the project's `.claude/settings.json` permissions, so open the
+folder interactively once and accept the trust prompt. The guard hooks come from the plugin and
+stay active. A session without a human follows one rule: recommended option for reversible choices;
+an L spec, an ADR or a protected zone means `needs-human` and a report.
+
 To run every night, `senior-mode schedule install [--at HH:MM]` sets a systemd timer (or cron); `schedule status` shows the next trigger and the last result.
 
 Do not edit files, push or merge yourself during the run: the sessions and the command do it, inside

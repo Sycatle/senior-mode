@@ -279,6 +279,17 @@ these bounds:
   (redirections, `tee`, `cp`, `mv`, `rm`, `sed -i`, `git rm`...), so an agent cannot weaken its own
   barriers. Outside a run it does nothing. Like the Bash guard it is a guardrail for honest mistakes,
   not a sandbox.
+- **Sessions without a human:** a headless session (`claude -p`, a `run` session with
+  `SENIOR_MODE_RUN=1`, a scheduled batch) cannot be asked anything, and an agent that waits or
+  improvises is worse than one that stops. One rule, stated here, in the SessionStart router of a
+  run session and in each skill that asks (`grill`, `frame`, `setup`): for a reversible choice take
+  the recommended option and say so in the report; never accept an L spec or any ADR, never accept
+  a protection gap (no branch protection), never touch a protected zone: leave the document `draft`
+  or `proposed`, label the issue or pull request `needs-human`, and stop that step with a report of
+  what a human must decide. A headless session in a workspace Claude Code does not yet trust ignores
+  the project's permissions (`.claude/settings.json`): trust the folder once in an interactive
+  session, or pass the permissions on the command line; `run` itself uses
+  `--permission-mode bypassPermissions` and relies on the hooks above.
 - **Always denied:** `--no-verify`, force-push, direct push to the default branch,
   `gh pr merge --admin` or a PUT to the REST merge endpoint, history rewrite on shared branches,
   deleting files outside the ticket's worktree. The guard reads commands as written; it is a

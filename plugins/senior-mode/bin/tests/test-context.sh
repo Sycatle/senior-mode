@@ -63,5 +63,14 @@ git -C "$repo" switch -q -c spike-oauth
 context "$repo"
 grep -q "Current ticket" <<<"$out" && fail "ticket on a branch without an issue number: $out"
 
+# A run session has no human: the router says what to do instead of asking.
+grep -qi "nobody answers" <<<"$out" && fail "unattended rule outside a run: $out"
+SENIOR_MODE_RUN=1 context "$work"
+for want in "nobody answers" "recommended option" "needs-human"; do
+  grep -qF "$want" <<<"$out" || fail "run session router lacks '$want': $out"
+done
+SENIOR_MODE_RUN=1 context "$repo"
+grep -qF "nobody answers" <<<"$out" || fail "run session rule lost on a ticket branch: $out"
+
 [ "$failures" -eq 0 ] && echo "context: all cases pass"
 exit "$failures"

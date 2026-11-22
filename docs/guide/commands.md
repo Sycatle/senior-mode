@@ -111,7 +111,9 @@ State: **Available.** Triggers: "run", "lance", "enchaîne en autonomie".
 - **Merging** is off by default: the run stops at pull requests with `senior-mode/ci` and
   `senior-mode/review` set. With `autonomy.merge: true` it merges what is green, not `needs-human`,
   on a repository with server-side protection. See [Autonomy](autonomy.md#run).
-- **Needs** `claude` on PATH or in `~/.local/bin`, and a user that is not root.
+- **Needs** `claude` on PATH or in `~/.local/bin`, and a user that is not root. In a workspace Claude
+  Code does not trust yet, headless sessions ignore the project's permissions: open the folder once
+  interactively and accept the trust prompt. See [Sessions without a human](autonomy.md#sessions-without-a-human).
 
 ## `retro`
 

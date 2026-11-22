@@ -18,7 +18,7 @@ Argument: $ARGUMENTS (a ticket number; empty means the top of `pick`). Answer in
 3. **Pick.** `senior-mode pick --max 1`, or the ticket asked for if it is Ready. Nothing to pick: say
    so, suggest `frame`, stop. Show the ticket and its criteria in two lines and ask to take it.
 4. **Start.** `senior-mode start <issue>` makes the worktree and the branch and sets In progress.
-   Work only in that worktree.
+   Work only in that worktree. If it refuses on the `wip` limit, offer to finish the ticket it names.
 5. **Red.** `test-author` agent, from the ticket and its spec (skill `tdd`). Keep the failing output.
 6. **Green.** `implementer` agent, atomic commits (skill `commit`), then `senior-mode check` (skill
    `verify`). Show the user the diff summary; they can redirect at any point.

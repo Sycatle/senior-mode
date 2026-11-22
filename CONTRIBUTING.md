@@ -58,12 +58,22 @@ The body gives:
 - what you verified, and what you could not;
 - for a command, skill or hook: the dogfooding evidence (ADR 0011), that is the real `claude -p`
   session you ran on the sandbox repository (`Sycatle/senior-mode-sandbox`), what you ran and what
-  you saw. `check` alone does not prove behaviour, and a PR without this is not merged;
+  you saw. `check` alone does not prove behaviour, and a PR without this is not merged. The sandbox
+  is private, so an external contributor cannot run it: a maintainer reads the diff, runs the session
+  on your head commit and records it in the PR (see below);
 - either the spec change, or a `Spec-Unchanged: <reason>` line.
 
 A fresh-context `reviewer` agent reviews each pull request and sets `senior-mode/review`. Changes to
 protected zones (CI, security, permissions, secrets, data migrations, major dependency upgrades, any
 size L ticket or ADR) get the `needs-human` label and wait for a maintainer's explicit approval.
+
+### Dogfooding external pull requests
+
+The sandbox is private, so, like `publish` for forks, the maintainer does this step. They read the
+diff first (the session runs your code with their credentials), then run the `claude -p` session on
+the sandbox against your head commit and record it in the PR: what they ran, what they saw, and the
+commit it ran on. A push after that makes the record stale and the session runs again. Until then,
+write in the PR what the session should exercise.
 
 ## Reporting a vulnerability
 

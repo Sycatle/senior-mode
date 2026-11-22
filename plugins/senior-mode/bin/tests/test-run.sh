@@ -101,7 +101,8 @@ board() {
   jq -nc --argjson i "$items" '{data: {node: {items: {pageInfo: {hasNextPage: false}, nodes: $i}}}}' >"$FIX/board.json"
 }
 session() { printf '%s\n%s\n' "$2" "${3:-}" >"$FIX/claude-$1"; }
-green='{"statuses": [{"context": "senior-mode/ci", "state": "success"}, {"context": "senior-mode/review", "state": "success"}]}'
+green='{"statuses": [{"context": "senior-mode/ci", "state": "success"}, {"context": "senior-mode/review", "state": "success"},
+  {"context": "senior-mode/security", "state": "success"}]}'
 # outcome_is <ticket>: the outcome file of the ticket, in .git/senior-mode/runs/<stamp>/<n>.json, holds the
 # fixture record and a finishedAt time.
 outcome_is() {
@@ -128,7 +129,8 @@ session 10-sonnet delivered pr
 echo "$green" >"$FIX/status-10"
 session 11-sonnet "failed: tests do not pass"
 session 11-opus delivered pr
-echo '{"statuses": [{"context": "senior-mode/ci", "state": "success"}, {"context": "senior-mode/review", "state": "pending"}]}' >"$FIX/status-11"
+echo '{"statuses": [{"context": "senior-mode/ci", "state": "success"}, {"context": "senior-mode/review", "state": "pending"},
+  {"context": "senior-mode/security", "state": "success"}]}' >"$FIX/status-11"
 session 12-sonnet "failed: cannot build"
 session 12-opus "failed: still cannot build"
 run || fail "A: run failed: $(cat "$work/out")"
@@ -223,6 +225,20 @@ run || fail "H: run failed: $(cat "$work/out")"
 grep -q 'pr merge' "$GH_LOG" && fail "H: merged a pull request that touches a protected zone"
 grep -q 'Waiting for a human.*#44.*protected zone (auth/session.ts)' "$work/out" ||
   fail "H: report misses the protected zone: $(cat "$work/out")"
+
+# K: ci and review green but the security status is missing or not success: no merge, and the report
+# names it. A security status that is success merges (A, #10).
+config '{"merge": true}' '{"protection": "ruleset"}'
+board 45 '[]' 46 '[]'
+session 45-sonnet delivered pr
+session 46-sonnet delivered pr
+echo '{"statuses": [{"context": "senior-mode/ci", "state": "success"}, {"context": "senior-mode/review", "state": "success"}]}' >"$FIX/status-45"
+echo '{"statuses": [{"context": "senior-mode/ci", "state": "success"}, {"context": "senior-mode/review", "state": "success"},
+  {"context": "senior-mode/security", "state": "pending"}]}' >"$FIX/status-46"
+run || fail "K: run failed: $(cat "$work/out")"
+grep -q 'pr merge' "$GH_LOG" && fail "K: merged without senior-mode/security success: $(grep merge "$GH_LOG")"
+grep -q 'Waiting for a human.*#45.*senior-mode/security not green' "$work/out" || fail "K: report misses #45: $(cat "$work/out")"
+grep -q 'Waiting for a human.*#46.*senior-mode/security not green' "$work/out" || fail "K: report misses #46: $(cat "$work/out")"
 
 # F: a ticket already opened with `senior-mode start` (its worktree and branch exist) is reused as it is.
 config '{}'

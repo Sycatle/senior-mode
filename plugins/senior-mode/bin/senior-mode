@@ -1010,11 +1010,15 @@ pick() {
   fi
 }
 
-# Lowercase words of a title joined by dashes, at most 40 characters cut at a word; a leading
-# `type(scope): ` of a Conventional Commit title is dropped.
+# Lowercase ASCII words of a title joined by dashes, at most 40 characters cut at a word; a leading
+# `type(scope): ` of a Conventional Commit title is dropped. Accents are transliterated with iconv when
+# it can (under a UTF-8 locale, else it writes `?`), and any non-ASCII byte left is dropped, so a branch
+# name is portable whatever the locale (#111).
 slugify() {
-  local full=${1,,} s
-  full=$(sed -E 's/^[a-z]+(\([^)]*\))?!?: //; s/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' <<<"$full")
+  local full s
+  full=$(LC_ALL=C.UTF-8 iconv -f UTF-8 -t ASCII//TRANSLIT <<<"$1" 2>/dev/null) || full=$1
+  full=$(printf '%s' "$full" | LC_ALL=C tr -cd '\000-\177' | LC_ALL=C tr '[:upper:]' '[:lower:]' |
+    LC_ALL=C sed -E 's/^[a-z]+(\([^)]*\))?!?: //; s/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
   s=${full:0:40}
   [ ${#full} -le 40 ] || [ "${full:40:1}" = - ] || s=${s%-*}
   printf '%s\n' "${s%-}"

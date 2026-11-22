@@ -132,8 +132,9 @@ descriptions, and the `language` config key for replies and documents.
   the main checkout (`<repository>-<issue>`) and the branch `<type>/<issue>-<slug>`, from the default
   branch fetched first (no upstream is set), then sets Status `In progress`. The type follows the
   issue's `type:` label (`feature` feat, `bug` fix, `task` and `chore` chore; feat without a label); the
-  slug is the title without its Conventional prefix, cut at 40 characters on a word. It refuses a
-  closed issue or a taken path, and rerunning reuses the branch (whatever its slug) and the worktree.
+  slug is the title without its Conventional prefix, lowercase ASCII (accents are transliterated with
+  `iconv` when it is available, any other non-ASCII character is dropped, whatever the locale), cut at 40
+  characters on a word. It refuses a closed issue or a taken path, and rerunning reuses the branch (whatever its slug) and the worktree.
   It prints `branch <name>` and `worktree <path>`.
 - `senior-mode status [--json] [--since <dur>] [--watch [secs]]` reads the Project items and the
   repository facts (open pull requests with their statuses, recently closed issues and merged pull

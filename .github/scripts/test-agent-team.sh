@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for agent-team.sh: the team of ADR 0004 passes, a missing role, a wrong pin, a reviewer
-# cheaper than the implementer, ops loading CLAUDE.md or an unknown preloaded skill fail.
+# cheaper than the implementer, a security agent off Opus, ops loading CLAUDE.md or an unknown preloaded skill fail.
 set -u
 script=$(cd "$(dirname "$0")" && pwd)/agent-team.sh
 work=$(mktemp -d)
@@ -22,6 +22,7 @@ team() {
   agent test-author sonnet medium "skills: [tdd]"
   agent implementer sonnet medium
   agent reviewer opus high
+  agent security opus high
   agent ops haiku low "omitClaudeMd: true"
 }
 expect_fail() { # reason, then the output must name the file
@@ -46,6 +47,12 @@ expect_fail "no maxTurns" implementer.md
 
 team && agent reviewer haiku high
 expect_fail "a reviewer cheaper than the implementer" reviewer.md
+
+team && agent security sonnet high
+expect_fail "a security agent cheaper than Opus" security.md
+
+team && rm "$work/p/agents/security.md"
+expect_fail "a missing security agent" security.md
 
 team && agent ops haiku low
 expect_fail "ops loading CLAUDE.md" ops.md

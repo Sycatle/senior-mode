@@ -6,18 +6,19 @@ disable-model-invocation: true
 
 # Setup
 
-Safe to rerun: it repairs.
+Safe to rerun: it repairs. Wording to relay, follow-ups, status line: `${CLAUDE_SKILL_DIR}/reference.md`.
 
 ## Before
 
 1. The folder is a git repository with an `origin` remote on GitHub. If not, offer to create one,
-   private by default, never without a yes. GitHub needs a first commit: commit what is there, then `gh repo create <name> --private --source . --push`.
+   private by default, never without a yes: commit what is there, then
+   `gh repo create <name> --private --source . --push`.
 2. `gh auth status` succeeds. If the token lacks the `project` scope, ask the user to run
-   `gh auth refresh -s project` and wait.
+   `gh auth refresh -s project`.
 3. Ask once: checks before each push only (`local`, free) or also on GitHub Actions (`actions`,
    spends the Actions budget). Then tell the user, in a short table, what will change: a Project
    board, labels, rebase-only merges, a default-branch ruleset, in `local` the workflows disabled
-   (files kept), and the Repository files below. Proceed on their yes.
+   (files kept), and the Repository files below. Go on their yes.
 
 ## GitHub
 
@@ -28,27 +29,20 @@ Run `senior-mode setup github --ci <local|actions>`. It:
 - creates the labels `needs-human`, `needs-info`, `blocked` (and `type:*` on a personal account);
 - allows rebase merges only, deletes merged branches;
 - creates or updates a ruleset `senior-mode` on the default branch: pull requests only, rebase,
-  `senior-mode/ci` and `senior-mode/review` required, linear history; other protection kept;
-  an admin can bypass it with `gh pr merge --admin`. If it prints `protection: NOT enforced`
-  (private repo, GitHub Free), relay it and get an acknowledgement;
+  `senior-mode/ci` and `senior-mode/review` required, linear history; other protection kept. If it
+  prints `protection: NOT enforced`, see "No branch protection" in the reference;
 - `local`: disables the repository's workflows (files kept); `actions`: `setup repo` then adds
-  `.github/workflows/senior-mode.yml`: checks, `senior-mode/ci`, releases. If it prints
-  `releases:`, relay it (the release PR needs a `RELEASE_PLEASE_TOKEN` secret to get CI).
+  `.github/workflows/senior-mode.yml`. If it prints `releases:`, relay it (the release PR needs
+  a `RELEASE_PLEASE_TOKEN` secret to get CI).
 
 ## Repository
 
-1. Run `senior-mode setup repo`. With a `package.json` it takes the `node` preset and its
-   scripts; otherwise ask once how to lint, typecheck, test and build, and rerun with one
-   `--command lint="<cmd>"` per answer. It adds checks, git hooks, `CLAUDE.md` Principles, PR and
-   issue templates, permissions and release-please, keeping what exists.
-2. If it prints `missing:`, propose a tool for each (Biome to lint, Vitest to test), added in its
-   own commit on a yes; then rerun.
-3. If it created `CLAUDE.md`, fill the skeleton from the scout agent's commands, code map and
-   pitfalls. If it reports over 80 lines, propose cuts.
-4. Offer a status line (ticket, last check, run); it replaces the user's own here. On a
-   yes, run `senior-mode setup statusline`.
+Run `senior-mode setup repo`. With a `package.json` it takes the `node` preset; otherwise ask once
+how to lint, typecheck, test and build, and rerun with one `--command lint="<cmd>"` per answer. It
+adds checks, git hooks, `CLAUDE.md` Principles, templates, permissions and release-please, keeping
+what exists. Then follow "Repository follow-ups" in the reference.
 
 ## Report
 
 Summarise the output in plain words, in the project language, with the Project URL
-(`gh project view <number> --owner <owner> --web`). On failure, quote the error and the retry command.
+(`gh project view <number> --owner <owner> --web`). On failure, quote the error and the command to retry.

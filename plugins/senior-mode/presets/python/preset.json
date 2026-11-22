@@ -10,6 +10,7 @@
     "**/Dockerfile*",
     "docker-compose*.yml",
     "infra/**",
+    ".claude/senior-mode.json",
     ".claude/secret-allowlist"
   ],
   "checks": [{ "name": "commit subjects", "run": ".githooks/commit-msg --branch" }],

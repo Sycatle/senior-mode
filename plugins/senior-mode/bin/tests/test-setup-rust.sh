@@ -76,7 +76,7 @@ expect "$d" test "cargo nextest run"
 
 # Default protected zones: migrations, auth and security, CI, containers and infra; no lockfile.
 jq -e '.protected | length > 0' "$preset" >/dev/null || fail "no protected globs in the preset"
-for g in '**/migrations/**' '**/auth/**' '**/security/**' '.github/workflows/**' 'Dockerfile*' 'infra/**' '.claude/secret-allowlist'; do
+for g in '**/migrations/**' '**/auth/**' '**/security/**' '.github/workflows/**' 'Dockerfile*' 'infra/**' '.claude/secret-allowlist' '.claude/senior-mode.json'; do
   jq -e --arg g "$g" '.protected | index($g)' "$preset" >/dev/null || fail "$g not protected by default"
 done
 jq -e '.protected | map(test("Cargo")) | any' "$preset" >/dev/null && fail "Cargo.lock or Cargo.toml is protected by default"

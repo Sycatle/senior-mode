@@ -1,6 +1,6 @@
 # Agents
 
-senior-mode ships seven agents, each with a narrow job, a pinned model and only the tools that job needs.
+senior-mode ships eight agents, each with a narrow job, a pinned model and only the tools that job needs.
 
 The main session routes work to them; it does not read code at length. The design is in
 [spec §9](../specs/0001-senior-mode.md#9-agent-team) and [ADR 0004](../adr/0004-model-routing.md).
@@ -15,6 +15,7 @@ The main session routes work to them; it does not read code at length. The desig
 | `test-author` | sonnet / medium | 30 | Read, Grep, Glob, Edit, Write, Bash | tdd | Failing tests from the acceptance criteria |
 | `implementer` | sonnet / medium | 60 | Read, Grep, Glob, Edit, Write, Bash | tdd, commit, verify | Make the tests pass, refactor, commit |
 | `reviewer` | opus / high | 30 | Read, Grep, Glob, Bash (no Edit, Write) | review, spec | Fresh-context review and merge verdict |
+| `security` | opus / high | 30 | Read, Grep, Glob, Bash (no Edit, Write) | review | Security pass on protected zones and L tickets |
 | `ops` | haiku / low | 20 | Bash, Read | commit | Issues, board fields, PRs, statuses, merges, releases |
 
 Values come from each agent's frontmatter in `plugins/senior-mode/agents/`.
@@ -72,11 +73,21 @@ and spec, and the tests, applies the [`review`](skills.md#review) skill, posts o
 the status `senior-mode/review`. It cannot edit files. It keeps recurring findings in its project
 memory (in `.claude/agent-memory/`).
 
+## `security`
+
+The second review level ([ADR 0015](../adr/0015-security-posture.md)), for a pull request that
+touches a [protected zone](autonomy.md#protected-zones) or closes a size L ticket. It starts from an
+empty context, applies the Security section of the [`review`](skills.md#review) skill in depth,
+following untrusted values into code the diff does not touch, posts one comment and sets
+`senior-mode/security`: `success` with no high or critical finding, `failure` with one (and the
+`needs-human` label), `pending` when it could not finish. It cannot edit files. It runs on Opus
+because a miss costs most where it is used.
+
 ## `ops`
 
 Runs bookkeeping with `gh`, `git` and the `senior-mode` script: tickets, board fields, labels, pull
 requests, releases. It merges only with `gh pr merge <pr> --rebase --delete-branch`, only when told
-to, only when `senior-mode/ci` and `senior-mode/review` are green, and never a `needs-human` pull
+to, only when `senior-mode/ci`, `senior-mode/review` and `senior-mode/security` are green, and never a `needs-human` pull
 request. It skips `CLAUDE.md`, which it never needs.
 
 ## How they are used

@@ -230,8 +230,9 @@ you are on, with its own Claude login: no API key, no budget flag
 
 | Feature | State |
 |---|---|
-| Spec drift check in the check list | Coming in [v0.2](https://github.com/Sycatle/senior-mode/milestone/2) |
-| Retry on Opus in `next` (it exists in `run`) | Arrives with `next` |
+| Spec drift check in the check list | Planned, no milestone yet; today the reviewer checks it |
+| Dependency audit and secret scan of the diff in the check list | Planned in [v0.3](https://github.com/Sycatle/senior-mode/milestone/3) |
+| Retry on Opus in `next` (it exists in `run`) | Not planned: in `next` you decide |
 | Formatter after each edit, desktop notifications, auto-allowed check commands during a run | Planned in [spec §16](../specs/0001-senior-mode.md#hooks), no milestone yet |
 
 Nothing merges unless you ask for it: by hand, or with `autonomy.merge: true` for `run`.

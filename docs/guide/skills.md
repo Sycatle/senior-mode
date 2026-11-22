@@ -74,8 +74,7 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
   `draft`, `accepted`, `implemented`, `superseded` (never deleted). The `paths` field lists the code
   it governs; a PR touching those paths updates the spec or says `Spec-Unchanged: <reason>`.
 - **When.** When writing a spec, when code under a spec changes, near files in `docs/specs/`.
-- **Note.** The CI check for spec drift is coming in
-  [v0.2](https://github.com/Sycatle/senior-mode/milestone/2); today the reviewer checks it.
+- **Note.** A check for spec drift is planned, with no milestone yet; today the reviewer checks it.
 
 ## `adr`
 

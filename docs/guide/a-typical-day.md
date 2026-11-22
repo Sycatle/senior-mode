@@ -1,11 +1,10 @@
 # A typical day
 
-A walk-through from an idea to a merged pull request with the tools of version 0.1, and where the
-coming commands will take over.
+A walk-through from an idea to a merged pull request, step by step, and which command runs each part.
 
 `frame` and `next` run a whole flow. Without them, you ask Claude for each step in plain words, and
 the skills, agents and hooks keep the work disciplined. The daily commands
-`next` and `status` chain these steps for you; `run` will do it without you later.
+`next` and `status` chain these steps with you; `run` does it without you.
 
 ## 1. Frame the idea
 
@@ -108,12 +107,12 @@ senior-mode release
 
 ## Where the commands fit
 
-| Step | Today | Later |
-|---|---|---|
-| Read where things stand | `status`, a plain-language dashboard | Same |
-| Steps 3 to 7, with you in the loop | `/senior-mode:next` picks the top Ready ticket and delivers it with you | Same |
-| Steps 3 to 7, without you | `/senior-mode:run` delivers up to N Ready tickets, and merges within guardrails when you turn merging on | Same |
-| Weekly cleanup | `/senior-mode:retro` gives the facts of the week and up to three process changes to approve | Same |
+| Step | Command |
+|---|---|
+| Read where things stand | `status`, a plain-language dashboard |
+| Steps 3 to 7, with you in the loop | `/senior-mode:next` picks the top Ready ticket and delivers it with you |
+| Steps 3 to 7, without you | `/senior-mode:run` delivers up to N Ready tickets, and merges within guardrails when you turn merging on; `senior-mode schedule install` runs it every night |
+| Weekly cleanup | `/senior-mode:retro` gives the facts of the week and up to three process changes to approve |
 
 Note: Claude's session greeting and the end of `frame` mention "go" and `/senior-mode:next`: "go"
 starts `next`.

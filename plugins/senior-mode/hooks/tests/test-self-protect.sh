@@ -129,6 +129,19 @@ for c in \
   'cp -r x .git/' \
   'cp -r x .git' \
   'cp /tmp/c .git/config.worktree' \
+  'rm -rf .git/*' \
+  'rm -rf .git/hoo*' \
+  'rm -rf .git/h?oks' \
+  'sudo -u nobody rm -rf .git' \
+  'env -i rm -rf .git' \
+  'env -i PATH=/bin rm .git/hooks/pre-push' \
+  'nice -n 5 rm -rf .git' \
+  'doas rm -rf .git' \
+  'echo x | xargs -n1 rm .git/hooks/pre-push' \
+  'xargs rm -rf .git' \
+  'time rm -rf .git' \
+  'sudo -u root chmod -x .git/hooks/pre-push' \
+  'sudo -u nobody tee .claude/x' \
   'unlink .claude/settings.json' \
   'touch .claude/x' \
   'truncate -s0 .claude/settings.json' \
@@ -191,6 +204,14 @@ for c in \
   'cp .git/config /tmp/config.bak' \
   'cat .git/config.worktree' \
   'git config user.name t' \
+  'rm -rf .git-old/*' \
+  'cp .git/* /tmp/backup' \
+  'ls .git/*' \
+  'sudo -u nobody rm -rf build' \
+  'env -i ls .git' \
+  'nice -n 5 make' \
+  'xargs -n1 rm build/x' \
+  'doas ls' \
   'mv src/a src/b' \
   'touch .github/ISSUE_TEMPLATE/new.yml' \
   'echo x > .github/pull_request_template.md' \

@@ -45,10 +45,13 @@ normalize() {
 
 # Denies a path, as written, that is under a protected directory of the repository.
 check() {
-  local p=$1 r rel
+  local p=$1 r rel rest
   [ -n "$p" ] || return 0
   [[ $p == /* ]] || p=$cwd/$p
   p=$(normalize "$p")
+  # An unexpanded glob directly under the common dir (`rm -rf .git/*`) reaches the hooks and the config.
+  rest=${p#"$common"/}
+  [[ -n $common && $p == "$common"/* && ${rest%%/*} == *[\*\?\[]* ]] && deny "$1"
   [[ -n $common && ($p == "$common" || $p == "$common"/hooks || $p == "$common"/hooks/* || $p == "$common"/config ||
     $p == "$common"/config.worktree || $p == "$common"/worktrees/*/config.worktree) ]] && deny "$1"
   for r in "$root" "$here"; do
@@ -83,7 +86,14 @@ while IFS= read -r segment; do
     [[ $target == '&'* ]] || check "$target"
   done
   i=0
-  while [[ ${w[i]:-} == *=* || ${w[i]:-} =~ ^(command|exec|sudo|env|nohup|time)$ ]]; do i=$((i + 1)); done
+  while [[ ${w[i]:-} == *=* || ${w[i]:-} =~ ^(command|exec)$ ]]; do i=$((i + 1)); done
+  # sudo, env, xargs... run what follows: go on to the command they run, options and values included.
+  if [[ ${w[i]##*/} =~ ^(sudo|doas|env|xargs|nohup|time|nice)$ ]]; then
+    while [ "$i" -lt "${#w[@]}" ] &&
+      ! [[ ${w[i]##*/} =~ ^(tee|rm|rmdir|unlink|touch|truncate|shred|mv|chmod|chown|chgrp|cp|install|ln|sed|perl|dd|git)$ ]]; do
+      i=$((i + 1))
+    done
+  fi
   cmd=${w[i]:-}
   cmd=${cmd##*/}
   [ -n "$cmd" ] || continue

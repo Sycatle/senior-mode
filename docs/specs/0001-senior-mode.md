@@ -294,9 +294,11 @@ these bounds:
 the merge are applied by the command, not by a model. It takes the first N tickets of `pick`, and
 for each, at most P at a time:
 
-- creates the worktree `<repo>-run-<n>` (a sibling of the main checkout) and the branch
-  `<type>/<issue>-<slug>` from the default branch (`fix` for `type:bug`, `chore` for `type:chore`,
-  else `feat`), or reuses them, and sets the status `In progress`;
+- opens the ticket with `senior-mode start <issue>` (section 7), the same code path as the daily
+  session: the worktree `<repo>-<issue>` (a sibling of the main checkout), the branch
+  `<type>/<issue>-<slug>` from the default branch (`fix` for `type:bug`, `chore` for `type:task` and
+  `type:chore`, else `feat`), reused when they exist, and the status `In progress`; a ticket that
+  cannot be opened is given up;
 - starts `claude -p --model sonnet --permission-mode bypassPermissions` in it, with
   `SENIOR_MODE_RUN=1` and `SENIOR_MODE_RUN_OUTCOME` (and `--plugin-dir` from
   `SENIOR_MODE_PLUGIN_DIR`), in a window of the tmux session `senior-mode-run`, or in the background

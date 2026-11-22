@@ -21,6 +21,10 @@ cat >"$work/stub/gh" <<'STUB'
 echo "$*" >>"$GH_LOG"
 case "$*" in
   "api graphql --input -") cat >/dev/null; cat "$FIX/board.json" ;;
+  "issue view "*)
+    n=$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*")
+    jq -c --argjson n "$n" '.data.node.items.nodes[] | select(.content.number == $n) | .content
+      | {title, state, labels: .labels.nodes}' "$FIX/board.json" ;;
   "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
   "project item-edit"*) ;;
   "api repos/acme/app/pulls?head="*)
@@ -39,7 +43,7 @@ cat >"$work/stub/claude" <<'STUB'
 args=("$@")
 for ((i = 0; i < $#; i++)); do [ "${args[i]}" != --model ] || model=${args[i + 1]}; done
 echo "$(basename "$PWD") $model run=${SENIOR_MODE_RUN:-} ${*:1:$# - 1}" >>"$CLAUDE_LOG"
-n=$(sed -nE 's/.*-run-([0-9]+)$/\1/p' <<<"$PWD")
+n=$(sed -nE 's#.*/app-([0-9]+)$#\1#p' <<<"$PWD")
 [ -n "$n" ] || exit 0
 fx=$FIX/claude-$n-$model
 [ -f "$fx" ] || exit 1
@@ -86,7 +90,7 @@ board() {
     n=$1
     items=$(jq -c --argjson n "$n" --argjson l "$2" '. + [{fieldValues: {nodes: [{name: "Ready", field: {name: "Status"}},
       {name: "P1 next", field: {name: "Priority"}}, {name: "S", field: {name: "Size"}}]},
-      content: {number: $n, title: "Ticket \($n) é", url: "u", state: "OPEN", closedAt: null,
+      content: {number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null,
         labels: {nodes: ($l | map({name: .}))}, milestone: null, blockedBy: {nodes: []}}}]' <<<"$items")
     shift 2
   done
@@ -106,6 +110,9 @@ outcome_is() {
   jq -e '.finishedAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")' "$f" >/dev/null ||
     fail "outcome of #$1 has no ISO finishedAt: $(cat "$f")"
 }
+outcome_is_delivered() {
+  jq -e '.outcome == "delivered"' "$repo/.git/senior-mode/runs/"*/"$1.json" >/dev/null || fail "#$1 not recorded as delivered"
+}
 run() { : >"$GH_LOG"; : >"$CLAUDE_LOG"; (cd "$repo" && "$cli" run "$@") >"$work/out" 2>&1; }
 
 # A: three tickets two at a time in tmux; merging on. #10 merges; #11 succeeds on Opus but its review
@@ -121,15 +128,16 @@ echo '{"statuses": [{"context": "senior-mode/ci", "state": "success"}, {"context
 session 12-sonnet "failed: cannot build"
 session 12-opus "failed: still cannot build"
 run || fail "A: run failed: $(cat "$work/out")"
-[ "$(git -C "$work/app-run-10" branch --show-current 2>/dev/null)" = fix/10-ticket-10-e ] ||
-  fail "A: no worktree on fix/10-ticket-10-e: $(git -C "$repo" worktree list)"
-git -C "$work/app-run-11" branch --show-current 2>/dev/null | grep -qx feat/11-ticket-11-e || fail "A: no feat branch for #11"
-grep -q 'app-run-10 sonnet run=1 -p --model sonnet --permission-mode bypassPermissions --output-format json' "$CLAUDE_LOG" ||
+[ "$(git -C "$work/app-10" branch --show-current 2>/dev/null)" = fix/10-ticket-10 ] ||
+  fail "A: no worktree on fix/10-ticket-10: $(git -C "$repo" worktree list)"
+git -C "$work/app-11" branch --show-current 2>/dev/null | grep -qx feat/11-ticket-11 || fail "A: no feat branch for #11"
+grep -q 'issue view 10 ' "$GH_LOG" || fail "A: the worktree was not opened by senior-mode start: $(cat "$GH_LOG")"
+grep -q 'app-10 sonnet run=1 -p --model sonnet --permission-mode bypassPermissions --output-format json' "$CLAUDE_LOG" ||
   fail "A: claude not called as expected: $(cat "$CLAUDE_LOG")"
-grep -q '^app-run-10 opus' "$CLAUDE_LOG" && fail "A: a delivered ticket was retried on Opus"
-grep -q '^app-run-11 opus' "$CLAUDE_LOG" || fail "A: a failed ticket was not retried on Opus"
-grep -q '^app-run-12 opus' "$CLAUDE_LOG" || fail "A: #12 not retried on Opus"
-grep -q 'app-run-13' "$CLAUDE_LOG" && fail "A: more than maxTickets tickets started"
+grep -q '^app-10 opus' "$CLAUDE_LOG" && fail "A: a delivered ticket was retried on Opus"
+grep -q '^app-11 opus' "$CLAUDE_LOG" || fail "A: a failed ticket was not retried on Opus"
+grep -q '^app-12 opus' "$CLAUDE_LOG" || fail "A: #12 not retried on Opus"
+grep -q 'app-13' "$CLAUDE_LOG" && fail "A: more than maxTickets tickets started"
 grep -qx 'pr merge 110 --rebase -R acme/app' "$GH_LOG" || fail "A: green #10 not merged: $(grep merge "$GH_LOG")"
 grep -q 'pr merge 111' "$GH_LOG" && fail "A: #11 merged without a green review"
 grep -q 'PUT' "$GH_LOG" && fail "A: the REST merge endpoint was used"
@@ -155,7 +163,7 @@ board 20 '[]' 21 '[]'
 session 20-sonnet delivered
 session 21-sonnet delivered pr
 run || fail "B: run failed: $(cat "$work/out")"
-grep -q 'app-run-21' "$CLAUDE_LOG" && fail "B: circuit breaker did not stop the run"
+grep -q 'app-21' "$CLAUDE_LOG" && fail "B: circuit breaker did not stop the run"
 grep -q 'opus' "$CLAUDE_LOG" && fail "B: escalated although autonomy.escalate is false"
 grep -q 'Failed.*#20.*no open pull request' "$work/out" || fail "B: report misses #20: $(cat "$work/out")"
 grep -q 'Not started.*#21' "$work/out" || fail "B: report misses #21 not started: $(cat "$work/out")"
@@ -166,8 +174,8 @@ config '{}'
 board 30 '[]' 31 '[]'
 session 30-sonnet "outgrown: needs a data migration"
 run || fail "C: run failed: $(cat "$work/out")"
-grep -q 'app-run-30 opus' "$CLAUDE_LOG" && fail "C: an outgrown ticket was retried"
-grep -q 'app-run-31' "$CLAUDE_LOG" && fail "C: run went on after an outgrown ticket"
+grep -q 'app-30 opus' "$CLAUDE_LOG" && fail "C: an outgrown ticket was retried"
+grep -q 'app-31' "$CLAUDE_LOG" && fail "C: run went on after an outgrown ticket"
 grep -q 'issues/30/comments' "$GH_LOG" || fail "C: no comment on the outgrown ticket"
 grep -q 'needs a data migration' "$work/out" || fail "C: report misses the reason: $(cat "$work/out")"
 outcome_is 30
@@ -179,7 +187,7 @@ session 40-sonnet delivered pr
 echo "$green" >"$FIX/status-40"
 run --max 1 || fail "D: run failed: $(cat "$work/out")"
 grep -q 'pr merge' "$GH_LOG" && fail "D: merged without server-side protection"
-grep -q 'app-run-41' "$CLAUDE_LOG" && fail "D: --max 1 started two tickets"
+grep -q 'app-41' "$CLAUDE_LOG" && fail "D: --max 1 started two tickets"
 grep -q 'Waiting for a human.*#40.*protection' "$work/out" || fail "D: report misses why #40 waits: $(cat "$work/out")"
 config '{"merge": true}' '{"protection": "ruleset"}'
 board 42 '[]'
@@ -189,6 +197,16 @@ echo "$green" >"$FIX/status-42"
 run || fail "D: run failed: $(cat "$work/out")"
 grep -q 'pr merge' "$GH_LOG" && fail "D: merged a needs-human pull request"
 grep -q 'Waiting for a human.*#42.*needs-human' "$work/out" || fail "D: report misses the label: $(cat "$work/out")"
+
+# F: a ticket already opened with `senior-mode start` (its worktree and branch exist) is reused as it is.
+config '{}'
+board 50 '["type:bug"]'
+(cd "$repo" && "$cli" start 50) >/dev/null 2>&1 || fail "F: start 50 failed"
+session 50-sonnet delivered pr
+run || fail "F: run failed: $(cat "$work/out")"
+[ "$(git -C "$repo" worktree list | grep -c 'app-50 ')" -eq 1 ] || fail "F: not one worktree for #50: $(git -C "$repo" worktree list)"
+grep -q '^app-50 sonnet' "$CLAUDE_LOG" || fail "F: no session in the worktree of start: $(cat "$CLAUDE_LOG")"
+outcome_is_delivered 50
 
 # E: nothing Ready, bad arguments.
 board

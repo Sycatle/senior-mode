@@ -135,6 +135,15 @@ for c in \
   'rm .git/hoo\ks/pre-push' \
   'echo x > .cla\ude/x' \
   'rm -rf .git\/*' \
+  'rm -rf .git\/hooks' \
+  'rm .githooks\/pre-push' \
+  'echo x >> \.claude/settings.json' \
+  'echo x > .claude/x\ ' \
+  'echo x > .claude\/x' \
+  'rm .git/hooks/pre-push\ ' \
+  'cp x .git\/' \
+  'echo "a\\" > .claude/x' \
+  'echo x > \".claude/x' \
   'rm -rf .git/hoo*' \
   'rm -rf .git/h?oks' \
   'sudo -u nobody rm -rf .git' \
@@ -211,6 +220,11 @@ for c in \
   'git config user.name t' \
   'rm -rf .git-old/*' \
   'echo x\y > out.txt' \
+  'echo "a\\" > out.txt' \
+  'cat my\ file' \
+  'echo x > my\ file.txt' \
+  "grep 'a\\.b' src/x" \
+  "sed 's/\\//x/' src/f" \
   'echo a\nb' \
   'cp .git/* /tmp/backup' \
   'ls .git/*' \

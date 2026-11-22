@@ -79,7 +79,8 @@ d=$(project next '{"scripts": {"typecheck": "tsc --noEmit", "test": "echo \"Erro
 setup "$d"
 [ "$(cfg "$d" .framework)" = next ] || fail "Next.js not recorded"
 grep -q "^preset: node (TypeScript, next)$" "$work/out" || fail "Next.js not reported: $(cat "$work/out")"
-[ "$(check_run "$d" typecheck)" = "npm run typecheck" ] || fail "typecheck script not used"
+[ "$(check_run "$d" typecheck)" = "npx --no -- next typegen && npm run typecheck" ] ||
+  fail "typecheck without next typegen: $(check_run "$d" typecheck)"
 [ "$(check_run "$d" build)" = "npm run build" ] || fail "next build not through the script"
 [ "$(check_run "$d" e2e)" = "npm run test:e2e" ] || fail "e2e script not used: $(check_run "$d" e2e)"
 [ -z "$(check_run "$d" test)" ] || fail "npm's placeholder test script taken as tests"
@@ -104,6 +105,17 @@ jq -e '.protected | index("middleware.*")' "$d/.claude/senior-mode.json" >/dev/n
 d=$(project dev-next '{"devDependencies": {"next": "16"}}' package-lock.json)
 setup "$d"
 jq -e '.protected | index("src/middleware.*")' "$d/.claude/senior-mode.json" >/dev/null || fail "next as a devDependency not recognised"
+
+# Route types (#112): next typegen before typecheck from Next.js 15.5, not before, not twice.
+for pair in '^15.5.0:npx --no -- next typegen && npx --no -- tsc --noEmit' 'latest:npx --no -- next typegen && npx --no -- tsc --noEmit' \
+  '~15.4.2:npx --no -- tsc --noEmit' '14:npx --no -- tsc --noEmit'; do
+  d=$(project "typegen-${pair%%:*}" "{\"dependencies\": {\"next\": \"${pair%%:*}\", \"typescript\": \"5\"}}" package-lock.json tsconfig.json)
+  setup "$d"
+  [ "$(check_run "$d" typecheck)" = "${pair#*:}" ] || fail "next ${pair%%:*}: $(check_run "$d" typecheck)"
+done
+d=$(project typegen-script '{"scripts": {"typecheck": "next typegen && tsc --noEmit"}, "dependencies": {"next": "16"}}' package-lock.json)
+setup "$d"
+[ "$(check_run "$d" typecheck)" = "npm run typecheck" ] || fail "typegen added twice: $(check_run "$d" typecheck)"
 
 # Plain JavaScript: named as such, and no typecheck is expected.
 d=$(project js '{"scripts": {"lint": "eslint ."}}' package-lock.json)

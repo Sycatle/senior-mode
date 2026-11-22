@@ -676,10 +676,19 @@ node_detect() {
   jq -c --arg pm "$pm" --arg exec "$exec" --arg install "$install" --argjson tsconfig "$tsconfig" '(.scripts // {}) as $s
     | def run($n): if $s[$n] then "\($pm) run \($n)" else null end;
     ((.dependencies.typescript // .devDependencies.typescript) != null) as $ts
+    # Next.js 15.5+ generates its route types only on build or dev: a fresh worktree needs
+    # next typegen before typecheck (#112). A range without a version (latest, canary) is recent.
+    | (.dependencies.next // .devDependencies.next) as $next
+    | ($next != null and (($next | [scan("[0-9]+")]) as $n
+        | if ($next | test("^[~^>=v ]*[0-9]")) then ($n[0] | tonumber) > 15
+            or (($n[0] | tonumber) == 15 and (($n[1] // "0") | tonumber) >= 5)
+          else true end)) as $typegen
     | {commands: ({
         lint: run("lint"),
-        typecheck: (run("typecheck") // run("type-check")
-          // (if $tsconfig and $ts then "\($exec) tsc --noEmit" else null end)),
+        typecheck: ((run("typecheck") // run("type-check")
+          // (if $tsconfig and $ts then "\($exec) tsc --noEmit" else null end))
+          | if . and $typegen and (($s.typecheck // $s["type-check"] // "") | contains("typegen") | not)
+            then "\($exec) next typegen && \(.)" else . end),
         test: (if ($s.test // "") | test("no test specified") then null else run("test") end),
         build: run("build"),
         e2e: (run("test:e2e") // run("e2e")),

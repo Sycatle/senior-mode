@@ -973,11 +973,14 @@ setup_codeowners() { # root owner globs-json slug
     echo "CODEOWNERS: $verb .github/CODEOWNERS, protected zones owned by @$2; commit it (setup commits nothing), the ruleset reads the default branch's copy"
   # Said on every run, a rerun that changes nothing included: until the default branch holds this very
   # file, GitHub reads no CODEOWNERS from it and the review requirement binds nothing.
-  if there=$(gh_retry api "repos/$4/contents/.github/CODEOWNERS" -H "Accept: application/vnd.github.raw" 2>/dev/null); then
+  # Only a 404 says the default branch has none; any other error leaves the question open.
+  if there=$(gh_retry api "repos/$4/contents/.github/CODEOWNERS" -H "Accept: application/vnd.github.raw" 2>&1); then
     [ "$there" != "$(cat "$file")" ] || return 0
     there="the default branch holds another copy"
-  else
+  elif grep -q 'HTTP 404' <<<"$there"; then
     there="the default branch has none"
+  else
+    there="could not read .github/CODEOWNERS on the default branch: $there"
   fi
   echo "CODEOWNERS: code owner review enforces nothing until .github/CODEOWNERS is on the default branch ($there): commit it and merge it"
 }

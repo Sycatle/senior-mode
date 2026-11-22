@@ -27,7 +27,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> --priority <p> [--severity <s>] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] [--fix] | statusline | retro [--since <dur>] [--json] | check | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] [--fix] | statusline | retro [--since <dur>] [--json] | check | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -83,7 +83,7 @@ gh_retry() {
 option_id() {
   local file=$1 field=$2 option=$3 id
   jq -e --arg f "$field" '.project.fields[$f].id' "$file" >/dev/null ||
-    die "unknown field $field (known: $(jq -r '.project.fields // {} | keys | join(", ")' "$file"))"
+    die "unknown field $field (known: $(jq -r '.project.fields // {} | keys | join(", ")' "$file")); a config created before this field existed lacks it: rerun senior-mode setup github"
   id=$(jq -r --arg f "$field" --arg o "$option" '.project.fields[$f].options[$o] // empty' "$file")
   [ -n "$id" ] ||
     die "unknown option $option for $field (known: $(jq -r --arg f "$field" '.project.fields[$f].options | keys | join(", ")' "$file"))"
@@ -195,7 +195,8 @@ issue_create() {
   local blockers=() edits=() file slug found number url b fields implied have
   while [ $# -gt 0 ]; do
     case $1 in -h | --help)
-      echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> --priority <option> [--severity critical|high|moderate|low] [--status <option>] [--milestone <title>] [--type feature|bug|task|chore] [--blocked-by <n>]... [--parent <n>]"
+      echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> [--priority <option>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <file|-> | --no-advisory]] [--status <option>] [--milestone <title>] [--type feature|bug|task|chore] [--blocked-by <n>]... [--parent <n>]"
+      echo "--priority is required unless --severity is critical (P0) or high (P1). --kind, --path and --rule go together and need --severity."
       return 0 ;;
     esac
     if [ "$1" = --no-advisory ]; then

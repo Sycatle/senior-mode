@@ -136,6 +136,11 @@ grep -q -- "--remove-label type: bug$" "$GH_LOG" || fail "a label with a space i
 # --help prints this command's usage and succeeds.
 create --help || fail "--help exits non-zero"
 grep -q -- '--blocked-by' "$work/out" || fail "--help does not list the flags: $(cat "$work/out")"
+# The usage shows --priority optional and every flag of the risk path.
+grep -q -- '\[--priority' "$work/out" || fail "--help shows --priority as required: $(cat "$work/out")"
+for flag in --severity --kind --path --rule --details-file --no-advisory; do
+  grep -q -- "$flag" "$work/out" || fail "--help does not list $flag: $(cat "$work/out")"
+done
 
 # Defaults: Status Backlog, no milestone, label or links.
 create --title "Small" --body-file "$work/body.md" --size S --priority "P0 now" ||
@@ -298,6 +303,13 @@ bad --title "X" --body-file "$work/body.md" --size S --priority "P0 now" --kind 
 bad --title "X" --body-file "$work/body.md" --size S --severity high --kind "" --path a.sh --rule r
 bad --title "X" --body-file "$work/body.md" --size S --severity high --details-file "$work/details.md"
 bad --title "X" --body-file "$work/body.md" --size S --severity critical --kind k --path a.sh --rule r --details-file "$work/missing.md"
+
+# A config created before Severity says how to get the field, instead of only listing the known ones.
+cp "$repo/.claude/senior-mode.json" "$work/with-severity.json"
+jq 'del(.project.fields.Severity)' "$work/with-severity.json" >"$repo/.claude/senior-mode.json"
+bad --title "X" --body-file "$work/body.md" --size S --severity high
+grep -q 'senior-mode setup github' "$work/err" || fail "old config error does not point to setup github: $(cat "$work/err")"
+cp "$work/with-severity.json" "$repo/.claude/senior-mode.json"
 
 # A failed create stops before touching the board.
 CREATE_ERR="milestone 'v9' not found" create --title "Y" --body-file "$work/body.md" --size S --priority "P0 now" &&

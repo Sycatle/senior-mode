@@ -152,8 +152,9 @@ The plugin's hooks apply to the main session and to every agent.
 Runs before every Bash command, in any repository where the plugin is enabled. It denies:
 
 - skipping checks: `--no-verify`, `git commit -n`, `git -c core.hooksPath=...` (or
-  `--config-env`), a `GIT_CONFIG_KEY_<n>=core.hooksPath` environment setting, and setting or
-  unsetting `core.hooksPath` with `git config`, an empty value included (reading it is allowed);
+  `--config-env`), a `GIT_CONFIG_KEY_<n>=core.hooksPath` or `GIT_CONFIG_PARAMETERS` environment
+  setting, and setting or unsetting `core.hooksPath` with `git config`, an empty value included
+  (reading it is allowed). An empty quote pair inside a word (`--no""-verify`) does not hide it;
 - `gh alias set` and `gh alias import`: an alias hides the command it runs from this guard;
 - force-push: `--force`, `-f`, `--force-with-lease`, `--force-if-includes`, a `+` refspec;
 - pushing every branch: `--all`, `--mirror`, `--branches`;
@@ -162,7 +163,9 @@ Runs before every Bash command, in any repository where the plugin is enabled. I
   an upstream);
 - `gh pr merge --admin`, and a merge through `gh api` with `PUT` on `pulls/<n>/merge`, even when
   the number is a variable. `env`, `sudo`, `xargs` and the like in front of `gh` or `git` do not
-  hide the command; for `gh api`, only the endpoint counts, not the text of a `-f body=...`;
+  hide the command; for `gh api`, only the endpoint counts, not the text of a `-f body=...`, as long
+  as the quoting is plain (with a backslash, `$'...'` or a command substitution the whole command
+  is read, and a body that names a ruleset path is then denied too);
 - in a `run` session (`SENIOR_MODE_RUN=1`), any merge: `gh pr merge`, and through `gh api` the
   merge endpoints and the `mergePullRequest` and `enablePullRequestAutoMerge` mutations; and any
   write to rulesets or branch protection, through `gh api` paths or GraphQL ruleset and
@@ -177,10 +180,10 @@ Active only while the environment variable `SENIOR_MODE_RUN=1` is set, which `ru
 sessions it starts. Outside a run it does nothing. It denies Edit, Write, MultiEdit and NotebookEdit
 on `.github/workflows/**`, `.claude/**` and `.githooks/**` at the repository root, and on the git
 hooks, `.git/config` and `config.worktree` of the common dir (every worktree shares them), and
-the `.git` directory itself, and Bash
-commands that obviously write there: redirections, `tee`, `cp`, `mv`, `rm`, `touch`, `truncate`,
-`chmod`, `chown`, `chgrp`, `install`, `ln`, `dd of=`, `sed -i`, `perl -i`, `git rm`, `git mv`, `git checkout` and
-`git restore` on those paths. An agent therefore cannot weaken the checks, the hooks or the
+the `.git` directory itself (`rm -rf .git`, `rm -rf .git/*`), and Bash commands that obviously write
+there: redirections, `tee`, `cp`, `mv`, `rm`, `touch`, `truncate`, `chmod`, `chown`, `chgrp`,
+`install`, `ln`, `dd of=`, `sed -i`, `perl -i`, `git rm`, `git mv`, `git checkout` and
+`git restore` on those paths, also behind `sudo`, `env`, `xargs`, `nice`, `doas` and the like. An agent therefore cannot weaken the checks, the hooks or the
 protected-zone list (which lives in `.claude/senior-mode.json`). `.claude/agent-memory/**` stays
 writable: the reviewer and architect agents keep their project memory there. The reason it gives tells the agent to
 leave the change out and say in the pull request that a human must make it.

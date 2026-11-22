@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for guard-bash.sh (PreToolUse on Bash): JSON in, decision out.
-# shellcheck disable=SC2016 # test commands hold literal $VARIABLES, not shell expansions
+# shellcheck disable=SC2016,SC1003 # test commands hold literal $VARIABLES and backslash-quotes, not shell expansions
 set -u
 hook=$(cd "$(dirname "$0")/.." && pwd)/guard-bash.sh
 work=$(mktemp -d)
@@ -95,6 +95,37 @@ expect deny 'env -u FOO gh pr merge 3 --admin'
 expect deny 'echo 3 | xargs gh pr merge --admin'
 expect deny 'xargs -n1 git push --force'
 expect deny 'sudo -u nobody git push --force'
+# Review of #218: an empty pair inside a word is removed, as before; alone it stays an argument.
+expect deny 'git commit --no""-verify -m x'
+expect deny "git commit --no''-verify -m x"
+expect deny 'git push --for""ce'
+expect deny 'git pu""sh --force'
+expect deny 'git push origin ma""in'
+expect deny 'git config core.hooks""Path x'
+expect deny 'git -c core.hooks""Path=x commit -m x'
+expect deny 'GIT_CONFIG_KEY_0=core.hooks""Path git commit -m x'
+expect deny 'gh pr merge 3 --ad""min'
+expect allow 'git commit --allow-empty-message -m ""'
+expect allow 'git config user.name ""'
+expect allow 'git commit -m "docs: a" -m ""'
+# Review of #218: more forms of the same switches.
+expect deny 'git --config-env core.hooksPath=NOHOOKS commit -m x'
+expect deny 'git --config-env core.hookspath=NOHOOKS commit -m x'
+expect deny 'declare -x GIT_CONFIG_KEY_0=core.hooksPath'
+expect deny 'typeset -x GIT_CONFIG_KEY_0=core.hooksPath'
+expect deny 'GIT_CONFIG_PARAMETERS="'"'"'core.hookspath=/dev/null'"'"'" git commit -m x'
+expect deny "export GIT_CONFIG_PARAMETERS=\"'core.hooksPath'='/dev/null'\""
+expect deny "env GIT_CONFIG_PARAMETERS=\"'core.hooksPath'='x'\" git push"
+expect allow 'git --config-env user.name=NAME commit -m x'
+expect allow "GIT_CONFIG_PARAMETERS=\"'user.name=t'\" git status"
+expect allow 'declare -x FOO=1'
+expect allow 'command -v git'
+# An escaped quote or $'..' in a value can hide the endpoint from the value stripper: whole command read.
+expect deny 'gh api -f body=it\'"'"'s -X PUT repos/a/b/pulls/5/merge'
+expect deny "gh api -f body=\$'a\\'b' -X PUT repos/a/b/pulls/5/merge"
+expect deny "gh api -f body=\$'x\\'y' -X PUT repos/a/b/pulls/5/merge -F z='a'"
+expect deny 'gh api -f body=a\"b -X PUT repos/a/b/pulls/5/merge -f z="c"'
+expect allow 'gh api -X PUT repos/a/b/issues/3/comments -f body="a note"'
 expect allow 'GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=t git commit -m x'
 expect allow 'GIT_CONFIG_COUNT=0 git status'
 expect allow 'git config user.name ""'
@@ -149,6 +180,21 @@ expect deny 'gh api repos/a/b/branches/main/protection/required_status_checks -X
 expect deny 'gh api -X put repos/a/b/pulls/5/merge'
 expect deny "gh api graphql -f query='mutation { updateRepositoryRuleset(input: {}) { clientMutationId } }'"
 expect deny "gh api graphql -f query='mutation { deleteBranchProtectionRule(input: {}) { clientMutationId } }'"
+# Review of #218: the stripped copy only excuses plain quoting; a backslash or $'..' makes the whole
+# command count (a false positive beats a bypass), and so does a command substitution that names the path.
+expect deny "gh api -f body=\$'x\\'y' repos/a/b/rulesets -X POST -f z='a'"
+expect deny 'gh api -f body=a\"b repos/a/b/rulesets -X POST -f z="c"'
+expect deny "gh api -f body=\$'x\\'y' repos/a/b/pulls/5/merge -X PUT -f z='a'"
+expect deny 'gh api -f body=a\"b repos/a/b/pulls/5/merge -X PUT -f z="c"'
+expect deny 'gh api -f body="a \" b" repos/a/b/rulesets -X POST'
+expect deny 'gh api -f body="x \" y" -F z="/rulesets/" -X POST repos/a/b/rulesets'
+expect deny "gh api -f body=\$'a\\'b' -X PUT repos/a/b/rulesets/1"
+expect deny 'gh api -f body=it\'"'"'s -X PUT repos/a/b/rulesets/1'
+expect deny 'gh api -f body=it\'"'"'s -X PUT repos/a/b/pulls/5/merge'
+expect deny 'gh api -f body="$(cat n.md)" -X PUT repos/a/b/rulesets/1'
+expect deny "gh api -f body=\$'it\\'s' repos/a/b/merges -f base=main"
+expect deny 'gh api -f body="$(echo /rulesets/)" -X POST repos/a/b/rulesets'
+expect allow 'gh api repos/a/b/issues/5/comments -f body="$(cat n.md)"'
 # #194: only the endpoint decides, not the text of a body, a header or a jq filter.
 expect deny 'gh api -f name=x -X POST repos/a/b/rulesets'
 expect deny 'gh api -X PUT "repos/$R/rulesets/$ID" -f body="ok"'

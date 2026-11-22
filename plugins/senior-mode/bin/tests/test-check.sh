@@ -9,12 +9,22 @@ failures=0
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 
 mkdir -p "$work/stub"
+# The stub answers the pull request lookup (ASSOC), the board query of an issue (ITEM) and the combined
+# status (STATUS) from files in $FIX; anything else it only logs.
 cat >"$work/stub/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >>"$GH_LOG"
+case "$*" in
+  "api graphql --input -")
+    q=$(cat)
+    if grep -q closingIssuesReferences <<<"$q"; then cat "$FIX/assoc" 2>/dev/null || exit 1
+    else cat "$FIX/item" 2>/dev/null || exit 1; fi ;;
+  "api repos/acme/app/commits/"*"/status --jq "*) all=$*; jq -r "${all#*--jq }" "$FIX/status" 2>/dev/null || true ;;
+esac
 STUB
 chmod +x "$work/stub/gh"
-export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log"
+mkdir -p "$work/fix"
+export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" FIX="$work/fix"
 
 repo="$work/repo"
 git init -q "$repo"
@@ -62,6 +72,68 @@ grep -q "3/3 checks passed" "$work/out" || fail "a skipped check is not counted 
 config '{"checks":[{"name":"env","run":"env | grep -E \"^GIT_(DIR|WORK_TREE|INDEX_FILE)=\" && exit 1; true"}]}'
 (cd "$repo" && GIT_DIR="$repo/.git" GIT_WORK_TREE="$repo" GIT_INDEX_FILE="$repo/.git/index" "$cli" check) \
   >"$work/out" 2>&1 || fail "a check sees git's hook environment: $(cat "$work/out")"
+
+# senior-mode/security (ADR 0015): success "not required" unless a protected zone of the base branch is
+# touched or a closing ticket is L; then pending, never success, and never a downgrade of a verdict.
+git -C "$repo" branch -M main
+git -C "$repo" checkout -q -b feat/9-x
+sec() { grep -- "context=senior-mode/security" "$GH_LOG" | sed 's/.* -f state=\([a-z]*\) .*description=\(.*\)$/\1 \2/'; }
+assoc() { # numbers of the issues the open pull request closes
+  jq -nc --argjson n "[$1]" '{data: {repository: {object: {associatedPullRequests: {nodes: [{number: 7, state: "OPEN",
+    closingIssuesReferences: {nodes: ($n | map({number: .}))}}]}}}}}' >"$FIX/assoc"
+}
+item() { # the Size of the issue on the board
+  jq -nc --arg s "$1" '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"},
+    fieldValues: {nodes: [{name: $s, field: {name: "Size"}}]}}]}}}}}' >"$FIX/item"
+}
+published() { # a config, then check and publish on a new commit
+  config "$1"
+  git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "feat: x"
+  run check || fail "check: $(cat "$work/out")"
+  : >"$GH_LOG"
+  run publish || fail "publish: $(cat "$work/out")"
+}
+ok='"checks":[{"name":"lint","run":"true"}]'
+proj='"project":{"id":"PVT_1","owner":"acme","number":3,"fields":{}}'
+assoc ""
+published "{$ok}"
+[ "$(sec)" = "success not required: no protected zone, not L" ] || fail "not required not published: $(sec)"
+assoc 9; item S
+published "{$ok,$proj}"
+[ "$(sec | cut -d' ' -f1)" = success ] || fail "an S ticket needs the security pass: $(sec)"
+item L
+published "{$ok,$proj}"
+[ "$(sec | cut -d' ' -f1)" = pending ] || fail "an L ticket does not leave security pending: $(sec)"
+sec | grep -q "L ticket #9" || fail "pending without the reason: $(sec)"
+item ""
+published "{$ok,$proj}"
+[ "$(sec | cut -d' ' -f1)" = pending ] || fail "an unknown Size counts as not L: $(sec)"
+rm "$FIX/assoc"
+published "{$ok,$proj}"
+[ "$(sec | cut -d' ' -f1)" = pending ] || fail "an unreadable pull request counts as not required: $(sec)"
+assoc ""
+# The zones are the base branch's: a branch cannot lift its own.
+git -C "$repo" checkout -q main
+config "{$ok,\"protected\":[\"auth/**\"]}"
+git -C "$repo" checkout -q -b feat/10-y
+config "{$ok,\"protected\":[]}"
+mkdir -p "$repo/auth" && echo x >"$repo/auth/a.txt" && git -C "$repo" add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "feat: auth"
+run check || fail "check: $(cat "$work/out")"
+: >"$GH_LOG"
+run publish || fail "publish: $(cat "$work/out")"
+[ "$(sec | cut -d' ' -f1)" = pending ] || fail "a protected zone does not leave security pending: $(sec)"
+sec | grep -q "auth/a.txt" || fail "the zone is not named: $(sec)"
+# A verdict the security agent already set on this commit stays; a "not required" on a due pass goes.
+echo '{"statuses": [{"context": "senior-mode/security", "state": "failure", "description": "1 high"}]}' >"$FIX/status"
+: >"$GH_LOG"
+run publish || fail "publish: $(cat "$work/out")"
+[ -z "$(sec)" ] || fail "publish overwrote the verdict of the security agent: $(sec)"
+echo '{"statuses": [{"context": "senior-mode/security", "state": "success", "description": "not required: no protected zone, not L"}]}' >"$FIX/status"
+: >"$GH_LOG"
+run publish || fail "publish: $(cat "$work/out")"
+[ "$(sec | cut -d' ' -f1)" = pending ] || fail "a due pass stays marked not required: $(sec)"
+rm -f "$FIX/status"
 
 config '{"checks":[{"name":"lint","run":"true"}]}'
 : >"$GH_LOG"

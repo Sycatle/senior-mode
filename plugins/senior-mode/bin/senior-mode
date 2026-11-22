@@ -467,18 +467,72 @@ e2e_lock() {
   done
 }
 
-# Publishes the recorded check result of a commit as the status senior-mode/ci.
+# Open pull requests that contain a commit, with the issues each closes (for the security status).
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+ASSOC_QUERY='query($owner: String!, $name: String!, $sha: GitObjectID!) { repository(owner: $owner, name: $name) {
+  object(oid: $sha) { ... on Commit { associatedPullRequests(first: 10) { nodes { number state
+    closingIssuesReferences(first: 20) { nodes { number } } } } } } } }'
+
+# What `publish` says of senior-mode/security on a commit, as "<state> <description>" (ADR 0015): success
+# "not required" only when no protected zone of the base branch is touched and no ticket the pull
+# request closes is L; pending in every other case, also when that cannot be read. The globs come from
+# the base branch, so a branch cannot lift its own zone.
+security_verdict() {
+  local sha=$1 base globs files zones slug answer issues n size
+  base=$(default_branch) || { echo "pending required: no default branch to compare with"; return; }
+  if git cat-file -e "$base:.claude/senior-mode.json" 2>/dev/null; then
+    globs=$(git show "$base:.claude/senior-mode.json" | jq -c '.protected // []') || globs=null
+  else
+    globs=$(config_get protected 2>/dev/null) || globs='[]'
+  fi
+  jq -e 'type == "array" and all(type == "string")' <<<"$globs" >/dev/null ||
+    { echo "pending required: protected is not a list of globs"; return; }
+  files=$(git -c core.quotePath=false diff --name-only --no-renames "$base...$sha") ||
+    { echo "pending required: cannot compare with $base"; return; }
+  zones=$(protected_match "$globs" <<<"$files")
+  [ -z "$zones" ] || { echo "pending required: protected zone ($(paste -sd, - <<<"$zones" | sed 's/,/, /g'))"; return; }
+  slug=$(repo_slug)
+  answer=$(jq -nc --arg q "$ASSOC_QUERY" --arg o "${slug%%/*}" --arg n "${slug#*/}" --arg s "$sha" \
+    '{query: $q, variables: {owner: $o, name: $n, sha: $s}}' | gh_retry api graphql --input -) || answer=""
+  if [ -z "$answer" ] || ! issues=$(jq -r '[.data.repository.object.associatedPullRequests.nodes[] | select(.state == "OPEN")]
+    | if length == 0 then error("no open pull request") else [.[].closingIssuesReferences.nodes[].number] | unique | .[] end' \
+    <<<"$answer" 2>/dev/null); then
+    echo "pending required: no open pull request found for this commit, so its tickets are unknown"
+    return
+  fi
+  for n in $issues; do
+    size=$( (item_get "$n" Size) 2>/dev/null) || size=""
+    [ -n "$size" ] || { echo "pending required: the Size of #$n is unknown"; return; }
+    [ "$size" != L ] || { echo "pending required: closes the L ticket #$n"; return; }
+  done
+  echo "success not required: no protected zone, not L"
+}
+
+# Publishes the recorded check result of a commit as the status senior-mode/ci, and senior-mode/security
+# when the pull request does not need the security pass. A due pass is left pending, and a verdict
+# the security agent already set on the commit is left alone.
 publish() {
-  local sha record state description
+  local sha record state description slug verdict current
   sha=$(git rev-parse --verify "${1:-HEAD}^{commit}" 2>/dev/null) || die "unknown commit: ${1:-HEAD}"
   record=$(check_record "$sha")
   [ -f "$record" ] || die "no check result for ${sha:0:7}; run senior-mode check on a clean tree first"
   state=$(sed -n 1p "$record")
   description=$(sed -n 2p "$record")
-  gh_retry api "repos/$(repo_slug)/statuses/$sha" -f state="$state" -f context=senior-mode/ci \
+  slug=$(repo_slug)
+  gh_retry api "repos/$slug/statuses/$sha" -f state="$state" -f context=senior-mode/ci \
     -f description="$description" >/dev/null ||
     die "could not publish the status of ${sha:0:7}; push the commit first"
   echo "senior-mode/ci = $state on ${sha:0:7}: $description"
+  verdict=$(security_verdict "$sha")
+  state=${verdict%% *} description=${verdict#* }
+  if [ "$state" = pending ]; then
+    current=$(gh_retry api "repos/$slug/commits/$sha/status" --jq '[.statuses[] | select(.context == "senior-mode/security")
+      | select(.state != "success" or (.description | startswith("not required") | not)) | .state][0] // empty') || current=""
+    [ -z "$current" ] || { echo "senior-mode/security = $current on ${sha:0:7}: left as it is"; return 0; }
+  fi
+  gh_retry api "repos/$slug/statuses/$sha" -f state="$state" -f context=senior-mode/security \
+    -f description="${description:0:140}" >/dev/null || die "could not publish the security status of ${sha:0:7}"
+  echo "senior-mode/security = $state on ${sha:0:7}: $description"
 }
 
 # Board fields and options (spec 0001 §11), in order. Aliases match options of GitHub's default

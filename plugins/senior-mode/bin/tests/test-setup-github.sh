@@ -26,6 +26,7 @@ case "$*" in
     if [ -f "$FIX/rulesets.json" ]; then respond <"$FIX/rulesets.json"; else echo '[]' | respond; fi ;;
   "api -X POST repos/acme/app/rulesets"*) plan_limit write; cat >>"$GH_LOG"
     echo '[{"id": 9, "name": "senior-mode", "source_type": "Repository"}]' >"$FIX/rulesets.json" ;;
+  "api repos/acme/app/rulesets/"*" --jq"*) respond <"$FIX/ruleset-9.json" ;;
   "api -X PUT repos/acme/app/rulesets/"*) cat >>"$GH_LOG" ;;
   "workflow list"*) if [ -f "$FIX/workflows.json" ]; then respond <"$FIX/workflows.json"; else echo '[]' | respond; fi ;;
   "workflow disable"* | "workflow enable"*) ;;
@@ -66,6 +67,7 @@ git -C "$repo" remote add origin git@github.com:acme/app.git
 mkdir -p "$repo/.claude" "$FIX"
 echo '{"language": "fr"}' >"$repo/.claude/senior-mode.json"
 echo '{"owner": {"type": "User"}}' >"$FIX/repo.json"
+echo '{"rules": []}' >"$FIX/ruleset-9.json"
 echo '{"projects": [{"number": 2, "title": "other"}]}' >"$FIX/projects.json"
 echo '{"data": {"node": {"fields": {"nodes": [{}, {"id": "F_Status", "name": "Status", "options": [
   {"id": "O_todo", "name": "Todo", "color": "GRAY", "description": ""},
@@ -128,6 +130,17 @@ logged "updateProjectV2Field" && fail "second run rewrites field options"
 logged "api -X POST repos/acme/app/rulesets" && fail "second run creates another ruleset"
 logged "api -X PUT repos/acme/app/rulesets/9" || fail "second run does not update the ruleset"
 [ "$(cat "$repo/.claude/senior-mode.json")" = "$before" ] || fail "second run changes the config"
+
+# A required check someone added by hand to the ruleset survives the update (merged, not replaced), and
+# ours are not listed twice.
+echo '{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [
+  {"context": "senior-mode/ci"}, {"context": "ci/lint", "integration_id": 15368}]}}]}' >"$FIX/ruleset-9.json"
+setup
+logged "api -X PUT repos/acme/app/rulesets/9" || fail "no update to merge into"
+tr -d ' \n' <"$GH_LOG" | grep -qF '{"context":"ci/lint","integration_id":15368}' || fail "a hand-added required check was dropped: $(cat "$GH_LOG")"
+[ "$(grep -o 'senior-mode/security' "$GH_LOG" | wc -l)" -eq 1 ] || fail "senior-mode/security not required exactly once"
+[ "$(grep -o '"senior-mode/ci"' "$GH_LOG" | wc -l)" -eq 1 ] || fail "senior-mode/ci listed twice"
+echo '{"rules": []}' >"$FIX/ruleset-9.json"
 
 grep -q 'Workflows' "$work/out" && fail "built-in workflows reported although both are on: $(cat "$work/out")"
 

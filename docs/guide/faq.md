@@ -77,8 +77,9 @@ Run `/senior-mode:setup` and read the table of changes before you say yes.
 ## What does an L ticket mean?
 
 L is the largest size. A request is L when any one of these holds: a new subsystem, a data
-migration, a public interface (API, schema, file format), a hard-to-reverse choice, or more than
-about 400 changed lines. An L always goes through `/senior-mode:frame`: alternatives, at least one
+migration or model, authentication, money, an irreversible or cross-cutting change, a change to a
+public interface (API, schema, file format) that others depend on, or more than about 400 changed
+lines. Size follows risk: a small read-only, unauthenticated endpoint that handles no data is S or M. An L always goes through `/senior-mode:frame`: alternatives, at least one
 ADR, a full spec, and an epic split into tickets of size M or less. A human accepts the spec and ADRs
 before work starts. An L is never Ready itself; its sub-issues are. See [`triage`](skills.md#triage).
 

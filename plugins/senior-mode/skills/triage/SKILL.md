@@ -14,10 +14,12 @@ Any single criterion is enough for the larger size.
 
 | Size | Criteria |
 |---|---|
-| S | One module, under ~50 changed lines, no new dependency, no interface change, trivially reversible |
+| S | One module, under ~50 changed lines, no new dependency, no change to an existing interface, trivially reversible |
 | M | Bounded feature or refactor, under ~400 changed lines, may add a dependency or change an internal interface |
-| L | New subsystem, data migration, public interface (API, schema, file format), hard-to-reverse choice, or over ~400 lines |
+| L | New subsystem, data migration or model, authentication, money, irreversible or cross-cutting change, a change to a public interface (API, schema, file format) that others depend on, or over ~400 lines |
 
+Size follows risk, not labels. A new public interface that is read-only, unauthenticated and handles
+no data (a health or status endpoint) is S or M by lines and reversibility, never L for being public.
 Generated code and lockfiles do not count toward line estimates.
 
 ## Ceremony

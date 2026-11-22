@@ -84,9 +84,9 @@ Every request is classified before any work. The classification is written in th
 
 | Size | Criteria (any one is enough for the higher size) | Ceremony |
 |---|---|---|
-| S | one module, < ~50 lines, no new dependency, no interface change, trivially reversible | branch + PR; no issue required, no spec; bug fixes still need a regression test |
+| S | one module, < ~50 lines, no new dependency, no change to an existing interface, trivially reversible | branch + PR; no issue required, no spec; bug fixes still need a regression test |
 | M | bounded feature or refactor, < ~400 lines, may add a dependency or change an internal interface | issue + light spec (`docs/specs`, problem, acceptance criteria, out of scope) + TDD + PR |
-| L | new subsystem, data migration, public interface, hard-to-reverse choice, or > ~400 lines | `frame` mandatory: alternatives, ADR(s), full spec, epic issue split into sub-issues of size ≤ M; a human accepts spec and ADRs before implementation |
+| L | new subsystem, data migration or model, auth, money, irreversible or cross-cutting change, a change to a public interface others depend on, or > ~400 lines (a new read-only, unauthenticated endpoint without data is S or M: size follows risk) | `frame` mandatory: alternatives, ADR(s), full spec, epic issue split into sub-issues of size ≤ M; a human accepts spec and ADRs before implementation |
 
 A ticket that grows past its size during work stops; the architect proposes a split.
 

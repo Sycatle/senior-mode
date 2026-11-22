@@ -23,9 +23,9 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
 
   | Size | Criteria | Ceremony |
   |---|---|---|
-  | S | One module, under ~50 lines, no new dependency, no interface change, easy to undo | Branch and PR; a bug fix still gets a regression test |
+  | S | One module, under ~50 lines, no new dependency, no change to an existing interface, easy to undo | Branch and PR; a bug fix still gets a regression test |
   | M | Bounded feature or refactor, under ~400 lines, may add a dependency | Issue, light spec, tests first, PR |
-  | L | New subsystem, data migration, public interface, hard-to-reverse choice, or over ~400 lines | `frame`: ADRs, full spec, epic split into tickets of size M or less; a human accepts first |
+  | L | New subsystem, data migration or model, auth, money, irreversible or cross-cutting change, a changed public interface others depend on, or over ~400 lines | `frame`: ADRs, full spec, epic split into tickets of size M or less; a human accepts first |
 
 - **When.** At the start of every request, and again when a ticket grows during work. A ticket that
   outgrows its size stops, and Claude proposes a split.

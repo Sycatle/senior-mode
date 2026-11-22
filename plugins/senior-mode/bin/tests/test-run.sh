@@ -5,6 +5,9 @@
 # never end, with a child process, recorded in $FIX/pids-<n>, to check that a killed session leaves none;
 # "decoy": the same, but the session's recorded process group is swapped for another group, whose leader is
 # not the session's script, to check that run kills nothing it does not recognise).
+# A claude session whose prompt says "guard probe" is the daily probe of #117: $FIX/probe says whether the
+# stub honours the deny (default: prints the deny, runs nothing), ignores it (runs the denied command) or
+# is silent (no deny to see). CLAUDE_CONFIG_DIR holds the user settings that enable the plugin.
 # The per-ticket outcome files `run` leaves are checked against the records of fixture-runs.sh, the same
 # ones test-retro.sh feeds to `retro`.
 # shellcheck disable=SC2016 # jq programs and stub bodies, not expanded here
@@ -50,6 +53,14 @@ cat >"$work/stub/claude" <<'STUB'
 args=("$@")
 for ((i = 0; i < $#; i++)); do [ "${args[i]}" != --model ] || model=${args[i + 1]}; done
 echo "$(basename "$PWD") $model run=${SENIOR_MODE_RUN:-} ${*:1:$# - 1}" >>"$CLAUDE_LOG"
+if [[ ${!#} == *"guard probe"* ]]; then
+  case $(cat "$FIX/probe" 2>/dev/null || echo honour) in
+    honour) echo '{"type": "user", "message": {"content": "senior-mode: skipping checks is denied (core.hooksPath); fix what the check reports instead."}}' ;;
+    ignore) git init -q "$(sed -nE 's#.*init -q ([^ `]+).*#\1#p' <<<"${!#}")"; echo '{"type": "result"}' ;;
+    silent) echo '{"type": "result"}' ;;
+  esac
+  exit 0
+fi
 n=$(sed -nE 's#.*/app-([0-9]+)$#\1#p' <<<"$PWD")
 [ -n "$n" ] || exit 0
 fx=$FIX/claude-$n-$model
@@ -87,7 +98,9 @@ STUB
 sed 's/CLAUDE_LOG/SYACODE_LOG/' "$work/stub/claude" >"$work/stub/syacode"
 chmod +x "$work/stub/"* "$work/tmux/tmux"
 export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" CLAUDE_LOG="$work/claude.log" SYACODE_LOG="$work/syacode.log" TMUX_LOG="$work/tmux.log" \
-  FIX="$work/fix" SENIOR_MODE_RETRY_DELAY=0 SENIOR_MODE_POLL=0.1
+  FIX="$work/fix" SENIOR_MODE_RETRY_DELAY=0 SENIOR_MODE_POLL=0.1 CLAUDE_CONFIG_DIR="$work/claude-home"
+mkdir -p "$CLAUDE_CONFIG_DIR"
+echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DIR/settings.json"
 
 # A local origin whose path ends like a GitHub URL, so the slug reads acme/app.
 git init -q --bare -b main "$work/github.com/acme/app.git"
@@ -347,6 +360,58 @@ grep -q '#92.*not stopped' "$work/out" || fail "L: the unstopped session is not 
 grep -q 'issues/92/labels.*needs-human' "$GH_LOG" || fail "L: #92 not labelled needs-human"
 jq -e '.outcome == "failed" and .reason == "timed out after 1 minute"' "$repo/.git/senior-mode/runs/"*"/92.json" >/dev/null ||
   fail "L: #92 not recorded as timed out"
+
+# M: before a run starts (#117): the plugin must be enabled and hooks.json present, and once a day a probe
+# session tries a denied, inert command (git -c core.hooksPath=... init <tmp>/ran). The deny must show in
+# the session's output and the command must not have run, else run refuses to start.
+config '{}'
+board 100 '[]'
+session 100-sonnet delivered pr
+probe=$repo/.git/senior-mode/probe
+rm -f "$probe"
+echo ignore >"$FIX/probe"
+run && fail "M: run started although the probe session ran the denied command"
+grep -q 'guard' "$work/out" || fail "M: the failed probe is not explained: $(cat "$work/out")"
+grep -q 'hooksPath' "$work/out" || fail "M: the failed probe does not name the denied command: $(cat "$work/out")"
+grep -q 'app-100' "$CLAUDE_LOG" && fail "M: a ticket started after a failed probe"
+[ -e "$probe" ] && fail "M: a failed probe was recorded as passed"
+echo silent >"$FIX/probe"
+run && fail "M: run started although no deny showed in the probe session"
+grep -q 'app-100' "$CLAUDE_LOG" && fail "M: a ticket started after a silent probe"
+echo honour >"$FIX/probe"
+run || fail "M: run failed with a probe that honours the deny: $(cat "$work/out")"
+grep -q 'haiku' "$CLAUDE_LOG" || fail "M: no probe session: $(cat "$CLAUDE_LOG")"
+grep -q 'run=1 -p --model haiku --permission-mode bypassPermissions' "$CLAUDE_LOG" || fail "M: probe not launched like a run session: $(cat "$CLAUDE_LOG")"
+[ "$(cat "$probe" 2>/dev/null)" = "$(date +%F)" ] || fail "M: probe date not recorded: $(cat "$probe" 2>/dev/null)"
+echo ignore >"$FIX/probe"
+board 101 '[]'
+session 101-sonnet delivered pr
+run || fail "M: the probe ran twice in a day: $(cat "$work/out")"
+grep -q 'haiku' "$CLAUDE_LOG" && fail "M: a second probe the same day"
+date -d yesterday +%F >"$probe" 2>/dev/null || date -v-1d +%F >"$probe"
+run && fail "M: a probe of yesterday was not repeated"
+echo honour >"$FIX/probe"
+run || fail "M: run failed after a new honoured probe: $(cat "$work/out")"
+
+echo '{"enabledPlugins": {"senior-mode@senior-mode": false}}' >"$CLAUDE_CONFIG_DIR/settings.json"
+board 102 '[]'
+session 102-sonnet delivered pr
+run && fail "M: run started with the plugin disabled"
+grep -q 'enabled' "$work/out" || fail "M: the disabled plugin is not named: $(cat "$work/out")"
+grep -q 'app-102' "$CLAUDE_LOG" && fail "M: a ticket started with the plugin disabled"
+echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$repo/.claude/settings.local.json"
+run || fail "M: the project's own setting did not enable the plugin: $(cat "$work/out")"
+rm -f "$repo/.claude/settings.local.json" "$CLAUDE_CONFIG_DIR/settings.json"
+run && fail "M: run started with no settings at all"
+echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DIR/settings.json"
+# --plugin-dir loads the plugin without enabling it; its hooks.json must still be there.
+mkdir -p "$work/plugin/hooks"
+echo '{"enabledPlugins": {}}' >"$CLAUDE_CONFIG_DIR/settings.json"
+SENIOR_MODE_PLUGIN_DIR="$work/plugin" run && fail "M: run started with a plugin dir that has no hooks.json"
+grep -q 'hooks.json' "$work/out" || fail "M: the missing hooks.json is not named: $(cat "$work/out")"
+echo '{}' >"$work/plugin/hooks/hooks.json"
+SENIOR_MODE_PLUGIN_DIR="$work/plugin" run || fail "M: a plugin dir with hooks.json was refused: $(cat "$work/out")"
+echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DIR/settings.json"
 
 # E: nothing Ready, bad arguments.
 config '{}'

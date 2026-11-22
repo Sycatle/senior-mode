@@ -21,6 +21,7 @@ plan_limit() { # PROTECTION_403=1 refuses reads and writes, =write only the writ
 }
 case "$*" in
   "api repos/acme/app --jq"*) respond <"$FIX/repo.json" ;;
+  "api user --jq"*) echo '{"login": "maintainer"}' | respond ;;
   "api repos/acme/app/rulesets --jq"*) plan_limit read
     if [ -f "$FIX/rulesets.json" ]; then respond <"$FIX/rulesets.json"; else echo '[]' | respond; fi ;;
   "api -X POST repos/acme/app/rulesets"*) plan_limit write; cat >>"$GH_LOG"
@@ -230,6 +231,100 @@ grep -q "RELEASE_PLEASE_TOKEN" "$work/out" && fail "release note printed though 
 
 # The ruleset is recorded as the protection when it is in place.
 [ "$(cfg .github.protection)" = ruleset ] || fail "protection not recorded as ruleset: $(cfg .github)"
+
+# CODEOWNERS from the protected globs (#171): a managed block, the owner's entries around it kept, and
+# the ruleset requires code owner review only when there is something to own.
+co=$repo/.github/CODEOWNERS
+review_required() { tr -d ' \n' <"$GH_LOG" | grep -qF '"require_code_owner_review":true'; }
+set_protected() { jq --argjson p "$1" '.protected = $p' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"; }
+echo '{"owner": {"type": "User"}}' >"$FIX/repo.json"
+set_protected '[]'
+setup
+[ ! -e "$co" ] || fail "CODEOWNERS written without protected globs: $(cat "$co")"
+review_required && fail "code owner review required without protected globs"
+set_protected '["**/migrations/**", ".github/workflows/**", ".env*", "*.pem", "Dockerfile*", "docs/", "/infra/*.tf", "src/middleware.*", "a?.txt", "ci/**/x.sh"]'
+setup
+want='# senior-mode:begin (managed from protected in .claude/senior-mode.json; edit outside this block)
+**/migrations/** @acme
+/.github/workflows/** @acme
+.env* @acme
+*.pem @acme
+Dockerfile* @acme
+/docs/ @acme
+/infra/*.tf @acme
+/src/middleware.* @acme
+/a?.txt @acme
+/ci/**/x.sh @acme
+# senior-mode:end'
+[ "$(cat "$co" 2>/dev/null)" = "$want" ] || fail "CODEOWNERS: $(cat "$co" 2>/dev/null)"
+review_required || fail "ruleset without require_code_owner_review"
+grep -q "CODEOWNERS: created" "$work/out" || fail "creation not reported: $(cat "$work/out")"
+grep -q "commit" "$work/out" || fail "no word that the file is for the user to commit: $(cat "$work/out")"
+grep -q "approve their own" "$work/out" || fail "author-cannot-approve limit not said: $(cat "$work/out")"
+logged "git commit" && fail "setup committed CODEOWNERS"
+
+# A rerun changes nothing; entries added by hand, above and below the block, survive a changed list.
+cp "$co" "$work/co"
+setup
+cmp -s "$work/co" "$co" || fail "rerun changed CODEOWNERS"
+grep -q "CODEOWNERS" "$work/out" && fail "rerun reports a change: $(cat "$work/out")"
+{ echo '/docs/api/ @alice'; cat "$work/co"; echo '/docs/legal/ @bob'; } >"$co"
+set_protected '["*.pem", "infra/"]'
+setup
+[ "$(cat "$co")" = "/docs/api/ @alice
+# senior-mode:begin (managed from protected in .claude/senior-mode.json; edit outside this block)
+*.pem @acme
+/infra/ @acme
+# senior-mode:end
+/docs/legal/ @bob" ] || fail "hand entries lost or block not rewritten: $(cat "$co")"
+grep -q "CODEOWNERS: updated" "$work/out" || fail "update not reported: $(cat "$work/out")"
+
+# A file with no block gets one at the end; globs CODEOWNERS cannot express are named, not written.
+printf '* @acme\n' >"$co"
+set_protected '["*.pem", "my file/*", "#hash", "!neg", "a[b].c"]'
+setup
+[ "$(cat "$co")" = "* @acme
+
+# senior-mode:begin (managed from protected in .claude/senior-mode.json; edit outside this block)
+*.pem @acme
+# senior-mode:end" ] || fail "block not appended: $(cat "$co")"
+for g in "my file/*" "#hash" "!neg" "a[b].c"; do
+  grep -qF "$g" "$work/out" || fail "inexpressible glob $g not named: $(cat "$work/out")"
+done
+
+# Emptied list: the block stays, empty, and review is no longer required.
+set_protected '[]'
+setup
+[ "$(cat "$co")" = "* @acme
+
+# senior-mode:begin (managed from protected in .claude/senior-mode.json; edit outside this block)
+# senior-mode:end" ] || fail "block not emptied: $(cat "$co")"
+review_required && fail "code owner review required with an empty list"
+
+# Broken markers: the file is left alone and setup says so.
+printf '# senior-mode:begin\n*.pem @x\n' >"$co"
+set_protected '["*.pem"]'
+setup
+[ "$(cat "$co")" = '# senior-mode:begin
+*.pem @x' ] || fail "broken markers: file rewritten: $(cat "$co")"
+grep -q "markers" "$work/out" || fail "broken markers not reported: $(cat "$work/out")"
+
+# An organization has no user to own the file: the owner is the signed-in user.
+rm "$co"
+echo '{"owner": {"type": "Organization"}}' >"$FIX/repo.json"
+setup
+[ "$(cat "$co")" = "# senior-mode:begin (managed from protected in .claude/senior-mode.json; edit outside this block)
+*.pem @maintainer
+# senior-mode:end" ] || fail "organization owner: $(cat "$co")"
+
+# Refused plan: the file is still written, but nothing claims the review is enforced.
+rm -f "$FIX/rulesets.json" "$co"
+PROTECTION_403=1 setup
+[ -e "$co" ] || fail "CODEOWNERS not written when the plan refuses the ruleset"
+grep -q "approve their own" "$work/out" && fail "owner-approval note printed without a ruleset: $(cat "$work/out")"
+rm -rf "$repo/.github"
+set_protected '[]'
+setup
 
 # Private repository on GitHub Free: the API refuses rulesets (real response of GET and POST, HTTP 403).
 # Setup finishes, forces ci.mode local, records protection none and warns in plain words.

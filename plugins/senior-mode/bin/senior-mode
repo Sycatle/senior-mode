@@ -27,7 +27,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> --priority <p> [--severity <s>] [--kind <k> --path <p> --rule <r> [--details-file <f>]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] [--fix] | statusline | retro [--since <dur>] [--json] | check | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> --priority <p> [--severity <s>] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] [--fix] | statusline | retro [--since <dur>] [--json] | check | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -185,18 +185,24 @@ advisory() {
 # --severity adds the Severity field and the label `security`. --kind, --path and --rule (a risk
 # outside the ticket) add the line `security-id: <sha256 of the three>` to the body: an open issue
 # that carries it is reported and left alone. A critical one in a public repository also opens a
-# draft security advisory holding --details-file, which never goes in the issue (spec 130).
+# draft security advisory holding --details-file, which never goes in the issue (spec 130);
+# --no-advisory skips that for a risk that is no flaw of the project's own code (an alert GitHub raises).
 # An open issue with the same title is reused, so a run cut short can be repeated (spec 0001 §7):
 # its body, fields, milestone, label and links converge to the arguments, its Status only with --status.
 issue_create() {
   local title="" body="" size="" priority="" severity="" status="" milestone="" type="" parent=""
-  local kind="" path="" rule="" details="" sid="" text private
+  local kind="" path="" rule="" details="" sid="" text private no_advisory=""
   local blockers=() edits=() file slug found number url b fields implied have
   while [ $# -gt 0 ]; do
     case $1 in -h | --help)
       echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> --priority <option> [--severity critical|high|moderate|low] [--status <option>] [--milestone <title>] [--type feature|bug|task|chore] [--blocked-by <n>]... [--parent <n>]"
       return 0 ;;
     esac
+    if [ "$1" = --no-advisory ]; then
+      no_advisory=1
+      shift
+      continue
+    fi
     [ $# -ge 2 ] || usage
     case $1 in
       --title) title=$2 ;;
@@ -234,6 +240,7 @@ issue_create() {
     [ "$details" = - ] || [ -f "$details" ] || die "no details file: $details"
     [ "$details" != - ] || [ "$body" != - ] || die "--body-file and --details-file cannot both read stdin"
   fi
+  [ -z "$no_advisory" ] || [ -z "$details" ] || die "--no-advisory and --details-file exclude each other"
   case $type in "" | feature | bug | task | chore) ;; *) die "unknown type $type (feature, bug, task, chore)" ;; esac
   # ${a[@]+...}: an empty array is unbound under set -u before bash 4.4.
   for b in ${blockers[@]+"${blockers[@]}"}; do
@@ -264,7 +271,7 @@ issue_create() {
     fi
     # Read once, before anything is created: stdin is gone after the first read.
     text=$(cat "$body")
-    [ "$severity" != critical ] || advisory "$slug" "$title" "$details"
+    [ "$severity" != critical ] || [ -n "$no_advisory" ] || advisory "$slug" "$title" "$details"
     body=$(mktemp)
     printf '%s\n\nsecurity-id: %s\n' "$text" "$sid" >"$body"
   fi
@@ -334,7 +341,7 @@ SECRET_ALERTS_JQ='.[] | select(.state == "open") | .number as $n | .secret_type 
 # new (#144, #172). Below high nothing is filed. An alert source GitHub refuses (scanning not enabled,
 # no permission, 404) or an issue that cannot be filed is said on stderr and never stops the caller.
 security_alerts() {
-  local slug source prog alerts line sev kind path rule title body details
+  local slug source prog alerts line sev kind path rule title body
   slug=$(repo_slug)
   for source in dependabot secret-scanning; do
     case $source in dependabot) prog=$DEPENDABOT_ALERTS_JQ ;; *) prog=$SECRET_ALERTS_JQ ;; esac
@@ -347,10 +354,8 @@ security_alerts() {
       IFS=$'\t' read -r sev kind path rule title < <(jq -r '[.severity, .kind, .path, .rule, .title] | @tsv' <<<"$line")
       body=$(mktemp)
       jq -r .body <<<"$line" >"$body"
-      details=()
-      [ "$sev" != critical ] || details=(--details-file "$body")
       "$SELF" issue create --title "$title" --body-file "$body" --size S --severity "$sev" \
-        --kind "$kind" --path "$path" --rule "$rule" ${details[@]+"${details[@]}"} </dev/null ||
+        --kind "$kind" --path "$path" --rule "$rule" --no-advisory </dev/null ||
         echo "security alerts: $kind alert $rule not filed" >&2
       rm -f "$body"
     done <<<"$alerts"

@@ -486,6 +486,10 @@ check_alert_issues() { # label
   jq -r '.[].body' "$FIX/issues.json" | grep -q "^security-id: [0-9a-f]\{64\}\$" || fail "$1: a body lacks its security-id"
   cat "$FIX/issues.json" "$FIX/advisories" 2>/dev/null | grep -q "SUPERSECRETVALUE" && fail "$1: the secret value was written out"
   jq -r '.[].body' "$FIX/issues.json" | grep -q "Prototype pollution" && fail "$1: advisory detail in an issue body"
+  # An alert is not a vulnerability in this project's code: no repository security advisory, even for a
+  # critical one in a public repository, and the repository's visibility is not even read.
+  [ ! -e "$FIX/advisories" ] || fail "$1: a repository security advisory was opened for an alert"
+  grep -qE 'security-advisories|repo view' "$GH_LOG" && fail "$1: the advisory path was taken for an alert: $(grep -E 'security-advisories|repo view' "$GH_LOG")"
 }
 
 # N: open alerts become issues when a run starts, before it looks for a Ready ticket (#172). A high
@@ -506,7 +510,6 @@ for o in v1 v2 p0 p1; do
   grep -q "option-id $o" "$GH_LOG" || fail "N: option $o not set: high is P1 and critical P0, each with its Severity"
 done
 grep -q 'GHSA-aaaa-bbbb-cccc' "$work/out" || fail "N: filing not reported: $(cat "$work/out")"
-[ "$(grep -c "\"summary\"" "$FIX/advisories" 2>/dev/null)" = 1 ] || fail "N: the critical secret did not open one advisory (public repository)"
 run || fail "N: second run failed: $(cat "$work/out")"
 grep -q 'issue create' "$GH_LOG" && fail "N: a second pass files again: $(grep 'issue create' "$GH_LOG")"
 [ "$(jq 'length' "$FIX/issues.json")" -eq 2 ] || fail "N: a second pass changed the issues"

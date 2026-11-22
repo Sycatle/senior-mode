@@ -237,6 +237,10 @@ check_alert_issues() { # label
   jq -r '.[].body' "$FIX/issues.json" | grep -q "^security-id: [0-9a-f]\{64\}\$" || fail "$1: a body lacks its security-id"
   cat "$FIX/issues.json" "$FIX/advisories" 2>/dev/null | grep -q "SUPERSECRETVALUE" && fail "$1: the secret value was written out"
   jq -r '.[].body' "$FIX/issues.json" | grep -q "Prototype pollution" && fail "$1: advisory detail in an issue body"
+  # An alert is not a vulnerability in this project's code: no repository security advisory, even for a
+  # critical one in a public repository, and the repository's visibility is not even read.
+  [ ! -e "$FIX/advisories" ] || fail "$1: a repository security advisory was opened for an alert"
+  grep -qE 'security-advisories|repo view' "$GH_LOG" && fail "$1: the advisory path was taken for an alert: $(grep -E 'security-advisories|repo view' "$GH_LOG")"
 }
 
 # Open high or critical alerts are filed when retro runs (#172), once; --json stays pure JSON.

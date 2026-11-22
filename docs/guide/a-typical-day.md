@@ -84,11 +84,16 @@ on two axes (skill [`review`](skills.md#review)). It sets the status `senior-mod
 | Approve, human merge (sensitive area) | `pending`, plus the `needs-human` label |
 | Changes requested | `failure` |
 
+If the pull request touches a protected zone or closes an L ticket, `publish` leaves
+`senior-mode/security` pending and Claude also runs the [`security`](agents.md#security) agent, which
+sets it (`failure` and `needs-human` on a high or critical finding). Any other pull request gets
+`success`, "not required".
+
 After fixes, push, check, publish and review again.
 
 ## 7. Merge and release
 
-When `senior-mode/ci` and `senior-mode/review` are green on an up-to-date branch, merge by rebase:
+When `senior-mode/ci`, `senior-mode/review` and `senior-mode/security` are green on an up-to-date branch, merge by rebase:
 
 ```
 gh pr merge 43 --rebase --delete-branch

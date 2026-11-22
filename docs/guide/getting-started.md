@@ -59,8 +59,8 @@ Before changing anything, setup:
   `type:bug`, `type:task` and `type:chore` (organizations use issue types).
 - **Merges.** Rebase merges only; branches are deleted after merge.
 - **Ruleset.** A ruleset named `senior-mode` on the default branch: pull requests only, rebase,
-  linear history, no deletion or force-push, and two required statuses, `senior-mode/ci` and
-  `senior-mode/review`, on an up-to-date branch, and code owner review of the [protected
+  linear history, no deletion or force-push, and three required statuses, `senior-mode/ci`,
+  `senior-mode/review` and `senior-mode/security`, on an up-to-date branch, and code owner review of the [protected
   zones](autonomy.md#code-owners) (setup writes `.github/CODEOWNERS` for you to commit; the owner
   merges those pull requests by hand). It adds to your existing protection and does not
   rewrite it. Admins can bypass it with `gh pr merge --admin`; agents cannot (see

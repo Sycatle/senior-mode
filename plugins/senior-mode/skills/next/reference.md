@@ -10,12 +10,14 @@
 | Start | `senior-mode start <issue>`: prints `branch <name>` and `worktree <path>`, sets Status In progress |
 | Ticket | `gh issue view <n> --json title,body,labels`; the spec is linked in the body |
 | Pull request | `gh pr create --body-file <file>` from `.github/pull_request_template.md`; the title is the first commit's subject |
-| Merge | `gh pr merge <n> --rebase --delete-branch`, never `--admin` |
+| Merge | `gh pr merge <n> --rebase --delete-branch`, never `--admin`; needs ci, review and security `success` on the head |
 
 ## Waiting for a human
 
 - Reviewed and green, no `needs-human`: offer "merge #n?". On a clear yes, merge as in step 9.
 - No review yet: offer the `reviewer` agent first; it posts the verdict and `senior-mode/review`.
+- `senior-mode/security` pending (`gh pr checks <n>`): offer the `security` agent; it sets it. Never
+  call it green by hand, and never merge while it is pending or failing.
 - `needs-human` (protected zone, size L, ADR): summarise the verdict and the files that triggered
   it, and let the user merge it themselves.
 - Failing status: show the failing context; offer to fix it on that branch.

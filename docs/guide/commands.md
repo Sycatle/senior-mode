@@ -109,8 +109,8 @@ State: **Available.** Triggers: "run", "lance", "enchaîne en autonomie".
   Sonnet is retried once on Opus (`autonomy.escalate`). Logs stay in `.git/senior-mode/runs/`, with one
   `<n>.json` per ticket that says how it ended (`delivered`, `outgrown` or `failed`, whether it went
   to Opus, why, when).
-- **Merging** is off by default: the run stops at pull requests with `senior-mode/ci` and
-  `senior-mode/review` set. With `autonomy.merge: true` it merges what is green, not `needs-human`,
+- **Merging** is off by default: the run stops at pull requests with `senior-mode/ci`,
+  `senior-mode/review` and `senior-mode/security` set. With `autonomy.merge: true` it merges what is green, not `needs-human`,
   on a repository with server-side protection. See [Autonomy](autonomy.md#run).
 - **Needs** `claude` on PATH or in `~/.local/bin`, and a user that is not root. In a workspace Claude
   Code does not trust yet, headless sessions ignore the project's permissions: open the folder once
@@ -141,7 +141,7 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode setup github [--ci local\|actions]` | The GitHub side of setup: Project, fields, labels, merge settings, workflows, ruleset, CODEOWNERS for the protected zones |
 | `senior-mode setup repo [--command <name>=<cmd>]...` | The repository side of setup; `--command` stores a lint, typecheck, test, build (or, for node, e2e) command and its check, or `install=<cmd>`, the command `start` runs in a new worktree |
 | `senior-mode check` | Runs the secret scan of the branch's added lines, then the check list; on a clean tree, records the result for the current commit; a node project without `node_modules` fails first with `dependencies not installed: run <cmd>` |
-| `senior-mode publish [commit]` | Sends the recorded result to GitHub as `senior-mode/ci` (the commit must be pushed) |
+| `senior-mode publish [commit]` | Sends the recorded result to GitHub as `senior-mode/ci` (the commit must be pushed), and sets `senior-mode/security`: success "not required: no protected zone, not L", else pending until the `security` agent has judged (see [Autonomy](autonomy.md#required-statuses)) |
 | `senior-mode release [--dry-run]` | Runs release-please 17.11.2 locally: tags a merged release PR, opens or updates the next one |
 | `senior-mode issue create --title ... --body-file ... --size ... --priority ...` | Creates a ticket with board fields, and optionally `--status`, `--milestone`, `--type`, `--blocked-by`, `--parent`, `--severity critical\|high\|moderate\|low` (sets the Severity field and the `security` label; critical implies P0 and high P1, the stricter of that and `--priority` wins, and `--priority` may then be left out); `--kind`, `--path` and `--rule` (a risk outside the ticket, with `--severity`) add the line `security-id: <sha256 of the three>` to the body and, when an open `security` issue already carries it, print that issue instead of filing another (a title match alone no longer reuses an issue then; a newline in the three is refused); a critical one in a public repository also opens a draft security advisory holding `--details-file <file\|->` (required there, never put in the issue), a private repository gets a message instead; reuses an open issue with the same title and replaces its body |
 | `senior-mode pick [--json] [--max N]` | The Ready tickets in delivery order: Priority, a critical Severity first within a Priority, then milestone due date; leaves out size L, blocked tickets and `needs-info` |

@@ -117,7 +117,8 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
   - your own, from [`review.sections`](configuration.md#project-review-sections).
 - **Produces.** One PR comment with the verdict, the brief and `file:line` findings, and the status
   `senior-mode/review` (`success`, `pending` for a human merge, `failure`).
-- **When.** For every pull request, from a fresh context.
+- **When.** For every pull request, from a fresh context. A pull request that touches a protected
+  zone or closes an L ticket also gets the [`security`](agents.md#security) agent.
 
 ## `docs`
 

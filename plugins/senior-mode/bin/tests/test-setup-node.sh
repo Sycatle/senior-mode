@@ -54,7 +54,7 @@ setup "$v"
 grep -q 'first release follows 1.0.0.*"0.0.0"' "$work/out" || fail "no way to start below 1.0.0 given: $(cat "$work/out")"
 
 # Protected zones: the preset's globs are written when the key is absent, a user's list is never touched.
-for zone in '**/migrations/**' '**/auth/**' '**/payments/**' '.env*' '.github/workflows/**' 'Dockerfile*'; do
+for zone in '**/migrations/**' '**/auth/**' '**/payments/**' '.env*' '.github/workflows/**' 'Dockerfile*' '.claude/secret-allowlist'; do
   jq -e --arg z "$zone" '.protected | index($z)' "$d/.claude/senior-mode.json" >/dev/null ||
     fail "node preset does not protect $zone: $(cfg "$d" '.protected')"
 done

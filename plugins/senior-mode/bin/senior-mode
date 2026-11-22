@@ -1984,13 +1984,14 @@ Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode tea
    template with \`Closes #$1\` and the red run; \`senior-mode publish\`;
    \`senior-mode item set $1 Status "In review"\`.
 4. The reviewer agent reviews the pull request in a fresh context (skill review) and sets
-   senior-mode/review; at most 2 fix rounds, with check and publish after each push.
+   senior-mode/review; when publish left senior-mode/security pending, the security agent reviews it
+   too; at most 2 fix rounds, with check and publish after each push.
 5. Never merge, never touch another ticket: \`senior-mode run\` decides what happens next. A risk
    you meet outside this ticket is filed, never fixed here: \`senior-mode issue create --severity ...
    --kind ... --path ... --rule ...\` (no exploit detail in the body).
 
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
-- \`delivered\` once the pull request is open with senior-mode/ci and senior-mode/review set;
+- \`delivered\` once the pull request is open with senior-mode/ci, senior-mode/review and senior-mode/security set;
 - \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
 - \`failed: <reason>\` otherwise, in one plain sentence.
 EOF
@@ -2106,7 +2107,7 @@ run_merge() {
     reason="the server enforces no branch protection (github.protection is ${RUN_PROTECTION:-unset})"
   elif jq -e '[.[0].labels[]?.name] | index("needs-human")' <<<"$2" >/dev/null; then
     reason="labelled needs-human"
-  elif ! missing=$(gh_retry api "repos/$RUN_SLUG/commits/$sha/status" | jq -r '["senior-mode/ci", "senior-mode/review"]
+  elif ! missing=$(gh_retry api "repos/$RUN_SLUG/commits/$sha/status" | jq -r '["senior-mode/ci", "senior-mode/review", "senior-mode/security"]
       - [.statuses[] | select(.state == "success") | .context] | join(" and ")'); then
     reason="its statuses could not be read"
   elif [ -n "$missing" ]; then

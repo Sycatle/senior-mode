@@ -434,6 +434,11 @@ Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
 skill keeps current after a merge, with changes flagged for human review. `language` (`en` or `fr`)
 sets the language of the templates and of what the skills write.
 
+`senior-mode config get <key>` prints a value with its default. The optional keys (`protected`, `secrets`,
+`envGuard.forbidden`, `review.sections`, `docs.extra`, `github.protection`) read as empty when absent: `[]`
+for a list, an empty line for the string; a key the config does not define is an error, so a caller never
+has to treat an error as "empty".
+
 Field and option ids are cached here so no agent rediscovers them with extra API calls.
 `github.protection` is written by `setup github`: `"ruleset"` when the `senior-mode` ruleset is in
 place, `"none"` when the plan refused it (§11), so status and governance documents can say whether

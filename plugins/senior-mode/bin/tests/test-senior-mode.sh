@@ -52,6 +52,20 @@ config '{}'
 expect 0 false config get autonomy.merge
 expect 1 - config get autonomy.autoMerge
 
+# Documented optional keys read as empty when absent (a list for the list keys, an empty line for a
+# string), and as set when present; a key nobody documents is still an error.
+for key in review.sections docs.extra envGuard.forbidden protected secrets; do
+  expect 0 '[]' config get "$key"
+done
+expect 0 '' config get github.protection
+expect 1 - config get review.nope
+expect 1 - config get docs.extra.path
+config '{"protected":["a/**"],"review":{"sections":["x.md"]},"github":{"protection":"ruleset"}}'
+expect 0 '["a/**"]' config get protected
+expect 0 '["x.md"]' config get review.sections
+expect 0 ruleset config get github.protection
+expect 0 '[]' config get secrets
+
 config '{not json'
 expect 1 - config get language
 grep -q setup "$work/err" || fail "invalid config message does not mention setup"

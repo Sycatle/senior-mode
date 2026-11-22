@@ -8,7 +8,13 @@ DEFAULTS='{
   "ci": { "mode": "local" },
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "merge": false, "escalate": true, "schedule": "02:00" },
   "e2e": { "slots": 2 },
-  "limits": { "prLines": 400 }
+  "limits": { "prLines": 400 },
+  "protected": [],
+  "secrets": [],
+  "envGuard": { "forbidden": [] },
+  "review": { "sections": [] },
+  "docs": { "extra": [] },
+  "github": { "protection": "" }
 }'
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
 
@@ -30,7 +36,8 @@ config_file() {
   printf '%s\n' "$file"
 }
 
-# Prints a config value (strings raw, anything else as JSON), falling back to DEFAULTS.
+# Prints a config value (strings raw, anything else as JSON), falling back to DEFAULTS: the optional keys
+# read as empty (`[]` for a list, an empty line for a string) when absent; any other key is an error.
 config_get() {
   local key=$1 file path value
   file=$(config_file)

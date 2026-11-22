@@ -9,7 +9,7 @@ Docs rot unless updating them is a step of delivery. After a merge, change only 
 stale. Formats, section map and PR body: `${CLAUDE_SKILL_DIR}/reference.md`.
 
 Language: `senior-mode config get language`. Extra documents: `senior-mode config get docs.extra`
-(a list of `{path, purpose}`; an error means none).
+(a list of `{path, purpose}`, `[]` when none).
 
 ## After a merge, or on demand
 

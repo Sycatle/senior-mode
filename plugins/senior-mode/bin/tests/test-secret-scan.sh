@@ -128,6 +128,14 @@ done
 p=redis://:
 kind "credentialed URL" "Zx9k" "REDIS_URL=${p}Zx9k@cache.internal:6379"
 
+# Review of #230: a template is the whole password, not a part of it. A password that merely contains a template
+# form is reported.
+p=postgres://app:
+# shellcheck disable=SC2016 # the values are literal text, not expansions
+for pwd in 'Zq9{x}' 'q8{Abc}z' 'Ab$(9z' 'Zq9%(x)s' 'Zq9${x}k' 'Zq9%sQ4' 'Zq9***Q4' 'Zq9{{x}}k' 'p<a>ss' 'Zx9$DB_PASS' '$DB_PASS9z' '{DB_PASS}9z' '<db_pass>9z' '${DB_PASS}9z' '%(db_pass)s9z'; do
+  kind "credentialed URL" "$pwd" "DATABASE_URL=${p}${pwd}@db.internal:5432/app"
+done
+
 # A hunk in the middle of a file: the line number is the one of the new file, and a deleted line does not shift it.
 git_ checkout -q main
 printf 'a\nb\nc\nd\ne\nf\ng\nh\n' >"$repo/src/long.txt"
@@ -161,6 +169,7 @@ for line in 'password = "changeme"' 'token = "your-token-here"' 'secret = "<gene
   'URL=postgres://app:{DB_PASS}@db.internal/app' 'URL=postgres://app:%(db_pass)s@db.internal/app' \
   'URL=postgres://app:$(DB_PASS)@db.internal/app' 'URL=postgres://app:${DB_PASS}@db.internal/app' \
   'URL=postgres://app:$DB_PASS@db.internal/app' 'URL=postgres://app:<db_pass>@db.internal/app' \
+  'URL=postgres://app:{{DB_PASS}}@db.internal/app' 'URL=postgres://app:*****@db.internal/app' 'URL=postgres://app:%s@db.internal/app' \
   'password: {DB_PASSWORD_VALUE_1}' 'password: %(db_password_value_1)s' 'password: $(DB_PASSWORD_VALUE_1)' 'password: $DB_PASSWORD_VALUE_1' \
   'URL=redis://:<password>@cache.internal:6379' 'URL=postgres://app:%s%s%s@db.internal/app' \
   'URL=postgres://app:********@db.internal/app' 'URL=redis://:changeme@cache.internal:6379' \

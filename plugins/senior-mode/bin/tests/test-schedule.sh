@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Tests for `senior-mode schedule`. Offline: systemctl, crontab, loginctl, journalctl and id are stubs
 # on PATH. systemctl logs its calls to $SYS_LOG and fails `--user show-environment` when
-# $FIX/no-systemd exists; crontab keeps its table in $FIX/crontab; loginctl answers from $FIX/linger.
+# $FIX/no-systemd exists; crontab keeps its table in $FIX/crontab (and fails `-l` with a real error while
+# $FIX/cron-broken exists, logging any write to $FIX/cron-writes); loginctl answers from $FIX/linger.
 # shellcheck disable=SC2016 # stub bodies, not expanded here
 set -u
 cli=$(cd "$(dirname "$0")/.." && pwd)/senior-mode
@@ -26,8 +27,10 @@ esac
 STUB
 cat >"$work/stub/crontab" <<'STUB'
 #!/usr/bin/env bash
+[ "$1" = -l ] || [ ! -f "$FIX/cron-broken" ] || echo "$1" >>"$FIX/cron-writes"
 case $1 in
-  -l) [ -f "$FIX/crontab" ] && cat "$FIX/crontab" || { echo "no crontab for $USER" >&2; exit 1; } ;;
+  -l) [ ! -f "$FIX/cron-broken" ] || { echo "crontab: cannot read the spool: Permission denied" >&2; exit 1; }
+    [ -f "$FIX/crontab" ] && cat "$FIX/crontab" || { echo "no crontab for $USER" >&2; exit 1; } ;;
   -) cat >"$FIX/crontab" ;;
 esac
 STUB
@@ -123,6 +126,26 @@ grep -qx '0 5 \* \* \* echo other' "$FIX/crontab" || fail "E: remove dropped the
 sched remove || fail "E: second remove failed"
 grep -q 'Nothing scheduled' "$work/out" || fail "E: second cron remove did not say so"
 rm -f "$FIX/no-systemd"
+
+# G: crontab -l failing for a real reason: install and remove stop and change nothing.
+sched install --at 03:30 || fail "G: setup install failed"
+cp "$timer" "$work/timer.g"
+touch "$FIX/no-systemd"
+printf '0 5 * * * echo other\n' >"$FIX/crontab"
+cp "$FIX/crontab" "$work/crontab.g"
+touch "$FIX/cron-broken"
+sched install --at 03:30 && fail "G: cron install accepted a failing crontab -l"
+grep -q 'crontab' "$work/out" || fail "G: cron install did not explain: $(cat "$work/out")"
+rm -f "$FIX/no-systemd"
+sched install --at 06:00 && fail "G: systemd install accepted a failing crontab -l"
+cmp -s "$timer" "$work/timer.g" || fail "G: a refused install changed the timer"
+sched remove && fail "G: remove accepted a failing crontab -l"
+grep -q 'crontab' "$work/out" || fail "G: remove did not explain: $(cat "$work/out")"
+[ -f "$timer" ] && [ -f "$service" ] || fail "G: a refused remove deleted the units"
+[ ! -e "$FIX/cron-writes" ] || fail "G: crontab was written: $(cat "$FIX/cron-writes")"
+cmp -s "$FIX/crontab" "$work/crontab.g" || fail "G: the crontab changed"
+rm -f "$FIX/cron-broken"
+sched remove || fail "G: cleanup remove failed"
 
 # F: refusals.
 sched install --at 25:00 && fail "F: --at 25:00 accepted"

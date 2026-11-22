@@ -24,6 +24,9 @@ sec_limit() { # SEC_REFUSE lists the features the plan refuses (alerts fixes sca
 }
 case "$*" in
   "api repos/acme/app --jq"*) respond <"$FIX/repo.json" ;;
+  "api repos/acme/app/contents/.github/CODEOWNERS"*)
+    [ -f "$FIX/default-codeowners" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    cat "$FIX/default-codeowners" ;;
   "api user --jq"*) echo '{"login": "maintainer"}' | respond ;;
   "api repos/acme/app/rulesets --jq"*) plan_limit read
     if [ -f "$FIX/rulesets.json" ]; then respond <"$FIX/rulesets.json"; else echo '[]' | respond; fi ;;
@@ -345,7 +348,7 @@ logged "git commit" && fail "setup committed CODEOWNERS"
 cp "$co" "$work/co"
 setup
 cmp -s "$work/co" "$co" || fail "rerun changed CODEOWNERS"
-grep -q "CODEOWNERS" "$work/out" && fail "rerun reports a change: $(cat "$work/out")"
+grep -qE "CODEOWNERS: (created|updated)" "$work/out" && fail "rerun reports a change: $(cat "$work/out")"
 { echo '/docs/api/ @alice'; cat "$work/co"; echo '/docs/legal/ @bob'; } >"$co"
 set_protected '["*.pem", "infra/"]'
 setup
@@ -365,6 +368,7 @@ setup
 
 # senior-mode:begin (managed from protected in .claude/senior-mode.json; edit outside this block)
 *.pem @acme
+# left to the reviewer, CODEOWNERS has no spelling for them: my file/*, #hash, !neg, a[b].c
 # senior-mode:end" ] || fail "block not appended: $(cat "$co")"
 for g in "my file/*" "#hash" "!neg" "a[b].c"; do
   grep -qF "$g" "$work/out" || fail "inexpressible glob $g not named: $(cat "$work/out")"
@@ -394,6 +398,55 @@ setup
 [ "$(cat "$co")" = "# senior-mode:begin (managed from protected in .claude/senior-mode.json; edit outside this block)
 *.pem @maintainer
 # senior-mode:end" ] || fail "organization owner: $(cat "$co")"
+
+# Until the file is on the default branch nothing is enforced, and a rerun that changes nothing says
+# so; the copy there, when identical, ends the warning.
+rm -f "$FIX/default-codeowners"
+set_protected '["*.pem"]'
+setup
+cp "$co" "$work/co"
+setup
+cmp -s "$work/co" "$co" || fail "rerun changed CODEOWNERS"
+grep -qE "CODEOWNERS: (created|updated)" "$work/out" && fail "unchanged rerun reports a change: $(cat "$work/out")"
+grep -q "enforces nothing until .github/CODEOWNERS is on the default branch" "$work/out" ||
+  fail "unchanged rerun does not say nothing is enforced yet: $(cat "$work/out")"
+echo "stale" >"$FIX/default-codeowners"
+setup
+grep -q "enforces nothing until .github/CODEOWNERS is on the default branch" "$work/out" ||
+  fail "a differing copy on the default branch not said: $(cat "$work/out")"
+cp "$co" "$FIX/default-codeowners"
+setup
+grep -q "enforces nothing" "$work/out" && fail "warning although the default branch holds the file: $(cat "$work/out")"
+rm -f "$FIX/default-codeowners"
+set_protected '[]'
+setup
+grep -q "enforces nothing" "$work/out" && fail "warning without protected globs: $(cat "$work/out")"
+set_protected '["*.pem"]'
+
+# A root or docs/ CODEOWNERS would be shadowed by .github/CODEOWNERS (GitHub reads .github/ first):
+# setup refuses to create the shadow, says so, and goes on with the rest.
+for shadow in CODEOWNERS docs/CODEOWNERS; do
+  rm -rf "$repo/.github" "$repo/docs" "$repo/CODEOWNERS"
+  mkdir -p "$(dirname "$repo/$shadow")"
+  echo "* @alice" >"$repo/$shadow"
+  : >"$GH_LOG"
+  setup
+  [ ! -e "$co" ] || fail "$shadow: .github/CODEOWNERS written over it: $(cat "$co")"
+  [ "$(cat "$repo/$shadow")" = "* @alice" ] || fail "$shadow: the existing file was changed"
+  grep -q "CODEOWNERS: $shadow would be shadowed" "$work/out" || fail "$shadow: refusal not said: $(cat "$work/out")"
+  logged "rulesets" || fail "$shadow: setup stopped at the refusal"
+done
+# Already shadowed by a .github/CODEOWNERS: the block is written, the lost file is named on each run.
+mkdir -p "$repo/.github"
+printf '/docs/api/ @bob\n' >"$co"
+for i in 1 2; do
+  setup
+  grep -q "ignored by GitHub: docs/CODEOWNERS" "$work/out" || fail "shadowed file not named (run $i): $(cat "$work/out")"
+done
+grep -q "^\*.pem @maintainer$" "$co" || fail "block not written next to a shadowed file: $(cat "$co")"
+rm -rf "$repo/.github" "$repo/docs" "$repo/CODEOWNERS"
+setup
+rm -f "$FIX/default-codeowners"
 
 # Refused plan: the file is still written, but nothing claims the review is enforced.
 rm -f "$FIX/rulesets.json" "$co"

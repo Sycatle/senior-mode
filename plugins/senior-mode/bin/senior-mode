@@ -903,13 +903,25 @@ codeowners_pattern() {
 # `# senior-mode:begin` and `# senior-mode:end`; only that block is rewritten, so entries added by
 # hand survive a rerun. The block goes last in a new one, where GitHub reads the last match first.
 # Written, not committed: setup commits nothing, and the file protects once it is on the default branch.
-setup_codeowners() { # root owner globs-json
-  local file=$1/.github/CODEOWNERS glob pat entries="" skipped="" block new verb
+# GitHub reads .github/CODEOWNERS before the root's and docs/'s: it never creates that shadow over a
+# file of the project (the ownership there would be lost without a word), and names one it finds.
+# The globs CODEOWNERS cannot spell are listed in the block too, so the file says what it leaves out.
+setup_codeowners() { # root owner globs-json slug
+  local file=$1/.github/CODEOWNERS glob pat entries="" skipped="" block new verb shadow="" s there
+  for s in CODEOWNERS docs/CODEOWNERS; do [ ! -e "$1/$s" ] || shadow+="${shadow:+ and }$s"; done
+  if [ -n "$shadow" ] && [ ! -e "$file" ]; then
+    echo "CODEOWNERS: $shadow would be shadowed by .github/CODEOWNERS, which GitHub reads first, and its ownership lost; .github/CODEOWNERS not written. Move it to .github/CODEOWNERS, then run setup github again, or add the protected zones to it by hand"
+    return 0
+  fi
+  [ -z "$shadow" ] ||
+    echo "CODEOWNERS: shadowed by .github/CODEOWNERS and ignored by GitHub: $shadow; merge its entries into .github/CODEOWNERS and delete it, or its ownership stays lost"
   while IFS= read -r glob; do
     if pat=$(codeowners_pattern "$glob"); then entries+="$pat @$2"$'\n'; else skipped+="${skipped:+, }$glob"; fi
   done < <(jq -r '.[]' <<<"$3")
-  [ -z "$skipped" ] || echo "CODEOWNERS: no spelling for $skipped, left out; those zones stay with the reviewer"
-  block="# senior-mode:begin (managed from protected in .claude/senior-mode.json; edit outside this block)"$'\n'"$entries# senior-mode:end"
+  [ -z "$skipped" ] || echo "CODEOWNERS: no spelling for $skipped, left out; those zones are owned by no one, so code owner review does not cover them and they stay with the reviewer"
+  block="# senior-mode:begin (managed from protected in .claude/senior-mode.json; edit outside this block)"$'\n'"$entries"
+  [ -z "$skipped" ] || block+="# left to the reviewer, CODEOWNERS has no spelling for them: $skipped"$'\n'
+  block+="# senior-mode:end"
   if [ ! -e "$file" ]; then
     [ -n "$entries" ] || return 0
     mkdir -p "$1/.github"
@@ -929,10 +941,19 @@ setup_codeowners() { # root owner globs-json
   elif [ "$new" != "$(cat "$file")" ]; then
     printf '%s\n' "$new" >"$file"
     verb=updated
-  else
-    return 0
   fi
-  echo "CODEOWNERS: $verb .github/CODEOWNERS, protected zones owned by @$2; commit it (setup commits nothing), the ruleset reads the default branch's copy"
+  [ -z "${verb:-}" ] ||
+    echo "CODEOWNERS: $verb .github/CODEOWNERS, protected zones owned by @$2; commit it (setup commits nothing), the ruleset reads the default branch's copy"
+  [ -n "$entries" ] || return 0
+  # Said on every run, a rerun that changes nothing included: until the default branch holds this very
+  # file, GitHub reads no CODEOWNERS from it and the review requirement binds nothing.
+  if there=$(gh_retry api "repos/$4/contents/.github/CODEOWNERS" -H "Accept: application/vnd.github.raw" 2>/dev/null); then
+    [ "$there" != "$(cat "$file")" ] || return 0
+    there="the default branch holds another copy"
+  else
+    there="the default branch has none"
+  fi
+  echo "CODEOWNERS: code owner review enforces nothing until .github/CODEOWNERS is on the default branch ($there): commit it and merge it"
 }
 
 # Creates the senior-mode ruleset of the repository, or updates it; $2 is whether it requires code
@@ -1119,7 +1140,7 @@ type:chore|ededed|Maintenance with no user-visible change'
     codeowner=$owner
     [ "$owner_type" != Organization ] || codeowner=$(gh_retry api user --jq .login) || die "cannot read your GitHub login"
   fi
-  setup_codeowners "$root" "$codeowner" "$globs"
+  setup_codeowners "$root" "$codeowner" "$globs" "$slug"
 
   # Before the workflows: a refused ruleset forces ci.mode local, which decides what happens to them.
   if err=$(setup_ruleset "$slug" "$review" 2>&1 >/dev/null); then

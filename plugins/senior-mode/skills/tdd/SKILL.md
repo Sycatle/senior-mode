@@ -1,6 +1,6 @@
 ---
 name: tdd
-description: Drive code changes with tests chosen by the nature of the code - failing test first for logic and bugs, end-to-end scenarios for UI and glue, characterization tests for a refactor-only ticket ("refactor", "refacto", "nettoie"). Use before writing or changing production code, and when fixing any bug.
+description: Drive code changes with tests chosen by the nature of the code - failing test first for logic and bugs, end-to-end scenarios for UI and glue, characterization tests for a refactor-only ticket ("refactor", "refacto", "nettoie"). Use before writing or changing production code, and when fixing any bug ("implémente", "développe", "corrige ce bug").
 ---
 
 # Test-driven delivery

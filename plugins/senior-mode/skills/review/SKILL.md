@@ -1,6 +1,6 @@
 ---
 name: review
-description: Review a pull request on two axes, spec conformance and engineering standards, brief the person who merges in plain language, and give a verdict. Use to review or explain a pull request or diff ("revue de PR", "explique cette PR") from a fresh context.
+description: Review a pull request on two axes, spec conformance and engineering standards, brief the person who merges in plain words, give a verdict. Use to review or explain a PR or diff ("revue de PR", "relis", "explique cette PR") from a fresh context.
 ---
 
 # Two-axis review

@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Prove a change works by running the project's checks and reading their output before claiming success. Use before saying a task is done, before pushing, before opening or merging a pull request.
+description: Prove a change works by running the project's checks and reading their output before claiming success. Use before saying a task is done, before pushing, before opening or merging a pull request ("vérifie", "ça passe ?", "c'est bon ?").
 ---
 
 # Proof before claims

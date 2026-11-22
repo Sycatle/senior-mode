@@ -1,6 +1,6 @@
 ---
 name: spec
-description: Write and maintain feature specs in docs/specs with their lifecycle and governed paths. Use when creating a spec for an M or L ticket, when code governed by a spec changes, and when a spec is replaced.
+description: Write and maintain feature specs in docs/specs with their lifecycle and governed paths. Use when creating a spec for an M or L ticket, when code governed by a spec changes, and when a spec is replaced ("rédige la spec", "écris la spec", "mets à jour la spec").
 paths: ["docs/specs/**"]
 ---
 

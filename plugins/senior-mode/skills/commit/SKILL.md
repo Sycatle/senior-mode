@@ -1,6 +1,6 @@
 ---
 name: commit
-description: Make atomic Conventional Commits that each build and pass on their own and explain why. Use whenever committing, and before pushing a branch.
+description: Make atomic Conventional Commits that each build and pass on their own and explain why. Use whenever committing, and before pushing a branch ("commite", "fais un commit", "on commit").
 ---
 
 # Commits

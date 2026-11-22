@@ -1,6 +1,6 @@
 ---
 name: adr
-description: Record architecture decisions as ADRs in docs/adr, one decision each, never rewritten once accepted. Use when a choice is hard to reverse, chooses between real alternatives with lasting consequences, or changes a previous decision.
+description: Record architecture decisions as ADRs in docs/adr, one decision each, never rewritten once accepted. Use when a choice is hard to reverse, chooses between real alternatives with lasting consequences, or changes a previous decision ("décision d'archi", "note cette décision", "on change d'avis sur").
 paths: ["docs/adr/**"]
 ---
 

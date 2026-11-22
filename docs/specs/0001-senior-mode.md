@@ -487,7 +487,7 @@ without a lockfile. The report names the language: TypeScript when `typescript` 
 dependency or a tsconfig exists, else JavaScript, which expects no typecheck. A missing linter or
 test runner is reported, and `setup` proposes Biome
 or Vitest in a separate commit, never installed without a yes. Next.js is recorded as `framework`; it
-builds through its script, and `middleware.*` and `src/middleware.*` join the default `protected`
+builds through its script, and `middleware.*`, `src/middleware.*`, `proxy.*` (Next 16's rename) and `src/proxy.*` join the default `protected`
 globs: the preset declares such framework defaults under `frameworks` (its top-level `protected`
 list stays the stack-wide one). Fixtures in `evals/fixtures/` are adopted and checked end to end by
 `evals/run.sh` (network, run on demand before merging a change to presets).

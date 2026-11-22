@@ -426,6 +426,8 @@ for shadow in CODEOWNERS docs/CODEOWNERS; do
   [ "$(cat "$repo/$shadow")" = "* @alice" ] || fail "$shadow: the existing file was changed"
   grep -q "CODEOWNERS: $shadow would be shadowed" "$work/out" || fail "$shadow: refusal not said: $(cat "$work/out")"
   logged "rulesets" || fail "$shadow: setup stopped at the refusal"
+  review_required && fail "$shadow: code owner review required although no CODEOWNERS owns the zones"
+  grep -q "code owner review is not required" "$work/out" || fail "$shadow: no word that review is not required: $(cat "$work/out")"
 done
 # Already shadowed by a .github/CODEOWNERS: the block is written, the lost file is named on each run.
 mkdir -p "$repo/.github"
@@ -435,6 +437,35 @@ for i in 1 2; do
   grep -q "ignored by GitHub: docs/CODEOWNERS" "$work/out" || fail "shadowed file not named (run $i): $(cat "$work/out")"
 done
 grep -q "^\*.pem @maintainer$" "$co" || fail "block not written next to a shadowed file: $(cat "$co")"
+rm -rf "$repo/.github" "$repo/docs" "$repo/CODEOWNERS"
+setup
+rm -f "$FIX/default-codeowners"
+
+# Every glob untranslatable: a block with no entry says nobody owns the zones; with no file, the
+# block is still written (docs/guide/autonomy.md), and the review is not required.
+set_protected '["my file/*", "#hash"]'
+setup
+grep -q "protected zones owned by" "$work/out" && fail "an empty block claims an owner: $(cat "$work/out")"
+grep -q "no protected zone owned" "$work/out" || fail "empty block not said: $(cat "$work/out")"
+review_required && fail "code owner review required with an empty block"
+rm -rf "$repo/.github"
+setup
+[ "$(cat "$co" 2>/dev/null)" = "# senior-mode:begin (managed from protected in .claude/senior-mode.json; edit outside this block)
+# left to the reviewer, CODEOWNERS has no spelling for them: my file/*, #hash
+# senior-mode:end" ] || fail "no file, no spelling: block not written: $(cat "$co" 2>/dev/null)"
+review_required && fail "code owner review required with no entry"
+set_protected '["*.pem"]'
+
+# Root and docs/ CODEOWNERS together, no .github one: GitHub already ignores docs/; only the root's
+# ownership would be lost.
+rm -rf "$repo/.github" "$repo/docs" "$repo/CODEOWNERS"
+mkdir -p "$repo/docs"
+echo "* @alice" >"$repo/CODEOWNERS"
+echo "* @bob" >"$repo/docs/CODEOWNERS"
+setup
+grep -q "CODEOWNERS: CODEOWNERS would be shadowed" "$work/out" || fail "root file not named alone: $(cat "$work/out")"
+grep -q "CODEOWNERS and docs/CODEOWNERS would be shadowed" "$work/out" && fail "both files said lost: $(cat "$work/out")"
+grep -q "docs/CODEOWNERS is already ignored by GitHub" "$work/out" || fail "docs/ not said already ignored: $(cat "$work/out")"
 rm -rf "$repo/.github" "$repo/docs" "$repo/CODEOWNERS"
 setup
 rm -f "$FIX/default-codeowners"

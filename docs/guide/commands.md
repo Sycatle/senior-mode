@@ -24,7 +24,7 @@ State: **Available.**
   `gh auth refresh -s project` if the scope is missing; where checks run (`local` or `actions`);
   your yes to the list of changes; for a stack without a `package.json`, how to lint, typecheck,
   test and build; your yes before adding a missing linter or test runner.
-- **Produces.** A Project board with `Status`, `Priority` and `Size`; labels; rebase-only merges;
+- **Produces.** A Project board with `Status`, `Priority`, `Size` and `Severity`; labels; rebase-only merges;
   the `senior-mode` ruleset; `.claude/senior-mode.json`; git hooks; `CLAUDE.md` Principles; PR and
   issue templates; permissions; release-please config; in `actions` mode, a workflow. Ends with a
   plain summary and the Project URL.
@@ -143,8 +143,8 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode check` | Runs the check list; on a clean tree, records the result for the current commit; a node project without `node_modules` fails first with `dependencies not installed: run <cmd>` |
 | `senior-mode publish [commit]` | Sends the recorded result to GitHub as `senior-mode/ci` (the commit must be pushed) |
 | `senior-mode release [--dry-run]` | Runs release-please 17.11.2 locally: tags a merged release PR, opens or updates the next one |
-| `senior-mode issue create --title ... --body-file ... --size ... --priority ...` | Creates a ticket with board fields, and optionally `--status`, `--milestone`, `--type`, `--blocked-by`, `--parent`; reuses an open issue with the same title and replaces its body |
-| `senior-mode pick [--json] [--max N]` | The Ready tickets in delivery order: Priority, then milestone due date; leaves out size L, blocked tickets and `needs-info` |
+| `senior-mode issue create --title ... --body-file ... --size ... --priority ...` | Creates a ticket with board fields, and optionally `--status`, `--milestone`, `--type`, `--blocked-by`, `--parent`, `--severity critical\|high\|moderate\|low` (sets the Severity field and the `security` label; critical implies P0 and high P1, the stricter of that and `--priority` wins, and `--priority` may then be left out); reuses an open issue with the same title and replaces its body |
+| `senior-mode pick [--json] [--max N]` | The Ready tickets in delivery order: Priority, a critical Severity first within a Priority, then milestone due date; leaves out size L, blocked tickets and `needs-info` |
 | `senior-mode start <issue>` | Creates the worktree (`<repository>-<issue>`) and the branch `<type>/<issue>-<slug>` for a ticket, from the default branch, installs the dependencies with the `install` command of the config (`npm ci`, `pnpm install --frozen-lockfile`...), and sets Status `In progress`; safe to rerun |
 | `senior-mode run [--max N] [--parallel P]` | The autonomous run of `/senior-mode:run`: one headless session per ticket, then a plain report |
 | `senior-mode schedule install [--at HH:MM] [--max N]` | Runs `senior-mode run` every day on this machine, as a systemd user timer or a tagged crontab line ([scheduled runs](autonomy.md#scheduled-runs)) |

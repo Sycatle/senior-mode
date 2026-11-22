@@ -57,7 +57,8 @@ cat >"$repo/.claude/senior-mode.json" <<'EOF'
 {"project": {"id": "PVT_1", "owner": "acme", "number": 3, "fields": {
   "Status": {"id": "F_S", "options": {"Backlog": "o1", "Ready": "o2"}},
   "Priority": {"id": "F_P", "options": {"P0 now": "o3", "P1 next": "o4"}},
-  "Size": {"id": "F_Z", "options": {"S": "o5", "M": "o6", "L": "o7"}}}}}
+  "Size": {"id": "F_Z", "options": {"S": "o5", "M": "o6", "L": "o7"}},
+  "Severity": {"id": "F_V", "options": {"critical": "s1", "high": "s2", "moderate": "s3", "low": "s4"}}}}}
 EOF
 echo '[{"number": 7, "title": "Epic"}, {"number": 8, "title": "Earlier slice"}]' >"$FIX/issues.json"
 printf '## Acceptance criteria\n- Given a, when b, then c.\n' >"$work/body.md"
@@ -137,6 +138,33 @@ logged "--single-select-option-id o1" || fail "default status is not Backlog"
 logged "--milestone" && fail "milestone passed without --milestone"
 logged "--label" && fail "label passed without --type"
 
+# --severity sets the Severity field and the security label. Critical is P0 and high is P1; given
+# with --priority too, the stricter of the two wins.
+sev=(--title "A risk" --body-file "$work/body.md" --size S)
+create "${sev[@]}" --severity critical || fail "critical without --priority refused: $(cat "$work/err")"
+logged "--field-id F_V --single-select-option-id s1" || fail "Severity not set: $(cat "$GH_LOG")"
+logged "--field-id F_P --single-select-option-id o3" || fail "critical is not P0: $(cat "$GH_LOG")"
+logged "--label security" || fail "security label not set on creation: $(cat "$GH_LOG")"
+create "${sev[@]}" --severity high || fail "high without --priority refused: $(cat "$work/err")"
+logged "--field-id F_P --single-select-option-id o4" || fail "high is not P1: $(cat "$GH_LOG")"
+create "${sev[@]}" --severity critical --priority "P1 next" || fail "critical with a softer priority failed: $(cat "$work/err")"
+logged "--field-id F_P --single-select-option-id o3" || fail "a softer --priority beats critical: $(cat "$GH_LOG")"
+logged "--field-id F_P --single-select-option-id o4" && fail "both priorities set"
+create "${sev[@]}" --severity high --priority "P0 now" || fail "high with a stricter priority failed: $(cat "$work/err")"
+logged "--field-id F_P --single-select-option-id o3" || fail "a stricter --priority is lowered by high: $(cat "$GH_LOG")"
+create "${sev[@]}" --severity low --priority "P1 next" || fail "low with a priority failed: $(cat "$work/err")"
+logged "--field-id F_V --single-select-option-id s4" || fail "low Severity not set"
+logged "--field-id F_P --single-select-option-id o4" || fail "low changes the priority: $(cat "$GH_LOG")"
+create --title "A typed risk" --body-file "$work/body.md" --size S --severity low --priority "P1 next" --type bug || fail "severity with a type failed: $(cat "$work/err")"
+logged "--label type:bug --label security" || fail "type and security labels not both set: $(cat "$GH_LOG")"
+echo '[{"number": 9, "title": "A risk", "labels": []}]' >"$FIX/issues.json"
+create "${sev[@]}" --severity critical || fail "reuse with severity failed: $(cat "$work/err")"
+logged "issue edit 9 --repo acme/app --add-label security" || fail "reused issue does not get the security label: $(cat "$GH_LOG")"
+logged "--field-id F_V --single-select-option-id s1" || fail "reused issue does not converge Severity"
+echo '[{"number": 7, "title": "Epic"}, {"number": 8, "title": "Earlier slice"}]' >"$FIX/issues.json"
+create --title "Plain" --body-file "$work/body.md" --size S --priority "P1 next" || fail "plain create failed"
+logged "security" && fail "security label or Severity without --severity: $(cat "$GH_LOG")"
+
 # Bad input is refused before anything is created.
 bad() {
   create "$@" && fail "accepted: $*"
@@ -152,6 +180,9 @@ bad --title "X" --body-file "$work/body.md" --size S --priority "P0 now" --block
 bad --title "X" --body-file "$work/body.md" --size S --priority "P0 now" --parent 0
 bad --body-file "$work/body.md" --size S --priority "P0 now"
 bad --title "X" --body-file "$work/body.md" --size S --priority
+bad --title "X" --body-file "$work/body.md" --size S --priority "P0 now" --severity urgent
+bad --title "X" --body-file "$work/body.md" --size S --severity moderate
+bad --title "X" --body-file "$work/body.md" --size S --priority "P0 now" --severity
 
 # A failed create stops before touching the board.
 CREATE_ERR="milestone 'v9' not found" create --title "Y" --body-file "$work/body.md" --size S --priority "P0 now" &&

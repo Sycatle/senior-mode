@@ -26,7 +26,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] [--fix] | statusline | retro [--since <dur>] [--json] | check | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> --priority <p> [--severity <s>] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] [--fix] | statusline | retro [--since <dur>] [--json] | check | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -157,15 +157,22 @@ link() {
   gh api -X POST "repos/$slug/issues/$issue/$path" -F "$key=$id" >/dev/null
 }
 
+# Priority a Severity implies: critical is P0, high is P1, the others none. With --priority too,
+# the stricter of the two wins (the lower P number).
+severity_priority() {
+  case $1 in critical) echo "P0 now" ;; high) echo "P1 next" ;; esac
+}
+
 # Creates a ticket with its board fields, milestone, type label, blocked-by links and parent epic.
+# --severity adds the Severity field and the label `security`.
 # An open issue with the same title is reused, so a run cut short can be repeated (spec 0001 §7):
 # its body, fields, milestone, label and links converge to the arguments, its Status only with --status.
 issue_create() {
-  local title="" body="" size="" priority="" status="" milestone="" type="" parent=""
-  local blockers=() edits=() file slug found number url b fields
+  local title="" body="" size="" priority="" severity="" status="" milestone="" type="" parent=""
+  local blockers=() edits=() file slug found number url b fields implied have
   while [ $# -gt 0 ]; do
     case $1 in -h | --help)
-      echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> --priority <option> [--status <option>] [--milestone <title>] [--type feature|bug|task|chore] [--blocked-by <n>]... [--parent <n>]"
+      echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> --priority <option> [--severity critical|high|moderate|low] [--status <option>] [--milestone <title>] [--type feature|bug|task|chore] [--blocked-by <n>]... [--parent <n>]"
       return 0 ;;
     esac
     [ $# -ge 2 ] || usage
@@ -174,6 +181,7 @@ issue_create() {
       --body-file) body=$2 ;;
       --size) size=$2 ;;
       --priority) priority=$2 ;;
+      --severity) severity=$2 ;;
       --status) status=$2 ;;
       --milestone) milestone=$2 ;;
       --type) type=$2 ;;
@@ -183,8 +191,11 @@ issue_create() {
     esac
     shift 2
   done
+  case $severity in "" | critical | high | moderate | low) ;; *) die "unknown severity $severity (critical, high, moderate, low)" ;; esac
+  implied=$(severity_priority "$severity")
+  [ -n "$priority" ] || priority=$implied
   [ -n "$title" ] && [ -n "$size" ] && [ -n "$priority" ] ||
-    die "issue create needs --title, --body-file, --size and --priority"
+    die "issue create needs --title, --body-file, --size and --priority (optional with --severity critical or high)"
   [ "$body" = - ] || [ -f "$body" ] || die "no body file: $body"
   case $type in "" | feature | bug | task | chore) ;; *) die "unknown type $type (feature, bug, task, chore)" ;; esac
   # ${a[@]+...}: an empty array is unbound under set -u before bash 4.4.
@@ -193,8 +204,16 @@ issue_create() {
   done
   [ -z "$parent" ] || [[ $parent =~ ^[1-9][0-9]*$ ]] || die "not an issue number: $parent"
   file=$(config_file)
+  [ -z "$priority" ] || option_id "$file" Priority "$priority" >/dev/null
+  if [ -n "$implied" ]; then
+    [[ $priority =~ ^P([0-9]+) ]] && have=${BASH_REMATCH[1]} || have=99
+    [[ $implied =~ ^P([0-9]+) ]]
+    [ "$have" -lt "${BASH_REMATCH[1]}" ] || priority=$implied
+  fi
   fields=(Priority "$priority" Size "$size")
+  [ -z "$severity" ] || fields+=(Severity "$severity")
   option_id "$file" Size "$size" >/dev/null
+  [ -z "$severity" ] || option_id "$file" Severity "$severity" >/dev/null
   option_id "$file" Priority "$priority" >/dev/null
   option_id "$file" Status "${status:-Backlog}" >/dev/null
   slug=$(repo_slug)
@@ -208,6 +227,7 @@ issue_create() {
   if [ -n "$number" ]; then
     echo "#$number $title (already open, body updated)"
     [ -z "$milestone" ] || edits+=(--milestone "$milestone")
+    [ -z "$severity" ] || edits+=(--add-label security)
     if [ -n "$type" ]; then
       edits+=(--add-label "type:$type")
       while IFS= read -r b; do
@@ -219,7 +239,7 @@ issue_create() {
     gh issue edit "$number" --repo "$slug" --body-file "$body" >/dev/null
   else
     url=$(gh issue create --repo "$slug" --title "$title" --body-file "$body" \
-      ${milestone:+--milestone "$milestone"} ${type:+--label "type:$type"})
+      ${milestone:+--milestone "$milestone"} ${type:+--label "type:$type"} ${severity:+--label security})
     number=${url##*/}
     echo "#$number $title (created)"
     status=${status:-Backlog}
@@ -378,7 +398,9 @@ BOARD='{
     {"name": "In progress", "color": "YELLOW"}, {"name": "In review", "color": "PURPLE"}, {"name": "Done", "color": "GREEN"}],
   "Priority": [{"name": "P0 now", "color": "RED"}, {"name": "P1 next", "color": "ORANGE"},
     {"name": "P2 later", "color": "YELLOW"}, {"name": "P3 someday", "color": "GRAY"}],
-  "Size": [{"name": "S", "color": "GREEN"}, {"name": "M", "color": "YELLOW"}, {"name": "L", "color": "RED"}]
+  "Size": [{"name": "S", "color": "GREEN"}, {"name": "M", "color": "YELLOW"}, {"name": "L", "color": "RED"}],
+  "Severity": [{"name": "critical", "color": "RED"}, {"name": "high", "color": "ORANGE"},
+    {"name": "moderate", "color": "YELLOW"}, {"name": "low", "color": "GRAY"}]
 }'
 
 # Options to give a field: the wanted ones, keeping the id, colour and description of an existing
@@ -445,7 +467,7 @@ setup_project() {
 setup_fields() {
   local id=$1 fields field want current options
   fields=$(board_fields "$id")
-  for field in Status Priority Size; do
+  for field in Status Priority Size Severity; do
     want=$(jq -c --arg f "$field" '.[$f]' <<<"$BOARD")
     current=$(jq -c --arg f "$field" '.[] | select(.name == $f)' <<<"$fields")
     if [ -z "$current" ]; then
@@ -516,7 +538,7 @@ setup_protection() { # config-file ruleset|none
 }
 
 # The GitHub side of a project (spec 0001 §11, #11), idempotent: Project linked to the repository with
-# Status, Priority and Size; labels; rebase-only merges; a ruleset requiring both statuses
+# Status, Priority, Size and Severity; labels; rebase-only merges; a ruleset requiring both statuses
 # (ADR 0006); ids cached in the config.
 # ci.mode local: the checks run before each push, so the repository's own workflows are disabled
 # (files kept) and spend no Actions budget. GitHub's built-in ones (dynamic/: Dependabot, Pages)
@@ -565,16 +587,17 @@ setup_github() {
   setup_fields "$id"
   fields=$(board_fields "$id") || die "could not read the fields of Project #$number"
   jq --arg o "$owner" --argjson n "$number" --arg id "$id" --argjson f "$fields" \
-    '.project = {owner: $o, number: $n, id: $id, fields: ($f | map(select(.name | IN("Status", "Priority", "Size"))
+    '.project = {owner: $o, number: $n, id: $id, fields: ($f | map(select(.name | IN("Status", "Priority", "Size", "Severity"))
       | {key: .name, value: {id, options: (.options | map({key: .name, value: .id}) | from_entries)}}) | from_entries)}' \
     "$file" >"$file.tmp" || die "could not write .claude/senior-mode.json"
   mv "$file.tmp" "$file"
-  echo "Project #$number $name: linked, fields Status, Priority, Size; ids cached in .claude/senior-mode.json"
+  echo "Project #$number $name: linked, fields Status, Priority, Size, Severity; ids cached in .claude/senior-mode.json"
   setup_board_workflows "$id"
 
   labels='needs-human|d93f0b|Waiting for a human decision or merge
 needs-info|fbca04|Missing information before work can start
-blocked|b60205|Blocked by something outside this ticket'
+blocked|b60205|Blocked by something outside this ticket
+security|ee0701|A security risk, with its Severity on the board'
   [ "$owner_type" = Organization ] || labels+='
 type:feature|a2eeef|New capability for users
 type:bug|d73a4a|Something does not work as specified
@@ -1108,7 +1131,7 @@ board_data() {
     (.[0].data.repository // {}) as $r
     | {items: [.[].data.node.items.nodes[] | select(.content.number != null) | .content as $c
         | {number: $c.number, title: $c.title, url: $c.url, open: ($c.state == "OPEN"),
-           status: single("Status"), priority: single("Priority"), size: single("Size"),
+           status: single("Status"), priority: single("Priority"), size: single("Size"), severity: single("Severity"),
            labels: [$c.labels.nodes[].name], milestone: $c.milestone.title, due: $c.milestone.dueOn,
            blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number]}],
        prs: [$r.pullRequests.nodes[]? | {number, title, url, branch: .headRefName, labels: [.labels.nodes[].name], failing: failing}],
@@ -1120,11 +1143,12 @@ board_data() {
 
 # The tickets `run` and `next` take (spec 0001 §7): Ready, open, not size L, not blocked (open
 # "blocked by" link, `blocked` label), not waiting for information (`needs-info`). Sorted by Priority
-# (P0 first), then milestone due date, then number.
+# (P0 first), a critical Severity ahead of the others, then milestone due date, then number.
 # shellcheck disable=SC2016 # a jq program, not shell
 PICK_DEF='def pick: [.items[] | select(.open and .status == "Ready" and .size != "L" and (.blockers | length == 0)
     and ((.labels | index("blocked")) | not) and ((.labels | index("needs-info")) | not))]
-  | sort_by([([(.priority // "") | scan("^P([0-9]+)") | .[0] | tonumber] | first // 99), (.due // "9999"), .number]);'
+  | sort_by([([(.priority // "") | scan("^P([0-9]+)") | .[0] | tonumber] | first // 99),
+    (if .severity == "critical" then 0 else 1 end), (.due // "9999"), .number]);'
 
 # senior-mode pick [--json] [--max N]
 pick() {

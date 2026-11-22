@@ -101,8 +101,11 @@ logged "project link 7 --owner acme --repo acme/app" || fail "Project not linked
 [ "$(cfg '.project.fields.Priority.options | keys_unsorted | join(",")')" = "P0 now,P1 next,P2 later,P3 someday" ] ||
   fail "Priority: $(cfg .project.fields.Priority)"
 [ "$(cfg '.project.fields.Size.options | keys_unsorted | join(",")')" = "S,M,L" ] || fail "Size: $(cfg .project.fields.Size)"
+[ "$(cfg '.project.fields.Severity.options | keys_unsorted | join(",")')" = "critical,high,moderate,low" ] ||
+  fail "Severity: $(cfg .project.fields.Severity)"
+logged '"name":"critical","color":"RED"' || fail "Severity created without its colours"
 logged '"name":"P0 now","color":"RED"' || fail "created fields without their colours"
-for label in needs-human needs-info blocked type:feature type:bug type:task type:chore; do
+for label in needs-human needs-info blocked security type:feature type:bug type:task type:chore; do
   logged "label create $label" || fail "label $label not created"
 done
 logged "--enable-rebase-merge --enable-merge-commit=false --enable-squash-merge=false --delete-branch-on-merge" ||

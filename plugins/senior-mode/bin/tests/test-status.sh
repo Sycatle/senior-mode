@@ -134,6 +134,14 @@ run pick --json || fail "empty pick --json failed"
 [ "$(cat "$work/out")" = "[]" ] || fail "empty pick --json: $(cat "$work/out")"
 cp "$FIX/page-first.full" "$FIX/page-first.json"
 
+# A critical ticket leads its priority, ahead of an earlier milestone; Severity is read from the board.
+cp "$FIX/page-first.json" "$FIX/page-first.keep"
+crit=$(item 30 Ready "P0 now" S '"2028-01-01T00:00:00Z"' '[]' '[]' | jq -c '.fieldValues.nodes += [{name: "critical", field: {name: "Severity"}}]')
+jq -c --argjson c "$crit" '.data.node.items.nodes += [$c]' "$FIX/page-first.keep" >"$FIX/page-first.json"
+run pick --json || fail "pick with a critical ticket failed: $(cat "$work/err")"
+[ "$(json 'map(.number)')" = "[30,11,16,12,10]" ] || fail "critical not first: $(cat "$work/out")"
+cp "$FIX/page-first.keep" "$FIX/page-first.json"
+
 for bad in "--max 0" "--max x" "--max" "--nope"; do
   # shellcheck disable=SC2086 # the words are the arguments
   run pick $bad && fail "pick accepted: $bad"

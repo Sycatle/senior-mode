@@ -53,9 +53,11 @@ Before changing anything, setup:
 
 - **Project board.** It finds the Project linked to the repository (or one with the repository's
   name), or creates it. It makes sure the fields `Status` (Backlog, Ready, In progress, In review,
-  Done), `Priority` (P0 now, P1 next, P2 later, P3 someday) and `Size` (S, M, L) exist. Options and
-  values already there are kept.
-- **Labels.** `needs-human`, `needs-info`, `blocked`. On a personal account, also `type:feature`,
+  Done), `Priority` (P0 now, P1 next, P2 later, P3 someday), `Size` (S, M, L) and `Severity` (critical, high,
+  moderate, low) exist. Options and values already there are kept. Severity is a tie-break within a
+  Priority, not a priority: a critical ticket moved by hand to P1 still comes after a P0. A project
+  created before Severity gets the field by rerunning `senior-mode setup github`.
+- **Labels.** `needs-human`, `needs-info`, `blocked`, `security` (on risks filed with `--severity`). On a personal account, also `type:feature`,
   `type:bug`, `type:task` and `type:chore` (organizations use issue types).
 - **Merges.** Rebase merges only; branches are deleted after merge.
 - **Ruleset.** A ruleset named `senior-mode` on the default branch: pull requests only, rebase,

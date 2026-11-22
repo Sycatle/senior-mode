@@ -372,14 +372,17 @@ last result.
 ## 11. GitHub model
 
 - **Project (v2):** fields `Status` (Backlog, Ready, In progress, In review, Done), `Priority`
-  (P0 now, P1 next, P2 later, P3 someday), `Size` (S, M, L). Built-in workflows set Done on merge.
+  (P0 now, P1 next, P2 later, P3 someday), `Size` (S, M, L), `Severity` (critical, high, moderate, low;
+  a tie-break within a Priority: a critical ticket moved by hand to P1 sorts after a P0). Built-in
+  workflows set Done on merge.
 - **Native features first:** milestones for roadmap stages (with due dates), sub-issues for epics,
   issue dependencies (blocked by) for ordering, issue types when the owner is an organization;
   on personal accounts, type labels `type:feature|bug|task|chore` replace issue types.
   `senior-mode issue create` sets fields, milestone, type, blocked-by and parent in one call, and
   reuses an open issue with the same title, replacing its body and saying so, so an interrupted
   `frame` can be rerun. Agents pass the board's exact option values (`P0 now`, not "High").
-- **Labels:** `needs-human`, `needs-info`, `blocked`, plus type labels when needed. Nothing else by
+- **Labels:** `needs-human`, `needs-info`, `blocked`, `security` (risks filed with `--severity`), plus
+  type labels when needed. Nothing else by
   default.
 - **Branches:** short-lived, one per ticket, from the default branch.
 - **Commits:** Conventional Commits, atomic, enforced by a `commit-msg` git hook and a CI check.

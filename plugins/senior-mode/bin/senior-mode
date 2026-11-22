@@ -2200,6 +2200,60 @@ run_docs() {
     >"$RUN_DIR/docs.json" 2>"$RUN_DIR/docs.log") || echo "docs: the session failed, log in $RUN_DIR/docs.log" >&2
 }
 
+# Is the plugin enabled? Claude Code keeps it in `enabledPlugins` ("<plugin>@<marketplace>": true) of the
+# user settings (CLAUDE_CONFIG_DIR, else ~/.claude), then the project's, then the project's local ones: the
+# last file that names a key decides it. $1 is the project root.
+run_plugin_enabled() {
+  local f files=()
+  for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" "$1/.claude/settings.json" "$1/.claude/settings.local.json"; do
+    [ ! -f "$f" ] || files+=("$f")
+  done
+  [ ${#files[@]} -gt 0 ] && jq -es 'reduce .[] as $s ({}; . + ($s.enabledPlugins // {}))
+    | to_entries | any(.[]; (.key | startswith("senior-mode@")) and .value == true)' "${files[@]}" >/dev/null 2>&1
+}
+
+# Once a day, a probe session that tries a command guard-bash denies in every session and that is inert
+# if the deny fails (git init of a temporary directory under a core.hooksPath override). The probe passes
+# when the deny shows in the session's output and the directory was not created. The date of the last
+# pass is in <git common dir>/senior-mode/probe. A failed probe leaves its output in probe.log.
+run_probe() {
+  local state=$1/senior-mode/probe tmp why="" rc=0 timeout=()
+  [ "$(cat "$state" 2>/dev/null)" != "$(date +%F)" ] || return 0
+  mkdir -p "$1/senior-mode"
+  tmp=$(mktemp -d)
+  ! command -v timeout >/dev/null || timeout=(timeout 300)
+  (cd "$RUN_ROOT" && SENIOR_MODE_RUN=1 ${timeout[@]+"${timeout[@]}"} "$RUN_CLAUDE" -p --model haiku \
+    --permission-mode bypassPermissions --output-format stream-json --verbose \
+    ${SENIOR_MODE_PLUGIN_DIR:+--plugin-dir "$SENIOR_MODE_PLUGIN_DIR"} \
+    "This is a guard probe. Run exactly this one Bash command and nothing else: \`git -c core.hooksPath=/dev/null init -q $tmp/ran\`. If a hook denies it, do not retry and do not work around it: answer with one line saying it was denied." \
+    >"$tmp/out" 2>&1) || rc=$?
+  if [ -e "$tmp/ran" ]; then
+    why="the denied command ran"
+  elif ! grep -q 'senior-mode: skipping checks is denied' "$tmp/out"; then
+    why="no deny showed in the session (exit code $rc)"
+  fi
+  if [ -n "$why" ]; then
+    cp "$tmp/out" "$1/senior-mode/probe.log"
+    rm -rf "$tmp"
+    die "the guard probe failed: $why. A session was asked to run git -c core.hooksPath=... and the guard did not stop it, so the guards may not be active in run sessions. Output in $1/senior-mode/probe.log; nothing was started."
+  fi
+  rm -rf "$tmp"
+  date +%F >"$state"
+}
+
+# Before a run starts (#117): with the claude CLI, the plugin is enabled (or loaded with --plugin-dir) and
+# its hooks.json is there, and the daily probe shows the guards deny. $1 is the git common dir.
+run_guards() {
+  local root hooks
+  root=${SENIOR_MODE_PLUGIN_DIR:-$(dirname "$(dirname "$SELF")")}
+  hooks=$root/hooks/hooks.json
+  [ "$(config_get agent.command)" = claude ] || return 0
+  [ -f "$hooks" ] || die "no hooks.json at $hooks: the guards would not run in the sessions; nothing was started."
+  [ -n "${SENIOR_MODE_PLUGIN_DIR:-}" ] || run_plugin_enabled "$RUN_ROOT" ||
+    die "the senior-mode plugin is not enabled (enabledPlugins in $RUN_ROOT/.claude/settings.json or ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json): the guards would not run in the sessions; nothing was started."
+  run_probe "$1"
+}
+
 # senior-mode run [--max N] [--parallel P]: delivers up to N Ready tickets, P at a time, each in a
 # headless claude session in its own worktree (spec 0001 §10, ADR 0007), then reports in plain words.
 run() {
@@ -2234,6 +2288,7 @@ run() {
   RUN_SLUG=$(repo_slug)
   # The main checkout, even when run from a ticket worktree: worktrees are its siblings.
   RUN_ROOT=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+  run_guards "$(git rev-parse --path-format=absolute --git-common-dir)"
   git fetch -q origin || echo "senior-mode: could not fetch origin; starting from the last fetched state" >&2
   RUN_BASE=$(default_branch) || die "no default branch found"
   # Protected zones as the base branch has them; a branch cannot edit its own.

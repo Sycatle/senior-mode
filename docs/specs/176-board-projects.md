@@ -28,8 +28,8 @@ Template copy (#176) and migration (#181):
   (`copyProjectV2`, without draft issues), links it to the repository, makes it public when the
   repository is, writes its id in `.claude/senior-mode.json`, then checks the copy: the views and
   workflows the template has are there, and any missing one is named with where to fix it.
-- The template is "senior-mode template", public, on the Sycatle account; its id ships in the
-  presets and `board.template` overrides it (an organisation's own template).
+- The template is "senior-mode template", public, on the Sycatle account; its id is the
+  default of `board.template` in the config defaults, which a project overrides (an organisation's own template).
 - Given an existing Project, when `setup github` runs, then it is never replaced: setup lists the
   views and workflows the template has and it lacks, and says `--migrate` exists.
 - Given `setup github --migrate --dry-run`, then it prints the mapping (items, fields, options,
@@ -47,8 +47,9 @@ Project health (#177):
 - Given `status --publish`, then a `createProjectV2StatusUpdate` posts a status, a start date, a
   target date (the earliest open milestone's due date, if any) and a short body: counts per Status,
   needs-human items, failing pull requests, drift.
-- Off track when an open milestone is past due with open issues, or the run breaker is paused.
-  At risk when a `needs-human` item has waited more than 24 hours, an open pull request fails its
+- Off track when an open milestone is past due with open issues. At risk when an open issue has
+  carried `needs-human` for more than 24 hours (time of its last `labeled` event in the issue
+  timeline), an open pull request fails its
   checks, or there is drift. On track otherwise. The body says which rule decided.
 - Given `retro` runs, then it publishes the same update at the end of each pass.
 - `status` alone never publishes.
@@ -80,6 +81,8 @@ Iterations and dates (#180):
 
 - The daemon publishing health once a day and archiving on each loop: `serve` does not exist yet;
   its ticket #149 carries both, calling the same functions.
+- Off track because the breaker paused: the breaker only lives inside one `run` today; the
+  persistent, pausing breaker of the daemon (#156) adds that rule.
 - Moving issues between repositories, or migrating anything but Project items and their fields.
 - Deleting the old Project: it is closed, a human may delete it.
 - Agent identity and server-side review (#175, #171).
@@ -89,10 +92,14 @@ Iterations and dates (#180):
 `setup_github` (copy, `--migrate`, `--dry-run`, README, fields), `status --publish`, `run` start,
 `start`, `run_merge` and `retro` in `bin/senior-mode`, through `test-setup-github.sh`,
 `test-status.sh`, `test-start.sh`, `test-run.sh` and `test-retro.sh`, all with
-the gh stub and board fixtures; the template's real content checked once by hand at setup.
+the gh stub and board fixtures; the `next` skill for setting End after its merge; the template's
+real content checked once by hand at setup.
 
 ## Open questions
 
 - What `copyProjectV2` copies (views, workflows, auto-add) is checked against the real API in the
   first slice and the criteria above adjusted if it differs; recommended: keep the post-copy check
-  either way, it is what tells the user.
+  either way, it is what tells the user. The same check covers creating an ITERATION field on an
+  existing Project through `createProjectV2Field` (#180).
+- `status --publish` shares the word with `senior-mode publish` (commit statuses); recommended: keep
+  it, the subcommand and the flag never meet, and the help text says what each publishes.

@@ -32,4 +32,7 @@ Argument: $ARGUMENTS (a ticket number; empty means the top of `pick`). Answer in
    invoke skill `docs`; do not wait for its pull
    request. Offer the next ticket.
 
+A security risk met outside the ticket is filed with `senior-mode issue create --severity ... --kind ... --path ...
+--rule ...`, never fixed in this pull request (`${CLAUDE_SKILL_DIR}/reference.md`, Delivering).
+
 Never skip a step to go faster; stop and say why when one fails twice.

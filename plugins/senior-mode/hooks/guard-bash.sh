@@ -8,17 +8,22 @@
 set -o pipefail
 input=$(cat)
 # Quoted text is data (commit messages, echo), never options: replace it before parsing. A quoted
-# single word (a URL, a ref) is unquoted instead; an empty pair is an argument (`core.hooksPath ""`),
-# not nothing. A backslash-newline continues the line.
+# single word (a URL, a ref) is unquoted instead. An empty pair touching a word (`--for""ce`) is removed;
+# alone it is an argument (`core.hooksPath ""`) and stays, as `Q`. A backslash-newline continues the line.
 command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
-  | gsub("\"(?<w>[^\"\\\\\\s$`]+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'"; .w // .v)
+  | gsub("\"(?<w>[^\"\\\\\\s$`]+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'|(?<=\\S)(?:\"\"|'"'"''"'"')|(?:\"\"|'"'"''"'"')(?=\\S)|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')"; .w // .v // .g // "")
   | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
 cwd=$(jq -r '.cwd // empty' <<<"$input")
 raw=$(jq -r '.tool_input.command // ""' <<<"$input")
 # The gh api checks read the endpoint, not the text of a body, header or filter: drop the values of
 # the options that take one, keeping what is quoted in the endpoint (`"repos/$R/pulls/$N/merge"`).
+# Only plain quoting is parsed this way: with a backslash, `$'..'`, `$".."` or a command substitution
+# the stripper and the shell can disagree on where a value ends, so the whole command is read
+# instead (a false positive beats a bypass).
 raw_ep=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
   | gsub("(?<f>\\s(-f|-F|-H|-q|-t|--field|--raw-field|--header|--jq|--template|--input)(\\s+|=)?)(\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"'|[^\\s\"'"'"'])+"; "\(.f)V")' <<<"$input")
+ep=$raw_ep
+case ${raw//\\$'\n'/ } in *\\* | *\$\'* | *\$\"* | *\$\(* | *\`*) ep=$raw ;; esac
 
 deny() {
   jq -nc --arg r "senior-mode: $1" \
@@ -38,6 +43,14 @@ is_default() {
 is_shared() {
   is_default "$1" || git -C "$dir" rev-parse -q --verify "refs/remotes/origin/$1" >/dev/null ||
     git -C "$dir" rev-parse -q --verify "$1@{upstream}" >/dev/null 2>&1
+}
+
+# An assignment that sets core.hooksPath through the environment: GIT_CONFIG_KEY_<n>, or the older
+# GIT_CONFIG_PARAMETERS (its quoting is read in the raw command).
+check_env() {
+  [[ ${1,,} =~ ^git_config_key_[0-9]+=[\"\']?core\.hookspath ]] && deny_skip "GIT_CONFIG_KEY core.hooksPath"
+  [[ $1 == GIT_CONFIG_PARAMETERS=* && ${raw,,} == *hookspath* ]] && deny_skip "GIT_CONFIG_PARAMETERS core.hooksPath"
+  return 0
 }
 
 check_push() {
@@ -67,14 +80,14 @@ while IFS= read -r segment; do
   # Leading words that only set up the command: assignments, export, wrappers. A git setting handed
   # over through the environment switches the hooks off as surely as -c does.
   i=0
-  while [[ ${w[i]:-} == *=* || ${w[i]:-} =~ ^(command|exec|export|declare|typeset|readonly)$ ]]; do
-    [[ ${w[i],,} =~ ^git_config_key_[0-9]+=[\"\']?core\.hookspath ]] && deny_skip "GIT_CONFIG_KEY core.hooksPath"
+  while [[ ${w[i]:-} == *=* || ${w[i]:-} =~ ^(command|exec|export|declare|typeset|readonly)$ || (i -gt 0 && ${w[i]:-} == -*) ]]; do
+    check_env "${w[i]:-}"
     i=$((i + 1))
   done
   # env, sudo, xargs... run what follows: look for the gh or git behind them, options and values included.
   if [[ ${w[i]##*/} =~ ^(env|sudo|doas|xargs|nohup|time|nice)$ ]]; then
     while [ "$i" -lt "${#w[@]}" ] && ! [[ ${w[i]##*/} =~ ^(gh|git)$ ]]; do
-      [[ ${w[i],,} =~ ^git_config_key_[0-9]+=[\"\']?core\.hookspath ]] && deny_skip "GIT_CONFIG_KEY core.hooksPath"
+      check_env "${w[i]:-}"
       i=$((i + 1))
     done
   fi
@@ -104,15 +117,17 @@ while IFS= read -r segment; do
         write=true
       fi
     fi
+    # Where the quoting is not plain, the words above may have lost the method: read it in the whole command.
+    [[ ${gs[0]:-} == api && $ep == "$raw" && ${raw,,} =~ [[:space:]](-x|--method)[[:space:]=]?put([[:space:]]|$) ]] && method=PUT
     # In a run only `senior-mode run` merges, after its own checks (ADR 0008): the ticket session,
     # which can post its own statuses, must never merge, whatever autonomy.merge says.
     if [ "${SENIOR_MODE_RUN:-}" = 1 ]; then
       $merge && deny "a run session never merges: senior-mode run merges after its own checks, or a human does."
       # A GraphQL mutation sits in quoted text, which $command no longer holds: read the raw one.
-      [[ ${gs[0]:-} == api && ($raw_ep =~ pulls/[^/[:space:]]+/merge|/merges || $raw =~ mergePullRequest|enablePullRequestAutoMerge) ]] &&
+      [[ ${gs[0]:-} == api && ($ep =~ pulls/[^/[:space:]]+/merge|/merges || $raw =~ mergePullRequest|enablePullRequestAutoMerge) ]] &&
         deny "a run session never merges, not through gh api either."
       # The rules that bound the run are the human's (spec 130, #116).
-      [[ ($write == true && $raw_ep =~ /rulesets([/?[:space:]\"\']|$)|/branches/[^[:space:]]+/protection) ||
+      [[ ($write == true && $ep =~ /rulesets([/?[:space:]\"\']|$)|/branches/[^[:space:]]+/protection) ||
         (${gs[0]:-} == api && $raw =~ (create|update|delete)(RepositoryRuleset|BranchProtectionRule)) ]] &&
         deny "a run session never changes rulesets or branch protection: say in the pull request what a human should change."
     fi
@@ -120,7 +135,7 @@ while IFS= read -r segment; do
     $merge && [[ " ${w[*]:i+1} " =~ \ --admin[=\ ] ]] &&
       deny "gh pr merge --admin bypasses the required checks and review: a human must do it."
     # Through the API, an admin's merge bypasses the ruleset without any flag.
-    [[ $method == PUT && $raw_ep =~ pulls/[^/[:space:]]+/merge([?[:space:]\"\']|$) ]] &&
+    [[ $method == PUT && $ep =~ pulls/[^/[:space:]]+/merge([?[:space:]\"\']|$) ]] &&
       deny "merging through gh api can bypass the required checks: use gh pr merge without --admin."
     continue
   fi
@@ -132,6 +147,7 @@ while IFS= read -r segment; do
       -C) dir=$(cd "$dir" 2>/dev/null && cd "${w[i + 1]}" 2>/dev/null && pwd) || dir=$cwd; i=$((i + 2)) ;;
       -c) [[ ${w[i + 1],,} == core.hookspath=* ]] && deny_skip "core.hooksPath"; i=$((i + 2)) ;;
       --config-env=*) [[ ${w[i],,} == --config-env=core.hookspath=* ]] && deny_skip "core.hooksPath"; i=$((i + 1)) ;;
+      --config-env) [[ ${w[i + 1],,} == core.hookspath=* ]] && deny_skip "core.hooksPath"; i=$((i + 2)) ;;
       *) i=$((i + 1)) ;;
     esac
   done

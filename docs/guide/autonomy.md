@@ -246,6 +246,11 @@ adopted, it suggests `/senior-mode:setup`.
 session per ticket, each in its own worktree, with `SENIOR_MODE_RUN=1`. The `senior-mode run`
 command, not a model, applies these bounds:
 
+- **WIP:** `run` is bounded by `autonomy.parallel`, not by `wip`. It proves it is the caller with a
+  random token, kept in its memory and in a `0600` file of the run's directory that it removes when it
+  ends; `start` skips `wip` only when the two match. `SENIOR_MODE_RUN=1` set by hand does not: it
+  only marks a session as unattended for the guards. This stops an accidental or hand-set bypass, not a
+  process of the same user bent on it.
 - **Alerts first:** before it looks at the board, `run` files the open high or critical alerts of
   GitHub's scanners as issues (see [GitHub's scanners](#githubs-scanners)).
 - **Batch:** at most `autonomy.maxTickets` tickets (default 3), `autonomy.parallel` at a time

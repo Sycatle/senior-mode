@@ -54,10 +54,22 @@ jq -e '.packages["."]["initial-version"] == "0.1.0"' "$new/release-please-config
 jq -e '.protected | index("**/migrations/**") and index(".github/workflows/**") and index("**/secrets/**") and index(".claude/secret-allowlist")' \
   "$new/.claude/senior-mode.json" >/dev/null || fail "generic preset without protected zones: $(jq -c .protected "$new/.claude/senior-mode.json")"
 
+# `setup repo` writes `protected`, after `setup github` ran on a first setup: with globs and no
+# managed CODEOWNERS block it says to rerun `setup github`, and it says it again on a rerun.
+grep -q "CODEOWNERS: the protected zones are not owned yet; rerun senior-mode setup github" "$work/out" ||
+  fail "no word that setup github must be rerun: $(cat "$work/out")"
+
 # Second run: nothing changes.
 before=$(snapshot "$new")
 setup "$new" --command test="true" --command lint="true"
 [ "$(snapshot "$new")" = "$before" ] || fail "second run changed files"
+grep -q "rerun senior-mode setup github" "$work/out" || fail "rerun forgets to say setup github must be rerun"
+mkdir -p "$new/.github"
+printf '# senior-mode:begin\n# senior-mode:end\n' >"$new/.github/CODEOWNERS"
+setup "$new" --command test="true" --command lint="true"
+grep -q "CODEOWNERS" "$work/out" && fail "CODEOWNERS advice although the managed block exists: $(cat "$work/out")"
+rm -rf "$new/.github/CODEOWNERS"
+before=$(snapshot "$new")
 
 # The commit-msg hook.
 commit "$new" "mise à jour" && fail "non-conventional commit accepted"

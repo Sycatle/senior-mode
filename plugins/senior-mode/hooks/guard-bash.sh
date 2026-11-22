@@ -9,9 +9,10 @@ set -o pipefail
 input=$(cat)
 # Quoted text is data (commit messages, echo), never options: replace it before parsing. A quoted
 # single word (a URL, a ref) is unquoted instead. An empty pair touching a word (`--for""ce`) is removed;
-# alone it is an argument (`core.hooksPath ""`) and stays, as `Q`. A backslash-newline continues the line.
+# alone it is an argument (`core.hooksPath ""`) and stays, as `Q`. Outside quotes a backslash before a
+# letter, digit or `/._~-` is dropped, as the shell does (`--for\ce`). A backslash-newline continues the line.
 command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
-  | gsub("\"(?<w>[^\"\\\\\\s$`]+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'|(?<=\\S)(?:\"\"|'"'"''"'"')|(?:\"\"|'"'"''"'"')(?=\\S)|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')"; .w // .v // .g // "")
+  | gsub("\"(?<w>[^\"\\\\\\s$`]+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'|(?<=\\S)(?:\"\"|'"'"''"'"')|(?:\"\"|'"'"''"'"')(?=\\S)|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')|\\\\(?=[A-Za-z0-9/._~-])"; .w // .v // .g // "")
   | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
 cwd=$(jq -r '.cwd // empty' <<<"$input")
 raw=$(jq -r '.tool_input.command // ""' <<<"$input")
@@ -22,8 +23,10 @@ raw=$(jq -r '.tool_input.command // ""' <<<"$input")
 # instead (a false positive beats a bypass).
 raw_ep=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
   | gsub("(?<f>\\s(-f|-F|-H|-q|-t|--field|--raw-field|--header|--jq|--template|--input)(\\s+|=)?)(\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"'|[^\\s\"'"'"'])+"; "\(.f)V")' <<<"$input")
-ep=$raw_ep
-case ${raw//\\$'\n'/ } in *\\* | *\$\'* | *\$\"* | *\$\(* | *\`*) ep=$raw ;; esac
+ep=$raw_ep untrusted=false
+case ${raw//\\$'\n'/ } in *\\* | *\$\'* | *\$\"* | *\$\(* | *\`*) ep=$raw untrusted=true ;; esac
+# The command with its quotes and backslashes removed, in lower case: for what the words may have lost.
+flat=${raw,,} flat=${flat//[\"\'\\]/}
 
 deny() {
   jq -nc --arg r "senior-mode: $1" \
@@ -49,7 +52,12 @@ is_shared() {
 # GIT_CONFIG_PARAMETERS (its quoting is read in the raw command).
 check_env() {
   [[ ${1,,} =~ ^git_config_key_[0-9]+=[\"\']?core\.hookspath ]] && deny_skip "GIT_CONFIG_KEY core.hooksPath"
-  [[ $1 == GIT_CONFIG_PARAMETERS=* && ${raw,,} == *hookspath* ]] && deny_skip "GIT_CONFIG_PARAMETERS core.hooksPath"
+  # Its value is a list of quoted pairs, which the parsed command no longer shows: read the flattened one,
+  # and refuse a value that is not a literal ($X, $(..), backticks) since it cannot be read at all.
+  if [[ $1 == GIT_CONFIG_PARAMETERS=* ]]; then
+    [[ ${1,,} == *hookspath* || $flat == *hookspath* ]] && deny_skip "GIT_CONFIG_PARAMETERS core.hooksPath"
+    [[ $flat =~ git_config_parameters=[^[:space:]]*[\$\`] ]] && deny_skip "GIT_CONFIG_PARAMETERS set to a value that is not a literal"
+  fi
   return 0
 }
 
@@ -117,8 +125,13 @@ while IFS= read -r segment; do
         write=true
       fi
     fi
-    # Where the quoting is not plain, the words above may have lost the method: read it in the whole command.
-    [[ ${gs[0]:-} == api && $ep == "$raw" && ${raw,,} =~ [[:space:]](-x|--method)[[:space:]=]?put([[:space:]]|$) ]] && method=PUT
+    # Where the quoting is not plain, the words above may have lost the method (`-X "PUT"` after an
+    # escaped quote): fail closed, a write unless every method option in the command says GET.
+    if [[ ${gs[0]:-} == api && $untrusted == true ]]; then
+      opt='(^|[[:space:]])(-x|--method)'
+      methods=$(grep -oE "$opt" <<<"$flat" | wc -l) gets=$(grep -oE "${opt}[[:space:]=]?get([[:space:]]|\$)" <<<"$flat" | wc -l)
+      if [ "$gets" -lt 1 ] || [ "$gets" -ne "$methods" ]; then method=PUT write=true; fi
+    fi
     # In a run only `senior-mode run` merges, after its own checks (ADR 0008): the ticket session,
     # which can post its own statuses, must never merge, whatever autonomy.merge says.
     if [ "${SENIOR_MODE_RUN:-}" = 1 ]; then

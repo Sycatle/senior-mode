@@ -125,7 +125,37 @@ expect deny 'gh api -f body=it\'"'"'s -X PUT repos/a/b/pulls/5/merge'
 expect deny "gh api -f body=\$'a\\'b' -X PUT repos/a/b/pulls/5/merge"
 expect deny "gh api -f body=\$'x\\'y' -X PUT repos/a/b/pulls/5/merge -F z='a'"
 expect deny 'gh api -f body=a\"b -X PUT repos/a/b/pulls/5/merge -f z="c"'
+# Second review of #218: with odd quoting earlier on the line, a quoted or computed method is not lost.
+expect deny 'gh api -f body=a\"b -X "PUT" repos/a/b/pulls/5/merge -f z="c"'
+expect deny "gh api -f body=a\\\"b -X 'PUT' repos/a/b/pulls/5/merge -f z=c"
+expect deny 'gh api -f body=a\"b --method "PUT" repos/a/b/pulls/5/merge -f z="c"'
+expect deny 'gh api -f body=a\"b --method="PUT" repos/a/b/pulls/5/merge -f z="c"'
+expect deny 'gh api -f body=a\"b -X P"UT" repos/a/b/pulls/5/merge -f z="c"'
+expect deny 'gh api -f body=a\"b -X $M repos/a/b/pulls/5/merge -f z="c"'
+expect deny 'gh api -f body=a\"b -X GET -X PUT repos/a/b/pulls/5/merge -f z="c"'
+expect allow 'gh api -f body=a\"b -X GET repos/a/b/pulls/5/merge -f z="c"'
 expect allow 'gh api -X PUT repos/a/b/issues/3/comments -f body="a note"'
+# GIT_CONFIG_PARAMETERS is read normalised, and a value that is not a literal is refused.
+expect deny 'GIT_CONFIG_PARAMETERS="'"'"'core.hooks""Path=/dev/null'"'"'" git commit -m x'
+expect deny 'GIT_CONFIG_PARAMETERS=$X git commit -m x'
+expect deny 'GIT_CONFIG_PARAMETERS="$X" git status'
+expect deny 'GIT_CONFIG_PARAMETERS=$(cat p) git commit -m x'
+expect deny 'export GIT_CONFIG_PARAMETERS=`cat p`'
+expect deny "env GIT_CONFIG_PARAMETERS='core.hooks\\Path=x' git push"
+expect allow "GIT_CONFIG_PARAMETERS=\"'user.name=t' 'user.email=t@t'\" git status"
+# A backslash before an ordinary letter outside quotes is dropped by the shell: so is it here.
+expect deny 'git config core.hooks\Path x'
+expect deny 'git push --for\ce'
+expect deny 'git commit --no-ver\ify -m x'
+expect deny 'g\it push --force'
+expect deny 'git pu\sh --force'
+expect deny 'git -c core.hooks\Path=x commit -m x'
+expect deny 'GIT_CONFIG_KEY_0=core.hooks\Path git commit -m x'
+expect deny 'gh pr merge 3 --ad\min'
+expect deny 'g\h alias set x y'
+expect allow 'git commit -m "a\nb"'
+expect allow 'git log --format=%s\n'
+expect allow 'echo a\nb'
 expect allow 'GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=t git commit -m x'
 expect allow 'GIT_CONFIG_COUNT=0 git status'
 expect allow 'git config user.name ""'
@@ -180,6 +210,10 @@ expect deny 'gh api repos/a/b/branches/main/protection/required_status_checks -X
 expect deny 'gh api -X put repos/a/b/pulls/5/merge'
 expect deny "gh api graphql -f query='mutation { updateRepositoryRuleset(input: {}) { clientMutationId } }'"
 expect deny "gh api graphql -f query='mutation { deleteBranchProtectionRule(input: {}) { clientMutationId } }'"
+# Second review of #218: an odd quoting plus a quoted or computed method is still a write.
+expect deny 'gh api -f body=a\"b --method "POST" repos/a/b/rulesets -f z="c"'
+expect deny 'gh api -f body=a\"b -X $M repos/a/b/rulesets/1 -f z="c"'
+expect allow 'gh api -f body=a\"b --method GET repos/a/b/rulesets'
 # Review of #218: the stripped copy only excuses plain quoting; a backslash or $'..' makes the whole
 # command count (a false positive beats a bypass), and so does a command substitution that names the path.
 expect deny "gh api -f body=\$'x\\'y' repos/a/b/rulesets -X POST -f z='a'"

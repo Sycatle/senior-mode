@@ -15,8 +15,8 @@ issue: "#123"
 The board is the source of truth for state (ADR 0002), yet nothing kept it true when work ended. On
 2026-11-22 the senior-mode board had 24 closed tickets still In progress and 8 more in In review,
 Ready or no status: the Project's built-in "Item closed" and "Pull request merged" workflows were
-off, `run` and `next` never set Done, and `status` only reads open issues, so it showed nothing
-wrong. Everyone reading the board (the user, `next`, `run`, `retro`) was misled, and nothing limited
+off, `run` and `next` never set Done, and `status` reads closed items but only to list what was
+done, so it showed nothing wrong. Everyone reading the board (the user, `next`, `run`, `retro`) was misled, and nothing limited
 how much work was started at once.
 
 ## Acceptance criteria
@@ -35,9 +35,11 @@ Board drift (#124):
   lists it, and `status --fix` sets it Done and says so.
 - Given an open issue whose Status is Done, then it is listed as drift; `--fix` leaves it and says
   a human decides.
-- Given an open issue In progress or In review with no open pull request and no branch named after
-  it on origin, then it is listed as stale; `--fix` leaves it.
+- Given an open issue In progress or In review with no open pull request and no branch
+  `<type>/<n>-*` on origin, then it is listed as stale; `--fix` leaves it.
 - Given no drift, then the section is absent and `status --json` has `drift: []`.
+- Given `--fix` with `--json`, then the JSON lists what was fixed under `fixed`; `--fix` with
+  `--watch` is refused (a repair runs once, on purpose).
 
 Work-in-progress limit (#125):
 
@@ -45,10 +47,11 @@ Work-in-progress limit (#125):
   runs outside a run, then it refuses, names the ticket in progress and suggests finishing it; the
   board is unchanged.
 - Given `start` on the ticket already In progress, then it proceeds.
-- Given a run (`SENIOR_MODE_RUN=1`), then `start` does not apply `wip`: `autonomy.parallel` bounds
-  the run.
-- Given more open issues In progress than `wip`, then `status` shows the count against the limit
-  and `status --json` has `wip: {limit, count}`.
+- Given `run` opens its tickets (`run_start` calls `start` with `SENIOR_MODE_RUN=1` set for that
+  call, as the sessions have it), then `start` does not apply `wip`: `autonomy.parallel` bounds the
+  run. With `parallel: 2`, `wip: 1` and a ticket already In progress, both run tickets start.
+- Given more open issues In progress than `wip`, then `status` shows the count against the limit.
+  `status --json` always has `wip: {limit, count}`. `wip` gets its default 1 in the config defaults.
 
 ## Out of scope
 
@@ -58,6 +61,6 @@ Work-in-progress limit (#125):
 
 ## Test seams
 
-`run_merge`, `start`, `status` and `setup github` in `bin/senior-mode`, through `test-run.sh`,
+`run_merge`, `run_start`, `start`, `status` and `setup github` in `bin/senior-mode`, through `test-run.sh`,
 `test-start.sh`, `test-status.sh` and `test-setup-github.sh` with board fixtures; the `next` and
 `setup` skills for the steps a model performs.

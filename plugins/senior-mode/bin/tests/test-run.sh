@@ -248,6 +248,18 @@ board 61 '[]'
 run && fail "G: run started with an agent command that does not exist"
 grep -q 'no-such-agent' "$work/out" || fail "G: missing agent not named: $(cat "$work/out")"
 
+# I: the wip limit binds people, not runs (#125): parallel 2, wip 1 and #70 already In progress.
+config '{"parallel": 2}'
+board 71 '[]' 72 '[]'
+jq '.data.node.items.nodes += [{fieldValues: {nodes: [{name: "In progress", field: {name: "Status"}}]},
+  content: {number: 70, title: "Ticket 70", url: "u", state: "OPEN", closedAt: null, labels: {nodes: []},
+    milestone: null, blockedBy: {nodes: []}}}]' "$FIX/board.json" >"$work/b" && mv "$work/b" "$FIX/board.json"
+session 71-sonnet delivered pr
+session 72-sonnet delivered pr
+run || fail "I: run failed: $(cat "$work/out")"
+[ "$(grep -c '^app-7[12] sonnet' "$CLAUDE_LOG")" -eq 2 ] ||
+  fail "I: the wip limit stopped a run ticket: $(cat "$work/out")"
+
 # E: nothing Ready, bad arguments.
 config '{}'
 board

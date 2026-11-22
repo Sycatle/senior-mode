@@ -17,6 +17,10 @@ case "$*" in
   "issue view "*) echo "$GH_ISSUE" ;;
   "project item-add"*) echo "ITEM" ;;
   "project item-edit"*) ;;
+  "api graphql --input -") cat >/dev/null; jq -nc --argjson i "${GH_IN_PROGRESS:-[]}" '{data: {node: {items: {
+    pageInfo: {hasNextPage: false}, nodes: ($i | map({fieldValues: {nodes: [{name: "In progress", field: {name: "Status"}}]},
+      content: {number: ., title: "Ticket \(.)", url: "u", state: "OPEN", labels: {nodes: []}, milestone: null,
+        blockedBy: {nodes: []}}}))}}}}' ;;
   *) echo "unexpected: $*" >&2; exit 1 ;;
 esac
 STUB
@@ -162,6 +166,26 @@ issue "Occupied" ''
 mkdir "$work/app-96"
 start 96 && fail "started over an existing directory"
 git -C "$repo" show-ref -q --verify refs/heads/feat/96-occupied && fail "branch created despite the taken path"
+
+# The work-in-progress limit (#125): wip 1 by default, #89 In progress elsewhere.
+issue "Second thing" ''
+export GH_IN_PROGRESS='[89]'
+start 102 && fail "started past the wip limit"
+grep -q '#89' "$work/err" || fail "wip refusal does not name the ticket in progress: $(cat "$work/err")"
+grep -qi 'finish' "$work/err" || fail "wip refusal does not suggest finishing it: $(cat "$work/err")"
+logged "project item-" && fail "board touched past the wip limit"
+[ -e "$work/app-102" ] && fail "worktree created past the wip limit"
+git -C "$repo" show-ref -q --verify refs/heads/feat/102-second-thing && fail "branch created past the wip limit"
+issue "feat: add the next command, the daily session" '{"name": "type:feature"}'
+start 89 || fail "the ticket already In progress refused: $(cat "$work/err")"
+issue "Second thing" ''
+SENIOR_MODE_RUN=1 start 102 || fail "a run refused by wip: $(cat "$work/err")"
+jq '.wip = 2' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+issue "Third thing" ''
+start 103 || fail "wip 2 refused a second ticket: $(cat "$work/err")"
+jq 'del(.wip)' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+unset GH_IN_PROGRESS
+: >"$GH_LOG"
 
 # frame start <slug>: a worktree and a docs branch from origin's default branch, so framings do not share
 # a working tree; it stops when the local default branch holds commits origin does not have.

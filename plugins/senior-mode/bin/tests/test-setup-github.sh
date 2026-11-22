@@ -254,64 +254,55 @@ grep -q "RELEASE_PLEASE_TOKEN" "$work/out" && fail "release note printed though 
 # The ruleset is recorded as the protection when it is in place.
 [ "$(cfg .github.protection)" = ruleset ] || fail "protection not recorded as ruleset: $(cfg .github)"
 
-# GitHub's own scanners (#172): Dependabot alerts and security updates, secret scanning and push
-# protection are switched on; the Dependabot file asks for security updates only, grouped, and no
-# version updates. Written, not committed, like CODEOWNERS; a file of the project's own is kept.
+# GitHub's own scanners (#172, amended by #222): Dependabot alerts, secret scanning and push protection
+# are switched on. Security updates (automated-security-fixes) are not: GitHub has no severity filter
+# for them, so alerts become issues only (#144 path). No dependabot.yml is written; one that exists
+# is left untouched and setup says so.
 dep=$repo/.github/dependabot.yml
 rm -f "$dep"
 echo '{}' >"$repo/package.json"
 setup
 logged "api -X PUT repos/acme/app/vulnerability-alerts" || fail "Dependabot alerts not enabled: $(cat "$GH_LOG")"
-logged "api -X PUT repos/acme/app/automated-security-fixes" || fail "Dependabot security updates not enabled"
+logged "automated-security-fixes" && fail "Dependabot security updates turned on: $(cat "$GH_LOG")"
 for want in "security_and_analysis[secret_scanning][status]=enabled" "security_and_analysis[secret_scanning_push_protection][status]=enabled"; do
   logged "api -X PATCH repos/acme/app -f" || fail "repository not patched"
   logged "$want" || fail "repository not patched with $want"
 done
-for want in "package-ecosystem: npm" 'directory: "/"' "open-pull-requests-limit: 0" "applies-to: security-updates" "interval: weekly"; do
-  grep -qF -- "$want" "$dep" 2>/dev/null || fail "dependabot.yml without '$want': $(cat "$dep" 2>/dev/null)"
-done
-grep -q "dependabot.yml: created" "$work/out" || fail "dependabot.yml creation not reported: $(cat "$work/out")"
-grep -q "commit" "$work/out" || fail "no word that dependabot.yml is for the user to commit: $(cat "$work/out")"
-logged "git commit" && fail "setup committed dependabot.yml"
+[ ! -e "$dep" ] || fail "dependabot.yml written: $(cat "$dep")"
+grep -qF "Dependabot security updates" "$work/out" && fail "security updates still reported: $(cat "$work/out")"
+logged "git commit" && fail "setup committed something"
 grep -qiE "alerts.*(on|enabled)" "$work/out" || fail "scanners not reported on: $(cat "$work/out")"
+grep -q "dependabot.yml" "$work/out" && fail "dependabot.yml mentioned though there is none: $(cat "$work/out")"
 
-# A rerun keeps the file, even one the project edited, and switches the scanners on again.
-cp "$dep" "$work/dep"
-setup
-cmp -s "$work/dep" "$dep" || fail "rerun changed dependabot.yml"
-logged "api -X PUT repos/acme/app/vulnerability-alerts" || fail "rerun does not keep the scanners on"
-echo "version: 2 # mine" >"$dep"
+# A dependabot.yml of the project's own is left untouched, and setup says so; a rerun keeps the scanners on.
+mkdir -p "$repo/.github"; echo "version: 2 # mine" >"$dep"
 setup
 [ "$(cat "$dep")" = "version: 2 # mine" ] || fail "a dependabot.yml of the project's own was rewritten"
-grep -q "dependabot.yml: kept" "$work/out" || fail "kept file not said: $(cat "$work/out")"
+grep -q "dependabot.yml: .*untouched" "$work/out" || fail "existing file not reported untouched: $(cat "$work/out")"
+logged "api -X PUT repos/acme/app/vulnerability-alerts" || fail "rerun does not keep the scanners on"
+logged "automated-security-fixes" && fail "rerun turned security updates on"
 
-# The ecosystem comes from the project's manifest; a project with none has nothing to update.
+# No manifest or another ecosystem: still no file.
 rm -f "$dep" "$repo/package.json"
 echo 'module example.com/app' >"$repo/go.mod"
 setup
-grep -qF "package-ecosystem: gomod" "$dep" 2>/dev/null || fail "go project: $(cat "$dep" 2>/dev/null)"
-rm -f "$dep" "$repo/go.mod"
-setup
-[ ! -e "$dep" ] || fail "dependabot.yml written for a project with no manifest: $(cat "$dep")"
-grep -q "dependabot.yml" "$work/out" || fail "no word on the missing manifest: $(cat "$work/out")"
+[ ! -e "$dep" ] || fail "dependabot.yml written for a go project: $(cat "$dep")"
+rm -f "$repo/go.mod"
 
 # A plan that refuses (HTTP 403 or 422): each refusal is said, the other features are still tried,
 # and setup goes on to the end.
-echo '{}' >"$repo/package.json"
-rm -f "$dep"
-SEC_REFUSE="alerts fixes scanning" setup
-for f in vulnerability-alerts automated-security-fixes "api -X PATCH repos/acme/app"; do
+SEC_REFUSE="alerts scanning" setup
+for f in vulnerability-alerts "api -X PATCH repos/acme/app"; do
   logged "$f" || fail "refused plan: $f not attempted"
 done
-for want in "Dependabot alerts: not enabled" "Dependabot security updates: not enabled" "secret scanning (with push protection): not enabled" "HTTP 422"; do
+for want in "Dependabot alerts: not enabled" "secret scanning (with push protection): not enabled" "HTTP 422"; do
   grep -qF -- "$want" "$work/out" || fail "refusal without '$want': $(cat "$work/out")"
 done
-[ -e "$dep" ] || fail "dependabot.yml skipped because the plan refused the API"
 logged "workflow list" || fail "setup stopped at the refusal"
 SEC_REFUSE="alerts" SEC_ERR="Resource not accessible by personal access token (HTTP 403)" setup
 grep -qF "Dependabot alerts: not enabled" "$work/out" || fail "403 not said: $(cat "$work/out")"
-grep -qF "Dependabot security updates: not enabled" "$work/out" && fail "an accepted feature reported as refused"
-rm -f "$dep" "$repo/package.json"
+grep -qF "secret scanning (with push protection): not enabled" "$work/out" && fail "an accepted feature reported as refused"
+rm -f "$dep"
 
 # CODEOWNERS from the protected globs (#171): a managed block, the owner's entries around it kept, and
 # the ruleset requires code owner review only when there is something to own.

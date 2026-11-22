@@ -31,6 +31,10 @@ Run `senior-mode setup github --ci <local|actions>`. It:
 - creates or updates a ruleset `senior-mode` on the default branch: pull requests only, rebase,
   `senior-mode/ci` and `senior-mode/review` required, linear history; other rules kept. If it
   prints `protection: NOT enforced`, see "No branch protection" in the reference;
+- with `protected` globs, writes the `senior-mode:begin`/`end` block of `.github/CODEOWNERS` (owner's
+  entries kept) and requires code owner review. Tell the user to commit the file, and that an owner's
+  own pull request on a protected zone cannot be approved by them: they merge it by hand with
+  `gh pr merge --admin`. `setup repo` writes `protected`, so rerun `setup github` after it;
 - `local`: disables the repository's workflows (files kept); `actions`: `setup repo` then adds
   `.github/workflows/senior-mode.yml`. If it prints `releases:`, relay it (the release PR needs
   a `RELEASE_PLEASE_TOKEN` secret to get CI).

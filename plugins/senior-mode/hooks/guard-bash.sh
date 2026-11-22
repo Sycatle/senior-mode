@@ -9,10 +9,11 @@ set -o pipefail
 input=$(cat)
 # Quoted text is data (commit messages, echo), never options: replace it before parsing. A quoted
 # single word (a URL, a ref) is unquoted instead. An empty pair touching a word (`--for""ce`) is removed;
-# alone it is an argument (`core.hooksPath ""`) and stays, as `Q`. Outside quotes a backslash before a
-# letter, digit or `/._~-` is dropped, as the shell does (`--for\ce`). A backslash-newline continues the line.
+# alone it is an argument (`core.hooksPath ""`) and stays, as `Q`. Outside quotes a backslash is dropped
+# as the shell does (`--for\ce`, `core.hooksPath\=x`); an escaped space or quote is dropped with it, so
+# it neither splits a word nor opens a quote. A backslash-newline continues the line.
 command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
-  | gsub("\"(?<w>[^\"\\\\\\s$`]+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'|(?<=\\S)(?:\"\"|'"'"''"'"')|(?:\"\"|'"'"''"'"')(?=\\S)|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')|\\\\(?=[A-Za-z0-9/._~-])"; .w // .v // .g // "")
+  | gsub("\"(?<w>[^\"\\\\\\s$`]+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'|(?<=\\S)(?:\"\"|'"'"''"'"')|(?:\"\"|'"'"''"'"')(?=\\S)|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')|\\\\(?<c>[^\\n \"'"'"'])|\\\\[ \"'"'"']"; .w // .v // .g // .c // "")
   | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
 cwd=$(jq -r '.cwd // empty' <<<"$input")
 raw=$(jq -r '.tool_input.command // ""' <<<"$input")

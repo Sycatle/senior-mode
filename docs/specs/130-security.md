@@ -135,9 +135,11 @@ Guard hardening (#115-#120, #145):
   is not a placeholder, a bracketed expression or a dotted identifier. The secret an allowlist entry
   hashes is the value itself: the token, the whole URL, or a private key from its `BEGIN` to its `END`
   line, never the public header alone.
-- **Audit commands** live in each preset's checks: `npm audit --audit-level=high` or `pnpm audit
-  --audit-level high`, `pip-audit`, `govulncheck ./...` and `cargo audit`. The JSON output is
-  filtered to high and critical.
+- **Audit commands** are a built-in step of `check`, keyed on the lockfile at the root, not on the
+  preset: `pnpm audit --json` or `npm audit --json`, `pip-audit -r requirements.txt -f json`,
+  `govulncheck -json ./...` and `cargo audit --json`. The JSON is read in bash and jq and filtered to
+  high and critical; the tools that give no severity only warn. Lockfiles of yarn, bun, uv and poetry
+  are not audited yet.
 - **Issues** go through `issue create`. The fingerprint is searched as a quoted phrase in the body
   (`gh issue list --state open --search '"security-id <id>" in:body'`), so it does not read as a
   search qualifier.

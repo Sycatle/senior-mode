@@ -39,6 +39,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, even an empty one; `senior-mode protected` and the reviewer read it, and `setup github` maps it to [CODEOWNERS](autonomy.md#code-owners) |
 | `ci.mode` | `local` | `local` or `actions` |
+| `audit` | `true` | `false` turns off the [dependency audit](#dependency-audit) of `check`; `status` then says so. Set it yourself, setup does not write it |
 | `secrets` | none | Extra globs the [secrets guard](autonomy.md#secrets-guard-guard-secretssh) denies, added to its defaults: `"*.token"` matches a file name anywhere, `"config/prod.*"` and `"**/vault/*"` match from the repository root. It never allows a default. Add it yourself; setup does not write it |
 | `github.protection` | written by setup | `ruleset` when the `senior-mode` ruleset protects the default branch, `none` when GitHub refused it (private repository on a Free plan): the branch is then not protected on the server |
 | `review.sections` | none | Project review checklists, see [below](#project-review-sections) |
@@ -108,11 +109,11 @@ and, in `actions` mode, the workflow all run it, from the repository root.
 - A node project that declares dependencies but has no `node_modules` fails at once with
   `dependencies not installed: run <install command>`, before any check runs.
 - When `envGuard.forbidden` lists something, setup adds the `env guard` check (below).
-- `check` starts with a built-in `secret scan` that is not in the list and cannot be turned off
-  (below).
+- `check` starts with two built-in steps that are not in the list: the `secret scan`, which cannot be
+  turned off, and the `dependency audit`, which `audit: false` turns off (both below). A passing check
+  that has warnings prints them under its `ok`.
 
-Not in the list yet: spec drift (planned, no milestone yet), and the dependency audit
-([v0.3](https://github.com/Sycatle/senior-mode/milestone/3)). You can add your own as a check entry.
+Not in the list yet: spec drift (planned, no milestone yet). You can add your own as a check entry.
 
 ### Secret scan
 
@@ -136,6 +137,28 @@ allowlist its own secret; `setup` adds it to `protected`, and agents in a run ca
 The scan reads the net diff of the branch. A secret added in one commit and deleted in a later one is
 already in the pushed history: rotate it, do not just delete it. It does not read JWTs, binary files
 or commits that are not part of `<base>...HEAD`.
+
+### Dependency audit
+
+`senior-mode check` runs the audit tool of the lockfile at the repository root, whatever the preset:
+
+| Lockfile | Command | Install it with |
+|---|---|---|
+| `pnpm-lock.yaml` (before `package-lock.json`) | `pnpm audit --json` | `npm install -g pnpm` |
+| `package-lock.json` | `npm audit --json` | Node.js |
+| `requirements.txt` | `pip-audit -r requirements.txt -f json` | `pipx install pip-audit` |
+| `go.sum` | `govulncheck -json ./...` | `go install golang.org/x/vuln/cmd/govulncheck@latest` |
+| `Cargo.lock` | `cargo audit --json` | `cargo install cargo-audit --locked` |
+
+A high or critical advisory fails the check and is printed as `critical: <package> <advisory>, fixed in
+<version>`. An advisory of another severity, or with none, passes and is printed as a `warning:` line:
+`pip-audit`, `govulncheck` (only the vulnerabilities your code calls) and `cargo audit` give no
+severity, so Dependabot is the net for those. A missing tool fails the check and says how to install
+it, and so does a tool that gives no usable answer (no network): nothing was audited. Without any of
+these lockfiles the step shows as `skip`. Yarn, Bun, uv and Poetry lockfiles are not audited yet.
+
+`"audit": false` turns the step off, and `senior-mode status` prints `Dependency audit: off` while it
+is. Turning it off is a human's call.
 
 ### Environment guard
 

@@ -107,8 +107,8 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   `dependencies not installed: run <install command>`, before any check runs.
 - When `envGuard.forbidden` lists something, setup adds the `env guard` check (below).
 
-Not in the list yet: spec drift ([v0.2](https://github.com/Sycatle/senior-mode/milestone/2)) and
-secret scanning (planned in spec §14, no milestone yet). You can add your own as a check entry.
+Not in the list yet: spec drift (planned, no milestone yet), and the dependency audit and secret
+scanning ([v0.3](https://github.com/Sycatle/senior-mode/milestone/3)). You can add your own as a check entry.
 
 ### Environment guard
 

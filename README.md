@@ -7,7 +7,8 @@ framed before anyone codes. Decisions are written down. Tests come first and com
 The roadmap lives on a GitHub Project. Every change is reviewed, and nothing merges without passing
 checks. The process scales with the task: a typo never gets an ADR.
 
-Status: v0.1, early. What works today and what is coming is marked below.
+Status: v0.2, young: the daily loop and the autonomous run work; security checks come in v0.3.
+What works today and what is coming is marked below.
 
 ## Is it for me?
 

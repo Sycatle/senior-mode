@@ -8,7 +8,8 @@ premier et les commits restent petits. La feuille de route vit dans un GitHub Pr
 changement est relu, et rien n'est fusionné sans contrôles au vert. Le processus suit la taille de
 la tâche : une coquille n'a jamais droit à un ADR.
 
-État : v0.1, jeune. Ce qui marche aujourd'hui et ce qui arrive est indiqué plus bas.
+État : v0.2, jeune : la boucle quotidienne et le run autonome fonctionnent ; les contrôles de
+sécurité arrivent en v0.3. Ce qui marche aujourd'hui et ce qui arrive est indiqué plus bas.
 
 ## Est-ce pour moi ?
 

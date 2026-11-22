@@ -29,5 +29,11 @@
 - When the work outgrows the ticket's size, or touches a protected zone it did not plan for
   (`senior-mode config get protected`): stop and ask; the pull request gets `needs-human`.
 - Discovered work becomes a new issue (`senior-mode issue create`), not part of this pull request.
+- A security risk outside the ticket is filed, never fixed in this pull request: write the issue body
+  with the weakness and the fix, no exploit detail, then `senior-mode issue create --title <t>
+  --body-file <f> --size <s> --severity <critical|high|moderate|low> --kind <kind> --path <file>
+  --rule <rule>`. The same kind, path and rule print the open issue instead of filing it twice. A
+  critical risk in a public repository also needs `--details-file <f>` (a private advisory
+  holds the details, the issue never does).
 - After a merge, `docs` runs once; a `docs/after-pr-*` pull request is never documented in turn.
 - Close the day with a short count: merged, waiting for the user, next ticket.

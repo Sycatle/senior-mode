@@ -62,8 +62,10 @@ then moderate and low, one line each:
   request to replay or the secret itself (give its first four characters at most). A critical finding
   in a public repository: say it needs a private advisory, do not describe it further.
 - **Out of ticket:** risks seen in code the PR does not change, each with `file:line` and a one-line
-  summary, never blocking. They are for triage into a new issue (label `security`, with a Severity),
-  not for this PR.
+  summary, never blocking. They are for triage into a new issue, not for this PR: file each with
+  `senior-mode issue create --severity ... --kind ... --path ... --rule ...` (label `security`, no
+  exploit detail in the body; a critical one in a public repository also takes `--details-file`).
+  The same fingerprint finds the open issue instead of filing it twice.
 - **Not verified:** what you only read or could not run (dependency audit, secret scan, a path you
   could not trace). "No finding" means none seen in what was checked: say what that was.
 - Nothing found: write "Security: no finding" and the list of categories you checked.

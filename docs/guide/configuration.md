@@ -184,8 +184,9 @@ Setup warns when the file goes over 80 lines.
 ## Releases (release-please)
 
 Setup writes `release-please-config.json` (release type `node` or `simple`) and
-`.release-please-manifest.json`, both only if absent. A new project starts at 0.1.0; a
-`package.json` version counts as the last release, so the next release bumps it.
+`.release-please-manifest.json`, both only if absent. A new project starts at 0.1.0; a version already
+in `package.json`, `Cargo.toml` (`[package]`) or `pyproject.toml` (`[project]` or `[tool.poetry]`), or for
+a Go module the latest `vX.Y.Z` tag, counts as the last release, so the next release bumps it.
 
 ```
 senior-mode release --dry-run

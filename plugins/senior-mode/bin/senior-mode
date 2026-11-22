@@ -791,6 +791,15 @@ deps_missing() {
     jq -e '((.dependencies // {}) + (.devDependencies // {}) | length) > 0' "$1/package.json" >/dev/null 2>&1
 }
 
+# The static x.y.z version of a TOML table (the first of the tables given that has one), or 0.0.0.
+toml_version() {
+  local v
+  v=$(awk -v tables="$2 ${3:-}" 'BEGIN { n = split(tables, t, " ") }
+    /^\[/ { s = $0; sub(/[ \t]*#.*/, "", s); gsub(/[][ \t]/, "", s); on = 0; for (i = 1; i <= n; i++) if (s == t[i]) on = 1; next }
+    on && /^version[ \t]*=[ \t]*"/ { match($0, /"[^"]*"/); print substr($0, RSTART + 1, RLENGTH - 2); exit }' "$1")
+  [[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && printf '%s\n' "$v" || printf '0.0.0\n'
+}
+
 # The documents and checks of a project (spec 0001 §12, §14, #12), idempotent; whatever the project
 # already has is extended, never replaced. The preset is the stored one (typescript, its former name,
 # becomes node), else node when a package.json exists, else the one of its manifest (go, rust, python),
@@ -885,14 +894,28 @@ setup_repo() {
     # Without a previous release, release-please would start at 1.0.0: a new project starts at 0.1.0.
     # A package.json version counts as the last release, so the manifest holds it and the next
     # release bumps it (initial-version would publish it again).
-    local last=0.0.0
-    [ ! -f "$root/package.json" ] || last=$(jq -r '.version // "0.0.0"' "$root/package.json" 2>/dev/null) || last=0.0.0
+    local last=0.0.0 from=package.json
+    if [ -f "$root/package.json" ]; then
+      last=$(jq -r '.version // "0.0.0"' "$root/package.json" 2>/dev/null) || last=0.0.0
+    elif [ -f "$root/Cargo.toml" ]; then
+      from=Cargo.toml
+      last=$(toml_version "$root/Cargo.toml" package)
+    elif [ -f "$root/pyproject.toml" ]; then
+      from=pyproject.toml
+      last=$(toml_version "$root/pyproject.toml" project tool.poetry)
+    fi
+    if [ "$pname" = go ] && [ "$last" = 0.0.0 ]; then
+      from="git tag"
+      last=$(git -C "$root" tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname 2>/dev/null |
+        grep -E -m1 '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//') || true
+      last=${last:-0.0.0}
+    fi
     jq --arg n "$name" '.release | .packages["."] += {component: $n, "initial-version": "0.1.0"}' \
       "$preset" >"$root/release-please-config.json"
     if [ ! -e "$root/.release-please-manifest.json" ]; then
       jq -n --arg v "$last" '{".": $v}' >"$root/.release-please-manifest.json"
       if [ "$last" != 0.0.0 ] && [ -z "$(git -C "$root" tag --list)" ]; then
-        echo "releases: first release follows $last (package.json)$([ "$last" != 1.0.0 ] ||
+        echo "releases: first release follows $last ($from)$([ "$last" != 1.0.0 ] ||
           echo '; to start at 0.1.0, set "." to "0.0.0" in .release-please-manifest.json')"
       fi
     fi

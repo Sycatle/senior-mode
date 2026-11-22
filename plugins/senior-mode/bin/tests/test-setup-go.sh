@@ -50,6 +50,17 @@ for f in .golangci.yml .golangci.yaml .golangci.toml .golangci.json; do
   expect "$d" lint "go vet ./... && golangci-lint run"
 done
 
+# The latest vX.Y.Z tag is the last release (highest version, pre-releases ignored); with no tag the module starts at 0.1.0.
+d=$(project tagged go.mod)
+git -C "$d" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: init"
+for t in v1.4.2 v1.10.0 v2.0.0-rc1 other-v3.0.0; do git -C "$d" tag "$t"; done
+setup "$d"
+[ "$(jq -r '."."' "$d/.release-please-manifest.json")" = 1.10.0 ] || fail "manifest not seeded from the go tags: $(cat "$d/.release-please-manifest.json")"
+[ "$(jq -r '.packages["."]["initial-version"]' "$d/release-please-config.json")" = 0.1.0 ] || fail "initial-version taken from a tag"
+d=$(project untagged go.mod)
+setup "$d"
+[ "$(jq -r '."."' "$d/.release-please-manifest.json")" = 0.0.0 ] || fail "manifest not 0.0.0 without a tag"
+
 # Detection order: package.json keeps node; go.mod comes before Cargo.toml and Python files; a stored
 # preset wins.
 d=$(project withnode go.mod package.json)

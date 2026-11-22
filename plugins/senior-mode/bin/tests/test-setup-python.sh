@@ -49,6 +49,28 @@ expect "$d" build "uv run python -m build"
 [ "$(jq -r '.packages["."]["release-type"]' "$d/release-please-config.json")" = python ] ||
   fail "release-please not set up for a python package"
 
+# A package that already has a version is the last release: the manifest holds it (project or poetry table).
+d=$(project versioned 'pyproject.toml=[build-system]
+requires = ["hatchling"]
+[project] # metadata
+name = "app"
+version = "0.7.2"
+dependencies = ["pytest>=8"]')
+setup "$d"
+[ "$(jq -r '."."' "$d/.release-please-manifest.json")" = 0.7.2 ] || fail "manifest not seeded from pyproject.toml: $(cat "$d/.release-please-manifest.json")"
+[ "$(jq -r '.packages["."]["initial-version"]' "$d/release-please-config.json")" = 0.1.0 ] || fail "initial-version taken from pyproject.toml"
+grep -q "first release follows 0.7.2 (pyproject.toml)" "$work/out" || fail "seeded version not reported: $(cat "$work/out")"
+d=$(project poetry-versioned 'pyproject.toml=[tool.poetry]
+name = "app"
+version = "2.0.1"')
+setup "$d"
+[ "$(jq -r '."."' "$d/.release-please-manifest.json")" = 2.0.1 ] || fail "manifest not seeded from [tool.poetry]"
+d=$(project dynamic 'pyproject.toml=[project]
+name = "app"
+dynamic = ["version"]')
+setup "$d"
+[ "$(jq -r '."."' "$d/.release-please-manifest.json")" = 0.0.0 ] || fail "a dynamic version was invented"
+
 # The "missing" report is for the node presets: a python project without tests is not told to add scripts.
 d=$(project no-tests 'pyproject.toml=[tool.ruff]')
 setup "$d"

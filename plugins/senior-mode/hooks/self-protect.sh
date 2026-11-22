@@ -18,7 +18,8 @@ IFS=$'\x1f' read -r event tool cwd path < <(jq -r '[.hook_event_name, .tool_name
 root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || exit 0
 # git resolves symlinks in the root, Claude Code sends paths as reached from the cwd: try both.
 here=$(cd "$cwd/$(git -C "$cwd" rev-parse --show-cdup)" 2>/dev/null && pwd) || here=$root
-# The git hooks and config (core.hooksPath) of every worktree live in the common dir (#116).
+# The git hooks and config (core.hooksPath) of every worktree live in the common dir (#116); the
+# per-worktree config.worktree (extensions.worktreeConfig) lives in the common dir or under worktrees/.
 common=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
 
 deny() { # path as written
@@ -48,14 +49,15 @@ check() {
   [ -n "$p" ] || return 0
   [[ $p == /* ]] || p=$cwd/$p
   p=$(normalize "$p")
-  [[ -n $common && ($p == "$common"/hooks || $p == "$common"/hooks/* || $p == "$common"/config) ]] && deny "$1"
+  [[ -n $common && ($p == "$common" || $p == "$common"/hooks || $p == "$common"/hooks/* || $p == "$common"/config ||
+    $p == "$common"/config.worktree || $p == "$common"/worktrees/*/config.worktree) ]] && deny "$1"
   for r in "$root" "$here"; do
     [[ $p == "$r"/* ]] || continue
     rel=${p#"$r"/}
     case $rel in
       # Agents with `memory: project` keep their findings there; it guards nothing.
       .claude/agent-memory/*) ;;
-      .github | .github/workflows | .github/workflows/* | .claude | .claude/* | .githooks | .githooks/*) deny "$1" ;;
+      .git | .github | .github/workflows | .github/workflows/* | .claude | .claude/* | .githooks | .githooks/*) deny "$1" ;;
     esac
   done
 }
@@ -100,7 +102,7 @@ while IFS= read -r segment; do
     prev=$a
   done
   case $cmd in
-    tee | rm | rmdir | unlink | touch | truncate | shred | mv) for a in ${paths[@]+"${paths[@]}"}; do check "$a"; done ;;
+    tee | rm | rmdir | unlink | touch | truncate | shred | mv | chmod | chown | chgrp) for a in ${paths[@]+"${paths[@]}"}; do check "$a"; done ;;
     cp | install | ln) check "$last"; check "$into" ;;
     sed | perl) ! $inplace || for a in ${paths[@]+"${paths[@]}"}; do check "$a"; done ;;
     dd) for a in ${args[@]+"${args[@]}"}; do [[ $a == of=* ]] && check "${a#of=}"; done ;;

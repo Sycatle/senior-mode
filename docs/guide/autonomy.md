@@ -254,6 +254,10 @@ command, not a model, applies these bounds:
   a stuck session is not failed work ([ADR 0014](../adr/0014-model-escalation-in-runs.md)). Its Status
   stays In progress; the label is the signal. Where the session has no group of its own (no tmux and
   no `setsid`, as on macOS), it is not killed: `run` says so, and still labels and records the ticket.
+  The docs session that follows merges is bounded by the same timeout and killed the same way. It has
+  no ticket, so nothing is labelled: `run` says so on stderr and in its report, and records the outcome
+  in `docs-outcome.json` next to the ticket records (`retro` does not read it). Its branch and worktree
+  are kept, and `run` ends normally.
 - **Guards at the start** (with the `claude` CLI): `run` refuses to start unless the plugin is enabled
   for ticket sessions and its `hooks/hooks.json` is present. Ticket sessions run in fresh worktrees of
   the default branch, so only `enabledPlugins` in the user settings (`~/.claude/settings.json`, or

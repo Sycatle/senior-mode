@@ -51,7 +51,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `autonomy.maxConsecutiveFailures` | `2` | Failed tickets in a row after which a run starts no new one |
 | `autonomy.merge` | `false` | Whether a run merges the pull requests that pass every bound |
 | `autonomy.escalate` | `true` | Whether a ticket that fails on Sonnet is retried once on Opus |
-| `autonomy.sessionTimeout` | `90` | Minutes a ticket session may run (a whole number from 1 to 1440). Past it, a [run](autonomy.md#run) kills the session (its process group), labels the ticket `needs-human` with the log path, counts a failure for the circuit breaker and does not retry on Opus; the ticket's Status is left as it is |
+| `autonomy.sessionTimeout` | `90` | Minutes a ticket session may run (a whole number from 1 to 1440). Past it, a [run](autonomy.md#run) kills the session (its process group), labels the ticket `needs-human` with the log path, counts a failure for the circuit breaker and does not retry on Opus; the ticket's Status is left as it is. The docs session after merges is bounded by the same limit |
 | `autonomy.schedule` | `"02:00"` | Time of day (`HH:MM`) of the [scheduled run](autonomy.md#scheduled-runs), unless `senior-mode schedule install --at` says otherwise |
 | `agent.command` | `claude` | The headless CLI `run` starts for each ticket and for the docs session, on `PATH` or in `~/.local/bin`; the guards of senior-mode do not hold under another CLI until it supports them (see [Run](autonomy.md#run)) |
 | `e2e.slots` | `2` | End-to-end suites that may run at once on the machine (the check named `e2e`) |

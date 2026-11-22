@@ -260,6 +260,18 @@ run || fail "I: run failed: $(cat "$work/out")"
 [ "$(grep -c '^app-7[12] sonnet' "$CLAUDE_LOG")" -eq 2 ] ||
   fail "I: the wip limit stopped a run ticket: $(cat "$work/out")"
 
+# J: the base branch has no .claude/senior-mode.json, so its protected zones are unknown: no merge (#116).
+config '{"merge": true}' '{"protection": "ruleset"}'
+git -C "$repo" rm -q --cached .claude/senior-mode.json &&
+  git -C "$repo" -c user.name=t -c user.email=t@t commit -qm "chore: drop config" && git -C "$repo" push -q origin main
+board 80 '[]'
+session 80-sonnet delivered pr
+echo "$green" >"$FIX/status-80"
+run || fail "J: run failed: $(cat "$work/out")"
+grep -q 'pr merge' "$GH_LOG" && fail "J: merged without the base branch's protected zones"
+grep -q 'Waiting for a human.*#80.*protected zones could not be read' "$work/out" ||
+  fail "J: report misses why #80 waits: $(cat "$work/out")"
+
 # E: nothing Ready, bad arguments.
 config '{}'
 board

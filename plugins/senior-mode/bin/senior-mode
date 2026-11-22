@@ -1786,6 +1786,8 @@ run_merge() {
   # The command applies the protected zones, not the reviewer: the files GitHub would merge, against
   # the globs of the base branch, so a pull request cannot unprotect itself. --match-head-commit
   # refuses a head pushed after these checks.
+  elif [ "$RUN_ZONES_KNOWN" != true ]; then
+    reason="the protected zones could not be read: $RUN_BASE has no .claude/senior-mode.json"
   elif ! files=$(gh_retry api "repos/$RUN_SLUG/pulls/$pr/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)'); then
     reason="its changed files could not be read"
   elif zones=$(protected_match "$RUN_GLOBS" <<<"$files") && [ -n "$zones" ]; then
@@ -1868,7 +1870,7 @@ run() {
   local max="" parallel="" n title t
   local -a queue=() running=() still=() RUN_MERGED=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
   local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=()
-  local RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS
+  local RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN
   local RUN_FAILS=0 RUN_STOP=""
   while [ $# -gt 0 ]; do
     case $1 in
@@ -1896,8 +1898,9 @@ run() {
   git fetch -q origin || echo "senior-mode: could not fetch origin; starting from the last fetched state" >&2
   RUN_BASE=$(default_branch) || die "no default branch found"
   # Protected zones as the base branch has them; a branch cannot edit its own.
-  RUN_GLOBS='[]'
+  RUN_GLOBS='[]' RUN_ZONES_KNOWN=false
   if git cat-file -e "$RUN_BASE:.claude/senior-mode.json" 2>/dev/null; then
+    RUN_ZONES_KNOWN=true
     RUN_GLOBS=$(git show "$RUN_BASE:.claude/senior-mode.json" | jq -c '.protected // []') || RUN_GLOBS=null
   fi
   jq -e 'type == "array" and all(type == "string")' <<<"$RUN_GLOBS" >/dev/null ||

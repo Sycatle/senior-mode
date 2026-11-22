@@ -147,6 +147,9 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode pick [--json] [--max N]` | The Ready tickets in delivery order: Priority, then milestone due date; leaves out size L, blocked tickets and `needs-info` |
 | `senior-mode start <issue>` | Creates the worktree (`<repository>-<issue>`) and the branch `<type>/<issue>-<slug>` for a ticket, from the default branch, installs the dependencies with the `install` command of the config (`npm ci`, `pnpm install --frozen-lockfile`...), and sets Status `In progress`; safe to rerun |
 | `senior-mode run [--max N] [--parallel P]` | The autonomous run of `/senior-mode:run`: one headless session per ticket, then a plain report |
+| `senior-mode schedule install [--at HH:MM] [--max N]` | Runs `senior-mode run` every day on this machine, as a systemd user timer or a tagged crontab line ([scheduled runs](autonomy.md#scheduled-runs)) |
+| `senior-mode schedule remove` | Disables and deletes the timer, or the tagged crontab line |
+| `senior-mode schedule status` | The next trigger and the result of the last scheduled run |
 | `senior-mode e2e-lock -- <command>` | Runs the command once one of `e2e.slots` machine-wide slots is free; `check` runs the check named `e2e` through it |
 | `senior-mode status [--json] [--since <dur>] [--watch [secs]]` | The dashboard of `/senior-mode:status`; `--since 7d` for a digest (`m`, `h`, `d`, `w`) |
 | `senior-mode retro [--json] [--since <dur>]` | The facts of `/senior-mode:retro` for the last 7 days or `--since`: done, cycle time, pull requests that needed a human, runs, reopened tickets, check failures, sizes |

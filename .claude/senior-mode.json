@@ -7,6 +7,7 @@
     { "name": "shellcheck", "run": ".github/scripts/shellcheck.sh" },
     { "name": "skill size", "run": ".github/scripts/skill-size.sh" },
     { "name": "agent team", "run": ".github/scripts/agent-team.sh" },
+    { "name": "docs drift", "run": ".github/scripts/docs-drift.sh" },
     { "name": "script tests", "run": "for t in $(git ls-files '*/test-*.sh'); do \"$t\" || exit 1; done" },
     { "name": "commit subjects", "run": "plugins/senior-mode/templates/githooks/commit-msg --branch" }
   ],

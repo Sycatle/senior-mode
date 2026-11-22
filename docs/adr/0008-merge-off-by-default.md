@@ -21,8 +21,11 @@ argument of ADR 0003 does not hold there.
   to a pull request with `senior-mode/ci` and `senior-mode/review` set, and the final report lists
   what waits for a human.
 - On: `run` merges with `gh pr merge --rebase` only when both statuses are `success` on the head
-  commit, the pull request has no `needs-human` label, and the server enforces protection
-  (`github.protection` is not `"none"`). Every bound of ADR 0003 still applies.
+  commit, the pull request has no `needs-human` label, the server enforces protection
+  (`github.protection` is `"ruleset"`), and `run` itself finds no protected zone of the default
+  branch among the changed files: a model's label is not the only barrier. The merge names the
+  checked head (`--match-head-commit`). The ticket session never merges (Bash guard). Every bound of
+  ADR 0003 still applies.
 - The key replaces `autonomy.autoMerge`, which nothing read yet.
 
 ## Alternatives considered

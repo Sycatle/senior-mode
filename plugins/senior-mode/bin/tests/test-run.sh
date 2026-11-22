@@ -27,6 +27,9 @@ case "$*" in
       | {title, state, labels: .labels.nodes}' "$FIX/board.json" ;;
   "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
   "project item-edit"*) ;;
+  "api repos/acme/app/pulls/"*"/files"*)
+    pr=$(sed -E 's#.*/pulls/([0-9]+)/files.*#\1#' <<<"$*")
+    cat "$FIX/files-$pr" 2>/dev/null || echo src/app.ts ;;
   "api repos/acme/app/pulls?head="*)
     n=$(sed -E 's#.*head=acme:[a-z]+/([0-9]+)-.*#\1#' <<<"$*")
     cat "$FIX/pulls-$n" 2>/dev/null || echo '[]' ;;
@@ -139,7 +142,7 @@ grep -q '^app-10 opus' "$CLAUDE_LOG" && fail "A: a delivered ticket was retried 
 grep -q '^app-11 opus' "$CLAUDE_LOG" || fail "A: a failed ticket was not retried on Opus"
 grep -q '^app-12 opus' "$CLAUDE_LOG" || fail "A: #12 not retried on Opus"
 grep -q 'app-13' "$CLAUDE_LOG" && fail "A: more than maxTickets tickets started"
-grep -qx 'pr merge 110 --rebase -R acme/app' "$GH_LOG" || fail "A: green #10 not merged: $(grep merge "$GH_LOG")"
+grep -qx 'pr merge 110 --rebase --match-head-commit sha10 -R acme/app' "$GH_LOG" || fail "A: green #10 not merged: $(grep merge "$GH_LOG")"
 grep -q 'pr merge 111' "$GH_LOG" && fail "A: #11 merged without a green review"
 grep -q 'PUT' "$GH_LOG" && fail "A: the REST merge endpoint was used"
 grep -q 'issues/12/comments' "$GH_LOG" || fail "A: no comment on the failed ticket"
@@ -198,6 +201,26 @@ echo "$green" >"$FIX/status-42"
 run || fail "D: run failed: $(cat "$work/out")"
 grep -q 'pr merge' "$GH_LOG" && fail "D: merged a needs-human pull request"
 grep -q 'Waiting for a human.*#42.*needs-human' "$work/out" || fail "D: report misses the label: $(cat "$work/out")"
+config '{"merge": true}'
+board 43 '[]'
+session 43-sonnet delivered pr
+echo "$green" >"$FIX/status-43"
+run || fail "D: run failed: $(cat "$work/out")"
+grep -q 'pr merge' "$GH_LOG" && fail "D: merged with github.protection unset"
+
+# H: green and unlabelled, but a protected zone of the base branch is touched (a rename out of it
+# counts): no merge, whatever the reviewer said. The branch's own config cannot lift it.
+config '{"merge": true}' '{"protection": "ruleset"}'
+jq '.protected = ["auth/**"]' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+git -C "$repo" -c user.name=t -c user.email=t@t commit -qam "chore: protect auth" && git -C "$repo" push -q origin main
+board 44 '[]'
+session 44-sonnet delivered pr
+echo "$green" >"$FIX/status-44"
+printf 'src/session.ts\nauth/session.ts\n' >"$FIX/files-144"
+run || fail "H: run failed: $(cat "$work/out")"
+grep -q 'pr merge' "$GH_LOG" && fail "H: merged a pull request that touches a protected zone"
+grep -q 'Waiting for a human.*#44.*protected zone (auth/session.ts)' "$work/out" ||
+  fail "H: report misses the protected zone: $(cat "$work/out")"
 
 # F: a ticket already opened with `senior-mode start` (its worktree and branch exist) is reused as it is.
 config '{}'

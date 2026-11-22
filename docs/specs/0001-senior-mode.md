@@ -326,8 +326,10 @@ for each, at most P at a time:
   failure. A failure on Sonnet is retried once on Opus from the same worktree when
   `autonomy.escalate` is true (default). A ticket given up goes back to `Backlog` with a comment;
 - merges a delivered pull request only when `autonomy.merge` is true, `senior-mode/ci` and
-  `senior-mode/review` are both `success` on its head, it has no `needs-human` label and
-  `github.protection` is not `none`; after any merge, one more session updates the living docs on a
+  `senior-mode/review` are both `success` on its head, it has no `needs-human` label,
+  `github.protection` is `ruleset` and no changed file (old name of a rename included) matches the
+  `protected` globs of the default branch, checked by `run` itself; the merge names that head
+  (`--match-head-commit`), and the guard denies the ticket session any merge; after any merge, one more session updates the living docs on a
   branch of its own;
 - the check named `e2e` runs through `senior-mode e2e-lock`, at most `e2e.slots` (default 2) at once
   per machine, the slot number in `SENIOR_MODE_E2E_SLOT`.

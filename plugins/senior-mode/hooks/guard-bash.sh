@@ -11,6 +11,7 @@ command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
   | gsub("\"(?<w>[^\"\\\\\\s$`]*)\"|'"'"'(?<v>[^'"'"'\\s]*)'"'"'"; .w // .v)
   | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
 cwd=$(jq -r '.cwd // empty' <<<"$input")
+raw=$(jq -r '.tool_input.command // ""' <<<"$input")
 
 deny() {
   jq -nc --arg r "senior-mode: $1" \
@@ -59,6 +60,15 @@ while IFS= read -r segment; do
   i=0
   while [[ ${w[i]:-} == *=* || ${w[i]:-} == command || ${w[i]:-} == exec ]]; do i=$((i + 1)); done
   if [ "${w[i]##*/}" = gh ] 2>/dev/null; then
+    # In a run only `senior-mode run` merges, after its own checks (ADR 0008): the ticket session,
+    # which can post its own statuses, must never merge, whatever autonomy.merge says.
+    if [ "${SENIOR_MODE_RUN:-}" = 1 ]; then
+      [[ " ${w[*]:i+1} " =~ \ pr\ (.*\ )?merge\  ]] &&
+        deny "a run session never merges: senior-mode run merges after its own checks, or a human does."
+      # A GraphQL mutation sits in quoted text, which $command no longer holds: read the raw one.
+      [[ ${w[i + 1]:-} == api && $raw =~ pulls/[0-9]+/merge|/merges|mergePullRequest|enablePullRequestAutoMerge ]] &&
+        deny "a run session never merges, not through gh api either."
+    fi
     # The ruleset lets admins bypass it on purpose (spec 0001 §11); an agent running as an admin must not.
     [[ " ${w[*]:i+1} " =~ \ pr\ (.*\ )?merge\  && " ${w[*]:i+1} " =~ \ --admin[=\ ] ]] &&
       deny "gh pr merge --admin bypasses the required checks and review: a human must do it."

@@ -91,10 +91,12 @@ Runs before every Bash command, in any repository where the plugin is enabled. I
 - pushing to the default branch (open a pull request instead);
 - `git reset --hard` on a shared branch (the default branch, or one that exists on `origin` or has
   an upstream);
-- `gh pr merge --admin`, and a merge through `gh api` with `PUT` on `pulls/<n>/merge`.
+- `gh pr merge --admin`, and a merge through `gh api` with `PUT` on `pulls/<n>/merge`;
+- in a `run` session (`SENIOR_MODE_RUN=1`), any merge: `gh pr merge`, and through `gh api` the
+  merge endpoints and the `mergePullRequest` and `enablePullRequestAutoMerge` mutations.
 
 It reads commands as written. It is a guardrail for honest mistakes, not a sandbox: `bash -c "..."`
-and GraphQL calls are not parsed.
+and other GraphQL calls are not parsed.
 
 ### Self-protection (`self-protect.sh`)
 
@@ -182,9 +184,12 @@ command, not a model, applies these bounds:
 - **Proof:** a session counts as delivered only if a pull request is open for its branch.
 - **Merge** ([ADR 0008](../adr/0008-merge-off-by-default.md)): off by default. With
   `autonomy.merge: true`, a pull request merges (`gh pr merge --rebase`) only when `senior-mode/ci`
-  and `senior-mode/review` are both `success` on its head, it has no `needs-human` label, and the
-  server enforces protection (`github.protection` is not `none`). Everything else waits for a human,
-  and the report says why.
+  and `senior-mode/review` are both `success` on its head, it has no `needs-human` label, the
+  server enforces protection (`github.protection` is `ruleset`), and none of its files matches a
+  protected zone of the default branch: `run` checks that itself, it does not rely on the reviewer.
+  The merge names the head it checked (`--match-head-commit`), so a later push is refused.
+  Everything else waits for a human, and the report says why. The ticket session itself never
+  merges: the Bash guard denies it any merge.
 - **Agent:** the headless CLI is `agent.command` (default `claude`), for the tickets and the docs
   session, scheduled or not. Another compatible CLI, such as syacode, can replace it, but senior-mode's
   hooks and guards do not hold under it until it implements them (Sycatle/syacode#13 to #18): use it

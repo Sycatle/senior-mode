@@ -20,11 +20,20 @@ The security pass is due when the pull request touches a [protected zone](#prote
 the base branch has them) or closes a size L ticket. `publish` then leaves `senior-mode/security`
 pending, and the [`security`](agents.md#security) agent reviews the pull request on Opus: with a high or
 critical finding it sets `failure` and the pull request gets `needs-human`. Any other pull request
-gets `success` with "not required: no protected zone, not L". When `publish` cannot read the pull
-request or the Size of a ticket, it leaves the status pending rather than guess. After
-`senior-mode setup github` adds the third check to an existing repository, a pull request opened
-before needs `senior-mode publish` once more on its head. See
+gets `success` with "not required: no protected zone, not L". A pull request that closes no issue
+(release, framing) is in that case: only protected zones and L tickets require the pass. The limit:
+a pull request that closes a small issue while doing L-sized work cannot be detected mechanically, so
+the `reviewer` flags it. When `publish` cannot read the pull request or the Size of a ticket, it
+leaves the status pending rather than guess. `publish` replaces only its own statuses ("not
+required", "required: ..."): a `failure` or `success` set by the `security` agent on a commit is
+never overwritten. After `senior-mode setup github` adds the third check to an existing
+repository, a pull request opened before needs `senior-mode publish` once more on its head. See
 [ADR 0015](../adr/0015-security-posture.md).
+
+Until the reviewer runs in a separate session ([#150](https://github.com/Sycatle/senior-mode/issues/150)),
+a ticket session can post `senior-mode/security` itself: the Bash guard does not block statuses.
+`run` checks the protected zones itself before it merges, whatever the statuses say, so only the
+auto-merge of an L ticket depends on this status being honest.
 
 A status published from your machine is only as trustworthy as that machine: it names the commit
 it verified ([ADR 0006](../adr/0006-local-ci.md)). Teams that need independent CI use `actions` mode.

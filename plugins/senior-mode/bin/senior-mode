@@ -285,9 +285,10 @@ check_record() {
   printf '%s/%s\n' "$(git rev-parse --git-path senior-mode/checks)" "$1"
 }
 
-# Runs the configured checks from the repository root. On a clean tree, records the result for HEAD.
+# Runs the built-in secret scan, then the configured checks, from the repository root. On a clean tree,
+# records the result for HEAD.
 check() {
-  local file root count i name cmd output passed=0 failed="" state description
+  local file root count i name cmd output passed=0 failed="" state description names cmds
   file=$(config_file)
   root=$(git rev-parse --show-toplevel)
   count=$(jq '.checks // [] | length' "$file")
@@ -297,10 +298,18 @@ check() {
     echo "FAIL  dependencies not installed: run $(install_command "$root")"
     return 1
   fi
+  # The secret scan is not configurable: it runs first, on every preset (ADR 0015).
+  names=("secret scan")
+  cmds=("$(printf '%q' "$SELF") secret-scan")
+  for ((i = 0; i < count; i++)); do
+    names+=("$(jq -r ".checks[$i].name" "$file")")
+    cmds+=("$(jq -r ".checks[$i].run" "$file")")
+  done
+  count=${#names[@]}
   output=$(mktemp)
   for ((i = 0; i < count; i++)); do
-    name=$(jq -r ".checks[$i].name" "$file")
-    cmd=$(jq -r ".checks[$i].run" "$file")
+    name=${names[i]}
+    cmd=${cmds[i]}
     # End-to-end suites are heavy: parallel tickets share e2e.slots of them per machine.
     [ "$name" != e2e ] || cmd="$(printf '%q' "$SELF") e2e-lock -- bash -c $(printf '%q' "$cmd")"
     # Git exports GIT_DIR to hooks, absolute in a linked worktree: a check that runs git on a test
@@ -335,6 +344,66 @@ check() {
   fi
   echo "$description"
   [ "$state" = success ]
+}
+
+# The sha256 of $1, as sha256sum or shasum prints it.
+sha256() {
+  if command -v sha256sum >/dev/null; then
+    printf %s "$1" | sha256sum | cut -d' ' -f1
+  else
+    printf %s "$1" | shasum -a 256 | cut -d' ' -f1
+  fi
+}
+
+# The secret scan of `check` (#143, spec 130): the lines added by <base>...HEAD against the patterns of the
+# plugin (`secret-patterns`). Prints `file:line: kind` for each finding, never the value; exit 1 when there
+# is one. A value whose sha256 is in `.claude/secret-allowlist` of the base, with a reason, is lifted: a
+# branch cannot allowlist its own secret.
+secret_scan() {
+  local base patterns allow added kind mode re path line text m value findings flags sep=$'\x1f'
+  base=$(default_branch) || {
+    echo "skipped: no base branch"
+    return 0
+  }
+  patterns=$(dirname "$SELF")/../secret-patterns
+  [ -f "$patterns" ] || die "secret patterns not found: $patterns"
+  allow=$(git show "$base:.claude/secret-allowlist" 2>/dev/null |
+    grep -E '^[0-9a-f]{64}[[:space:]]+[^[:space:]]' | cut -c1-64) || true
+  added=$(mktemp)
+  # The added lines as <file> <line> <text>. A "+++ " line is a file header only before the first hunk.
+  git -c core.quotePath=false diff -U0 --no-color --no-ext-diff --no-textconv --no-renames --no-prefix \
+    "$base...HEAD" | awk -v s="$sep" '
+    /^diff / { header = 1; next }
+    header && /^\+\+\+ / { file = substr($0, 5); sub(/\t$/, "", file); next }
+    /^@@ / { header = 0; if (match($0, /\+[0-9]+/)) n = substr($0, RSTART + 1, RLENGTH - 1) + 0; next }
+    !header && /^\+/ { printf "%s%s%d%s%s\n", file, s, n, s, substr($0, 2); n++ }' >"$added" ||
+    die "cannot compare with $base"
+  findings=$(
+    while IFS=$'\t' read -r kind mode re; do
+      case $kind in "" | "#"*) continue ;; esac
+      flags=(-E)
+      [ "$mode" != assign ] || flags=(-i -E)
+      while IFS=$sep read -r path line text; do
+        while IFS= read -r m; do
+          value=$m
+          if [ "$mode" = assign ]; then
+            # The value, not the name: a name only looks like a secret when it holds letters and digits
+            # and is not a placeholder.
+            value=$(sed -E 's/^[^:=]*[:=][[:space:]]*["'"'"']?//' <<<"$m")
+            [[ $value =~ [0-9] && $value =~ [A-Za-z] ]] || continue
+            ! grep -qiE 'example|changeme|placeholder|your|dummy|sample|xxxx' <<<"$value" || continue
+          fi
+          ! grep -qxF "$(sha256 "$value")" <<<"$allow" || continue
+          printf '%s:%s: %s\n' "$path" "$line" "$kind"
+        done < <(grep -o "${flags[@]}" -- "$re" <<<"$text")
+      done < <(grep "${flags[@]}" -- "$re" "$added")
+    done <"$patterns" | sort -t: -k1,1 -k2,2n | uniq
+  ) || true
+  rm -f "$added"
+  [ -n "$findings" ] || return 0
+  printf '%s\n' "$findings"
+  echo "a value is lifted by \"<sha256 of the value> <reason>\" in .claude/secret-allowlist on $base (printf %s <value> | sha256sum)"
+  return 1
 }
 
 file_owner() { stat -c %u "$1" 2>/dev/null || stat -f %u "$1"; }
@@ -2240,6 +2309,10 @@ case "${1:-}" in
   e2e-lock)
     shift
     e2e_lock "$@"
+    ;;
+  secret-scan)
+    [ $# -eq 1 ] || usage
+    secret_scan
     ;;
   publish)
     [ $# -le 2 ] || usage

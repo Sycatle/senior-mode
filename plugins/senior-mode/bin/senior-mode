@@ -25,7 +25,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] | statusline | retro [--since <dur>] [--json] | check | publish [commit] | release [--dry-run] | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] | statusline | retro [--since <dur>] [--json] | check | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -1121,6 +1121,47 @@ slugify() {
   printf '%s\n' "${s%-}"
 }
 
+# The ref a new branch starts from: origin's default branch, else a local main or master.
+start_base() {
+  local main=$1 base
+  base=$(git -C "$main" symbolic-ref -q --short refs/remotes/origin/HEAD) ||
+    base=$(git -C "$main" for-each-ref --format='%(refname:short)' refs/remotes/origin/main refs/remotes/origin/master | head -1)
+  [ -n "$base" ] || base=$(git -C "$main" for-each-ref --format='%(refname:short)' refs/heads/main refs/heads/master | head -1)
+  [ -n "$base" ] || return 1
+  printf '%s\n' "$base"
+}
+
+# senior-mode frame start <idea>: the worktree `<repo>-frame-<slug>` and the branch `docs/<slug>` of a
+# framing (spec 0001 §8), from origin's default branch, so parallel framings never share a working tree
+# or branch. Refuses when the local default branch holds commits origin lacks: they would ride along in
+# the framing's pull request.
+frame_start() {
+  local name main base branch path local_branch ahead
+  name=$(slugify "${1:-}")
+  [ -n "$name" ] || usage
+  main=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
+  main=${main%/.git}
+  git -C "$main" fetch -q origin 2>/dev/null || die "cannot fetch origin"
+  base=$(start_base "$main") || die "no default branch to frame from"
+  local_branch=${base#origin/}
+  if git -C "$main" show-ref -q --verify "refs/heads/$local_branch"; then
+    ahead=$(git -C "$main" rev-list --count "$base..$local_branch")
+    [ "$ahead" -eq 0 ] ||
+      die "$local_branch is ahead of $base by $ahead commit(s) (unpushed, such as a setup commit): push or open a pull request for them first, then frame again"
+  fi
+  branch=docs/$name
+  path=$(dirname "$main")/$(basename "$main")-frame-$name
+  if [ ! -e "$path" ]; then
+    if git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
+      git -C "$main" worktree add -q "$path" "$branch" >/dev/null || die "cannot create the worktree"
+    else
+      git -C "$main" worktree add -q --no-track -b "$branch" "$path" "$base" >/dev/null || die "cannot create the worktree"
+    fi
+  fi
+  echo "branch $branch"
+  echo "worktree $path"
+}
+
 # senior-mode start <issue>: the worktree and the branch `<type>/<issue>-<slug>` of a ticket, then Status
 # In progress. Shared by `next` and `run`. The branch type follows the `type:` label (feature: feat, bug:
 # fix, task and chore: chore; feat without a label). The branch starts from the default branch, fetched
@@ -1157,10 +1198,7 @@ start() {
     [ ! -e "$path" ] || die "$path exists and is not the worktree of $branch"
     if ! git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
       git -C "$main" fetch -q origin 2>/dev/null || true
-      base=$(git -C "$main" symbolic-ref -q --short refs/remotes/origin/HEAD) ||
-        base=$(git -C "$main" for-each-ref --format='%(refname:short)' refs/remotes/origin/main refs/remotes/origin/master | head -1)
-      [ -n "$base" ] || base=$(git -C "$main" for-each-ref --format='%(refname:short)' refs/heads/main refs/heads/master | head -1)
-      [ -n "$base" ] || die "no default branch to start $branch from"
+      base=$(start_base "$main") || die "no default branch to start $branch from"
       git -C "$main" worktree add -q --no-track -b "$branch" "$path" "$base" >/dev/null || die "cannot create the worktree"
     else
       git -C "$main" worktree add -q "$path" "$branch" >/dev/null || die "cannot create the worktree"
@@ -2003,6 +2041,10 @@ case "${1:-}" in
     ;;
   frame)
     # Lifts the docs/-only guard of every frame session in this repository (hooks/frame-guard.sh).
+    if [ "${2:-}" = start ] && [ $# -eq 3 ]; then
+      frame_start "$3"
+      exit
+    fi
     [ $# -eq 2 ] && [ "$2" = end ] || usage
     d=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "frame end: not inside a git repository"
     rm -rf "$d/senior-mode/frame"

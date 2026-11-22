@@ -113,7 +113,7 @@ Natural-language triggers in any language route to them ("let's frame", "cadrons
 | Command | Purpose | Agents |
 |---|---|---|
 | `setup` | Adopt a repo (new or existing): detect stack, choose preset, create the Project and its fields, labels, branch protection, CI, release-please, git hooks, issue and PR templates, `CLAUDE.md` with Principles (importing `AGENTS.md` when the repository has one), `.claude/senior-mode.json`. The language is proposed from the user's `CLAUDE.md` or conversation. The status line is set for this project only. Idempotent; re-run to repair. | scout, ops |
-| `frame` | Idea → interview rounds → alternatives → spec → ADR(s) → tickets as vertical slices with acceptance criteria, dependencies, size, priority, milestone. Ends with a summary of proactive suggestions the user did not ask for. | scout, researcher, architect, ops |
+| `frame` | Idea → interview rounds → alternatives → spec → ADR(s) → tickets as vertical slices with acceptance criteria, dependencies, size, priority, milestone. Works in its own worktree and branch from `origin/main` (`senior-mode frame start`; it stops when the default branch is ahead of origin), names the spec after its issue (`docs/specs/<issue>-<slug>.md`), takes ADR numbers from `origin/main` at commit time and re-checks them before the push, so parallel framings do not collide. Ends with a summary of proactive suggestions the user did not ask for. | scout, researcher, architect, ops |
 | `next [#issue]` | The daily session: short state of the board, open PRs needing a human (offered for review or merge first), then picks the top Ready ticket and delivers it with the user in the loop (TDD, commits, PR, review). Never merges without the user's explicit yes. | ops, test-author, implementer, reviewer |
 | `run` | Autonomous delivery of up to N Ready tickets, one headless session per ticket (section 10, ADR 0007). | all |
 | `status` | Plain-language dashboard: done since last time, in progress, blocked, next, waiting for a human, release state. Cheap: one GraphQL call. | none (runs `senior-mode status`) |
@@ -393,7 +393,7 @@ last result.
 
 ```
 CLAUDE.md                 ≤ 80 lines: commands, code map, non-derivable pitfalls, Principles section
-docs/specs/NNNN-slug.md   one per M/L feature, frontmatter: id, title, status, size, paths, adrs, issue
+docs/specs/<issue>-slug.md one per M/L feature (older ones: NNNN), frontmatter: id, title, status, size, paths, adrs, issue
 docs/specs/INDEX.md       generated, never edited by hand
 docs/adr/NNNN-slug.md     one decision each, MADR-lite, statuses proposed/accepted/superseded
 .claude/senior-mode.json  project config (section 13)

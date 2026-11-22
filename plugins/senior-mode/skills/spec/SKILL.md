@@ -11,7 +11,8 @@ why"; GitHub holds the state.
 
 ## Create
 
-- File: `docs/specs/NNNN-short-slug.md`, `NNNN` = highest existing number + 1, zero-padded.
+- File: `docs/specs/<issue>-short-slug.md`, `<issue>` = number of the issue the spec belongs to (the
+  epic, or the ticket), so parallel framings never collide. Older specs numbered `NNNN` stay as they are.
 - Start from `${CLAUDE_SKILL_DIR}/template.md`. Size M fills Problem, Acceptance criteria, Out of
   scope and Test seams only; size L fills every section.
 - Acceptance criteria are Given / When / Then, observable from outside, each one testable. They
@@ -26,7 +27,7 @@ why"; GitHub holds the state.
 
 - `draft` while framing; `accepted` when the user approves (always a human for size L).
 - `implemented` in the PR that delivers the last acceptance criterion.
-- `superseded` when a new spec replaces it: set `superseded-by: NNNN`, never delete the file.
+- `superseded` when a new spec replaces it: set `superseded-by: <id>`, never delete the file.
 
 ## Keep it true
 

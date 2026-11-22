@@ -17,7 +17,8 @@ commit message is enough there.
 
 ## How
 
-- File: `docs/adr/NNNN-short-slug.md`, `NNNN` = highest existing number + 1.
+- File: `docs/adr/NNNN-short-slug.md`, `NNNN` = highest number on `origin/main` + 1 (not the
+  worktree: parallel branches), taken when committing and checked again before the push.
 - Start from `${CLAUDE_SKILL_DIR}/template.md`. One decision per ADR.
 - At least two real alternatives with their trade-offs, including "do nothing" when it is credible.
 - Consequences include the bad ones.

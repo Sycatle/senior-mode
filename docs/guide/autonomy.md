@@ -133,8 +133,10 @@ dev-only secrets on a machine where agents run; `setup` says so.
 ### Frame guard (`frame-guard.sh`)
 
 Starting `/senior-mode:frame` marks the session as framing. While marked, edits outside `docs/` and
-`.claude/agent-memory/` (the agents' project memory) are denied, subagents included. Another senior-mode command or skill, the end of the session, or
-`senior-mode frame end` clears the mark. Only in repositories with `.claude/senior-mode.json`.
+`.claude/agent-memory/` (the agents' project memory) are denied, subagents included. `docs/` of any
+worktree of the repository counts, since a framing works in its own (`senior-mode frame start`).
+Another senior-mode command or skill, the end of the session, or `senior-mode frame end` clears the
+mark. Only in repositories with `.claude/senior-mode.json`.
 
 ### Proof hook (`proof.sh`)
 

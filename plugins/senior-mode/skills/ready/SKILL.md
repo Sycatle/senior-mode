@@ -10,7 +10,7 @@ nothing else.
 
 ## Checklist
 
-1. **Spec:** linked spec (`docs/specs/NNNN-*.md`) on the default branch (check with
+1. **Spec:** linked spec (`docs/specs/<issue>-*.md`) on the default branch (check with
    `gh api repos/{owner}/{repo}/contents/<path> --jq .path`, not the local file), whose acceptance
    criteria cover this ticket, written as Given / When / Then. Size S needs no spec but needs a clear expected behaviour in the issue.
 2. **Size:** S or M. An L is an epic: it is never Ready itself, its sub-issues are.

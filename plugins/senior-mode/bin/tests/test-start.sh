@@ -163,5 +163,39 @@ mkdir "$work/app-96"
 start 96 && fail "started over an existing directory"
 git -C "$repo" show-ref -q --verify refs/heads/feat/96-occupied && fail "branch created despite the taken path"
 
+# frame start <slug>: a worktree and a docs branch from origin's default branch, so framings do not share
+# a working tree; it stops when the local default branch holds commits origin does not have.
+fstart() {
+  (cd "$repo" && "$cli" frame start "$@") >"$work/out" 2>"$work/err"
+}
+fstart login-flow || fail "frame start failed: $(cat "$work/err")"
+grep -qx "branch docs/login-flow" "$work/out" || fail "frame branch line: $(cat "$work/out")"
+grep -qx "worktree $work/app-frame-login-flow" "$work/out" || fail "frame worktree line: $(cat "$work/out")"
+[ "$(git -C "$work/app-frame-login-flow" symbolic-ref --short HEAD)" = docs/login-flow ] || fail "frame worktree is not on its branch"
+[ -f "$work/app-frame-login-flow/new.txt" ] || fail "frame branch not started from the fetched origin/main"
+[ "$(git -C "$repo" symbolic-ref --short HEAD)" = main ] || fail "frame start moved the main checkout"
+logged "project item" && fail "frame start touched the board"
+fstart login-flow || fail "frame start rerun failed: $(cat "$work/err")"
+[ "$(git -C "$repo" worktree list | grep -c app-frame-login-flow)" -eq 1 ] || fail "frame start rerun added a second worktree"
+fstart "Billing, Stripe & invoices" || fail "frame start with a sentence failed: $(cat "$work/err")"
+grep -qx "branch docs/billing-stripe-invoices" "$work/out" || fail "frame slug not normalised: $(cat "$work/out")"
+for bad in "" "!!!"; do
+  fstart "$bad" && fail "frame start accepted '$bad'"
+done
+
+# Two framings at once get two worktrees.
+fstart other-idea || fail "second framing failed: $(cat "$work/err")"
+[ -d "$work/app-frame-other-idea" ] || fail "second framing has no worktree of its own"
+
+# An unpushed commit on the local default branch (a setup commit) would leak into the framing pull request.
+git -C "$repo" merge -q --ff-only origin/main
+echo local >"$repo/local.txt"
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "chore: unpushed setup"
+fstart ahead-idea && fail "frame start ran with main ahead of origin"
+grep -q "ahead of origin" "$work/err" || fail "main ahead not explained: $(cat "$work/err")"
+[ -e "$work/app-frame-ahead-idea" ] && fail "worktree created despite main ahead of origin"
+git -C "$repo" show-ref -q --verify refs/heads/docs/ahead-idea && fail "branch created despite main ahead of origin"
+
 [ "$failures" -eq 0 ] && echo "start: all cases pass"
 exit "$failures"

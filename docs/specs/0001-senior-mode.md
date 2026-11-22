@@ -526,11 +526,16 @@ it, and a project without the stored key falls back to what its preset detects. 
 lockfiles are not protected) in its `preset.json`; reading them is the protected zones' job.
 
 Every preset defines one check list: lint, typecheck, tests, build, Conventional Commits, spec drift,
-secret scanning, plus the environment guard when `envGuard.forbidden` is set: it fails when a
+plus the environment guard when `envGuard.forbidden` is set: it fails when a
 forbidden pattern appears in a `.env*` file of the worktree, tracked or not, or in the environment,
 and prints file names and variable names, never a value. A check whose first output line is
-`skipped: <reason>` passes and is shown as `skip <name>: <reason>`. Before running the list, `check`
-stops with `FAIL  dependencies not installed: run <install command>` when a node project declares
+`skipped: <reason>` passes and is shown as `skip <name>: <reason>`. `check` also runs a built-in
+`secret scan`, first and on every preset, outside the list: it reads the lines added by
+`<base>...HEAD` against the patterns in `plugins/senior-mode/secret-patterns` (provider keys, private
+key headers, generic assignments to names like password or token) and fails with `file:line: kind`,
+never the value. A value whose sha256 is in `.claude/secret-allowlist` with a reason, as read from the
+base branch, passes; `setup` protects that file (spec 130, ADR 0015). Before running the list,
+`check` stops with `FAIL  dependencies not installed: run <install command>` when a node project declares
 dependencies and has no `node_modules` (nor Plug'n'Play), instead of failing on typecheck. The pre-push hook runs it in any
 terminal; `senior-mode check` runs it in a session
 (and before every merge in `run`) and records the result that `senior-mode publish` sends as the

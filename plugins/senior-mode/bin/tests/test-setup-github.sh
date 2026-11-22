@@ -52,6 +52,7 @@ case "$*" in
       jq --argjson v "$v" '(.data.node.fields.nodes[] | select(.id == $v.field)
         | .options) = ($v.options | map(.id //= ("O_" + .name)))' "$FIX/fields.json" >"$FIX/f" &&
         mv "$FIX/f" "$FIX/fields.json"
+    elif grep -q workflows <<<"$body"; then respond <"$FIX/workflows-project.json"
     else respond <"$FIX/fields.json"; fi ;;
 esac
 STUB
@@ -69,6 +70,12 @@ echo '{"data": {"node": {"fields": {"nodes": [{}, {"id": "F_Status", "name": "St
   {"id": "O_todo", "name": "Todo", "color": "GRAY", "description": ""},
   {"id": "O_prog", "name": "In Progress", "color": "YELLOW", "description": ""},
   {"id": "O_done", "name": "Done", "color": "PURPLE", "description": "Shipped"}]}]}}}}' >"$FIX/fields.json"
+project_workflows() { # enabled flags of "Item closed" and "Pull request merged"
+  jq -n --argjson c "$1" --argjson m "$2" '{data: {node: {workflows: {nodes: [
+    {name: "Item closed", enabled: $c}, {name: "Pull request merged", enabled: $m},
+    {name: "Auto-add to project", enabled: false}]}}}}' >"$FIX/workflows-project.json"
+}
+project_workflows true true
 
 setup() {
   : >"$GH_LOG"
@@ -117,6 +124,21 @@ logged "updateProjectV2Field" && fail "second run rewrites field options"
 logged "api -X POST repos/acme/app/rulesets" && fail "second run creates another ruleset"
 logged "api -X PUT repos/acme/app/rulesets/9" || fail "second run does not update the ruleset"
 [ "$(cat "$repo/.claude/senior-mode.json")" = "$before" ] || fail "second run changes the config"
+
+grep -q 'Workflows' "$work/out" && fail "built-in workflows reported although both are on: $(cat "$work/out")"
+
+# Built-in workflows off: setup names them and says where to turn them on.
+project_workflows false false
+setup
+grep -q '"Item closed".*"Pull request merged"\|Item closed, Pull request merged' "$work/out" ||
+  fail "workflows off not named: $(cat "$work/out")"
+grep -q 'Workflows' "$work/out" || fail "no hint where to turn the workflows on: $(cat "$work/out")"
+grep -q 'Auto-add' "$work/out" && fail "an unrelated workflow reported"
+project_workflows true false
+setup
+grep -q 'Pull request merged' "$work/out" || fail "one workflow off not named"
+grep -q 'Item closed' "$work/out" && fail "an enabled workflow named as off"
+project_workflows true true
 
 # A field deleted on the board is created again.
 jq 'del(.data.node.fields.nodes[] | select(.name == "Size"))' "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"

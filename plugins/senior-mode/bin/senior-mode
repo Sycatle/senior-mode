@@ -2009,20 +2009,24 @@ It is back in Backlog. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in th
   [ "$RUN_FAILS" -lt "$RUN_MAXFAIL" ] || RUN_STOP="$RUN_FAILS failed ticket(s) in a row (autonomy.maxConsecutiveFailures)"
 }
 
-# A session that outlived autonomy.sessionTimeout: killed with its whole process group (the group of a
-# tmux window or of setsid, never run's own), then the ticket is labelled needs-human with the log path,
-# recorded as failed and counted for the circuit breaker. Not retried on Opus: ADR 0014 escalates failed
-# work, not a stuck session. Its Status stays In progress, needs-human is the signal.
+# A session that outlived autonomy.sessionTimeout: killed with its process group (the group of a tmux
+# window or of setsid; processes that left it by their own setsid are out of reach), then the ticket is
+# labelled needs-human with the log path, recorded as failed and counted for the circuit breaker. Not
+# retried on Opus: ADR 0014 escalates failed work, not a stuck session. Its Status stays In progress,
+# needs-human is the signal.
 run_timeout() {
   local n=$1 pgid="" i reason log=$RUN_DIR/$1-${RUN_MODEL[$1]}.log
   reason="timed out after $RUN_TIMEOUT minute$([ "$RUN_TIMEOUT" -eq 1 ] || echo s)"
   pgid=$(cat "$RUN_DIR/$n.pgid" 2>/dev/null) || pgid=""
-  if [[ $pgid =~ ^[1-9][0-9]*$ ]] && [ "$pgid" != "$(ps -o pgid= -p $$ | tr -d ' ')" ]; then
+  # Only the group of this session's script: a pgid file that is empty, 0 or 1, run's own group or a
+  # leader that is not <n>.sh is never signalled.
+  if [[ $pgid =~ ^([2-9]|[1-9][0-9]+)$ ]] && [ "$pgid" != "$(ps -o pgid= -p $$ | tr -d ' ')" ] &&
+    [[ $(ps -o args= -p "$pgid" 2>/dev/null) == *"/$n.sh"* ]]; then
     kill -TERM -- "-$pgid" 2>/dev/null || true
     for ((i = 0; i < 20; i++)); do kill -0 -- "-$pgid" 2>/dev/null || break; sleep 0.1; done
     kill -KILL -- "-$pgid" 2>/dev/null || true
   else
-    echo "#$n: no process group to stop, the session may still be running" >&2
+    echo "#$n: session not stopped (no process group of its own to kill), it may still be running" >&2
   fi
   gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
     echo "#$n: could not label the ticket needs-human" >&2
@@ -2161,7 +2165,8 @@ run() {
   RUN_MERGE=$(config_get autonomy.merge)
   RUN_ESCALATE=$(config_get autonomy.escalate)
   RUN_TIMEOUT=$(config_get autonomy.sessionTimeout)
-  [[ $RUN_TIMEOUT =~ ^[1-9][0-9]*$ ]] || die "autonomy.sessionTimeout must be a positive whole number of minutes, not $RUN_TIMEOUT"
+  [[ $RUN_TIMEOUT =~ ^[1-9][0-9]*$ ]] && [ "$RUN_TIMEOUT" -le 1440 ] ||
+    die "autonomy.sessionTimeout must be a whole number of minutes from 1 to 1440, not $RUN_TIMEOUT"
   RUN_PROTECTION=$(jq -r '.github.protection // empty' "$file")
   RUN_CLAUDE=$(agent_bin)
   RUN_SLUG=$(repo_slug)

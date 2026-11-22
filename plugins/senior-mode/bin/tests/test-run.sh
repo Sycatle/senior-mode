@@ -2,7 +2,9 @@
 # Tests for `senior-mode run`. Offline: gh, claude and tmux are stubs. gh answers the board query and
 # the REST calls from fixtures in $FIX; claude plays a ticket session from $FIX/claude-<n>-<model>
 # (line 1: the outcome to write, empty for none; line 2: "pr" to open a pull request; line 3: "hang" to
-# never end, with a child process, recorded in $FIX/pids-<n>, to check that a killed session leaves none).
+# never end, with a child process, recorded in $FIX/pids-<n>, to check that a killed session leaves none;
+# "decoy": the same, but the session's recorded process group is swapped for another group, whose leader is
+# not the session's script, to check that run kills nothing it does not recognise).
 # The per-ticket outcome files `run` leaves are checked against the records of fixture-runs.sh, the same
 # ones test-retro.sh feeds to `retro`.
 # shellcheck disable=SC2016 # jq programs and stub bodies, not expanded here
@@ -55,6 +57,14 @@ fx=$FIX/claude-$n-$model
 if [ "$(sed -n 3p "$fx")" = hang ]; then
   sleep 300 &
   echo "$$ $!" >"$FIX/pids-$n"
+  wait
+fi
+if [ "$(sed -n 3p "$fx")" = decoy ]; then
+  setsid sleep 301 &
+  decoy=$!
+  echo "$decoy" >"${SENIOR_MODE_RUN_OUTCOME%.outcome}.pgid"
+  sleep 300 &
+  echo "$$ $! $decoy" >"$FIX/pids-$n"
   wait
 fi
 outcome=$(sed -n 1p "$fx")
@@ -303,6 +313,24 @@ for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
 config '{"sessionTimeout": 0}'
 run && fail "K: sessionTimeout 0 accepted"
 grep -q 'sessionTimeout' "$work/out" || fail "K: bad sessionTimeout not named: $(cat "$work/out")"
+config '{"sessionTimeout": 1441}'
+board
+run && fail "K: sessionTimeout above a day accepted"
+grep -q 'sessionTimeout' "$work/out" || fail "K: too long a sessionTimeout not named: $(cat "$work/out")"
+
+# L: the recorded process group is not the session's (its leader is not <n>.sh): nothing is killed, run
+# says so, and the ticket is still labelled needs-human and recorded as timed out.
+config '{"sessionTimeout": 1}'
+board 92 '[]'
+session 92-sonnet "" "" decoy
+SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "L: run failed: $(cat "$work/out")"
+read -r -a pids <"$FIX/pids-92"
+kill -0 "${pids[2]}" 2>/dev/null || fail "L: run killed a process group that is not the session's"
+for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
+grep -q '#92.*not stopped' "$work/out" || fail "L: the unstopped session is not reported: $(cat "$work/out")"
+grep -q 'issues/92/labels.*needs-human' "$GH_LOG" || fail "L: #92 not labelled needs-human"
+jq -e '.outcome == "failed" and .reason == "timed out after 1 minute"' "$repo/.git/senior-mode/runs/"*"/92.json" >/dev/null ||
+  fail "L: #92 not recorded as timed out"
 
 # E: nothing Ready, bad arguments.
 config '{}'

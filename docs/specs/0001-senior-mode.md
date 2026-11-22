@@ -587,7 +587,7 @@ plugin's hooks, which cover every agent.
 | `SessionStart` | command | Inject a ~15-line router and, from the branch name, the current ticket, its spec and its state |
 | `PreToolUse` Bash | command | Deny `--no-verify`, force-push, push to the default branch, `reset --hard` on shared branches |
 | `PreToolUse` Edit/Write/Bash | command | During a run (`SENIOR_MODE_RUN=1`), deny writes to `.github/workflows/**`, `.claude/**`, `.githooks/**` (section 10, `self-protect.sh`) |
-| `PreToolUse` Edit/Write | command | In a frame session, deny edits outside `docs/`, subagents included |
+| `PreToolUse` Edit/Write | command | In a frame session, deny edits outside `docs/` and `.claude/agent-memory/`, subagents included |
 | `PreToolUse` Read/Grep/Glob/Bash | command | Deny reading `.env` files, keys and credential files, and dumping the environment, in every session (section 10) |
 | `UserPromptExpansion`, `PreToolUse` Skill, `SessionEnd` | command | Mark a frame session when `frame` starts; clear it on another senior-mode command or skill, at session end, or with `senior-mode frame end` |
 | `PermissionRequest` | command | During a run, allow the project's verification commands from config, so autonomy does not stall on prompts |

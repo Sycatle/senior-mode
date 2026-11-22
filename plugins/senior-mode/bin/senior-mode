@@ -26,7 +26,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> --priority <p> [--severity <s>] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] [--fix] | statusline | retro [--since <dur>] [--json] | check | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> --priority <p> [--severity <s>] [--kind <k> --path <p> --rule <r> [--details-file <f>]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] [--fix] | statusline | retro [--since <dur>] [--json] | check | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -163,12 +163,32 @@ severity_priority() {
   case $1 in critical) echo "P0 now" ;; high) echo "P1 next" ;; esac
 }
 
+# The details of a critical risk go in a draft security advisory, private to the maintainers. A
+# private repository has none: say so. The details are needed before anything is filed.
+advisory() {
+  local slug=$1 title=$2 details=$3 private url
+  private=$(gh_retry repo view "$slug" --json isPrivate --jq .isPrivate)
+  if [ "$private" = true ]; then
+    echo "private repository: no security advisory opened, keep the details out of the issue"
+    return 0
+  fi
+  [ -n "$details" ] || die "a critical risk in a public repository needs --details-file (the advisory holds the details)"
+  url=$(jq -n --arg s "$title" --arg d "$(cat "$details")" --arg n "${slug#*/}" \
+    '{summary: $s, description: $d, severity: "critical", vulnerabilities: [{package: {ecosystem: "other", name: $n}}]}' |
+    gh api -X POST "repos/$slug/security-advisories" --input - --jq .html_url) || die "could not open the security advisory"
+  echo "draft security advisory: $url"
+}
+
 # Creates a ticket with its board fields, milestone, type label, blocked-by links and parent epic.
-# --severity adds the Severity field and the label `security`.
+# --severity adds the Severity field and the label `security`. --kind, --path and --rule (a risk
+# outside the ticket) add the line `security-id: <sha256 of the three>` to the body: an open issue
+# that carries it is reported and left alone. A critical one in a public repository also opens a
+# draft security advisory holding --details-file, which never goes in the issue (spec 130).
 # An open issue with the same title is reused, so a run cut short can be repeated (spec 0001 §7):
 # its body, fields, milestone, label and links converge to the arguments, its Status only with --status.
 issue_create() {
   local title="" body="" size="" priority="" severity="" status="" milestone="" type="" parent=""
+  local kind="" path="" rule="" details="" sid="" text private
   local blockers=() edits=() file slug found number url b fields implied have
   while [ $# -gt 0 ]; do
     case $1 in -h | --help)
@@ -182,6 +202,10 @@ issue_create() {
       --size) size=$2 ;;
       --priority) priority=$2 ;;
       --severity) severity=$2 ;;
+      --kind) kind=$2 ;;
+      --path) path=$2 ;;
+      --rule) rule=$2 ;;
+      --details-file) details=$2 ;;
       --status) status=$2 ;;
       --milestone) milestone=$2 ;;
       --type) type=$2 ;;
@@ -197,6 +221,16 @@ issue_create() {
   [ -n "$title" ] && [ -n "$size" ] && [ -n "$priority" ] ||
     die "issue create needs --title, --body-file, --size and --priority (optional with --severity critical or high)"
   [ "$body" = - ] || [ -f "$body" ] || die "no body file: $body"
+  if [ -n "$kind$path$rule" ]; then
+    [ -n "$kind" ] && [ -n "$path" ] && [ -n "$rule" ] || die "--kind, --path and --rule go together, none empty"
+    [ -n "$severity" ] || die "--kind, --path and --rule need --severity"
+    sid=$(printf '%s\n%s\n%s\n' "$kind" "$path" "$rule" | sha256sum | cut -d' ' -f1)
+  fi
+  if [ -n "$details" ]; then
+    [ "$severity" = critical ] && [ -n "$sid" ] || die "--details-file is for a critical risk with --kind, --path and --rule"
+    [ "$details" = - ] || [ -f "$details" ] || die "no details file: $details"
+    [ "$details" != - ] || [ "$body" != - ] || die "--body-file and --details-file cannot both read stdin"
+  fi
   case $type in "" | feature | bug | task | chore) ;; *) die "unknown type $type (feature, bug, task, chore)" ;; esac
   # ${a[@]+...}: an empty array is unbound under set -u before bash 4.4.
   for b in ${blockers[@]+"${blockers[@]}"}; do
@@ -217,6 +251,20 @@ issue_create() {
   option_id "$file" Priority "$priority" >/dev/null
   option_id "$file" Status "${status:-Backlog}" >/dev/null
   slug=$(repo_slug)
+
+  if [ -n "$sid" ]; then
+    found=$(gh_retry issue list --repo "$slug" --state open --limit 1000 --json number,title,body |
+      jq -r --arg l "security-id: $sid" 'first(.[] | select((.body // "") | split("\n") | index($l)) | "#\(.number) \(.title)") // empty')
+    if [ -n "$found" ]; then
+      echo "$found (already filed, security-id ${sid:0:12})"
+      return 0
+    fi
+    # Read once, before anything is created: stdin is gone after the first read.
+    text=$(cat "$body")
+    [ "$severity" != critical ] || advisory "$slug" "$title" "$details"
+    body=$(mktemp)
+    printf '%s\n\nsecurity-id: %s\n' "$text" "$sid" >"$body"
+  fi
 
   # The number of an open issue with this title, then its type labels other than the asked one.
   found=$(gh_retry issue list --repo "$slug" --state open --limit 1000 --json number,title,labels |
@@ -244,6 +292,7 @@ issue_create() {
     echo "#$number $title (created)"
     status=${status:-Backlog}
   fi
+  [ -z "$sid" ] || rm -f "$body"
   [ -z "$status" ] || fields=(Status "$status" "${fields[@]}")
   item_set "$number" "${fields[@]}"
   for b in ${blockers[@]+"${blockers[@]}"}; do

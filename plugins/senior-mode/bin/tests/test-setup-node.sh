@@ -85,9 +85,9 @@ grep -q "^preset: node (TypeScript, next)$" "$work/out" || fail "Next.js not rep
 [ -z "$(check_run "$d" test)" ] || fail "npm's placeholder test script taken as tests"
 grep -q "missing: lint, test" "$work/out" || fail "missing tools not reported: $(cat "$work/out")"
 
-# Next.js awareness: the middleware is a protected zone, written when the config has no list yet.
+# Next.js awareness: the middleware (proxy since Next 16) is a protected zone, written when the config has no list yet.
 # Only a Next.js project gets it; a list already in the config, even an empty one, is never touched.
-for zone in 'middleware.*' 'src/middleware.*'; do
+for zone in 'middleware.*' 'src/middleware.*' 'proxy.*' 'src/proxy.*'; do
   jq -e --arg z "$zone" '.protected | index($z)' "$d/.claude/senior-mode.json" >/dev/null ||
     fail "Next.js project does not protect $zone: $(cfg "$d" '.protected')"
 done

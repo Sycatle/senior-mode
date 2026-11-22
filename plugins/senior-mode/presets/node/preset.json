@@ -8,7 +8,7 @@
     ".gitlab-ci.yml", "Dockerfile*", "docker-compose*", "compose.y*ml", "**/infra/**",
     "**/terraform/**", "**/k8s/**", "*.tf", ".claude/settings*.json", ".claude/senior-mode.json"
   ],
-  "frameworks": { "next": { "protected": ["middleware.*", "src/middleware.*"] } },
+  "frameworks": { "next": { "protected": ["middleware.*", "src/middleware.*", "proxy.*", "src/proxy.*"] } },
   "release": {
     "packages": { ".": { "release-type": "node", "component": "{{name}}", "include-component-in-tag": true } }
   }

@@ -91,6 +91,10 @@ n=$(sed -nE 's#.*/app-([0-9]+)$#\1#p' <<<"$PWD")
 [ -n "$n" ] || exit 0
 fx=$FIX/claude-$n-$model
 [ -f "$fx" ] || exit 1
+# #145: the token file of the run, as the session sees it: its mode, never its content.
+for t in "$(git rev-parse --path-format=absolute --git-common-dir)"/senior-mode/runs/*/token; do
+  [ ! -f "$t" ] || echo "$n $(stat -c %a "$t" 2>/dev/null || stat -f %Lp "$t")" >>"$FIX/token-seen"
+done
 if [ "$(sed -n 3p "$fx")" = hang ]; then
   sleep 300 &
   echo "$$ $!" >"$FIX/pids-$n"
@@ -330,9 +334,16 @@ jq '.data.node.items.nodes += [{fieldValues: {nodes: [{name: "In progress", fiel
     milestone: null, blockedBy: {nodes: []}}}]' "$FIX/board.json" >"$work/b" && mv "$work/b" "$FIX/board.json"
 session 71-sonnet delivered pr
 session 72-sonnet delivered pr
+rm -f "$FIX/token-seen"
 run || fail "I: run failed: $(cat "$work/out")"
 [ "$(grep -c '^app-7[12] sonnet' "$CLAUDE_LOG")" -eq 2 ] ||
   fail "I: the wip limit stopped a run ticket: $(cat "$work/out")"
+# #145: it did so with a token file of mode 0600 that is gone when the run ends, and the sessions never
+# get the path in their environment.
+[ "$(sort "$FIX/token-seen" | tr '\n' ' ')" = "71 600 72 600 " ] ||
+  fail "I: token file seen by the sessions: $(cat "$FIX/token-seen" 2>/dev/null)"
+ls "$repo"/.git/senior-mode/runs/*/token >/dev/null 2>&1 && fail "I: the token file outlived the run"
+grep -q 'TOKEN' "$CLAUDE_LOG" && fail "I: a session got the token in its arguments"
 
 # J: the base branch has no .claude/senior-mode.json, so its protected zones are unknown: no merge (#116).
 config '{"merge": true}' '{"protection": "ruleset"}'

@@ -39,7 +39,7 @@ goes on: it skips the ruleset, sets `ci.mode` to `local` and records `github.pro
 
 You keep the board, labels, git hooks, the Bash guard and the statuses, but branch protection is
 **not enforced on the server**: anyone with push access can push to the default branch, and GitHub
-does not block a merge when `senior-mode/ci` or `senior-mode/review` is missing or red. Your options:
+does not block a merge when `senior-mode/ci`, `senior-mode/review` or `senior-mode/security` is missing or red. Your options:
 
 - make the repository public;
 - upgrade to GitHub Pro or Team, then run `/senior-mode:setup` again to get the ruleset;

@@ -25,9 +25,11 @@ Argument: $ARGUMENTS (a ticket number; empty means the top of `pick`). Answer in
 7. **Pull request.** Push, open it from the template with `Closes #<n>`, the red run, what was
    verified and the spec change or `Spec-Unchanged:`. `senior-mode item set <n> Status "In review"`,
    `senior-mode publish`.
-8. **Review.** `reviewer` agent in a fresh context; at most two fix rounds by the `implementer`.
+8. **Review.** `reviewer` agent in a fresh context; at most two fix rounds by the `implementer`. If
+   `senior-mode/security` is pending (protected zone or L ticket), the `security` agent too.
 9. **Merge.** Report the verdict and the link, then ask whether to merge. Only on a clear yes, and
-   when both statuses are green and the pull request is not `needs-human`: `ops` agent,
+   when `senior-mode/ci`, `senior-mode/review` and `senior-mode/security` are all green and the pull
+   request is not `needs-human`: `ops` agent,
    `gh pr merge <pr> --rebase --delete-branch`, then `senior-mode item set <n> Status Done`. Then
    invoke skill `docs`; do not wait for its pull
    request. Offer the next ticket.

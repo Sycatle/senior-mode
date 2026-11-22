@@ -124,6 +124,11 @@ Order: board rigour -> 0.2.0 -> security 0.3.0 -> autonomy daemon 0.4.0 -> proof
   author may review only on the owner's explicit request, says so in the comment, and an
   independent re-review is filed (first case: #128 and #129, re-review #166). ADR in #148.
 - Milestone 4 is "v0.4 Autonomy" (was "v0.4 Breadth", empty).
+- GitHub used fully, by wave: v0.3 CODEOWNERS from `protected` with code owner review (#171) and
+  native security, critical and important only so the board is not flooded (#172); v0.4 native
+  auto-merge for S and M (#173), Paths and Severity fields (#174); v0.5 Board: template Project
+  copy (#176), Project status updates (#177), README (#178), archiving (#179), iterations (#180).
+- Agents keep the owner's identity for now; a separate identity stays open (#175, P3, an L).
 
 ## Next
 
@@ -136,4 +141,5 @@ Done 2026-11-22: #113 (82 commits), #122 (docs drift, docs pass), board rigour #
 3. v0.4: frame the autonomy epic #131 (sub-issues #146-#156), deliver it, sandbox proof #157 -> 0.4.0.
 4. v1.0: a week of the daemon on senior-mode (#158), evals green (#159), then the human releases 1.0
    on the marketplace (#160).
-5. Later, no milestone: #168 (release start version), #169 (spec/code drift).
+5. v0.5 Board: #176-#180.
+6. Later, no milestone: #168 (release start version), #169 (spec/code drift), #175 (agent identity).

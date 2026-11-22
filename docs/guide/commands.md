@@ -87,7 +87,7 @@ State: **Available.**
 check recorded for it (`check ok`, `check FAILED`, `check stale` after an edit) and `run in progress`.
 It is offline and instant. To add it yourself, run `senior-mode setup statusline`: it writes a
 `statusLine` command to `.claude/settings.json` that finds the plugin at each run, so plugin updates
-do not break it. A project status line replaces your personal one in that project; one the project
+do not break it. The status line is set for this project only: it replaces your personal one in that project; one the project
 already has is kept. If the plugin is loaded with `--plugin-dir`, the line stays empty.
 
 ## `run`

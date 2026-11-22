@@ -86,8 +86,9 @@ before work starts. An L is never Ready itself; its sub-issues are. See [`triage
 
 Partly, today:
 
-- Add `"language": "fr"` to `.claude/senior-mode.json` before running setup. Setup then writes the
-  French `CLAUDE.md` skeleton and Principles, PR template and issue forms. Templates already in place
+- Setup proposes the language of your `CLAUDE.md` or of the conversation and records it in
+  `.claude/senior-mode.json` before writing anything (or add `"language": "fr"` yourself). Setup
+  then writes the French `CLAUDE.md` skeleton and Principles, PR template and issue forms. Templates already in place
   are kept, so set the language first.
 - Skills read the language and write specs, ADRs, tickets, commits and answers in French. Commit
   types (`feat`, `fix`, ...) stay English keywords.

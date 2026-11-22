@@ -37,10 +37,10 @@ Run `senior-mode setup github --ci <local|actions>`. It:
 
 ## Repository
 
-Run `senior-mode setup repo`. With a `package.json` it takes the `node` preset; otherwise ask once
-how to lint, typecheck, test and build, and rerun with one `--command lint="<cmd>"` per answer. It
-adds checks, git hooks, `CLAUDE.md` Principles, templates, permissions and release-please, keeping
-what exists. Then follow "Repository follow-ups" in the reference.
+Set the language (reference), then run `senior-mode setup repo`. With a `package.json` it takes the
+`node` preset; otherwise ask once how to lint, typecheck, test and build, and rerun with one
+`--command lint="<cmd>"` per answer. It adds checks, git hooks, `CLAUDE.md` Principles, templates,
+permissions and release-please, keeping what exists. Then "Repository follow-ups" (reference).
 
 ## Report
 

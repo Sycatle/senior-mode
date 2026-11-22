@@ -623,11 +623,16 @@ setup_githooks() {
   fi
 }
 
-# Adds the Principles block to CLAUDE.md, or refreshes it; a missing CLAUDE.md starts from the
-# skeleton that the setup skill fills from the code.
+# Adds the Principles block to CLAUDE.md, or refreshes it; a missing CLAUDE.md imports AGENTS.md when
+# there is one, else starts from the skeleton that the setup skill fills from the code.
 setup_claude_md() {
   local root=$1 tpl=$2 name=$3 claude=$1/CLAUDE.md block=$2/principles.md skeleton new lines
-  if [ ! -e "$claude" ]; then
+  if [ ! -e "$claude" ] && [ -f "$root/AGENTS.md" ]; then
+    # The repository already has agent instructions (frameworks scaffold AGENTS.md): point to them.
+    printf '# %s\n\n@AGENTS.md\n\n' "$name" >"$claude"
+    cat "$block" >>"$claude"
+    echo "CLAUDE.md: created, it imports the existing AGENTS.md, the skeleton is not needed"
+  elif [ ! -e "$claude" ]; then
     skeleton=$(cat "$tpl/CLAUDE.md")
     # Split around the one placeholder: a pattern substitution would read & in the name (bash 5.2).
     { printf '%s\n\n' "${skeleton%%\{\{name\}\}*}$name${skeleton#*\{\{name\}\}}"; cat "$block"; } >"$claude"

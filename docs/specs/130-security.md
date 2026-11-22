@@ -75,9 +75,11 @@ GitHub native (#171, #172):
 
 - Given `protected` globs, when `setup github` runs, then `.github/CODEOWNERS` maps each one to the
   owner and the ruleset requires code owner review. A rerun keeps the entries added by hand.
-- Given a plan that allows it, when `setup github` runs, then Dependabot alerts, Dependabot
-  security updates (grouped, high and critical only, no version updates), secret scanning and push
-  protection are on. When the plan refuses, setup says so and continues.
+- Given a plan that allows it, when `setup github` runs, then Dependabot alerts, secret
+  scanning and push protection are on. Dependabot security updates stay off and no
+  `.github/dependabot.yml` is written (an existing one is left untouched, and setup says so): alerts
+  become issues only, because GitHub has no severity filter for security-update pull requests. When
+  the plan refuses, setup says so and continues.
 - Given a high or critical Dependabot or secret-scanning alert open on the repository, when `run`
   starts or `retro` runs, then exactly one open triaged issue exists for it, through the same path
   as #144; a second pass files nothing new.

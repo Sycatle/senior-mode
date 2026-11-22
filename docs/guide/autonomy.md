@@ -60,10 +60,13 @@ marked `# senior-mode:begin` and `# senior-mode:end`, and the ruleset requires c
 rerun rewrites only that block: entries you add by hand, above or below it, are kept. In a new
 block at the end of an existing file, the block wins where patterns overlap, as GitHub reads the
 last match. A glob CODEOWNERS cannot express (whitespace, a leading `#` or `!`, brackets) is named
-on every run and recorded as a comment in the block, then left out: nobody owns that zone. The
-ruleset requires code owner review only when the file owns at least one zone: with no entry, or
-with no file written, setup says it is not required. Setup writes the file and does not commit it: commit it, as the ruleset reads the copy on the default
-branch. Until the default branch holds the file, code owner review enforces nothing, and each run
+on every run and recorded as a comment in the block, then left out: nobody owns that zone. Setup
+never lowers a protection: the ruleset requires code owner review when the block owns a zone, when
+the CODEOWNERS file GitHub reads (`.github/`, then the root, then `docs/`; a shadowed file and a
+file with broken markers included) has any owner entry, or when the ruleset already requires it, and
+each run says which reason kept it on. With none of the three, setup says it is not required and
+sends false. An empty `protected` list is the one deliberate way to turn it off. Setup writes the
+file and does not commit it: commit it, as the ruleset reads the copy on the default branch. Until the default branch holds the file, code owner review enforces nothing, and each run
 says so, a rerun that changes nothing included.
 
 GitHub reads `.github/CODEOWNERS` before a `CODEOWNERS` at the root or in `docs/`. Setup does not

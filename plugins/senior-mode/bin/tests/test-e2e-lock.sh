@@ -55,6 +55,40 @@ grep -q 'e2e.slots' "$work/err" || fail "bad e2e.slots not explained: $(cat "$wo
 # Outside a configured repository it still works, with the default.
 (cd "$work" && "$cli" e2e-lock -- true) || fail "e2e-lock fails outside a configured repository"
 
+# Where the lock lives: under XDG_RUNTIME_DIR, else in a private 0700 directory of the user, and a
+# directory somebody else could have made or opened up is refused.
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+owner_of() { stat -c %u "$1" 2>/dev/null || stat -f %u "$1"; }
+config '{}'
+rm -rf "$XDG_RUNTIME_DIR/senior-mode-e2e"
+(cd "$repo" && "$cli" e2e-lock -- true) || fail "e2e-lock fails with XDG_RUNTIME_DIR set"
+[ -e "$XDG_RUNTIME_DIR/senior-mode-e2e/slot-1" ] || fail "lock not under XDG_RUNTIME_DIR"
+[ "$(mode_of "$XDG_RUNTIME_DIR/senior-mode-e2e")" = 700 ] || fail "lock dir under XDG_RUNTIME_DIR is not 0700: $(mode_of "$XDG_RUNTIME_DIR/senior-mode-e2e")"
+
+fake_tmp=$work/tmp
+mkdir -p "$fake_tmp"
+chmod 1777 "$fake_tmp"
+unset_run() { (cd "$repo" && env -u XDG_RUNTIME_DIR TMPDIR="$fake_tmp" "$cli" e2e-lock -- "$@"); }
+unset_run true || fail "e2e-lock fails without XDG_RUNTIME_DIR"
+[ ! -e "$fake_tmp/senior-mode-e2e" ] || fail "lock in a shared, predictable path: $fake_tmp/senior-mode-e2e"
+private=$(find "$fake_tmp" -mindepth 1 -maxdepth 1 -name 'senior-mode-e2e*' -type d)
+[ -n "$private" ] && [ -e "$private/slot-1" ] || fail "no private lock directory without XDG_RUNTIME_DIR: $(ls -A "$fake_tmp")"
+if [ -n "$private" ]; then
+  [ "$(mode_of "$private")" = 700 ] || fail "private lock dir is not 0700: $(mode_of "$private")"
+  [ "$(owner_of "$private")" = "$(id -u)" ] || fail "private lock dir not owned by the user"
+  chmod 777 "$private"
+  unset_run true 2>"$work/err" && fail "lock dir with mode 0777 used"
+  grep -q "$private" "$work/err" || fail "refused lock dir not named: $(cat "$work/err")"
+  chmod 700 "$private"
+  unset_run true || fail "lock dir fixed back to 0700 still refused"
+  rm -rf "$private"
+  mkdir "$work/elsewhere"
+  ln -s "$work/elsewhere" "$private"
+  unset_run true 2>/dev/null && fail "symlinked lock dir used"
+  [ ! -e "$work/elsewhere/slot-1" ] || fail "lock followed a symlink"
+  rm -f "$private"
+fi
+
 # check runs the command named e2e through the lock, and only that one.
 config '{"checks": [{"name": "e2e", "run": "test -n \"$SENIOR_MODE_E2E_SLOT\""}, {"name": "unit", "run": "test -z \"${SENIOR_MODE_E2E_SLOT:-}\""}]}'
 (cd "$repo" && "$cli" check) >"$work/out" 2>&1 || fail "check does not run e2e through the lock: $(cat "$work/out")"

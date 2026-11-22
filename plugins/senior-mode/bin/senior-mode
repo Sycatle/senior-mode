@@ -1953,6 +1953,13 @@ schedule_paths() {
   SCHED_TAG="# senior-mode-run:$SCHED_NAME"
 }
 
+# Stops unless the crontab is readable or empty: rewriting a table we could not read would erase it.
+schedule_cron_check() {
+  local out
+  command -v crontab >/dev/null || return 0
+  out=$(crontab -l 2>&1) || [[ $out == *"no crontab"* ]] || die "crontab -l failed, so the schedule is left untouched: $out"
+}
+
 # The crontab without this repository's tagged line, order kept.
 schedule_cron_without() {
   local line
@@ -2003,6 +2010,7 @@ schedule() {
         shift
       done
       [ "$(id -u)" != 0 ] || die "schedule cannot work as root: run refuses to skip permission prompts for root; use a normal user"
+      schedule_cron_check
       at=${at:-$(config_get autonomy.schedule)}
       [[ $at =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "autonomy.schedule must be a time as HH:MM, not $at"
       [[ $SCHED_ROOT$SELF != *[\'\"\\%\$\`]* ]] || die "schedule: a path holds a quote, a backslash, % or \$, which a unit cannot carry"
@@ -2047,6 +2055,7 @@ UNIT
       ;;
     remove)
       [ $# -eq 0 ] || usage
+      schedule_cron_check
       if [ -e "$SCHED_DIR/$unit.timer" ] || [ -e "$SCHED_DIR/$unit.service" ]; then
         mech=systemd
         if command -v systemctl >/dev/null; then systemctl --user disable --now "$unit.timer" >/dev/null 2>&1 || true; fi

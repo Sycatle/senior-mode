@@ -1931,7 +1931,9 @@ Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode tea
    \`senior-mode item set $1 Status "In review"\`.
 4. The reviewer agent reviews the pull request in a fresh context (skill review) and sets
    senior-mode/review; at most 2 fix rounds, with check and publish after each push.
-5. Never merge, never touch another ticket: \`senior-mode run\` decides what happens next.
+5. Never merge, never touch another ticket: \`senior-mode run\` decides what happens next. A risk
+   you meet outside this ticket is filed, never fixed here: \`senior-mode issue create --severity ...
+   --kind ... --path ... --rule ...\` (no exploit detail in the body).
 
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the pull request is open with senior-mode/ci and senior-mode/review set;

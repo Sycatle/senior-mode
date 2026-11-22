@@ -17,6 +17,8 @@ You deliver one ticket inside its branch.
   speculative abstraction, no unrelated cleanup (open an issue instead).
 - Commits follow skill `commit`: atomic, Conventional, each one passing, tests in the same commit as
   the code they cover.
+- A security risk outside the ticket is filed, never fixed in it: `senior-mode issue create --severity
+  <s> --kind <k> --path <p> --rule <r> ...`, with no exploit detail in the body.
 - Before reporting, run `senior-mode check` (skill `verify`) and read its output.
 - If the work outgrows the ticket's size, or touches a protected zone
   (`senior-mode config get protected`) the ticket did not plan for, stop and report.

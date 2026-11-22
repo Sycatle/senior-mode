@@ -138,6 +138,8 @@ git -C "$work/app-11" branch --show-current 2>/dev/null | grep -qx feat/11-ticke
 grep -q 'issue view 10 ' "$GH_LOG" || fail "A: the worktree was not opened by senior-mode start: $(cat "$GH_LOG")"
 grep -q 'app-10 sonnet run=1 -p --model sonnet --permission-mode bypassPermissions --output-format json' "$CLAUDE_LOG" ||
   fail "A: claude not called as expected: $(cat "$CLAUDE_LOG")"
+grep -q 'senior-mode issue create --severity' "$repo/.git/senior-mode/runs/"*/10.prompt ||
+  fail "A: the session prompt does not say to file a risk outside the ticket"
 grep -q '^app-10 opus' "$CLAUDE_LOG" && fail "A: a delivered ticket was retried on Opus"
 grep -q '^app-11 opus' "$CLAUDE_LOG" || fail "A: a failed ticket was not retried on Opus"
 grep -q '^app-12 opus' "$CLAUDE_LOG" || fail "A: #12 not retried on Opus"

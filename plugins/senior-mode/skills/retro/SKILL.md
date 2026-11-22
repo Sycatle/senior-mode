@@ -14,7 +14,8 @@ anything until the user says yes.
 1. `senior-mode config get language` gives the language to answer in (`en` if it fails).
 2. Run `senior-mode retro --json` (weekly; `--since 14d` or `4w` for another period). If it
    says there is no Project or config, tell the user to run `/senior-mode:setup`; if GitHub does not
-   answer, say so and stop.
+   answer, say so and stop. It first files the open high or critical GitHub alerts as `security`
+   issues; relay what it printed on stderr.
 3. Do not read more of the repository than a proposal needs.
 
 ## Present

@@ -15,16 +15,40 @@ mkdir -p "$work/stub" "$work/fix"
 cat >"$work/stub/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >>"$GH_LOG"
+jqf="" prev=""
+for a in "$@"; do [ "$prev" = --jq ] && jqf=$a; prev=$a; done
+respond() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
+arg() { local prev=""; for a in "$@"; do [ "$prev" = "$FLAG" ] && echo "$a"; prev=$a; done; }
 [ -z "${GH_FAIL:-}" ] || { echo "HTTP 401: bad credentials" >&2; exit 1; }
-[ "$*" = "api graphql --input -" ] || { echo "unexpected: $*" >&2; exit 1; }
-body=$(cat)
-if grep -q ProjectV2ItemStatusChangedEvent <<<"$body"; then
-  printf '%s\n' "$body" >>"$FIX/history-bodies"
-  cat "$FIX/history.json"
-else
-  printf '%s\n' "$body" >>"$FIX/board-bodies"
-  cat "$FIX/board.json"
-fi
+case "$*" in
+  "api graphql --input -")
+    body=$(cat)
+    if grep -q ProjectV2ItemStatusChangedEvent <<<"$body"; then
+      printf '%s\n' "$body" >>"$FIX/history-bodies"
+      cat "$FIX/history.json"
+    else
+      printf '%s\n' "$body" >>"$FIX/board-bodies"
+      cat "$FIX/board.json"
+    fi ;;
+  "api repos/acme/app/dependabot/alerts"* | "api repos/acme/app/secret-scanning/alerts"*)
+    [ -z "${ALERTS_ERR:-}" ] || { echo "$ALERTS_ERR" >&2; exit 1; }
+    f=${2#repos/acme/app/}; f=$FIX/${f%%/*}.json
+    if [ -f "$f" ]; then respond <"$f"; else echo '[]' | respond; fi ;;
+  "issue list"*) respond <"$FIX/issues.json" ;;
+  "issue create"*)
+    f=$(FLAG=--body-file arg "$@")
+    n=$(jq '[42, (.[].number + 1)] | max' "$FIX/issues.json")
+    labels=$(FLAG=--label arg "$@" | jq -R . | jq -sc 'map({name: .})')
+    jq --argjson n "$n" --arg t "$(FLAG=--title arg "$@")" --rawfile b "$f" --argjson l "$labels" \
+      '. + [{number: $n, title: $t, body: $b, labels: $l}]' "$FIX/issues.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issues.json"
+    echo "https://github.com/acme/app/issues/$n" ;;
+  "repo view"*) echo '{"isPrivate": false}' | respond ;;
+  "api -X POST repos/acme/app/security-advisories"*)
+    cat >>"$FIX/advisories"; echo '{"html_url": "https://github.com/acme/app/security/advisories/GHSA-1"}' | respond ;;
+  "project item-add"*) echo ITEM ;;
+  "project item-edit"*) ;;
+  *) echo "unexpected: $*" >&2; exit 1 ;;
+esac
 STUB
 chmod +x "$work/stub/gh"
 export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" FIX="$work/fix" SENIOR_MODE_RETRY_DELAY=0
@@ -116,11 +140,10 @@ printf 'failure\nfailed: test\n' >"$checks/ccccccc333333333333333333333333333333
 touch -d "20 days ago" "$checks/ccccccc3333333333333333333333333333333333"
 
 run() { : >"$GH_LOG"; : >"$FIX/board-bodies"; : >"$FIX/history-bodies"; (cd "$repo" && "$cli" "$@") >"$work/out" 2>"$work/err"; }
-calls() { wc -l <"$GH_LOG" | tr -d ' '; }
 json() { jq -c "$1" "$work/out"; }
 
 run retro --json || fail "retro --json failed: $(cat "$work/err")"
-[ "$(calls)" -eq 2 ] || fail "retro makes $(calls) gh calls, wanted 2 (board, history)"
+[ "$(grep -c '^api ' "$GH_LOG")" -eq 4 ] || fail "retro makes $(grep -c '^api ' "$GH_LOG") gh calls, wanted 4 (the two alert lists, board, history)"
 [ "$(jq -r '.variables.repo' "$FIX/board-bodies")" = true ] || fail "retro does not reuse the board with repository facts"
 [ "$(jq -r '.variables.owner + "/" + .variables.name' "$FIX/history-bodies")" = acme/app ] || fail "history repository: $(cat "$FIX/history-bodies")"
 since_sent=$(jq -r '.variables.since' "$FIX/history-bodies")
@@ -187,6 +210,55 @@ run retro --json || fail "retro without local facts failed: $(cat "$work/err")"
 run retro || fail "plain retro without local facts failed"
 grep -qF "nothing" "$work/out" || fail "empty sections: $(cat "$work/out")"
 cp "$FIX/history.full" "$FIX/history.json"
+
+# Open alerts: a high Dependabot alert, a moderate and a low one (nothing to file), and an exposed secret
+# whose value must never reach an issue.
+fix_alerts() {
+  jq -n '[{number: 1, state: "open", html_url: "https://github.com/acme/app/security/dependabot/1",
+      security_advisory: {ghsa_id: "GHSA-aaaa-bbbb-cccc", severity: "high", summary: "Prototype pollution via crafted payload"},
+      dependency: {package: {ecosystem: "npm", name: "lodash"}, manifest_path: "package-lock.json"}},
+    {number: 2, state: "open", html_url: "u2", security_advisory: {ghsa_id: "GHSA-dddd", severity: "medium"},
+      dependency: {package: {ecosystem: "npm", name: "minimist"}, manifest_path: "package-lock.json"}},
+    {number: 3, state: "open", html_url: "u3", security_advisory: {ghsa_id: "GHSA-eeee", severity: "low"},
+      dependency: {package: {ecosystem: "npm", name: "tiny"}, manifest_path: "package-lock.json"}}]' >"$FIX/dependabot.json"
+  jq -n '[{number: 7, state: "open", secret_type: "github_personal_access_token",
+    secret_type_display_name: "GitHub Personal Access Token", html_url: "https://github.com/acme/app/security/secret-scanning/7",
+    secret: "SUPERSECRETVALUE"}]' >"$FIX/secret-scanning.json"
+  echo '[]' >"$FIX/issues.json"
+  rm -f "$FIX/advisories"
+}
+# What the alerts must have produced: one issue for the high alert, one for the secret, no secret value.
+check_alert_issues() { # label
+  [ "$(jq 'length' "$FIX/issues.json")" -eq 2 ] || fail "$1: issues filed: $(jq -c 'map(.title)' "$FIX/issues.json")"
+  jq -e 'map(select(.title | test("lodash"))) | length == 1 and (.[0].labels | map(.name) | index("security"))' "$FIX/issues.json" >/dev/null ||
+    fail "$1: no security issue for the high Dependabot alert: $(jq -c 'map(.title)' "$FIX/issues.json")"
+  jq -e 'map(select(.title | test("[Ss]ecret"))) | length == 1' "$FIX/issues.json" >/dev/null ||
+    fail "$1: no issue for the exposed secret: $(jq -c 'map(.title)' "$FIX/issues.json")"
+  jq -r '.[].body' "$FIX/issues.json" | grep -q "^security-id: [0-9a-f]\{64\}\$" || fail "$1: a body lacks its security-id"
+  cat "$FIX/issues.json" "$FIX/advisories" 2>/dev/null | grep -q "SUPERSECRETVALUE" && fail "$1: the secret value was written out"
+  jq -r '.[].body' "$FIX/issues.json" | grep -q "Prototype pollution" && fail "$1: advisory detail in an issue body"
+}
+
+# Open high or critical alerts are filed when retro runs (#172), once; --json stays pure JSON.
+echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3, "fields": {
+  "Status": {"id": "F_S", "options": {"Backlog": "o0"}},
+  "Priority": {"id": "F_P", "options": {"P0 now": "p0", "P1 next": "p1"}}, "Size": {"id": "F_Z", "options": {"S": "z1"}},
+  "Severity": {"id": "F_V", "options": {"critical": "v1", "high": "v2", "moderate": "v3", "low": "v4"}}}}}' >"$repo/.claude/senior-mode.json"
+fix_alerts
+run retro --json || fail "retro with alerts failed: $(cat "$work/err")"
+check_alert_issues retro
+jq -e .repository "$work/out" >/dev/null || fail "retro --json is not pure JSON with alerts: $(cat "$work/out")"
+for src in dependabot secret-scanning; do
+  grep -q "$src/alerts?state=open" "$GH_LOG" || fail "retro did not read the open $src alerts"
+done
+run retro || fail "second retro failed: $(cat "$work/err")"
+grep -q 'issue create' "$GH_LOG" && fail "a second pass files again"
+[ "$(jq 'length' "$FIX/issues.json")" -eq 2 ] || fail "a second pass changed the issues"
+ALERTS_ERR="gh: Secret scanning is disabled on this repository. (HTTP 404)" run retro || fail "an alerts error stopped retro: $(cat "$work/err")"
+grep -q 'disabled on this repository' "$work/err" || fail "alerts error not said: $(cat "$work/err")"
+grep -q 'Done in the last' "$work/out" || fail "retro gave no report after an alerts error"
+echo '[]' >"$FIX/dependabot.json"; echo '[]' >"$FIX/secret-scanning.json"
+echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
 
 # Errors.
 run retro --since soon && fail "accepted --since soon"

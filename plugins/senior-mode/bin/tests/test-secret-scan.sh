@@ -8,6 +8,14 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 failures=0
 
+# TEST_AWK="busybox awk" runs the whole suite with that awk in place of the `awk` of the PATH.
+if [ -n "${TEST_AWK:-}" ]; then
+  mkdir "$work/awkbin"
+  printf '#!/usr/bin/env bash\nexec %s "$@"\n' "$TEST_AWK" >"$work/awkbin/awk"
+  chmod +x "$work/awkbin/awk"
+  PATH="$work/awkbin:$PATH"
+fi
+
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 rep() { local s="" k; for ((k = 0; k < $2; k++)); do s+=$1; done; printf %s "$s"; }
 git_() { git -C "$repo" -c user.name=t -c user.email=t@t "$@"; }
@@ -111,6 +119,14 @@ p=eyJ
 jwt="${p}$(rep hbGciOiJI 2).eyJ$(rep c3ViIjoi 3).$(rep Zx9kQ4mW 4)"
 kind "JSON Web Token" "$jwt" "Authorization: Bearer $jwt"
 
+# Review of #217: a placeholder is the whole value being a known placeholder word, digits kept. A short password
+# or a word with digits is a real password until proven otherwise; the user may be empty.
+p=postgres://app:
+for pwd in Secret123 mySecret123 Test1234 Password123 password1 Zx9k; do
+  kind "credentialed URL" "$pwd" "DATABASE_URL=${p}${pwd}@db.internal:5432/app"
+done
+kind "credentialed URL" "Zx9k" "REDIS_URL=redis://:Zx9k@cache.internal:6379"
+
 # A hunk in the middle of a file: the line number is the one of the new file, and a deleted line does not shift it.
 git_ checkout -q main
 printf 'a\nb\nc\nd\ne\nf\ng\nh\n' >"$repo/src/long.txt"
@@ -138,7 +154,13 @@ grep -q "^ok    secret scan$" "$work/out" || fail "ok not shown: $(cat "$work/ou
 for line in 'password = "changeme"' 'token = "your-token-here"' 'secret = "<generated at deploy>"' 'const token = getToken()' \
   'password: ${DB_PASSWORD_VALUE_1}' 'token = tokens[index1234567890]' 'secret = this.config.secretValue1234' \
   'DATABASE_URL=postgres://user:password@localhost/db' 'URL=https://app:${APP_PASSWORD}@host.example/x' \
-  'URL=postgres://app:Password123@db.internal/app' 'URL=postgres://app:your-password@db.internal/app' \
+  'URL=postgres://app:your-password@db.internal/app' 'URL=postgres://app:my_password@db.internal/app' \
+  'URL=postgres://app:PASSWORD@db.internal/app' 'URL=postgres://app:pass@db.internal/app' 'URL=postgres://app:xxx@db.internal/app' \
+  'URL=postgres://app:secret@db.internal/app' 'URL=postgres://app:test@db.internal/app' \
+  'URL=postgres://app:{DB_PASS}@db.internal/app' 'URL=postgres://app:%(db_pass)s@db.internal/app' \
+  'URL=postgres://app:$(DB_PASS)@db.internal/app' 'URL=postgres://app:${DB_PASS}@db.internal/app' \
+  'URL=postgres://app:$DB_PASS@db.internal/app' 'URL=postgres://app:<db_pass>@db.internal/app' \
+  'password: {DB_PASSWORD_VALUE_1}' 'password: %(db_password_value_1)s' 'password: $(DB_PASSWORD_VALUE_1)' 'password: $DB_PASSWORD_VALUE_1' \
   'URL=redis://:<password>@cache.internal:6379' 'URL=postgres://app:%s%s%s@db.internal/app' \
   'URL=postgres://app:********@db.internal/app' 'URL=redis://:changeme@cache.internal:6379' \
   'token = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0'; do
@@ -231,5 +253,5 @@ git -C "$other" -c user.name=t -c user.email=t@t commit -q -m "chore: init"
 (cd "$other" && "$cli" check) >"$work/out" 2>&1 || fail "check fails with no base branch: $(cat "$work/out")"
 grep -q "^skip  secret scan: no base branch$" "$work/out" || fail "skip not reported: $(cat "$work/out")"
 
-[ "$failures" -eq 0 ] && echo "secret scan: all cases pass"
+[ "$failures" -eq 0 ] && echo "secret scan: all cases pass (awk: ${TEST_AWK:-awk})"
 exit "$failures"

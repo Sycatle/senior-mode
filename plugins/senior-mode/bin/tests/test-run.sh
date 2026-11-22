@@ -85,7 +85,8 @@ if [[ ${!#} == *"guard probe"* ]]; then
   esac
   exit 0
 fi
-if [[ $PWD == *-run-docs-* ]] && [ "$(cat "$FIX/docs" 2>/dev/null)" = hang ]; then
+[[ $PWD == */senior-mode/worktrees/run-docs-* ]] && echo "$PWD" >>"$FIX/docs-pwd"
+if [[ $PWD == */senior-mode/worktrees/run-docs-* ]] && [ "$(cat "$FIX/docs" 2>/dev/null)" = hang ]; then
   sleep 300 &
   echo "$$ $!" >"$FIX/pids-docs"
   wait
@@ -221,6 +222,8 @@ grep -c 'item-edit.*--single-select-option-id o0' "$GH_LOG" | grep -qx 1 || fail
 grep -c 'item-edit.*--single-select-option-id o4' "$GH_LOG" | grep -qx 1 || fail "A: only the merged ticket is set Done"
 grep -c 'new-session\|new-window' "$TMUX_LOG" | grep -qx 5 || fail "A: not one tmux window per session: $(cat "$TMUX_LOG")"
 grep -q 'docs' "$CLAUDE_LOG" || fail "A: no docs session after a merge"
+grep -q "^$wt/run-docs-" "$FIX/docs-pwd" 2>/dev/null || fail "A: the docs session did not run under the git dir: $(cat "$FIX/docs-pwd" 2>&1)"
+compgen -G "$work/app-*" >/dev/null && fail "A: a worktree beside the repository: $(ls "$work")"
 grep -q 'Merged.*#10' "$work/out" || fail "A: report misses the merge: $(cat "$work/out")"
 grep -q 'Waiting for a human.*#11.*senior-mode/review' "$work/out" || fail "A: report misses #11 waiting: $(cat "$work/out")"
 grep -q 'Failed.*#12.*still cannot build' "$work/out" || fail "A: report misses why #12 failed: $(cat "$work/out")"

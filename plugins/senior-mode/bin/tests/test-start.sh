@@ -223,22 +223,34 @@ fstart() {
 }
 fstart login-flow || fail "frame start failed: $(cat "$work/err")"
 grep -qx "branch docs/login-flow" "$work/out" || fail "frame branch line: $(cat "$work/out")"
-grep -qx "worktree $work/app-frame-login-flow" "$work/out" || fail "frame worktree line: $(cat "$work/out")"
-[ "$(git -C "$work/app-frame-login-flow" symbolic-ref --short HEAD)" = docs/login-flow ] || fail "frame worktree is not on its branch"
-[ -f "$work/app-frame-login-flow/new.txt" ] || fail "frame branch not started from the fetched origin/main"
+grep -qx "worktree $wt/frame-login-flow" "$work/out" || fail "frame worktree line: $(cat "$work/out")"
+[ "$(git -C "$wt/frame-login-flow" symbolic-ref --short HEAD)" = docs/login-flow ] || fail "frame worktree is not on its branch"
+[ -f "$wt/frame-login-flow/new.txt" ] || fail "frame branch not started from the fetched origin/main"
 [ "$(git -C "$repo" symbolic-ref --short HEAD)" = main ] || fail "frame start moved the main checkout"
 logged "project item" && fail "frame start touched the board"
 fstart login-flow || fail "frame start rerun failed: $(cat "$work/err")"
-[ "$(git -C "$repo" worktree list | grep -c app-frame-login-flow)" -eq 1 ] || fail "frame start rerun added a second worktree"
+[ "$(git -C "$repo" worktree list | grep -c "worktrees/frame-login-flow ")" -eq 1 ] || fail "frame start rerun added a second worktree"
 fstart "Billing, Stripe & invoices" || fail "frame start with a sentence failed: $(cat "$work/err")"
 grep -qx "branch docs/billing-stripe-invoices" "$work/out" || fail "frame slug not normalised: $(cat "$work/out")"
 for bad in "" "!!!"; do
   fstart "$bad" && fail "frame start accepted '$bad'"
 done
 
+compgen -G "$work/app-frame-*" >/dev/null && fail "a framing worktree beside the repository: $(ls "$work")"
+
+# A framing opened beside the repository before #224 is reused, not opened twice.
+git -C "$repo" worktree add -q --no-track -b docs/old-idea "$work/app-frame-old-idea" origin/main
+fstart old-idea || fail "frame start over an old-path worktree failed: $(cat "$work/err")"
+grep -qx "worktree $work/app-frame-old-idea" "$work/out" || fail "old-path framing not reported: $(cat "$work/out")"
+[ ! -e "$wt/frame-old-idea" ] || fail "a second framing worktree was created next to the old-path one"
+
+# Started from inside a worktree, a framing is still under the main repository's git dir.
+(cd "$wt/89" && "$cli" frame start from-a-worktree) >"$work/out" 2>"$work/err" || fail "frame start from a worktree failed: $(cat "$work/err")"
+grep -qx "worktree $wt/frame-from-a-worktree" "$work/out" || fail "frame start from a worktree: $(cat "$work/out")"
+
 # Two framings at once get two worktrees.
 fstart other-idea || fail "second framing failed: $(cat "$work/err")"
-[ -d "$work/app-frame-other-idea" ] || fail "second framing has no worktree of its own"
+[ -d "$wt/frame-other-idea" ] || fail "second framing has no worktree of its own"
 
 # An unpushed commit on the local default branch (a setup commit) would leak into the framing pull request.
 git -C "$repo" merge -q --ff-only origin/main
@@ -247,7 +259,7 @@ git -C "$repo" add -A
 git -C "$repo" commit -q -m "chore: unpushed setup"
 fstart ahead-idea && fail "frame start ran with main ahead of origin"
 grep -q "ahead of origin" "$work/err" || fail "main ahead not explained: $(cat "$work/err")"
-[ -e "$work/app-frame-ahead-idea" ] && fail "worktree created despite main ahead of origin"
+[ -e "$wt/frame-ahead-idea" ] && fail "worktree created despite main ahead of origin"
 git -C "$repo" show-ref -q --verify refs/heads/docs/ahead-idea && fail "branch created despite main ahead of origin"
 
 [ "$failures" -eq 0 ] && echo "start: all cases pass"

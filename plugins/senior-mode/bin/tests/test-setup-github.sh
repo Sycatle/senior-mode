@@ -253,7 +253,7 @@ Dockerfile* @acme
 /docs/ @acme
 /infra/*.tf @acme
 /src/middleware.* @acme
-/a?.txt @acme
+a?.txt @acme
 /ci/**/x.sh @acme
 # senior-mode:end'
 [ "$(cat "$co" 2>/dev/null)" = "$want" ] || fail "CODEOWNERS: $(cat "$co" 2>/dev/null)"

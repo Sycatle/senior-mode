@@ -24,9 +24,9 @@ Safe to rerun: it repairs. Wording, follow-ups, status line, no human to ask: `$
 
 Run `senior-mode setup github --ci <local|actions>`. It:
 
-- finds or creates the Project, links it, ensures the fields Status, Priority and Size, keeping
+- finds or creates the Project, links it, ensures the fields Status, Priority, Size and Severity, keeping
   existing options;
-- creates the labels `needs-human`, `needs-info`, `blocked` (and `type:*` on a personal account);
+- creates the labels `needs-human`, `needs-info`, `blocked`, `security` (and `type:*` on a personal account);
 - allows rebase merges only, deletes merged branches;
 - creates or updates a ruleset `senior-mode` on the default branch: pull requests only, rebase,
   `senior-mode/ci` and `senior-mode/review` required, linear history; other rules kept. If it

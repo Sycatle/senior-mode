@@ -19,6 +19,9 @@ plan_limit() { # PROTECTION_403=1 refuses reads and writes, =write only the writ
   [ -z "${PROTECTION_403:-}" ] || { [ "$1" = read ] && [ "$PROTECTION_403" = write ]; } && return 0
   echo "${PROTECTION_ERR:-gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)}" >&2; exit 1
 }
+sec_limit() { # SEC_REFUSE lists the features the plan refuses (alerts fixes scanning); real gh error line
+  case " ${SEC_REFUSE:-} " in *" $1 "*) echo "gh: ${SEC_ERR:-Advanced Security must be enabled for this repository to use this feature. (HTTP 422)}" >&2; exit 1 ;; esac
+}
 case "$*" in
   "api repos/acme/app --jq"*) respond <"$FIX/repo.json" ;;
   "api user --jq"*) echo '{"login": "maintainer"}' | respond ;;
@@ -28,6 +31,9 @@ case "$*" in
     echo '[{"id": 9, "name": "senior-mode", "source_type": "Repository"}]' >"$FIX/rulesets.json" ;;
   "api repos/acme/app/rulesets/"*" --jq"*) respond <"$FIX/ruleset-9.json" ;;
   "api -X PUT repos/acme/app/rulesets/"*) cat >>"$GH_LOG" ;;
+  "api -X PUT repos/acme/app/vulnerability-alerts"*) sec_limit alerts ;;
+  "api -X PUT repos/acme/app/automated-security-fixes"*) sec_limit fixes ;;
+  "api -X PATCH repos/acme/app -f"*) sec_limit scanning ;;
   "workflow list"*) if [ -f "$FIX/workflows.json" ]; then respond <"$FIX/workflows.json"; else echo '[]' | respond; fi ;;
   "workflow disable"* | "workflow enable"*) ;;
   "api repos/acme/app/actions/permissions/workflow"*) respond <"$FIX/actions-permissions.json" ;;
@@ -245,6 +251,65 @@ grep -q "RELEASE_PLEASE_TOKEN" "$work/out" && fail "release note printed though 
 # The ruleset is recorded as the protection when it is in place.
 [ "$(cfg .github.protection)" = ruleset ] || fail "protection not recorded as ruleset: $(cfg .github)"
 
+# GitHub's own scanners (#172): Dependabot alerts and security updates, secret scanning and push
+# protection are switched on; the Dependabot file asks for security updates only, grouped, and no
+# version updates. Written, not committed, like CODEOWNERS; a file of the project's own is kept.
+dep=$repo/.github/dependabot.yml
+rm -f "$dep"
+echo '{}' >"$repo/package.json"
+setup
+logged "api -X PUT repos/acme/app/vulnerability-alerts" || fail "Dependabot alerts not enabled: $(cat "$GH_LOG")"
+logged "api -X PUT repos/acme/app/automated-security-fixes" || fail "Dependabot security updates not enabled"
+for want in "security_and_analysis[secret_scanning][status]=enabled" "security_and_analysis[secret_scanning_push_protection][status]=enabled"; do
+  logged "api -X PATCH repos/acme/app -f" || fail "repository not patched"
+  logged "$want" || fail "repository not patched with $want"
+done
+for want in "package-ecosystem: npm" 'directory: "/"' "open-pull-requests-limit: 0" "applies-to: security-updates" "interval: weekly"; do
+  grep -qF -- "$want" "$dep" 2>/dev/null || fail "dependabot.yml without '$want': $(cat "$dep" 2>/dev/null)"
+done
+grep -q "dependabot.yml: created" "$work/out" || fail "dependabot.yml creation not reported: $(cat "$work/out")"
+grep -q "commit" "$work/out" || fail "no word that dependabot.yml is for the user to commit: $(cat "$work/out")"
+logged "git commit" && fail "setup committed dependabot.yml"
+grep -qiE "alerts.*(on|enabled)" "$work/out" || fail "scanners not reported on: $(cat "$work/out")"
+
+# A rerun keeps the file, even one the project edited, and switches the scanners on again.
+cp "$dep" "$work/dep"
+setup
+cmp -s "$work/dep" "$dep" || fail "rerun changed dependabot.yml"
+logged "api -X PUT repos/acme/app/vulnerability-alerts" || fail "rerun does not keep the scanners on"
+echo "version: 2 # mine" >"$dep"
+setup
+[ "$(cat "$dep")" = "version: 2 # mine" ] || fail "a dependabot.yml of the project's own was rewritten"
+grep -q "dependabot.yml: kept" "$work/out" || fail "kept file not said: $(cat "$work/out")"
+
+# The ecosystem comes from the project's manifest; a project with none has nothing to update.
+rm -f "$dep" "$repo/package.json"
+echo 'module example.com/app' >"$repo/go.mod"
+setup
+grep -qF "package-ecosystem: gomod" "$dep" 2>/dev/null || fail "go project: $(cat "$dep" 2>/dev/null)"
+rm -f "$dep" "$repo/go.mod"
+setup
+[ ! -e "$dep" ] || fail "dependabot.yml written for a project with no manifest: $(cat "$dep")"
+grep -q "dependabot.yml" "$work/out" || fail "no word on the missing manifest: $(cat "$work/out")"
+
+# A plan that refuses (HTTP 403 or 422): each refusal is said, the other features are still tried,
+# and setup goes on to the end.
+echo '{}' >"$repo/package.json"
+rm -f "$dep"
+SEC_REFUSE="alerts fixes scanning" setup
+for f in vulnerability-alerts automated-security-fixes "api -X PATCH repos/acme/app"; do
+  logged "$f" || fail "refused plan: $f not attempted"
+done
+for want in "Dependabot alerts: not enabled" "Dependabot security updates: not enabled" "secret scanning (with push protection): not enabled" "HTTP 422"; do
+  grep -qF -- "$want" "$work/out" || fail "refusal without '$want': $(cat "$work/out")"
+done
+[ -e "$dep" ] || fail "dependabot.yml skipped because the plan refused the API"
+logged "workflow list" || fail "setup stopped at the refusal"
+SEC_REFUSE="alerts" SEC_ERR="Resource not accessible by personal access token (HTTP 403)" setup
+grep -qF "Dependabot alerts: not enabled" "$work/out" || fail "403 not said: $(cat "$work/out")"
+grep -qF "Dependabot security updates: not enabled" "$work/out" && fail "an accepted feature reported as refused"
+rm -f "$dep" "$repo/package.json"
+
 # CODEOWNERS from the protected globs (#171): a managed block, the owner's entries around it kept, and
 # the ruleset requires code owner review only when there is something to own.
 co=$repo/.github/CODEOWNERS
@@ -356,7 +421,7 @@ for where in 1 write; do
     grep -qi "$option" "$work/out" || fail "$where: option $option missing from the warning"
   done
   logged "workflow enable" && fail "$where: a workflow turned on although ci.mode is local"
-  logged "api -X PUT" && fail "$where: ruleset updated although the plan refuses it"
+  logged "api -X PUT repos/acme/app/rulesets" && fail "$where: ruleset updated although the plan refuses it"
 done
 [ "$(grep -c "NOT enforced" "$work/out")" = 1 ] || fail "warning repeated: $(cat "$work/out")"
 

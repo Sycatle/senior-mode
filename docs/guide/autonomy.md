@@ -60,8 +60,16 @@ marked `# senior-mode:begin` and `# senior-mode:end`, and the ruleset requires c
 rerun rewrites only that block: entries you add by hand, above or below it, are kept. In a new
 block at the end of an existing file, the block wins where patterns overlap, as GitHub reads the
 last match. A glob CODEOWNERS cannot express (whitespace, a leading `#` or `!`, brackets) is named
-and left out. Setup writes the file and does not commit it: commit it, as the ruleset reads the
-copy on the default branch.
+on every run and recorded as a comment in the block, then left out: nobody owns that zone. Setup
+writes the file and does not commit it: commit it, as the ruleset reads the copy on the default
+branch. Until the default branch holds the file, code owner review enforces nothing, and each run
+says so, a rerun that changes nothing included.
+
+GitHub reads `.github/CODEOWNERS` before a `CODEOWNERS` at the root or in `docs/`. Setup does not
+create that shadow over a file of yours: it says so and writes nothing; move your file to
+`.github/CODEOWNERS` and rerun. Where `.github/CODEOWNERS` already exists next to one of them, the
+other is named on each run as ignored. On a first setup, `setup github` runs before `setup repo`
+has written `protected`: `setup repo` then says to rerun `setup github`.
 
 Agents act with the owner's identity, and GitHub never lets an author approve their own pull
 request. A pull request that touches a protected zone therefore cannot get the required review: the

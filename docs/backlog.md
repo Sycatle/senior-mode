@@ -85,7 +85,14 @@ Done 2026-11-22: #112, #114 and the two blocking review findings (run merge gate
 reviewed twice, merged (rebase, main 3bed96e); #79 #82 #85 closed. Review follow-ups filed:
 #115-#121 (security wave).
 
-1. #64 docs drift check + #58 docs pass -> PR from `feat/64-docs-drift` (doing).
+Done: #64 docs drift check + #58 docs pass (#122).
+
+Framing 2026-11-22 (board rigour): the board had 24 closed tickets still In progress. From now on
+senior-mode's own process applies strictly here: waves through `frame`, tickets through the `next`
+flow with the board moved at each step, WIP 1. Spec `docs/specs/123-board-rigour.md`.
+
+1. Board rigour, before 0.2.0: #123 Done on merge/close + setup checks Project workflows,
+   #124 `status` board drift + `--fix`, #125 `wip` limit.
 2. Release 0.2.0 (`senior-mode release`, ci.mode local).
 3. Security wave (above): ADR, review section + security agent, check audits, #115-#121 -> 0.3.0.
 4. Dogfood run, schedule, next, retro, review, docs on the sandbox from sya-dev-01; fix findings.

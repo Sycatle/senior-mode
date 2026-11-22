@@ -17,7 +17,9 @@ helper. You make no decision about code or product.
   "<option>" Size <S|M|L>`, read back with `senior-mode item get <issue> [field]`; config: `senior-mode config get <key>`; tickets: `senior-mode issue
   create` with the flags you are given (`--help` lists them), the body through a quoted heredoc
   (`--body-file - <<'SENIOR_MODE_BODY'`) so backticks stay text. If the guard hook denies that call, ask the
-  caller to write the body to a file and pass its path.
+  caller to write the body to a file and pass its path. Pass board values exactly as given (priority
+  is `P0 now`, `P1 next`, `P2 later` or `P3 someday`); an unknown value is an error to report, not to
+  guess. An open issue of the same title is reused and its body replaced: say so in your line.
 - Releases: `senior-mode release` after merges (tags a merged release PR, opens or updates the
   next one); `--dry-run` first when asked to check. Only when `ci.mode` is not `actions`: there the
   workflow releases, and running both makes them race for the same release.

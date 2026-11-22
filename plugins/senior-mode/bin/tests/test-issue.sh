@@ -31,7 +31,9 @@ case "$*" in
     jq --argjson n "$n" --arg t "$(FLAG=--title arg "$@")" '. + [{number: $n, title: $t}]' \
       "$FIX/issues.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issues.json"
     echo "https://github.com/acme/app/issues/$n" ;;
-  "issue edit"*) ;;
+  "issue edit"*)
+    [ "$(FLAG=--body-file arg "$@")" != - ] || cat >"$FIX/stdin-edit-body"
+    f=$(FLAG=--body-file arg "$@"); [ -z "$f" ] || [ "$f" = - ] || cp "$f" "$FIX/edit-body" ;;
   "project item-add"*) echo "ITEM" ;;
   "project item-edit"*) ;;
   "api repos/acme/app/issues/"*"/dependencies/blocked_by --paginate"*) n=${2#repos/acme/app/issues/}; links "blocked-${n%%/*}" ;;
@@ -92,6 +94,17 @@ logged "issue edit 42 --repo acme/app --milestone v0.1 Bootstrap --add-label typ
   fail "reuse does not converge milestone and type: $(cat "$GH_LOG")"
 create "${slice[@]}" --status Ready || fail "reuse with --status failed: $(cat "$work/err")"
 logged "--single-select-option-id o2" || fail "reuse ignores an explicit --status"
+
+# A reused issue gets the new body, and the output says so.
+printf '## Acceptance criteria\n- Given d, when e, then f.\n' >"$work/body2.md"
+rm -f "$FIX/edit-body"
+create --title "A slice" --body-file "$work/body2.md" --size M --priority "P1 next" || fail "body update failed: $(cat "$work/err")"
+logged "issue edit 42 --repo acme/app --body-file $work/body2.md" || fail "reused issue body not updated: $(cat "$GH_LOG")"
+cmp -s "$work/body2.md" "$FIX/edit-body" || fail "reused issue kept its old body"
+head -1 "$work/out" | grep -q 'body updated' || fail "body update not reported: $(cat "$work/out")"
+rm -f "$FIX/stdin-edit-body"
+echo "from stdin again" | create --title "A slice" --body-file - --size M --priority "P1 next" || fail "stdin body update failed: $(cat "$work/err")"
+[ "$(cat "$FIX/stdin-edit-body" 2>/dev/null)" = "from stdin again" ] || fail "stdin body not passed whole to gh issue edit"
 
 # The body can come from stdin.
 # shellcheck disable=SC2016 # the backticks must stay text

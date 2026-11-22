@@ -364,7 +364,8 @@ last result.
   issue dependencies (blocked by) for ordering, issue types when the owner is an organization;
   on personal accounts, type labels `type:feature|bug|task|chore` replace issue types.
   `senior-mode issue create` sets fields, milestone, type, blocked-by and parent in one call, and
-  reuses an open issue with the same title so an interrupted `frame` can be rerun.
+  reuses an open issue with the same title, replacing its body and saying so, so an interrupted
+  `frame` can be rerun. Agents pass the board's exact option values (`P0 now`, not "High").
 - **Labels:** `needs-human`, `needs-info`, `blocked`, plus type labels when needed. Nothing else by
   default.
 - **Branches:** short-lived, one per ticket, from the default branch.

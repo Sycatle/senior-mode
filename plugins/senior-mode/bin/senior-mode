@@ -1720,6 +1720,7 @@ STATUS_JQ='. as $d | $d.items as $items | {
       | select([$d.prs[].branch, $d.branches[]] | any(test("^[a-z]+/\($i.number)(-|$)")) | not)
       | {number, title, kind: "stale", why: "\(.status) with no open pull request and no branch"}]),
   wip: {limit: $wip, count: ([$items[] | select(.open and .status == "In progress")] | length)},
+  audit: $audit,
   next: ($d | pick | .[:3] | map({number, title, priority, size, milestone})),
   release: {latest: $d.release, pr: ([$d.prs[] | select(.branch | startswith("release-please")) | {number, title}][0])}
 }'
@@ -1737,6 +1738,7 @@ STATUS_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" e
   sec("Blocked or missing information (\(.blocked | length))"; [.blocked[] | ticket + ": " + (.reasons | join(", "))]),
   sec("Waiting for a human (\(.waiting | length))"; [.waiting[] | "\(.kind) #\(.number) \(.title): \(.why)"]),
   (if (.drift | length) > 0 then sec("Board drift (\(.drift | length))"; [.drift[] | ticket + ": " + .why]) else empty end),
+  (if .audit then empty else "Dependency audit: off (audit: false)" end),
   sec("Next Ready"; [.next[] | "#\(.number) \(.priority // "no priority") · \(.size // "?") · \(.title)"
     + (if .milestone then " (\(.milestone))" else "" end)]),
   "Release",
@@ -1776,7 +1778,7 @@ status_fix() {
 # One status report. $1 json|text, $2 --since duration or "", $3 true to move the "last time" mark,
 # $4 true to repair the drift (--fix).
 status_once() {
-  local json=$1 since=$2 save=$3 fix=${4:-false} root cache now_s now since_iso head data out wip results fixed
+  local json=$1 since=$2 save=$3 fix=${4:-false} root cache now_s now since_iso head data out wip audit results fixed
   local lines="" rc=0
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   cache=$root/.claude/senior-mode/status-seen
@@ -1795,8 +1797,9 @@ status_once() {
   data=$(board_data true) || return 1
   wip=$(config_get wip)
   [[ $wip =~ ^[1-9][0-9]*$ ]] || die "wip must be a positive whole number, not $wip"
+  if audit_enabled; then audit=true; else audit=false; fi
   out=$(jq -c --arg now "$now" --arg since "$since_iso" --arg repo "$(repo_slug)" --argjson wip "$wip" \
-    "$PICK_DEF$STATUS_JQ" <<<"$data") ||
+    --argjson audit "$audit" "$PICK_DEF$STATUS_JQ" <<<"$data") ||
     die "could not build the status"
   if [ "$fix" = true ]; then
     results=$(status_fix "$out") || rc=1

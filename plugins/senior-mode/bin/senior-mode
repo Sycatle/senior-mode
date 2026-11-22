@@ -479,8 +479,7 @@ sha256() {
 # is one. A value whose sha256 is in `.claude/secret-allowlist` of the base, with a reason, is lifted: a
 # branch cannot allowlist its own secret. Runs as its own process (`senior-mode secret-scan`).
 secret_scan() {
-  local base patterns allow added kind mode re path line text m value findings flags sep=$'\x1f'
-  local dotted='^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$'
+  local base patterns allow added kind mode re n value raw findings flags path line sep=$'\x1f'
   base=$(default_branch) || {
     echo "skipped: no base branch"
     return 0
@@ -503,44 +502,57 @@ secret_scan() {
     /^@@ / { header = 0; if (match($0, /\+[0-9]+/)) n = substr($0, RSTART + 1, RLENGTH - 1) + 0; next }
     !header && /^\+/ { printf "%s%s%d%s%s\n", file, s, n, s, substr($0, 2); n++ }' >"$added" ||
     die "cannot compare with $base"
-  findings=$(
+  # One grep and one awk per pattern, not one process per matching line: grep -n gives the number of the line
+  # of $added, awk drops what is not a secret, and only a finding costs a hash. A finding is <n> <kind>.
+  raw=$(
     while IFS=$'\t' read -r kind mode re; do
       case $kind in "" | "#"*) continue ;; esac
-      flags=(-E)
-      [ "$mode" != assign ] || flags=(-i -E)
-      while IFS=$sep read -r path line text; do
-        while IFS= read -r m; do
-          value=$m
-          case $mode in
-            assign)
-              # The value, not the name. A name only looks like a secret when its value holds letters
-              # and digits and is neither a placeholder nor a dotted identifier (process.env.TOKEN_1).
-              value=$(sed -E 's/^[^:=]*[:=][[:space:]]*["'"'"']?//' <<<"$m")
-              [[ $value =~ [0-9] && $value =~ [A-Za-z] && ! $value =~ $dotted ]] || continue
-              ! grep -qiE 'example|changeme|placeholder|your|dummy|sample|xxxx' <<<"$value" || continue
-              ;;
-            url)
-              ! grep -qiE '^.{0,5}$|pass|secret|example|changeme|your|dummy|sample|test|xxx|[*$%{<]' \
-                <<<"$(sed -E 's#^[^:]*://[^:/@]*:([^@]*)@.*#\1#' <<<"$m")" || continue
-              ;;
-            block)
-              # The whole key, so that the header, public text, lifts nothing but itself.
-              value=$(awk -F"$sep" -v p="$path" -v l="$line" '
-                $1 == p && $2 + 0 >= l {
-                  if (n && $2 + 0 != prev + 1) exit
-                  prev = $2 + 0
-                  printf "%s%s", (n++ ? "\n" : ""), $3
-                  if ($3 ~ /-----END /) exit
-                }' "$added")
-              ;;
-          esac
-          ! grep -qxF "$(sha256 "$value")" <<<"$allow" || continue
-          printf '%s:%s: %s\n' "$path" "$line" "$kind"
-        done < <(grep -o "${flags[@]}" -- "$re" <<<"$text")
-      done < <(grep "${flags[@]}" -- "$re" "$added")
-    done <"$patterns" | sort -t: -k1,1 -k2,2n | uniq
-  ) || true
-  [ -n "$findings" ] || return 0
+      flags=(-noE)
+      [ "$mode" != assign ] || flags=(-i -noE)
+      cut -d "$sep" -f 3- "$added" | { grep "${flags[@]}" -- "$re" || true; } | awk -v mode="$mode" -v kind="$kind" -v s="$sep" '
+        { i = index($0, ":"); n = substr($0, 1, i - 1); m = substr($0, i + 1); v = m }
+        mode == "assign" {
+          # The value, not the name. A name only looks like a secret when its value holds letters and
+          # digits and is neither a placeholder nor a dotted identifier (process.env.TOKEN_1).
+          sub(/^[^:=]*[:=][ \t]*["'"'"']?/, "", v)
+          if (v !~ /[0-9]/ || v !~ /[A-Za-z]/ || v ~ /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$/) next
+          if (tolower(v) ~ /example|changeme|placeholder|your|dummy|sample|xxxx/) next
+        }
+        mode == "url" {
+          # A password is a placeholder when it is short, a template (${X}, <x>, %s, ***, $X), or equals a
+          # placeholder word once digits and punctuation are dropped; containing "test" or "%" is not enough.
+          pw = m
+          sub(/^[^:]*:\/\/[^:\/@]*:/, "", pw)
+          sub(/@.*/, "", pw)
+          if (length(pw) <= 5) next
+          if (pw ~ /[$][{]|<[^>]+>|%s|[*][*][*]|[{][{]|^[$][A-Za-z_][A-Za-z0-9_]*$/) next
+          w = tolower(pw)
+          gsub(/[^a-z]/, "", w)
+          if (w ~ /^(pass(word|wd)?|secret|example|changeme|changeit|placeholder|dummy|sample|test(ing)?|x+|user(name)?|(your|my)(pass(word|wd)?|secret)?(here)?)$/) next
+        }
+        { printf "%s%s%s%s%s\n", n, s, kind, s, (mode == "block" ? "" : v) }'
+    done <"$patterns" |
+      while IFS=$sep read -r n kind value; do
+        # Only a block needs its lines: the whole key, so that the header, public text, lifts nothing but itself.
+        if [ -z "$value" ]; then
+          IFS=$sep read -r path line _ < <(sed -n "${n}p" "$added")
+          value=$(awk -F"$sep" -v p="$path" -v l="$line" '
+            $1 == p && $2 + 0 >= l {
+              if (c && $2 + 0 != prev + 1) exit
+              prev = $2 + 0
+              printf "%s%s", (c++ ? "\n" : ""), $3
+              if ($3 ~ /-----END /) exit
+            }' "$added")
+        fi
+        [ -z "$allow" ] || ! grep -qxF "$(sha256 "$value")" <<<"$allow" || continue
+        printf '%s%s%s\n' "$n" "$sep" "$kind"
+      done
+  )
+  [ -n "$raw" ] || return 0
+  findings=$(awk -F"$sep" '
+    NR == FNR { if (!(($1 SUBSEP $2) in seen)) { seen[$1, $2] = 1; k[$1, ++c[$1]] = $2 }; next }
+    FNR in c { for (j = 1; j <= c[FNR]; j++) printf "%s:%s: %s\n", $1, $2, k[FNR, j] }' \
+    <(printf '%s\n' "$raw") "$added" | sort -t: -k1,1 -k2,2n | uniq) || true
   printf '%s\n' "$findings"
   echo "a value is lifted by \"<sha256 of the value> <reason>\" in .claude/secret-allowlist on $base (printf %s <value> | sha256sum)"
   return 1

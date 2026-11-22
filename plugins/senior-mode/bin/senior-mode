@@ -158,7 +158,7 @@ link() {
 
 # Creates a ticket with its board fields, milestone, type label, blocked-by links and parent epic.
 # An open issue with the same title is reused, so a run cut short can be repeated (spec 0001 §7):
-# its fields, milestone, label and links converge to the arguments, its Status only with --status.
+# its body, fields, milestone, label and links converge to the arguments, its Status only with --status.
 issue_create() {
   local title="" body="" size="" priority="" status="" milestone="" type="" parent=""
   local blockers=() edits=() file slug found number url b fields
@@ -205,7 +205,7 @@ issue_create() {
       | join("\n")) // empty')
   number=$(head -1 <<<"$found")
   if [ -n "$number" ]; then
-    echo "#$number $title (already open)"
+    echo "#$number $title (already open, body updated)"
     [ -z "$milestone" ] || edits+=(--milestone "$milestone")
     if [ -n "$type" ]; then
       edits+=(--add-label "type:$type")
@@ -214,6 +214,8 @@ issue_create() {
       done <<<"$(tail -n +2 <<<"$found")"
     fi
     [ ${#edits[@]} -eq 0 ] || gh_retry issue edit "$number" --repo "$slug" "${edits[@]}" >/dev/null
+    # Not retried: a body read from stdin is gone after the first attempt.
+    gh issue edit "$number" --repo "$slug" --body-file "$body" >/dev/null
   else
     url=$(gh issue create --repo "$slug" --title "$title" --body-file "$body" \
       ${milestone:+--milestone "$milestone"} ${type:+--label "type:$type"})

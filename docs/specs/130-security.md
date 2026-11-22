@@ -135,8 +135,9 @@ Guard hardening (#115-#120, #145):
   URLs, private keys, generic assignments). There is no new dependency, so the generic kind is a
   heuristic, not an entropy measure: a value of 16 characters or more, with a letter and a digit, that
   is not a placeholder, a bracketed expression or a dotted identifier. A credentialed URL (user possibly
-  empty) is a placeholder only when its password has five characters or fewer, is a template (`${X}`, `<x>`, `%s`, `***`) or
-  equals a placeholder word once digits and punctuation are dropped. A JWT is three base64url segments, the
+  empty) is skipped only when its password is a template (`${X}`, `$(X)`, `$X`, `{X}`, `%(x)s`, `%s`, `<x>`, `***`) or
+  is, as a whole, a placeholder word (`password`, `changeme`, `your_password`, `xxx`...), digits kept and `_` and `-`
+  ignored: a short password, or `Secret123`, is reported. A JWT is three base64url segments, the
   first two starting `eyJ`. The secret an allowlist entry
   hashes is the value itself: the token, the whole URL, or a private key from its `BEGIN` to its `END`
   line, never the public header alone.

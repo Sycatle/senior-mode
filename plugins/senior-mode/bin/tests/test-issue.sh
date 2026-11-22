@@ -248,6 +248,23 @@ echo '[{"number": 7, "title": "Epic"}]' >"$FIX/issues.json"
 create "${crit[@]}" && fail "critical in a public repository without --details-file accepted"
 [ "$(count "issue create")" -eq 0 ] || fail "issue created without the advisory details"
 echo x | create "${crit[@]}" --body-file - --details-file - && fail "two stdin sources accepted"
+# --no-advisory (alerts GitHub raises: no vulnerability of this project's code): a critical risk in a
+# public repository opens no advisory, needs no details and does not read the repository; the issue,
+# its fingerprint, Severity and P0 are the same. It cannot be combined with --details-file.
+echo '[{"number": 7, "title": "Epic"}]' >"$FIX/issues.json"
+rm -f "$FIX/advisory.json"
+create "${crit[@]}" --no-advisory || fail "--no-advisory on a critical risk refused: $(cat "$work/err")"
+logged "security-advisories" && fail "--no-advisory opened an advisory"
+logged "repo view" && fail "--no-advisory read the repository's visibility"
+[ ! -e "$FIX/advisory.json" ] || fail "--no-advisory left an advisory"
+logged "issue create --repo acme/app --title Shell injection in deploy" || fail "--no-advisory: risk not filed: $(cat "$GH_LOG")"
+logged "--field-id F_P --single-select-option-id o3" || fail "--no-advisory: critical risk is not P0"
+jq -r '.[-1].body' "$FIX/issues.json" | grep -q "^security-id: $id\$" || fail "--no-advisory: no security-id in the body"
+create "${crit[@]}" --no-advisory || fail "--no-advisory rerun failed: $(cat "$work/err")"
+logged "issue create" && fail "--no-advisory rerun files the risk again"
+create "${crit[@]}" --no-advisory --details-file "$work/details.md" && fail "--no-advisory with --details-file accepted"
+[ "$(count "issue create")" -eq 0 ] || fail "created despite --no-advisory with --details-file"
+echo '[{"number": 7, "title": "Epic"}]' >"$FIX/issues.json"
 # Private repository: no advisory, said so.
 REPO_PRIVATE=true create "${crit[@]}" || fail "critical in a private repository failed: $(cat "$work/err")"
 logged "security-advisories" && fail "advisory opened in a private repository"

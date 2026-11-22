@@ -88,7 +88,8 @@ When `run` starts and when `retro` runs, each open high or critical Dependabot a
 secret-scanning alert (treated as critical) gets one `security` issue, through
 `senior-mode issue create --kind --path --rule`: the alert's `security-id` makes a second pass file
 nothing new. The body names the package or secret type and links the alert; it holds no
-vulnerability detail and never the secret's value. Moderate and low alerts are left to Dependabot.
+vulnerability detail and never the secret's value, and no repository security advisory is opened for
+an alert (`--no-advisory`): it is a dependency's CVE or a leaked token, not a flaw in your own code. Moderate and low alerts are left to Dependabot.
 An alert list GitHub refuses (scanning not enabled, no permission, 404) is reported and does not stop
 the command.
 

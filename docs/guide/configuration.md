@@ -52,7 +52,9 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `autonomy.schedule` | `"02:00"` | Time of day (`HH:MM`) of the [scheduled run](autonomy.md#scheduled-runs), unless `senior-mode schedule install --at` says otherwise |
 | `e2e.slots` | `2` | End-to-end suites that may run at once on the machine (the check named `e2e`) |
 
-`senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`).
+`senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`). The optional keys
+(`protected`, `secrets`, `envGuard.forbidden`, `review.sections`, `docs.extra`, `github.protection`)
+print `[]` (an empty line for `github.protection`) when absent; a key the plugin does not know is an error.
 
 ### Keys with defaults but no effect yet
 

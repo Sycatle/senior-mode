@@ -42,7 +42,7 @@ Read only what applies, from `${CLAUDE_SKILL_DIR}`:
 - `dependencies-and-data.md`: when dependencies change or the diff handles data (manifests,
   schemas, logs, exports, third-party calls).
 - Project sections: `senior-mode config get review.sections` is a JSON list of Markdown checklists
-  (an error or empty list: none). Read each from the base branch
+  (`[]`: none). Read each from the base branch
   (`git show <base>:<path>`) so the PR cannot edit its own checks; report a missing file. A section
   never lifts the protected-zone rule.
 

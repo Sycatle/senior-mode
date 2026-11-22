@@ -9,12 +9,15 @@ gh api 'repos/{owner}/{repo}/milestones?state=all' --paginate --jq '.[]|"\(.numb
 
 ## Size S
 
-An S issue needs no spec but must reach Ready, or it never gets picked:
+An S issue needs no spec but must reach Ready, or it never gets picked. A new S idea with nobody to
+ask (headless) first becomes that issue, else `next` and `run` never see it: the `ops` agent runs
+`senior-mode issue create` as in "Tickets" with `--size S`, the type of the idea and its Given / When /
+Then criteria drafted from the idea. With a human, a new S idea only gets the offer to do the same.
 
 1. `senior-mode item set <n> Size S`: it adds the issue to the board. Add `Priority "<option>"` only
    when the user gave one.
 2. Read its acceptance criteria: each must be a testable Given / When / Then. Missing or vague:
-   draft them from the issue text and offer to add them to the issue body.
+   draft them from the issue text and offer to add them to the issue body (headless: add them).
 3. Apply skill `ready`: it sets Status Ready, or says what is missing.
 
 ## Tickets

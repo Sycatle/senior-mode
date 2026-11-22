@@ -50,7 +50,8 @@ State: **Available.**
   can run in parallel; the spec is named after its issue (`docs/specs/<issue>-<slug>.md`) and ADR
   numbers come from `origin/main`. Ends with at most five lines, then proactive suggestions.
 - **Limits.** A size S stops at once: it needs no framing. When the idea is an existing issue, `frame` first
-  puts it on the board with Size S, checks its criteria are testable and marks it Ready. If the default branch has commits origin lacks, it
+  puts it on the board with Size S, checks its criteria are testable and marks it Ready; in a headless
+  session a new S idea first becomes that issue, so `next` and `run` can deliver it. If the default branch has commits origin lacks, it
   stops and asks you to push them first. During framing, edits outside `docs/` are
   denied, subagents included. Re-running is safe: an open issue with the same title is reused.
   Tickets stay in Backlog until the documents pull request is merged and the spec accepted.

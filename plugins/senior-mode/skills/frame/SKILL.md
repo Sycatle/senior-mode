@@ -11,7 +11,7 @@ Idea: $ARGUMENTS (ask for it in one line if empty). Write to the user in the pro
 (`senior-mode config get language`). Commands and formats: `${CLAUDE_SKILL_DIR}/reference.md`.
 
 1. **Size.** Apply skill `triage`. Size S needs no framing: say so. If the idea is an existing
-   issue, give it its path to delivery ("Size S" in the reference); then stop.
+   issue, or nobody to ask, give it its path to delivery ("Size S" in the reference); then stop.
 2. **Workspace.** `senior-mode frame start <slug>` makes a worktree and a branch `docs/<slug>` from
    `origin/main`; write everything below there, not in the main checkout. If it says the default
    branch is ahead of origin, stop: those commits must be pushed or merged first.

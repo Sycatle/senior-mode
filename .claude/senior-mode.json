@@ -1,5 +1,6 @@
 {
   "language": "en",
+  "wip": 4,
   "preset": "generic",
   "ci": { "mode": "local" },
   "checks": [

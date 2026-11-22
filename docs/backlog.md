@@ -79,6 +79,40 @@ Mission: a proactive team, pragmatic, paranoid about quality and above all secur
 - **Dogfooding:** real `claude -p --plugin-dir` sessions on Sycatle/senior-mode-sandbox, run and
   schedule with `autonomy.merge: false`, on sya-dev-01 as a non-root user. Findings become issues.
 
+## Autonomy target (framing 2026-11-22, wave v0.4, to frame as an L before it starts)
+
+Goal: the human only frames; on the VPS, sessions run continuously over every Ready issue by
+priority, massively parallel, isolated, with senior-level rigour enforced by the tool, not advised.
+
+- **Orchestration:** `senior-mode serve`, a systemd service that polls the board and launches ticket,
+  reviewer and integrator sessions within the ceilings; `run`/`schedule` become one-pass cases.
+  ADR partially superseding 0007 and 0012.
+- **Independent review:** a separate reviewer session (fresh context, Opus) is the only one allowed to
+  set `senior-mode/review`; the guard denies `gh api .../statuses` to ticket sessions. Changes
+  requested: the ticket session resumes with the findings, 2 rounds max, then `needs-human`. The
+  `security` agent adds a mandatory pass on L or sensitive pull requests.
+- **Integrator:** a sequential merge queue by priority: rebase on main, resolve conflicts (Opus),
+  rerun checks, re-review when the resolution changed code, merge one at a time; unresolved conflict
+  or protected zone: `needs-human`.
+- **Collisions:** tickets declare the paths they touch (spec `paths` or architect estimate at
+  framing); overlapping tickets never run at the same time.
+- **Isolation:** worktree + slot per session; slot-derived env (PORT, database/schema, cache dir)
+  through a project `slot` hook in `.claude/senior-mode.json`; non-root user.
+- **Ready without the human:** after the framing PR merges, tickets passing the Definition of Ready
+  become Ready; agent-created issues too when S, not high/critical security and outside protected
+  zones; otherwise `needs-human`.
+- **Alerts:** configurable: GitHub (`needs-human` label + mention, daily `status --since 24h`
+  digest) and/or a generic `notify.webhook` (JSON POST).
+- **Ceilings:** `autonomy.parallel` slots, sessions per hour, pause on subscription rate limit and
+  resume at reset, circuit breaker pauses and alerts instead of stopping, CPU/memory checked before
+  each launch.
+- **Merge:** in daemon mode `autonomy.merge` is on for S and M with everything green, no protected
+  zone and no security finding; L, ADRs and protected zones wait for the human. Amends ADR 0008.
+- **Proof:** sandbox first (parallel toy tickets, provoked conflicts), then the daemon develops
+  senior-mode itself on sya-dev-01; 1.0 after a week of daemon on our own backlog without incident.
+
+Order: board rigour -> 0.2.0 -> security 0.3.0 -> autonomy daemon 0.4.0 -> proof -> evals -> 1.0.
+
 ## Next
 
 Done 2026-11-22: #112, #114 and the two blocking review findings (run merge gates) went into #113,
@@ -95,5 +129,6 @@ flow with the board moved at each step, WIP 1. Spec `docs/specs/123-board-rigour
    #124 `status` board drift + `--fix`, #125 `wip` limit.
 2. Release 0.2.0 (`senior-mode release`, ci.mode local).
 3. Security wave (above): ADR, review section + security agent, check audits, #115-#121 -> 0.3.0.
-4. Dogfood run, schedule, next, retro, review, docs on the sandbox from sya-dev-01; fix findings.
-5. Evals green (`evals/run.sh`), then stop for the 1.0 release and marketplace publication.
+4. Frame the autonomy wave (L: epic, full spec, ADRs, human acceptance), deliver it -> 0.4.0.
+5. Proof: sandbox, then the daemon on senior-mode itself on sya-dev-01 for a week.
+6. Evals green (`evals/run.sh`), then stop for the 1.0 release and marketplace publication.

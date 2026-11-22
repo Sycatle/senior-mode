@@ -69,6 +69,14 @@ edit deny ".git/hooks/pre-commit" Edit "" "relative path to the git hooks"
 edit deny "$repo/.git/config" Edit
 dir=$work/wt edit deny "$repo/.git/hooks/pre-push" Write "" "the hooks of a linked worktree live in the common dir"
 dir=$work/wt bash_ deny "cp /tmp/x $repo/.git/hooks/pre-push"
+# #194: the hooks can also be switched off by their mode, by removing or filling .git, or by the
+# per-worktree config (core.hooksPath under extensions.worktreeConfig).
+git -C "$repo" config extensions.worktreeConfig true
+edit deny "$repo/.git/config.worktree" Write "" "per-worktree config of the main checkout"
+edit deny "$repo/.git/worktrees/wt/config.worktree" Write "" "per-worktree config of a linked worktree"
+dir=$work/wt edit deny "$repo/.git/worktrees/wt/config.worktree" Edit "" "from inside the linked worktree"
+bash_ deny "echo x > $repo/.git/config.worktree"
+bash_ deny "git config --worktree core.hooksPath x > $repo/.git/worktrees/wt/config.worktree"
 bash_ deny "echo exit 0 > .git/hooks/pre-push"
 bash_ deny "rm .git/hooks/pre-push"
 edit allow "$repo/.git-notes.md" Write "" "a name that only starts like .git"
@@ -111,6 +119,16 @@ for c in \
   'rm -rf .claude' \
   'rm .githooks/pre-push' \
   'rm -rf .github' \
+  'chmod -x .git/hooks/*' \
+  'chmod -R a-x .git/hooks' \
+  'chown nobody .git/hooks/pre-push' \
+  'rm -rf .git' \
+  'rm -rf .git/' \
+  'rm -rf ./.git' \
+  'mv .git /tmp/git-gone' \
+  'cp -r x .git/' \
+  'cp -r x .git' \
+  'cp /tmp/c .git/config.worktree' \
   'unlink .claude/settings.json' \
   'touch .claude/x' \
   'truncate -s0 .claude/settings.json' \
@@ -139,6 +157,8 @@ done
 bash_ deny 'echo x > ../.claude/x' "$repo/web"
 bash_ deny 'echo x > .claude/x' "$work/wt"
 grep -q "\.claude/x" <<<"$reason" || fail "bash deny reason does not name the path: $reason"
+bash_ deny 'rm -f .git' "$work/wt"
+bash_ deny 'cp -r x .git/' "$work/wt"
 
 for c in \
   'git status' \
@@ -162,6 +182,15 @@ for c in \
   'ls > out.txt' \
   'echo x > /tmp/.claude/y' \
   'rm -rf node_modules dist' \
+  'rm -rf build' \
+  'rm -rf .gitignore-old .github-old' \
+  'chmod +x scripts/run.sh' \
+  'chmod -x src/old.sh' \
+  'chmod -R 755 src' \
+  'cp -r x src/' \
+  'cp .git/config /tmp/config.bak' \
+  'cat .git/config.worktree' \
+  'git config user.name t' \
   'mv src/a src/b' \
   'touch .github/ISSUE_TEMPLATE/new.yml' \
   'echo x > .github/pull_request_template.md' \

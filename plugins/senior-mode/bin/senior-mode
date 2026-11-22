@@ -24,7 +24,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] | statusline | retro [--since <dur>] [--json] | check | publish [commit] | release [--dry-run] | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> --priority <p> [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] | statusline | retro [--since <dur>] [--json] | check | publish [commit] | release [--dry-run] | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -112,6 +112,33 @@ item_set() {
       --field-id "${ids[i]}" --single-select-option-id "${ids[i + 1]}" >/dev/null
     echo "#$issue ${*:i+1:1} = ${*:i+2:1}"
   done
+}
+
+# Prints the board fields of an issue's Project item, read in one GraphQL call: the value of one
+# field (empty when it has none), or "#<issue> <field> = <value>" for each field that has one.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+ITEM_QUERY='query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { issue(number: $number) { projectItems(first: 20) { nodes {
+    project { id }
+    fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } } } } } } }
+}'
+item_get() {
+  [ $# -ge 1 ] && [ $# -le 2 ] && [[ $1 =~ ^[0-9]+$ ]] || usage
+  local issue=$1 field=${2:-} file project slug answer err
+  file=$(config_file)
+  project=$(jq -r '.project.id // empty' "$file")
+  [ -n "$project" ] || die "no Project in .claude/senior-mode.json; run /senior-mode:setup"
+  slug=$(repo_slug)
+  answer=$(jq -nc --arg q "$ITEM_QUERY" --arg o "${slug%%/*}" --arg n "${slug#*/}" --argjson i "$issue" \
+    '{query: $q, variables: {owner: $o, name: $n, number: $i}}' | gh_retry api graphql --input -) ||
+    die "cannot read #$issue from GitHub"
+  err=$(jq -r '.errors[0].message // empty' <<<"$answer" 2>/dev/null) || die "GitHub answered something that is not JSON"
+  [ -z "$err" ] || die "GitHub refused the query for #$issue: $err"
+  jq -e --arg p "$project" '[.data.repository.issue.projectItems.nodes[]? | select(.project.id == $p)] | length > 0' \
+    <<<"$answer" >/dev/null || die "#$issue is not on the board"
+  jq -r --arg p "$project" --arg f "$field" --arg i "$issue" '
+    [.data.repository.issue.projectItems.nodes[] | select(.project.id == $p) | .fieldValues.nodes[] | select(.field.name)]
+    | if $f == "" then .[] | "#\($i) \(.field.name) = \(.name)" else (map(select(.field.name == $f) | .name)[0] // "") end' <<<"$answer"
 }
 
 # Numbers of the issues linked to an issue through a REST list (blocked_by, sub_issues).
@@ -1921,9 +1948,11 @@ case "${1:-}" in
     config_get "$3"
     ;;
   item)
-    [ "${2:-}" = set ] || usage
-    shift 2
-    item_set "$@"
+    case ${2:-} in
+      set) shift 2; item_set "$@" ;;
+      get) shift 2; item_get "$@" ;;
+      *) usage ;;
+    esac
     ;;
   release)
     [ $# -le 2 ] || usage

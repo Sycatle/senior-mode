@@ -146,6 +146,7 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode statusline` | One offline line for Claude Code's status line (ticket, last check, run) |
 | `senior-mode setup statusline` | Writes the status line to the project's `.claude/settings.json` |
 | `senior-mode item set <issue> <field> <option>...` | Sets board fields of a ticket, for example `Status Ready` |
+| `senior-mode item get <issue> [field]` | Reads the board fields of a ticket in one call: the value of `field`, or every field set (`#42 Status = Ready`) |
 | `senior-mode config get <key>` | Prints a config value, with defaults (see [Configuration](configuration.md)) |
 | `senior-mode protected [--base <ref>]` | Lists the files changed on the branch that match a `protected` glob (exit 0), or nothing (exit 1); used by the reviewer |
 | `senior-mode context` | Prints the session greeting and the current ticket (used by the `SessionStart` hook) |

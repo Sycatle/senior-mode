@@ -112,7 +112,7 @@ done
 logged "--enable-rebase-merge --enable-merge-commit=false --enable-squash-merge=false --delete-branch-on-merge" ||
   fail "merge settings not set"
 logged "api -X POST repos/acme/app/rulesets" || fail "no ruleset created"
-for rule in '"include":["~DEFAULT_BRANCH"]' '{"context":"senior-mode/ci"},{"context":"senior-mode/review"}' \
+for rule in '"include":["~DEFAULT_BRANCH"]' '{"context":"senior-mode/ci"},{"context":"senior-mode/review"},{"context":"senior-mode/security"}' \
   '"strict_required_status_checks_policy":true' '{"type":"required_linear_history"}' '"bypass_mode":"always"' \
   '"allowed_merge_methods":["rebase"]'; do
   tr -d ' \n' <"$GH_LOG" | grep -qF -- "$rule" || fail "ruleset without $rule"

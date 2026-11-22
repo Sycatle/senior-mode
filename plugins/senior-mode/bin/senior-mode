@@ -570,7 +570,7 @@ RULESET='{"name": "senior-mode", "target": "branch", "enforcement": "active",
       "required_review_thread_resolution": false, "allowed_merge_methods": ["rebase"]}},
     {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true,
       "do_not_enforce_on_create": false,
-      "required_status_checks": [{"context": "senior-mode/ci"}, {"context": "senior-mode/review"}]}}]}'
+      "required_status_checks": [{"context": "senior-mode/ci"}, {"context": "senior-mode/review"}, {"context": "senior-mode/security"}]}}]}'
 
 # Single-select fields of a Project, with their options.
 board_fields() {
@@ -735,8 +735,8 @@ setup_protection() { # config-file ruleset|none
 }
 
 # The GitHub side of a project (spec 0001 §11, #11), idempotent: Project linked to the repository with
-# Status, Priority, Size and Severity; labels; rebase-only merges; a ruleset requiring both statuses
-# (ADR 0006); ids cached in the config.
+# Status, Priority, Size and Severity; labels; rebase-only merges; a ruleset requiring the three statuses
+# (ADR 0006, 0015); ids cached in the config.
 # ci.mode local: the checks run before each push, so the repository's own workflows are disabled
 # (files kept) and spend no Actions budget. GitHub's built-in ones (dynamic/: Dependabot, Pages)
 # are left alone. ci.mode actions: our workflow is turned back on if an earlier local run disabled it.
@@ -824,7 +824,7 @@ type:chore|ededed|Maintenance with no user-visible change'
   # Before the workflows: a refused ruleset forces ci.mode local, which decides what happens to them.
   if err=$(setup_ruleset "$slug" "$review" 2>&1 >/dev/null); then
     setup_protection "$file" ruleset
-    echo "default branch: ruleset senior-mode, pull requests only, rebase, senior-mode/ci and senior-mode/review on an up-to-date branch, linear history; admins may bypass with gh pr merge --admin; other protection untouched"
+    echo "default branch: ruleset senior-mode, pull requests only, rebase, senior-mode/ci, senior-mode/review and senior-mode/security on an up-to-date branch, linear history; admins may bypass with gh pr merge --admin; other protection untouched"
     [ "$review" = false ] || echo "code owners: a pull request touching a protected zone needs the owner's approval, and GitHub never lets an author approve their own pull request; agents act as the owner (#175 gives them an identity of their own), so merging one is the owner's call by hand, with gh pr merge --admin"
   elif ruleset_refused <<<"$err"; then
     setup_protection "$file" none

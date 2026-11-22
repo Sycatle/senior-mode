@@ -35,6 +35,7 @@ Run `senior-mode setup github --ci <local|actions>`. It:
   entries kept) and requires code owner review. Tell the user to commit the file, and that an owner's
   own pull request on a protected zone cannot be approved by them: they merge it by hand with
   `gh pr merge --admin`. `setup repo` writes `protected`, so rerun `setup github` after it;
+- turns on the scanners, writes dependabot.yml: see "Scanners";
 - `local`: disables the repository's workflows (files kept); `actions`: `setup repo` then adds
   `.github/workflows/senior-mode.yml`. If it prints `releases:`, relay it (the release PR needs
   a `RELEASE_PLEASE_TOKEN` secret to get CI).

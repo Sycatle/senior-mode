@@ -8,6 +8,13 @@ default branch, and the pre-push hook is the only gate. Relay it in plain words,
 out (make the repository public, or upgrade to Pro or Team and rerun setup), and get an explicit
 acknowledgement before going on.
 
+## Scanners
+
+`senior-mode setup github` turns on Dependabot alerts and security updates, secret scanning and push
+protection, and prints `security: <feature>: on` or `not enabled (<reason>)` for each: relay every
+`not enabled` in plain words (the plan or the token refuses it; setup went on). It writes
+`.github/dependabot.yml` for the project's ecosystem without committing it: tell the user to commit it.
+
 ## Language
 
 The language picks the templates `setup repo` writes (`en` or `fr`), so settle it before. Take it

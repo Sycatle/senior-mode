@@ -173,7 +173,8 @@ advisory() {
     return 0
   fi
   [ -n "$details" ] || die "a critical risk in a public repository needs --details-file (the advisory holds the details)"
-  url=$(jq -n --arg s "$title" --arg d "$(cat "$details")" --arg n "${slug#*/}" \
+  [ "$details" != - ] || details=/dev/stdin
+  url=$(jq -n --arg s "$title" --rawfile d "$details" --arg n "${slug#*/}" \
     '{summary: $s, description: $d, severity: "critical", vulnerabilities: [{package: {ecosystem: "other", name: $n}}]}' |
     gh api -X POST "repos/$slug/security-advisories" --input - --jq .html_url) || die "could not open the security advisory"
   echo "draft security advisory: $url"
@@ -224,6 +225,7 @@ issue_create() {
   if [ -n "$kind$path$rule" ]; then
     [ -n "$kind" ] && [ -n "$path" ] && [ -n "$rule" ] || die "--kind, --path and --rule go together, none empty"
     [ -n "$severity" ] || die "--kind, --path and --rule need --severity"
+    case $kind$path$rule in *$'\n'*) die "--kind, --path and --rule cannot hold a newline" ;; esac
     sid=$(printf '%s\n%s\n%s\n' "$kind" "$path" "$rule" | sha256sum | cut -d' ' -f1)
   fi
   if [ -n "$details" ]; then
@@ -253,8 +255,8 @@ issue_create() {
   slug=$(repo_slug)
 
   if [ -n "$sid" ]; then
-    found=$(gh_retry issue list --repo "$slug" --state open --limit 1000 --json number,title,body |
-      jq -r --arg l "security-id: $sid" 'first(.[] | select((.body // "") | split("\n") | index($l)) | "#\(.number) \(.title)") // empty')
+    found=$(gh_retry issue list --repo "$slug" --state open --limit 1000 --json number,title,body,labels |
+      jq -r --arg l "security-id: $sid" 'first(.[] | select(any(.labels[]?; .name == "security") and ((.body // "") | split("\n") | index($l))) | "#\(.number) \(.title)") // empty')
     if [ -n "$found" ]; then
       echo "$found (already filed, security-id ${sid:0:12})"
       return 0
@@ -267,7 +269,8 @@ issue_create() {
   fi
 
   # The number of an open issue with this title, then its type labels other than the asked one.
-  found=$(gh_retry issue list --repo "$slug" --state open --limit 1000 --json number,title,labels |
+  # With a fingerprint only the security-id matches: another issue of the same title is left alone.
+  [ -n "$sid" ] || found=$(gh_retry issue list --repo "$slug" --state open --limit 1000 --json number,title,labels |
     jq -r --arg t "$title" --arg k "type:$type" 'first(.[] | select(.title == $t)
       | [.number | tostring] + [.labels[]?.name | select(startswith("type:") and . != $k)]
       | join("\n")) // empty')

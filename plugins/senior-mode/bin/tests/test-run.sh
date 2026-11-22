@@ -25,8 +25,28 @@ mkdir -p "$work/stub" "$work/tmux" "$work/fix"
 cat >"$work/stub/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >>"$GH_LOG"
+jqf="" prev=""
+for a in "$@"; do [ "$prev" = --jq ] && jqf=$a; prev=$a; done
+respond() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
+arg() { local prev=""; for a in "$@"; do [ "$prev" = "$FLAG" ] && echo "$a"; prev=$a; done; }
 case "$*" in
   "api graphql --input -") cat >/dev/null; cat "$FIX/board.json" ;;
+  "api repos/acme/app/dependabot/alerts"* | "api repos/acme/app/secret-scanning/alerts"*)
+    [ -z "${ALERTS_ERR:-}" ] || { echo "$ALERTS_ERR" >&2; exit 1; }
+    f=${2#repos/acme/app/}; f=$FIX/${f%%/*}.json
+    if [ -f "$f" ]; then respond <"$f"; else echo '[]' | respond; fi ;;
+  "issue list"*) respond <"$FIX/issues.json" ;;
+  "issue create"*)
+    f=$(FLAG=--body-file arg "$@")
+    n=$(jq '[42, (.[].number + 1)] | max' "$FIX/issues.json")
+    labels=$(FLAG=--label arg "$@" | jq -R . | jq -sc 'map({name: .})')
+    jq --argjson n "$n" --arg t "$(FLAG=--title arg "$@")" --rawfile b "$f" --argjson l "$labels" \
+      '. + [{number: $n, title: $t, body: $b, labels: $l}]' "$FIX/issues.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issues.json"
+    echo "https://github.com/acme/app/issues/$n" ;;
+  "repo view"*) echo '{"isPrivate": false}' | respond ;;
+  "api -X POST repos/acme/app/security-advisories"*)
+    cat >>"$FIX/advisories"; echo '{"html_url": "https://github.com/acme/app/security/advisories/GHSA-1"}' | respond ;;
+
   "issue view "*)
     n=$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*")
     jq -c --argjson n "$n" '.data.node.items.nodes[] | select(.content.number == $n) | .content
@@ -439,6 +459,73 @@ SENIOR_MODE_PROBE_TIMEOUT=1 run && fail "M: run started although the probe sessi
 [ "$SECONDS" -lt 20 ] || fail "M: the probe was not stopped after its timeout ($SECONDS s)"
 grep -q 'app-103' "$CLAUDE_LOG" && fail "M: a ticket started after a probe that timed out"
 echo honour >"$FIX/probe"
+
+# Open alerts: a high Dependabot alert, a moderate and a low one (nothing to file), and an exposed secret
+# whose value must never reach an issue.
+fix_alerts() {
+  jq -n '[{number: 1, state: "open", html_url: "https://github.com/acme/app/security/dependabot/1",
+      security_advisory: {ghsa_id: "GHSA-aaaa-bbbb-cccc", severity: "high", summary: "Prototype pollution via crafted payload"},
+      dependency: {package: {ecosystem: "npm", name: "lodash"}, manifest_path: "package-lock.json"}},
+    {number: 2, state: "open", html_url: "u2", security_advisory: {ghsa_id: "GHSA-dddd", severity: "medium"},
+      dependency: {package: {ecosystem: "npm", name: "minimist"}, manifest_path: "package-lock.json"}},
+    {number: 3, state: "open", html_url: "u3", security_advisory: {ghsa_id: "GHSA-eeee", severity: "low"},
+      dependency: {package: {ecosystem: "npm", name: "tiny"}, manifest_path: "package-lock.json"}}]' >"$FIX/dependabot.json"
+  jq -n '[{number: 7, state: "open", secret_type: "github_personal_access_token",
+    secret_type_display_name: "GitHub Personal Access Token", html_url: "https://github.com/acme/app/security/secret-scanning/7",
+    secret: "SUPERSECRETVALUE"}]' >"$FIX/secret-scanning.json"
+  echo '[]' >"$FIX/issues.json"
+  rm -f "$FIX/advisories"
+}
+# What the alerts must have produced: one issue for the high alert, one for the secret, no secret value.
+check_alert_issues() { # label
+  [ "$(jq 'length' "$FIX/issues.json")" -eq 2 ] || fail "$1: issues filed: $(jq -c 'map(.title)' "$FIX/issues.json")"
+  jq -e 'map(select(.title | test("lodash"))) | length == 1 and (.[0].labels | map(.name) | index("security"))' "$FIX/issues.json" >/dev/null ||
+    fail "$1: no security issue for the high Dependabot alert: $(jq -c 'map(.title)' "$FIX/issues.json")"
+  jq -e 'map(select(.title | test("[Ss]ecret"))) | length == 1' "$FIX/issues.json" >/dev/null ||
+    fail "$1: no issue for the exposed secret: $(jq -c 'map(.title)' "$FIX/issues.json")"
+  jq -r '.[].body' "$FIX/issues.json" | grep -q "^security-id: [0-9a-f]\{64\}\$" || fail "$1: a body lacks its security-id"
+  cat "$FIX/issues.json" "$FIX/advisories" 2>/dev/null | grep -q "SUPERSECRETVALUE" && fail "$1: the secret value was written out"
+  jq -r '.[].body' "$FIX/issues.json" | grep -q "Prototype pollution" && fail "$1: advisory detail in an issue body"
+}
+
+# N: open alerts become issues when a run starts, before it looks for a Ready ticket (#172). A high
+# Dependabot alert and an exposed secret are filed (critical, P0) through issue create, a moderate or
+# low alert is not, and a second run files nothing new. The secret's value is never written.
+fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2", "In review": "o3", "Backlog": "o0", "Done": "o4"}},
+  "Priority": {"id": "F_P", "options": {"P0 now": "p0", "P1 next": "p1"}}, "Size": {"id": "F_Z", "options": {"S": "z1"}},
+  "Severity": {"id": "F_V", "options": {"critical": "v1", "high": "v2", "moderate": "v3", "low": "v4"}}}'
+config '{}'
+board
+fix_alerts
+run || fail "N: run failed: $(cat "$work/out")"
+check_alert_issues N
+grep -q 'No Ready ticket' "$work/out" || fail "N: the run did not go on to look for tickets: $(cat "$work/out")"
+grep -q 'dependabot/alerts?state=open' "$GH_LOG" || fail "N: open Dependabot alerts not read: $(cat "$GH_LOG")"
+grep -q 'secret-scanning/alerts?state=open' "$GH_LOG" || fail "N: open secret-scanning alerts not read"
+for o in v1 v2 p0 p1; do
+  grep -q "option-id $o" "$GH_LOG" || fail "N: option $o not set: high is P1 and critical P0, each with its Severity"
+done
+grep -q 'GHSA-aaaa-bbbb-cccc' "$work/out" || fail "N: filing not reported: $(cat "$work/out")"
+[ "$(grep -c "\"summary\"" "$FIX/advisories" 2>/dev/null)" = 1 ] || fail "N: the critical secret did not open one advisory (public repository)"
+run || fail "N: second run failed: $(cat "$work/out")"
+grep -q 'issue create' "$GH_LOG" && fail "N: a second pass files again: $(grep 'issue create' "$GH_LOG")"
+[ "$(jq 'length' "$FIX/issues.json")" -eq 2 ] || fail "N: a second pass changed the issues"
+# No open alert, nothing filed.
+echo '[]' >"$FIX/dependabot.json"; echo '[]' >"$FIX/secret-scanning.json"; echo '[]' >"$FIX/issues.json"
+run || fail "N: run with no alerts failed"
+grep -q 'issue create' "$GH_LOG" && fail "N: an issue filed without an alert"
+# An API error (scanning off, no permission) is said and does not stop the run, nor the other source.
+fix_alerts
+ALERTS_ERR="gh: Dependabot alerts are disabled for this repository. (HTTP 403)" run || fail "N: an alerts error stopped the run: $(cat "$work/out")"
+grep -q 'disabled for this repository' "$work/out" || fail "N: alerts error not said: $(cat "$work/out")"
+grep -q 'No Ready ticket' "$work/out" || fail "N: run stopped after an alerts error"
+[ "$(jq 'length' "$FIX/issues.json")" -eq 0 ] || fail "N: filed alerts it could not read"
+# A failure to file (no Priority option on the board) is said, and the run goes on.
+fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2", "In review": "o3", "Backlog": "o0", "Done": "o4"}}}'
+config '{}'
+run || fail "N: a filing error stopped the run: $(cat "$work/out")"
+grep -q 'No Ready ticket' "$work/out" || fail "N: run stopped after a filing error"
+grep -qi 'not filed' "$work/out" || fail "N: filing error not said: $(cat "$work/out")"
 
 # E: nothing Ready, bad arguments.
 config '{}'

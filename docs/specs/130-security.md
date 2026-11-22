@@ -99,12 +99,14 @@ Guard hardening (#115-#120, #145):
   kills it, labels the ticket `needs-human` with the log path, and counts it as a failure for the
   breaker. A timeout is not retried on a stronger model (ADR 0014 escalates failed work, not stuck
   sessions).
-- #116 (with #121): `guard-bash` denies `git config core.hooksPath` and shell writes under
-  `.git/hooks` (in the checkout and in every worktree's common dir); `self-protect` denies Edit and
-  Write there. `guard-bash` denies `gh api` writes to rulesets, branch protection and the merge endpoint, whatever the
-  variables in the path. Denying writes to commit statuses waits for the separate reviewer session
-  (#150), which is the only one that may set them. It allows read-only `gh` calls such as `gh pr list --search
-  merge`. `run_merge` refuses to merge when the base has no `.claude/senior-mode.json`.
+- #116 (with #121): `guard-bash` denies, in any session, setting or unsetting `core.hooksPath`
+  through `git config`, and a `PUT` on the merge endpoint whatever the variables in the path. In a
+  run session it also denies `gh api` writes to rulesets and branch protection, and
+  `self-protect` denies writes, by Edit, Write or the shell, to the git hooks and `.git/config` of
+  the common dir (every worktree included). Denying writes to commit statuses waits for the
+  separate reviewer session (#150), which is the only one that may set them. Read-only `gh` calls
+  such as `gh pr list --search merge` are allowed. `run_merge` refuses to merge when the base has
+  no `.claude/senior-mode.json`.
 - #117: Given `run` starts, then it checks that the plugin is enabled and `hooks.json` is present.
   Once a day it also runs a probe session that tries a denied, harmless command. If the deny does
   not show, `run` refuses to start.

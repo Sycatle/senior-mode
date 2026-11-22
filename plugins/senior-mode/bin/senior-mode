@@ -1461,6 +1461,9 @@ setup_repo() {
     elif $d.typescript == false then "JavaScript" else empty end, .framework // empty]
     | select(length > 0) | " (\(join(", ")))"' "$file")"
   echo "checks: $(jq -r '[.checks[].name] | join(", ")' "$file")"
+  # On a first setup `setup github` ran before `protected` existed: no block was written yet.
+  ! jq -e '(.protected // []) | length > 0' "$file" >/dev/null || grep -qs '^# senior-mode:begin' "$root/.github/CODEOWNERS" ||
+    echo "CODEOWNERS: the protected zones are not owned yet; rerun senior-mode setup github to write .github/CODEOWNERS"
   [ "$pname" != node ] || jq -r --argjson d "$detected" '["lint", "typecheck", "test", "build"] - (.commands | keys)
     - (if $d.typescript then [] else ["typecheck"] end)
     | select(length > 0) | "missing: \(join(", ")) (no script; propose tools, never install without a yes)"' "$file"

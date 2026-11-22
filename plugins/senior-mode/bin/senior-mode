@@ -1697,6 +1697,7 @@ run_merge() {
   elif gh pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
     RUN_MERGED+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
     RUN_PRS+=("#$pr")
+    (item_set "$n" Status Done) >/dev/null || echo "#$n: merged, but could not set the Status Done" >&2
     return 0
   else
     reason="the merge failed: $(head -n 1 "$RUN_DIR/$n.merge")"

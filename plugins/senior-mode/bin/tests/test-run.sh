@@ -78,7 +78,7 @@ repo="$work/app"
 git init -q -b main "$repo"
 git -C "$repo" remote add origin "$work/github.com/acme/app.git"
 mkdir -p "$repo/.claude"
-fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2", "In review": "o3", "Backlog": "o0"}}}'
+fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2", "In review": "o3", "Backlog": "o0", "Done": "o4"}}}'
 config() {
   jq -n --argjson f "$fields" --argjson a "$1" '{project: {id: "PVT_1", owner: "acme", number: 3, fields: $f}, autonomy: $a}
     + $ARGS.named' ${2:+--argjson github "$2"} ${3:+--argjson agent "$3"} >"$repo/.claude/senior-mode.json"
@@ -149,6 +149,7 @@ grep -q 'issues/12/comments' "$GH_LOG" || fail "A: no comment on the failed tick
 grep -q 'issues/1[01]/comments' "$GH_LOG" && fail "A: a comment on a delivered ticket"
 grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 3 || fail "A: tickets not set In progress"
 grep -c 'item-edit.*--single-select-option-id o0' "$GH_LOG" | grep -qx 1 || fail "A: the failed ticket not set back to Backlog"
+grep -c 'item-edit.*--single-select-option-id o4' "$GH_LOG" | grep -qx 1 || fail "A: only the merged ticket is set Done"
 grep -c 'new-session\|new-window' "$TMUX_LOG" | grep -qx 5 || fail "A: not one tmux window per session: $(cat "$TMUX_LOG")"
 grep -q 'docs' "$CLAUDE_LOG" || fail "A: no docs session after a merge"
 grep -q 'Merged.*#10' "$work/out" || fail "A: report misses the merge: $(cat "$work/out")"
@@ -207,6 +208,7 @@ session 43-sonnet delivered pr
 echo "$green" >"$FIX/status-43"
 run || fail "D: run failed: $(cat "$work/out")"
 grep -q 'pr merge' "$GH_LOG" && fail "D: merged with github.protection unset"
+grep -q 'option-id o4' "$GH_LOG" && fail "D: an unmerged ticket set Done"
 
 # H: green and unlabelled, but a protected zone of the base branch is touched (a rename out of it
 # counts): no merge, whatever the reviewer said. The branch's own config cannot lift it.

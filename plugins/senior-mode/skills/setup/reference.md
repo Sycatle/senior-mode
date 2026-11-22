@@ -12,8 +12,7 @@ acknowledgement before going on.
 
 `senior-mode setup github` turns on Dependabot alerts, secret scanning and push
 protection, and prints `security: <feature>: on` or `not enabled (<reason>)` for each: relay every
-`not enabled` in plain words (the plan or the token refuses it; setup went on). It writes
-It leaves Dependabot security updates off and writes no `.github/dependabot.yml` (GitHub cannot limit
+`not enabled` in plain words (the plan or the token refuses it; setup went on). It leaves Dependabot security updates off and writes no `.github/dependabot.yml` (GitHub cannot limit
 them to high and critical severity, so alerts become issues only); if the project has its own, setup
 prints `dependabot.yml: untouched`.
 

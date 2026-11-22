@@ -534,7 +534,11 @@ and prints file names and variable names, never a value. A check whose first out
 `<base>...HEAD` against the patterns in `plugins/senior-mode/secret-patterns` (provider keys, private
 key headers, generic assignments to names like password or token) and fails with `file:line: kind`,
 never the value. A value whose sha256 is in `.claude/secret-allowlist` with a reason, as read from the
-base branch, passes; `setup` protects that file (spec 130, ADR 0015). Before running the list,
+base branch, passes; `setup` protects that file (spec 130, ADR 0015). The built-in `dependency audit`
+follows it: the audit tool of the lockfile at the root (`pnpm-lock.yaml` or `package-lock.json`,
+`requirements.txt`, `go.sum`, `Cargo.lock`) fails the check on a high or critical advisory, naming the
+package, the advisory and the fixed version; an advisory with no severity is a warning, a missing tool
+fails and says how to install it, and `audit: false` turns it off and shows in `status` (#142). Before running the list,
 `check` stops with `FAIL  dependencies not installed: run <install command>` when a node project declares
 dependencies and has no `node_modules` (nor Plug'n'Play), instead of failing on typecheck. The pre-push hook runs it in any
 terminal; `senior-mode check` runs it in a session

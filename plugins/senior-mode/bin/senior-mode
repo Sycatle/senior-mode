@@ -2250,6 +2250,16 @@ Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 EOF
 }
 
+# Starts a session script in the background, in its own session so that run_kill can kill the group
+# without killing run; without setsid the session cannot be stopped (run_kill says so).
+run_detach() {
+  if command -v setsid >/dev/null; then
+    nohup setsid bash "$1" >/dev/null 2>&1 &
+  else
+    nohup bash "$1" >/dev/null 2>&1 &
+  fi
+}
+
 # Writes the script of a ticket session on a model and starts it in a window of the tmux session
 # senior-mode-run, else in the background. The script leaves <n>.exit when the session ends.
 # shellcheck disable=SC2016 # lines of the script, expanded when it runs
@@ -2277,13 +2287,7 @@ run_launch() {
       tmux new-session -d -s senior-mode-run -n "#$n" "$cmd"
     fi
   else
-    # Its own session, so that a timeout can kill the group without killing run; without setsid the
-    # session cannot be stopped (run_timeout says so).
-    if command -v setsid >/dev/null; then
-      nohup setsid bash "$script" >/dev/null 2>&1 &
-    else
-      nohup bash "$script" >/dev/null 2>&1 &
-    fi
+    run_detach "$script"
   fi
   echo "#$n: session started on $model"
 }
@@ -2317,25 +2321,32 @@ It is back in Backlog. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in th
   [ "$RUN_FAILS" -lt "$RUN_MAXFAIL" ] || RUN_STOP="$RUN_FAILS failed ticket(s) in a row (autonomy.maxConsecutiveFailures)"
 }
 
+# Kills the process group of the session script $1 (<name>.sh, its group in <name>.pgid), the ticket
+# number or docs; $2 names it in the message when it cannot be stopped.
+run_kill() {
+  local name=$1 pgid="" i
+  pgid=$(cat "$RUN_DIR/$name.pgid" 2>/dev/null) || pgid=""
+  # Only the group of this session's script: a pgid file that is empty, 0 or 1, run's own group or a
+  # leader that is not <name>.sh is never signalled.
+  if [[ $pgid =~ ^([2-9]|[1-9][0-9]+)$ ]] && [ "$pgid" != "$(ps -o pgid= -p $$ | tr -d ' ')" ] &&
+    [[ $(ps -o args= -p "$pgid" 2>/dev/null) == *"/$name.sh"* ]]; then
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+    for ((i = 0; i < 20; i++)); do kill -0 -- "-$pgid" 2>/dev/null || break; sleep 0.1; done
+    kill -KILL -- "-$pgid" 2>/dev/null || true
+  else
+    echo "$2: session not stopped (no process group of its own to kill), it may still be running" >&2
+  fi
+}
+
 # A session that outlived autonomy.sessionTimeout: killed with its process group (the group of a tmux
 # window or of setsid; processes that left it by their own setsid are out of reach), then the ticket is
 # labelled needs-human with the log path, recorded as failed and counted for the circuit breaker. Not
 # retried on Opus: ADR 0014 escalates failed work, not a stuck session. Its Status stays In progress,
 # needs-human is the signal.
 run_timeout() {
-  local n=$1 pgid="" i reason log=$RUN_DIR/$1-${RUN_MODEL[$1]}.log
+  local n=$1 reason log=$RUN_DIR/$1-${RUN_MODEL[$1]}.log
   reason="timed out after $RUN_TIMEOUT minute$([ "$RUN_TIMEOUT" -eq 1 ] || echo s)"
-  pgid=$(cat "$RUN_DIR/$n.pgid" 2>/dev/null) || pgid=""
-  # Only the group of this session's script: a pgid file that is empty, 0 or 1, run's own group or a
-  # leader that is not <n>.sh is never signalled.
-  if [[ $pgid =~ ^([2-9]|[1-9][0-9]+)$ ]] && [ "$pgid" != "$(ps -o pgid= -p $$ | tr -d ' ')" ] &&
-    [[ $(ps -o args= -p "$pgid" 2>/dev/null) == *"/$n.sh"* ]]; then
-    kill -TERM -- "-$pgid" 2>/dev/null || true
-    for ((i = 0; i < 20; i++)); do kill -0 -- "-$pgid" 2>/dev/null || break; sleep 0.1; done
-    kill -KILL -- "-$pgid" 2>/dev/null || true
-  else
-    echo "#$n: session not stopped (no process group of its own to kill), it may still be running" >&2
-  fi
+  run_kill "$n" "#$n"
   gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
     echo "#$n: could not label the ticket needs-human" >&2
   gh api "repos/$RUN_SLUG/issues/$n/comments" -f body="An autonomous senior-mode run stopped this ticket's session: $reason (autonomy.sessionTimeout).
@@ -2431,19 +2442,50 @@ run_finish() {
   esac
 }
 
-# After merges, one session brings the living docs up to date, on its own branch and pull request.
+# After merges, one session brings the living docs up to date, on its own branch and pull request. It is
+# bounded like a ticket session (autonomy.sessionTimeout, killed with its process group) and its outcome
+# is written to $RUN_DIR/docs-outcome.json ({session, outcome (done or failed), reason, finishedAt}; not a
+# ticket, so `retro` does not read it). No ticket to label: a failure is on stderr and in the report. The
+# worktree and branch are kept as they were.
+# shellcheck disable=SC2016 # lines of the script, expanded when it runs
 run_docs() {
-  local wt branch=docs/run-$RUN_STAMP
+  local wt branch=docs/run-$RUN_STAMP script=$RUN_DIR/docs.sh reason="" rc started=$SECONDS
   wt="$(dirname "$RUN_ROOT")/$(basename "$RUN_ROOT")-run-docs-$RUN_STAMP"
   git fetch -q origin 2>/dev/null || true
   git worktree add -q -b "$branch" "$wt" "$RUN_BASE" 2>/dev/null || {
     echo "docs: no worktree, skipped" >&2
     return 0
   }
-  (cd "$wt" && SENIOR_MODE_RUN=1 "$RUN_CLAUDE" -p --model sonnet --permission-mode bypassPermissions \
-    --output-format json ${SENIOR_MODE_PLUGIN_DIR:+--plugin-dir "$SENIOR_MODE_PLUGIN_DIR"} \
-    "Pull requests ${RUN_PRS[*]} were just merged on $RUN_SLUG. Bring the living docs up to date with them (README, architecture, user-facing changelog), with the project's docs skill if it has one. If nothing needs to change, stop. Otherwise commit on branch $branch, run senior-mode check, push and open a pull request; never merge it." \
-    >"$RUN_DIR/docs.json" 2>"$RUN_DIR/docs.log") || echo "docs: the session failed, log in $RUN_DIR/docs.log" >&2
+  printf "Pull requests %s were just merged on %s. Bring the living docs up to date with them (README, architecture, user-facing changelog), with the project's docs skill if it has one. If nothing needs to change, stop. Otherwise commit on branch %s, run senior-mode check, push and open a pull request; never merge it.\n" \
+    "${RUN_PRS[*]}" "$RUN_SLUG" "$branch" >"$RUN_DIR/docs.prompt"
+  {
+    echo '#!/usr/bin/env bash'
+    printf 'ps -o pgid= -p $$ | tr -d " " >%q\n' "$RUN_DIR/docs.pgid"
+    printf 'cd %q || exit 1\n' "$wt"
+    printf 'SENIOR_MODE_RUN=1 %q -p --model sonnet --permission-mode bypassPermissions --output-format json' "$RUN_CLAUDE"
+    [ -z "${SENIOR_MODE_PLUGIN_DIR:-}" ] || printf ' --plugin-dir %q' "$SENIOR_MODE_PLUGIN_DIR"
+    printf ' "$(cat %q)" >%q 2>%q\n' "$RUN_DIR/docs.prompt" "$RUN_DIR/docs.json" "$RUN_DIR/docs.log"
+    printf 'echo $? >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/docs.exit" "$RUN_DIR/docs.exit" "$RUN_DIR/docs.exit"
+  } >"$script"
+  run_detach "$script"
+  until [ -f "$RUN_DIR/docs.exit" ]; do
+    if [ $((SECONDS - started)) -ge $((RUN_TIMEOUT * ${SENIOR_MODE_TIMEOUT_UNIT:-60})) ]; then
+      reason="docs session timed out after $RUN_TIMEOUT minute$([ "$RUN_TIMEOUT" -eq 1 ] || echo s)"
+      run_kill docs docs
+      break
+    fi
+    sleep "${SENIOR_MODE_POLL:-15}"
+  done
+  if [ -z "$reason" ]; then
+    rc=$(cat "$RUN_DIR/docs.exit")
+    [ "$rc" -eq 0 ] || reason="docs session failed (exit code $rc, log in $RUN_DIR/docs.log)"
+  fi
+  [ -z "$reason" ] || {
+    echo "docs: $reason" >&2
+    RUN_FAILED+=("$reason (branch $branch kept, log $RUN_DIR/docs.log)")
+  }
+  jq -nc --arg r "$reason" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{session: "docs", outcome: (if $r == "" then "done" else "failed" end),
+    reason: (if $r == "" then null else $r end), finishedAt: $t}' >"$RUN_DIR/docs-outcome.json"
 }
 
 # Is the plugin enabled for the sessions the run starts? Claude Code keeps it in `enabledPlugins`

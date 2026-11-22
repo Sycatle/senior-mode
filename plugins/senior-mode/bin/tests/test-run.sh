@@ -82,6 +82,11 @@ if [[ ${!#} == *"guard probe"* ]]; then
   esac
   exit 0
 fi
+if [[ $PWD == *-run-docs-* ]] && [ "$(cat "$FIX/docs" 2>/dev/null)" = hang ]; then
+  sleep 300 &
+  echo "$$ $!" >"$FIX/pids-docs"
+  wait
+fi
 n=$(sed -nE 's#.*/app-([0-9]+)$#\1#p' <<<"$PWD")
 [ -n "$n" ] || exit 0
 fx=$FIX/claude-$n-$model
@@ -381,6 +386,32 @@ grep -q '#92.*not stopped' "$work/out" || fail "L: the unstopped session is not 
 grep -q 'issues/92/labels.*needs-human' "$GH_LOG" || fail "L: #92 not labelled needs-human"
 jq -e '.outcome == "failed" and .reason == "timed out after 1 minute"' "$repo/.git/senior-mode/runs/"*"/92.json" >/dev/null ||
   fail "L: #92 not recorded as timed out"
+
+# N: the docs session after a merge is bounded by the same timeout (#120): killed with its processes, recorded
+# in the run log (docs-outcome.json) and reported, and run ends normally. Without a timeout it is recorded done.
+config '{"sessionTimeout": 1, "merge": true}' '{"protection": "ruleset"}'
+board 110 '[]'
+session 110-sonnet delivered pr
+echo "$green" >"$FIX/status-110"
+echo hang >"$FIX/docs"
+SECONDS=0
+SENIOR_MODE_TIMEOUT_UNIT=2 run || fail "N: run failed: $(cat "$work/out")"
+[ "$SECONDS" -lt 30 ] || fail "N: run hung on the docs session ($SECONDS s)"
+grep -qx 'pr merge 210 --rebase --match-head-commit sha110 -R acme/app' "$GH_LOG" || fail "N: #110 not merged: $(cat "$GH_LOG")"
+read -r -a pids <"$FIX/pids-docs"
+for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && fail "N: process $pid of the docs session is still alive"; done
+for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
+jq -e '.session == "docs" and .outcome == "failed" and .reason == "docs session timed out after 1 minute" and (.finishedAt | length > 0)' \
+  "$repo/.git/senior-mode/runs/"*"/docs-outcome.json" >/dev/null || fail "N: the docs timeout is not recorded: $(cat "$repo"/.git/senior-mode/runs/*/docs-outcome.json)"
+grep -q 'docs session timed out after 1 minute' "$work/out" || fail "N: report misses the docs timeout: $(cat "$work/out")"
+grep -q 'issues/.*labels' "$GH_LOG" && fail "N: a docs timeout labelled a ticket"
+rm -f "$FIX/docs"
+board 111 '[]'
+session 111-sonnet delivered pr
+echo "$green" >"$FIX/status-111"
+run || fail "N: run failed: $(cat "$work/out")"
+jq -e '.session == "docs" and .outcome == "done" and .reason == null' "$repo/.git/senior-mode/runs/"*"/docs-outcome.json" >/dev/null ||
+  fail "N: a docs session that finished is not recorded done"
 
 # M: before a run starts (#117): the plugin must be enabled and hooks.json present, and once a day a probe
 # session tries a denied, inert command (git -c core.hooksPath=... init <tmp>/ran). The deny must show in

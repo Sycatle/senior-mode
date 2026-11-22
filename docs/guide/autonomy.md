@@ -195,7 +195,9 @@ command, not a model, applies these bounds:
   hooks and guards do not hold under it until it implements them (Sycatle/syacode#13 to #18): use it
   only on a machine where that is acceptable.
 - **End-to-end suites** share `e2e.slots` slots per machine (default 2): `check` runs the check named
-  `e2e` through `senior-mode e2e-lock`, which exports the slot number as `SENIOR_MODE_E2E_SLOT`.
+  `e2e` through `senior-mode e2e-lock`, which exports the slot number as `SENIOR_MODE_E2E_SLOT`. The lock files live in `$XDG_RUNTIME_DIR/senior-mode-e2e`, else in
+  a private `senior-mode-e2e-<uid>` directory of `$TMPDIR` (or `/tmp`); a directory that is a link, not yours or not
+  mode 0700 is refused.
 
 ### Scheduled runs
 

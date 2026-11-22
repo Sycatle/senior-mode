@@ -21,11 +21,16 @@ for file in "$plugin"/agents/*.md; do
 done
 
 # The script's commands are the alternatives of its usage line, up to their first argument.
-usage=$(grep -o 'usage: senior-mode .*"' "$plugin/bin/senior-mode" | head -n 1 | sed 's/^usage: senior-mode //; s/"$//')
+usage=$(sed -n 's/^ *die "usage: senior-mode \(.*\)"$/\1/p' "$plugin/bin/senior-mode")
+[ -n "$usage" ] && [ "$(wc -l <<<"$usage")" = 1 ] || {
+  drift "$plugin/bin/senior-mode: not exactly one main usage line (die \"usage: senior-mode ...\")"
+  exit 1
+}
 while IFS= read -r alt; do
   cmd=$(awk '{ for (i = 1; i <= NF && $i !~ /^[-<[]/; i++) printf "%s%s", (i > 1 ? " " : ""), $i }' <<<"$alt")
   [ -n "$cmd" ] || continue
-  grep -qF "| \`senior-mode $cmd" "$guide/commands.md" || drift "script command '$cmd': no row in $guide/commands.md"
+  # The command then a space or the closing backquote: `status` is not found in a `statusline` row.
+  grep -qE "^\| \`senior-mode ${cmd}[ \`]" "$guide/commands.md" || drift "script command '$cmd': no row in $guide/commands.md"
 done <<<"${usage// | /$'\n'}"
 
 for file in README.md README.fr.md "$guide/commands.md"; do

@@ -37,6 +37,11 @@ reset; : >plugins/senior-mode/agents/ops.md
 expect_fail "agent without a section" "agent ops"
 reset; sed -i 's/| check"/| check | schedule install [--at HH:MM]"/' plugins/senior-mode/bin/senior-mode
 expect_fail "script command without a row" "schedule install"
+reset; sed -i 's/| check"/| check | status | statusline"/' plugins/senior-mode/bin/senior-mode
+printf '| `senior-mode statusline` | x |\n' >>docs/guide/commands.md
+expect_fail "a longer command's row taken for a shorter one" "'status'"
+reset; echo 'echo hi' >plugins/senior-mode/bin/senior-mode
+expect_fail "no usage line" "usage line"
 reset; printf '| `/senior-mode:ship` | Ships | Available |\n' >>README.md; printf '## B\n' >>README.fr.md; printf '## B\n' >>README.md
 expect_fail "available command without a skill" "senior-mode:ship"
 reset; printf '| `/senior-mode:ship` | Ships | Coming in v0.4 |\n' >>README.md

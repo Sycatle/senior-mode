@@ -663,6 +663,7 @@ docs/specs/, docs/adr/              this project's own specs and ADRs
 |---|---|
 | v0.1 Bootstrap | Plugin skeleton, `setup` (generic + node presets), `frame`, discipline skills, agents, hooks; written by hand, then used to plan the rest |
 | v0.2 to v0.4, shipped together | Daily loop: `next`, `status`, spec index and drift check, git hooks. Autonomy: `run`, review status check, protected zones, circuit breaker, model escalation, scheduled runs on the agent machine. Breadth: python, go, rust presets, `retro`, generic `docs`, French triggers. Each piece passes the dogfooding gate (ADR 0011) before it is merged |
+| v0.3 Security | A `security` agent on L tickets and protected zones, a full security section in `review`, native dependency audit and a secret scan of the diff in the presets' checks (blocking on high and critical), risks found outside a ticket filed as triaged issues |
 | v1.0 | Evals green, marketplace publication |
 
 ## 20. Open questions

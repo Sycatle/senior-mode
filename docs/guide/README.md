@@ -28,8 +28,8 @@ plugin does today, and the spec describes where it is going.
 | Milestone | Content |
 |---|---|
 | v0.1 Bootstrap | `setup`, `frame`, discipline skills, agents, hooks (shipped) |
-| v0.2 to v0.4, shipped together | `next`, `status`, `run`, protected zones, circuit breaker, model escalation, python, go and rust presets, `retro`, generic `docs`; `schedule`; docs drift check (shipped) |
-| v0.3 | Security: a `security` agent, a full security section in `review`, dependency audit and secret scan in the checks |
+| v0.2 (planned as v0.2 to v0.4, released together) | `next`, `status`, `run`, protected zones, circuit breaker, model escalation, python, go and rust presets, `retro`, generic `docs`; `schedule`; docs drift check |
+| v0.3 Security | A `security` agent, a full security section in `review`, dependency audit and secret scan in the checks |
 | v1.0 | Evals green, docs, marketplace publication |
 
 Source: [spec §19](../specs/0001-senior-mode.md#19-delivery-plan).

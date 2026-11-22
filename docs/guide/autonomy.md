@@ -82,22 +82,21 @@ the git hooks and the Bash guard still apply, but GitHub will not enforce the st
 
 ### GitHub's scanners
 
-`setup github` also switches on Dependabot alerts, Dependabot security updates, secret scanning and
-push protection (`vulnerability-alerts`, `automated-security-fixes` and `security_and_analysis` of the
+`setup github` also switches on Dependabot alerts, secret scanning and
+push protection (`vulnerability-alerts` and `security_and_analysis` of the
 repository API), and says for each whether it is `on` or `not enabled` with GitHub's reason: a plan
 that refuses (HTTP 403 or 422, as private repositories without GitHub Advanced Security do) does not
-stop setup. It writes `.github/dependabot.yml` for the project's ecosystem (npm, pip, gomod or cargo,
-from the preset), with a group for security updates and `open-pull-requests-limit: 0`, so Dependabot
-opens no version-update pull requests; a file of your own is kept, and setup does not commit it.
-GitHub offers no severity filter for security updates in that file: they come for every severity,
-and the High-or-critical threshold applies where senior-mode files the alerts as issues.
+stop setup. It does not turn on Dependabot security updates and writes no `.github/dependabot.yml`:
+GitHub offers no severity filter for security-update pull requests, so they would come for every
+severity, and alerts become issues only (below). A `dependabot.yml` of your own is left untouched, and
+setup says so.
 
 When `run` starts and when `retro` runs, each open high or critical Dependabot alert and each open
 secret-scanning alert (treated as critical) gets one `security` issue, through
 `senior-mode issue create --kind --path --rule`: the alert's `security-id` makes a second pass file
 nothing new. The body names the package or secret type and links the alert; it holds no
 vulnerability detail and never the secret's value, and no repository security advisory is opened for
-an alert (`--no-advisory`): it is a dependency's CVE or a leaked token, not a flaw in your own code. Moderate and low alerts are left to Dependabot.
+an alert (`--no-advisory`): it is a dependency's CVE or a leaked token, not a flaw in your own code. Moderate and low alerts stay as alerts on GitHub.
 An alert list GitHub refuses (scanning not enabled, no permission, 404) is reported and does not stop
 the command.
 

@@ -64,3 +64,4 @@ hooks. The posture has to hold on GitHub Free as well as with GitHub's security 
   Amended (#142): this line said "each preset maintains an audit command"; the audit is a built-in step of `check`, as the Decision says.
 - An Opus pass on L tickets and protected zones costs more, on purpose, where a miss costs most.
 - Until #175, enforcement against a session that escapes the hooks rests on the hooks themselves.
+  Amended (#222): the Decision lists Dependabot security updates for high and critical only; GitHub has no severity filter for them, so `setup github` turns them off (no `automated-security-fixes`, no `dependabot.yml`) and Dependabot alerts become issues only, through the #144 path.

@@ -29,7 +29,9 @@ case "$*" in
     [ "$(FLAG=--body-file arg "$@")" != - ] || cat >"$FIX/stdin-body"
     f=$(FLAG=--body-file arg "$@"); [ "$f" != - ] || f="$FIX/stdin-body"
     n=$(jq '[42, (.[].number + 1)] | max' "$FIX/issues.json")
-    jq --argjson n "$n" --arg t "$(FLAG=--title arg "$@")" --rawfile b "$f" '. + [{number: $n, title: $t, body: $b}]' \
+    labels=$(FLAG=--label arg "$@" | jq -R . | jq -sc 'map({name: .})')
+    jq --argjson n "$n" --arg t "$(FLAG=--title arg "$@")" --rawfile b "$f" --argjson l "$labels" \
+      '. + [{number: $n, title: $t, body: $b, labels: $l}]' \
       "$FIX/issues.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issues.json"
     echo "https://github.com/acme/app/issues/$n" ;;
   "issue edit"*)
@@ -191,6 +193,28 @@ create "${risk[@]}" --rule quoted --title "Other rule" || fail "another rule ref
 logged "issue create" || fail "another rule is deduplicated"
 # A closed issue does not count: the list is of open issues.
 logged "--state open" || fail "the fingerprint is searched in closed issues: $(cat "$GH_LOG")"
+# A title clash is not a duplicate: with a fingerprint, an open issue of the same title that has no
+# or another security-id is left alone and the risk is filed as a new issue.
+echo '[{"number": 7, "title": "Epic"}, {"number": 50, "title": "Shell injection in deploy", "labels": [], "body": "Unrelated ticket"}]' >"$FIX/issues.json"
+create "${risk[@]}" || fail "a title clash refused: $(cat "$work/err")"
+[ "$(count "issue create")" -eq 1 ] || fail "a title clash is not filed as a new issue: $(cat "$GH_LOG")"
+[ "$(count "issue edit")" -eq 0 ] || fail "a fingerprinted risk edited another issue: $(cat "$GH_LOG")"
+[ "$(jq -r '.[] | select(.number == 50) | .body' "$FIX/issues.json")" = "Unrelated ticket" ] || fail "the other issue lost its body"
+# The line must be in an open issue labelled security: a plain issue quoting it does not count.
+echo "[{\"number\": 60, \"title\": \"Quote\", \"labels\": [], \"body\": \"security-id: $id\"}]" >"$FIX/issues.json"
+create "${risk[@]}" || fail "a quoted security-id refused: $(cat "$work/err")"
+[ "$(count "issue create")" -eq 1 ] || fail "an issue without the security label counts as the risk: $(cat "$GH_LOG")"
+printf '[{"number": 61, "title": "Found", "labels": [{"name": "security"}], "body": "x\\nsecurity-id: %s"}]\n' "$id" >"$FIX/issues.json"
+create "${risk[@]}" || fail "a labelled duplicate failed: $(cat "$work/err")"
+head -1 "$work/out" | grep -q '^#61 .*already filed' || fail "labelled duplicate not found: $(cat "$work/out")"
+# A newline in a part would let two risks hash alike: refused.
+bad_fp=(--title "X" --body-file "$work/body.md" --size S --severity high)
+create "${bad_fp[@]}" --kind $'a\nb' --path c --rule d && fail "a newline in --kind accepted"
+create "${bad_fp[@]}" --kind a --path $'b\nc' --rule d && fail "a newline in --path accepted"
+create "${bad_fp[@]}" --kind a --path b --rule $'c\nd' && fail "a newline in --rule accepted"
+[ "$(count "issue create")" -eq 0 ] || fail "created despite a newline in the fingerprint"
+echo '[{"number": 7, "title": "Epic"}]' >"$FIX/issues.json"
+
 # The fingerprint also works with a body on stdin.
 echo '[{"number": 7, "title": "Epic"}]' >"$FIX/issues.json"
 echo "from stdin" | create --title "From stdin risk" --body-file - --size S --severity high \

@@ -113,22 +113,27 @@ priority, massively parallel, isolated, with senior-level rigour enforced by the
 
 Order: board rigour -> 0.2.0 -> security 0.3.0 -> autonomy daemon 0.4.0 -> proof -> evals -> 1.0.
 
+## Decisions (framing 2026-11-22, the backlog lives on the board)
+
+- Everything still to come is an issue on the board; this file keeps the why, not the list.
+  Waves not yet framed are an L epic with their known pieces as Backlog sub-issues: none is Ready
+  before the wave's framing (spec, ADRs, human acceptance).
+- Dogfooding of run, schedule, next, retro, review and docs is in v0.3, before the security work:
+  its findings feed both waves. It waits on Claude being logged in on sya-dev-01 (#132).
+- Reviewer unavailable (usage window, rate limit): wait, `senior-mode/review` stays pending. The
+  author may review only on the owner's explicit request, says so in the comment, and an
+  independent re-review is filed (first case: #128 and #129, re-review #166). ADR in #148.
+- Milestone 4 is "v0.4 Autonomy" (was "v0.4 Breadth", empty).
+
 ## Next
 
-Done 2026-11-22: #112, #114 and the two blocking review findings (run merge gates) went into #113,
-reviewed twice, merged (rebase, main 3bed96e); #79 #82 #85 closed. Review follow-ups filed:
-#115-#121 (security wave).
+Done 2026-11-22: #113 (82 commits), #122 (docs drift, docs pass), board rigour #123 #124 #125
+(#127 #128 #129).
 
-Done: #64 docs drift check + #58 docs pass (#122).
-
-Framing 2026-11-22 (board rigour): the board had 24 closed tickets still In progress. From now on
-senior-mode's own process applies strictly here: waves through `frame`, tickets through the `next`
-flow with the board moved at each step, WIP 1. Spec `docs/specs/123-board-rigour.md`.
-
-1. Board rigour, before 0.2.0: #123 Done on merge/close + setup checks Project workflows,
-   #124 `status` board drift + `--fix`, #125 `wip` limit.
-2. Release 0.2.0 (`senior-mode release`, ci.mode local).
-3. Security wave (above): ADR, review section + security agent, check audits, #115-#121 -> 0.3.0.
-4. Frame the autonomy wave (L: epic, full spec, ADRs, human acceptance), deliver it -> 0.4.0.
-5. Proof: sandbox, then the daemon on senior-mode itself on sya-dev-01 for a week.
-6. Evals green (`evals/run.sh`), then stop for the 1.0 release and marketplace publication.
+1. v0.2: release 0.2.0 (#167), independent re-review (#166), small follow-ups #161-#165.
+2. v0.3: Claude on sya-dev-01 (#132, a human), dogfooding #133-#138, then the security epic #130
+   (frame it first; sub-issues #139-#145 and #115-#121) -> 0.3.0.
+3. v0.4: frame the autonomy epic #131 (sub-issues #146-#156), deliver it, sandbox proof #157 -> 0.4.0.
+4. v1.0: a week of the daemon on senior-mode (#158), evals green (#159), then the human releases 1.0
+   on the marketplace (#160).
+5. Later, no milestone: #168 (release start version), #169 (spec/code drift).

@@ -107,9 +107,26 @@ and, in `actions` mode, the workflow all run it, from the repository root.
 - A node project that declares dependencies but has no `node_modules` fails at once with
   `dependencies not installed: run <install command>`, before any check runs.
 - When `envGuard.forbidden` lists something, setup adds the `env guard` check (below).
+- `check` starts with a built-in `secret scan` that is not in the list and cannot be turned off
+  (below).
 
-Not in the list yet: spec drift (planned, no milestone yet), and the dependency audit and secret
-scanning ([v0.3](https://github.com/Sycatle/senior-mode/milestone/3)). You can add your own as a check entry.
+Not in the list yet: spec drift (planned, no milestone yet), and the dependency audit
+([v0.3](https://github.com/Sycatle/senior-mode/milestone/3)). You can add your own as a check entry.
+
+### Secret scan
+
+`senior-mode check` reads the lines your branch adds (`git diff <base>...HEAD`, the base being the
+default branch) and fails on a provider key (AWS, GitHub, Stripe, Slack, Google, OpenAI, Anthropic),
+a private key header, or a value of 16 characters or more assigned to a name such as `password`,
+`secret`, `token` or `api_key`. It prints `file:line: kind` and never the value. The patterns are in
+`plugins/senior-mode/secret-patterns`. Without a default branch to compare with, the scan shows as
+`skip`.
+
+A false positive is lifted by a human: add `<sha256 of the value> <reason>` to
+`.claude/secret-allowlist` (compute it with `printf %s '<value>' | sha256sum`) and merge that change
+first. The file is read from the base branch, so a pull request cannot allowlist its own secret;
+`setup` adds it to `protected`, and agents in a run cannot write it. For a private key the value is the
+header line, so one entry lifts every key of that type.
 
 ### Environment guard
 

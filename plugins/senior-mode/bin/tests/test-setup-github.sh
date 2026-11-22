@@ -382,6 +382,19 @@ setup
 [ "$(cat "$co")" = '# senior-mode:begin
 *.pem @x' ] || fail "broken markers: file rewritten: $(cat "$co")"
 grep -q "markers" "$work/out" || fail "broken markers not reported: $(cat "$work/out")"
+review_required || fail "broken markers over a file that owns: review lowered"
+grep -q "stays required: .github/CODEOWNERS, the CODEOWNERS file GitHub reads, has an owner entry" "$work/out" ||
+  fail "broken markers: reason not said: $(cat "$work/out")"
+printf '# senior-mode:begin\n# no owner here\n' >"$co"
+setup
+review_required && fail "broken markers over a file with no owner line: review required"
+
+# Never lowered: a ruleset that already requires code owner review keeps it while nothing in the files owns.
+jq -n '{rules: [{type: "pull_request", parameters: {require_code_owner_review: true}}]}' >"$FIX/ruleset-9.json"
+setup
+review_required || fail "ruleset already requiring review lowered"
+grep -q "stays required: the ruleset already requires it" "$work/out" || fail "ruleset reason not said: $(cat "$work/out")"
+echo '{"rules": []}' >"$FIX/ruleset-9.json"
 
 # An organization has no user to own the file: the owner is the signed-in user.
 rm "$co"
@@ -427,8 +440,9 @@ for shadow in CODEOWNERS docs/CODEOWNERS; do
   [ "$(cat "$repo/$shadow")" = "* @alice" ] || fail "$shadow: the existing file was changed"
   grep -q "CODEOWNERS: $shadow would be shadowed" "$work/out" || fail "$shadow: refusal not said: $(cat "$work/out")"
   logged "rulesets" || fail "$shadow: setup stopped at the refusal"
-  review_required && fail "$shadow: code owner review required although no CODEOWNERS owns the zones"
-  grep -q "code owner review is not required" "$work/out" || fail "$shadow: no word that review is not required: $(cat "$work/out")"
+  review_required || fail "$shadow: the file GitHub reads owns by hand, review no longer required"
+  grep -q "stays required: $shadow, the CODEOWNERS file GitHub reads, has an owner entry" "$work/out" ||
+    fail "$shadow: reason not said: $(cat "$work/out")"
 done
 # Already shadowed by a .github/CODEOWNERS: the block is written, the lost file is named on each run.
 mkdir -p "$repo/.github"
@@ -439,6 +453,13 @@ for i in 1 2; do
 done
 grep -q "^\*.pem @maintainer$" "$co" || fail "block not written next to a shadowed file: $(cat "$co")"
 rm -rf "$repo/.github" "$repo/docs" "$repo/CODEOWNERS"
+# A root file with no owner line owns nothing: nothing to keep, review not required.
+rm -rf "$repo/.github" "$repo/docs" "$repo/CODEOWNERS"
+printf '# nobody yet\n' >"$repo/CODEOWNERS"
+setup
+review_required && fail "review required with a root CODEOWNERS that owns nothing"
+grep -q "code owner review is not required" "$work/out" || fail "no word that review is not required: $(cat "$work/out")"
+rm -f "$repo/CODEOWNERS"
 setup
 rm -f "$FIX/default-codeowners"
 

@@ -918,8 +918,7 @@ codeowners_pattern() {
 # GitHub reads .github/CODEOWNERS before the root's and docs/'s: it never creates that shadow over a
 # file of the project (the ownership there would be lost without a word), and names one it finds.
 # The globs CODEOWNERS cannot spell are listed in the block too, so the file says what it leaves out.
-# Sets codeowners_owns to true when the file owns a protected zone, the only case where the ruleset can
-# require code owner review: an owner who is the author could never get the approval.
+# Sets codeowners_owns to true when the block owns a protected zone; review_reason decides on the review.
 setup_codeowners() { # root owner globs-json slug
   local file=$1/.github/CODEOWNERS glob pat entries="" skipped="" block new verb shadow="" s there
   codeowners_owns=false
@@ -957,7 +956,7 @@ setup_codeowners() { # root owner globs-json slug
       /^# senior-mode:begin/ { if (seen++) bad = 1; print ENVIRON["BLOCK"]; skip = 1; next }
       /^# senior-mode:end/ { if (!skip) bad = 1; skip = 0; next }
       !skip { print } END { exit (bad || skip) }' "$file"); then
-    echo "CODEOWNERS: senior-mode markers broken, file left untouched, so it is not counted as owning the protected zones; restore one begin and one end marker"
+    echo "CODEOWNERS: senior-mode markers broken, file left untouched; restore one begin and one end marker"
     return 0
   elif [ "$new" != "$(cat "$file")" ]; then
     printf '%s\n' "$new" >"$file"
@@ -983,6 +982,33 @@ setup_codeowners() { # root owner globs-json slug
     there="could not read .github/CODEOWNERS on the default branch: $there"
   fi
   echo "CODEOWNERS: code owner review enforces nothing until .github/CODEOWNERS is on the default branch ($there): commit it and merge it"
+}
+
+# True when the senior-mode ruleset of the repository already requires code owner review.
+ruleset_review_on() { # slug
+  local id
+  id=$(gh_retry api "repos/$1/rulesets" \
+    --jq '[.[] | select(.name == "senior-mode" and .source_type == "Repository")][0].id // empty' 2>/dev/null) || return 1
+  [ -n "$id" ] || return 1
+  [ "$(gh_retry api "repos/$1/rulesets/$id" \
+    --jq '[.rules[]? | select(.type == "pull_request") | .parameters.require_code_owner_review] | any' 2>/dev/null)" = true ]
+}
+
+# Why the ruleset requires code owner review, said in words, or nothing and status 1 when no reason holds.
+# Setup never lowers a protection: the review stays required when the block owns a zone, when the
+# CODEOWNERS file GitHub reads (.github/, then the root, then docs/; a shadow refusal and broken markers
+# included) has an owner entry, or when the ruleset already requires it.
+review_reason() { # root block-owns slug
+  local f
+  [ "$2" != true ] || { echo "the block owns the protected zones"; return 0; }
+  for f in .github/CODEOWNERS CODEOWNERS docs/CODEOWNERS; do
+    [ -e "$1/$f" ] || continue
+    ! grep -qE '^[[:space:]]*[^#[:space:]][^[:space:]]*[[:space:]]+[^#[:space:]]' "$1/$f" ||
+      { echo "$f, the CODEOWNERS file GitHub reads, has an owner entry"; return 0; }
+    break
+  done
+  ! ruleset_review_on "$3" || { echo "the ruleset already requires it"; return 0; }
+  return 1
 }
 
 # Creates the senior-mode ruleset of the repository, or updates it; $2 is whether it requires code
@@ -1085,7 +1111,7 @@ setup_security() { # root slug
 }
 
 setup_github() {
-  local root file slug owner name owner_type project number id fields labels label color description err ci="" globs review=false codeowner codeowners_owns=false
+  local root file slug owner name owner_type project number id fields labels label color description err ci="" globs review=false codeowner codeowners_owns=false reason
   case "$*" in "") ;; "--ci local" | "--ci actions") ci=$2 ;; *) usage ;; esac
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
@@ -1139,9 +1165,15 @@ type:chore|ededed|Maintenance with no user-visible change'
     [ "$owner_type" != Organization ] || codeowner=$(gh_retry api user --jq .login) || die "cannot read your GitHub login"
   fi
   setup_codeowners "$root" "$codeowner" "$globs" "$slug"
-  review=$codeowners_owns
-  [ "$globs" = "[]" ] || [ "$review" = true ] ||
-    echo "code owners: code owner review is not required, no CODEOWNERS entry owns the protected zones (a rule requiring it would wait for an approval nobody can give)"
+  if [ "$globs" != "[]" ]; then
+    if reason=$(review_reason "$root" "$codeowners_owns" "$slug"); then
+      review=true
+      [ "$codeowners_owns" = true ] ||
+        echo "code owners: code owner review stays required: $reason; setup never lowers an existing protection, and .github/CODEOWNERS owns no protected zone"
+    else
+      echo "code owners: code owner review is not required, no CODEOWNERS entry owns anything and the ruleset did not require it (a rule requiring it would wait for an approval nobody can give)"
+    fi
+  fi
 
   # Before the workflows: a refused ruleset forces ci.mode local, which decides what happens to them.
   if err=$(setup_ruleset "$slug" "$review" 2>&1 >/dev/null); then

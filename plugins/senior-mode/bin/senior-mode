@@ -7,6 +7,7 @@ DEFAULTS='{
   "language": "en",
   "ci": { "mode": "local" },
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "merge": false, "escalate": true, "schedule": "02:00" },
+  "agent": { "command": "claude" },
   "e2e": { "slots": 2 },
   "limits": { "prLines": 400 },
   "protected": [],
@@ -1491,11 +1492,14 @@ setup_statusline() {
   fi
 }
 
-# The claude CLI: on PATH, else where its installer puts it (cron and systemd timers have a short PATH).
-claude_bin() {
-  command -v claude 2>/dev/null && return 0
-  [ -x "$HOME/.local/bin/claude" ] || die "claude not found on PATH or in ~/.local/bin"
-  printf '%s\n' "$HOME/.local/bin/claude"
+# The headless CLI named by agent.command (default claude): on PATH, else where its installer puts it
+# (cron and systemd timers have a short PATH).
+agent_bin() {
+  local cmd
+  cmd=$(config_get agent.command)
+  command -v "$cmd" 2>/dev/null && return 0
+  [ -x "$HOME/.local/bin/$cmd" ] || die "$cmd not found on PATH or in ~/.local/bin (agent.command)"
+  printf '%s\n' "$HOME/.local/bin/$cmd"
 }
 
 # The task of the headless session of one ticket (spec 0001 §10, ADR 0007): number, title, branch.
@@ -1696,7 +1700,7 @@ run() {
   RUN_MERGE=$(config_get autonomy.merge)
   RUN_ESCALATE=$(config_get autonomy.escalate)
   RUN_PROTECTION=$(jq -r '.github.protection // empty' "$file")
-  RUN_CLAUDE=$(claude_bin)
+  RUN_CLAUDE=$(agent_bin)
   RUN_SLUG=$(repo_slug)
   # The main checkout, even when run from a ticket worktree: worktrees are its siblings.
   RUN_ROOT=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
@@ -1806,7 +1810,7 @@ schedule() {
       at=${at:-$(config_get autonomy.schedule)}
       [[ $at =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "autonomy.schedule must be a time as HH:MM, not $at"
       [[ $SCHED_ROOT$SELF != *[\'\"\\%\$\`]* ]] || die "schedule: a path holds a quote, a backslash, % or \$, which a unit cannot carry"
-      # A login shell, so ~/.local/bin/claude is on PATH.
+      # A login shell, so the agent.command CLI (claude by default) is on PATH; run also looks in ~/.local/bin.
       cmd="cd '$SCHED_ROOT' && '$SELF' run${max:+ --max $max}"
       me=${USER:-$(id -un)}
       if command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then

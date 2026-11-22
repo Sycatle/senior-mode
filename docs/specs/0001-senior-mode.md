@@ -302,7 +302,9 @@ for each, at most P at a time:
   `<type>/<issue>-<slug>` from the default branch (`fix` for `type:bug`, `chore` for `type:task` and
   `type:chore`, else `feat`), reused when they exist, and the status `In progress`; a ticket that
   cannot be opened is given up;
-- starts `claude -p --model sonnet --permission-mode bypassPermissions` in it, with
+- starts `claude -p --model sonnet --permission-mode bypassPermissions` in it (`claude` is the config
+  key `agent.command`; another headless CLI that takes the same flags can replace it, but the plugin's
+  hooks and guards do not hold under it until it implements them), with
   `SENIOR_MODE_RUN=1` and `SENIOR_MODE_RUN_OUTCOME` (and `--plugin-dir` from
   `SENIOR_MODE_PLUGIN_DIR`), in a window of the tmux session `senior-mode-run`, or in the background
   without tmux; scripts, prompts and logs go to `.git/senior-mode/runs/<stamp>/`;

@@ -63,6 +63,16 @@ dir=$repo/web edit deny "../.claude/settings.json" Edit "" "relative path taken 
 dir=$link edit deny "$link/.github/workflows/ci.yml" Edit "" "reached through a symlink"
 dir=$work/wt edit deny "$work/wt/.githooks/pre-push" Edit "" "inside a linked worktree"
 dir=$work/wt edit deny ".claude/settings.json" Edit "" "relative path inside a linked worktree"
+# #116: the git hooks and the git config (core.hooksPath) guard the run too, worktrees included.
+edit deny "$repo/.git/hooks/pre-push" Write
+edit deny ".git/hooks/pre-commit" Edit "" "relative path to the git hooks"
+edit deny "$repo/.git/config" Edit
+dir=$work/wt edit deny "$repo/.git/hooks/pre-push" Write "" "the hooks of a linked worktree live in the common dir"
+dir=$work/wt bash_ deny "cp /tmp/x $repo/.git/hooks/pre-push"
+bash_ deny "echo exit 0 > .git/hooks/pre-push"
+bash_ deny "rm .git/hooks/pre-push"
+edit allow "$repo/.git-notes.md" Write "" "a name that only starts like .git"
+dir=$work/wt edit deny ".claude/settings.json" Edit
 grep -q "\.claude/settings.json" <<<"$reason" || fail "deny reason does not name the path: $reason"
 grep -qi "human" <<<"$reason" || fail "deny reason gives no way forward: $reason"
 

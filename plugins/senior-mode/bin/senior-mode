@@ -358,9 +358,10 @@ sha256() {
 # The secret scan of `check` (#143, spec 130): the lines added by <base>...HEAD against the patterns of the
 # plugin (`secret-patterns`). Prints `file:line: kind` for each finding, never the value; exit 1 when there
 # is one. A value whose sha256 is in `.claude/secret-allowlist` of the base, with a reason, is lifted: a
-# branch cannot allowlist its own secret.
+# branch cannot allowlist its own secret. Runs as its own process (`senior-mode secret-scan`).
 secret_scan() {
   local base patterns allow added kind mode re path line text m value findings flags sep=$'\x1f'
+  local dotted='^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$'
   base=$(default_branch) || {
     echo "skipped: no base branch"
     return 0
@@ -370,6 +371,11 @@ secret_scan() {
   allow=$(git show "$base:.claude/secret-allowlist" 2>/dev/null |
     grep -E '^[0-9a-f]{64}[[:space:]]+[^[:space:]]' | cut -c1-64) || true
   added=$(mktemp)
+  # The copy holds the secrets of the diff: it goes away whatever way this process ends.
+  # shellcheck disable=SC2064 # expand now: $added is local and gone when the trap runs
+  trap "rm -f '$added'" EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   # The added lines as <file> <line> <text>. A "+++ " line is a file header only before the first hunk.
   git -c core.quotePath=false diff -U0 --no-color --no-ext-diff --no-textconv --no-renames --no-prefix \
     "$base...HEAD" | awk -v s="$sep" '
@@ -386,20 +392,35 @@ secret_scan() {
       while IFS=$sep read -r path line text; do
         while IFS= read -r m; do
           value=$m
-          if [ "$mode" = assign ]; then
-            # The value, not the name: a name only looks like a secret when it holds letters and digits
-            # and is not a placeholder.
-            value=$(sed -E 's/^[^:=]*[:=][[:space:]]*["'"'"']?//' <<<"$m")
-            [[ $value =~ [0-9] && $value =~ [A-Za-z] ]] || continue
-            ! grep -qiE 'example|changeme|placeholder|your|dummy|sample|xxxx' <<<"$value" || continue
-          fi
+          case $mode in
+            assign)
+              # The value, not the name. A name only looks like a secret when its value holds letters
+              # and digits and is neither a placeholder nor a dotted identifier (process.env.TOKEN_1).
+              value=$(sed -E 's/^[^:=]*[:=][[:space:]]*["'"'"']?//' <<<"$m")
+              [[ $value =~ [0-9] && $value =~ [A-Za-z] && ! $value =~ $dotted ]] || continue
+              ! grep -qiE 'example|changeme|placeholder|your|dummy|sample|xxxx' <<<"$value" || continue
+              ;;
+            url)
+              ! grep -qiE '^.{0,5}$|pass|secret|example|changeme|your|dummy|sample|test|xxx|[*$%{<]' \
+                <<<"$(sed -E 's#^[^:]*://[^:/@]*:([^@]*)@.*#\1#' <<<"$m")" || continue
+              ;;
+            block)
+              # The whole key, so that the header, public text, lifts nothing but itself.
+              value=$(awk -F"$sep" -v p="$path" -v l="$line" '
+                $1 == p && $2 + 0 >= l {
+                  if (n && $2 + 0 != prev + 1) exit
+                  prev = $2 + 0
+                  printf "%s%s", (n++ ? "\n" : ""), $3
+                  if ($3 ~ /-----END /) exit
+                }' "$added")
+              ;;
+          esac
           ! grep -qxF "$(sha256 "$value")" <<<"$allow" || continue
           printf '%s:%s: %s\n' "$path" "$line" "$kind"
         done < <(grep -o "${flags[@]}" -- "$re" <<<"$text")
       done < <(grep "${flags[@]}" -- "$re" "$added")
     done <"$patterns" | sort -t: -k1,1 -k2,2n | uniq
   ) || true
-  rm -f "$added"
   [ -n "$findings" ] || return 0
   printf '%s\n' "$findings"
   echo "a value is lifted by \"<sha256 of the value> <reason>\" in .claude/secret-allowlist on $base (printf %s <value> | sha256sum)"

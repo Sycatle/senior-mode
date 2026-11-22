@@ -116,17 +116,25 @@ Not in the list yet: spec drift (planned, no milestone yet), and the dependency 
 ### Secret scan
 
 `senior-mode check` reads the lines your branch adds (`git diff <base>...HEAD`, the base being the
-default branch) and fails on a provider key (AWS, GitHub, Stripe, Slack, Google, OpenAI, Anthropic),
-a private key header, or a value of 16 characters or more assigned to a name such as `password`,
-`secret`, `token` or `api_key`. It prints `file:line: kind` and never the value. The patterns are in
-`plugins/senior-mode/secret-patterns`. Without a default branch to compare with, the scan shows as
-`skip`.
+default branch) and fails on a provider key (AWS, GitHub, GitLab, npm, Stripe, Slack, Google, OpenAI,
+Anthropic, SendGrid, Azure storage), a URL with credentials (`scheme://user:password@host`), a private
+key, or a value of 16 characters or more assigned to a name such as `password`, `secret`, `token` or
+`api_key`. For that last kind it is a heuristic, not an entropy measure: the value needs a letter and a
+digit, and placeholders, brackets and dotted identifiers (`process.env.TOKEN_1`) are left alone. It
+prints `file:line: kind` and never the value. The patterns are in `plugins/senior-mode/secret-patterns`.
+Without a default branch to compare with, the scan shows as `skip`.
 
 A false positive is lifted by a human: add `<sha256 of the value> <reason>` to
-`.claude/secret-allowlist` (compute it with `printf %s '<value>' | sha256sum`) and merge that change
-first. The file is read from the base branch, so a pull request cannot allowlist its own secret;
-`setup` adds it to `protected`, and agents in a run cannot write it. For a private key the value is the
-header line, so one entry lifts every key of that type.
+`.claude/secret-allowlist` and merge that change first (compute the hash with
+`printf %s '<value>' | sha256sum`). The value is the key, token or password itself, without the name or
+quotes; for a URL it is the whole URL, and for a private key the whole block from the `BEGIN` line to the
+`END` line, so `printf %s "$(cat key.pem)" | sha256sum` for a file that holds only the key. An entry
+lifts that value and nothing else. The file is read from the base branch, so a pull request cannot
+allowlist its own secret; `setup` adds it to `protected`, and agents in a run cannot write it.
+
+The scan reads the net diff of the branch. A secret added in one commit and deleted in a later one is
+already in the pushed history: rotate it, do not just delete it. It does not read JWTs, binary files
+or commits that are not part of `<base>...HEAD`.
 
 ### Environment guard
 

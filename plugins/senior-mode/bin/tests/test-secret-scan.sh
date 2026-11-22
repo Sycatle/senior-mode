@@ -71,6 +71,30 @@ generic=$(rep Zx9kQ4mW 2)
 kind "generic secret" "$generic" "  password = \"$generic\""
 kind "generic secret" "$generic" "API_TOKEN=$generic"
 
+# Providers and shapes added after review: OpenAI project keys with _ and - in the body, npm, GitLab,
+# SendGrid, credentialed URLs, Azure storage keys, symbols in a generic value.
+p=sk-proj-
+proj="${p}$(rep aB3x-9Zq_ 4)"
+kind "OpenAI key" "$proj" "OPENAI=$proj"
+p=npm_
+npm="${p}$(rep aB3x9Zq2 5)"
+kind "npm token" "$npm" "NPM=$npm"
+p=glpat-
+gitlab="${p}$(rep aB3x9Zq2 3)"
+kind "GitLab token" "$gitlab" "GITLAB=$gitlab"
+p=SG.
+sendgrid="${p}$(rep aB3x9Zq2 3 | cut -c1-22).$(rep aB3x9Zq2 6 | cut -c1-43)"
+kind "SendGrid key" "$sendgrid" "SENDGRID=$sendgrid"
+p=postgres://app:
+pw=$(rep Zx9kQ4mW 2)
+url="${p}${pw}@db.internal:5432/app"
+kind "credentialed URL" "$pw" "DATABASE_URL=$url"
+p=AccountKey=
+azure="${p}$(rep aB3x9Zq2 6 | cut -c1-44)=="
+kind "Azure storage key" "$azure" "conn;$azure;"
+symbols='P@ss!w0rd#2024'"$(rep xyz 1)"
+kind "generic secret" "$symbols" "  password = \"$symbols\""
+
 # A hunk in the middle of a file: the line number is the one of the new file, and a deleted line does not shift it.
 git_ checkout -q main
 printf 'a\nb\nc\nd\ne\nf\ng\nh\n' >"$repo/src/long.txt"
@@ -94,7 +118,10 @@ grep -q "src/app.txt:6: AWS access key" "$work/out" || fail "a '+++' line shifte
 branch src/app.txt 'password = process.env.DB_PASSWORD_1'
 run || fail "an environment lookup is flagged: $(cat "$work/out")"
 grep -q "^ok    secret scan$" "$work/out" || fail "ok not shown: $(cat "$work/out")"
-for line in 'password = "changeme"' 'token = "your-token-here"' 'secret = "<generated at deploy>"' 'const token = getToken()'; do
+# shellcheck disable=SC2016 # the lines are literal text, not expansions
+for line in 'password = "changeme"' 'token = "your-token-here"' 'secret = "<generated at deploy>"' 'const token = getToken()' \
+  'password: ${DB_PASSWORD_VALUE_1}' 'token = tokens[index1234567890]' 'secret = this.config.secretValue1234' \
+  'DATABASE_URL=postgres://user:password@localhost/db' 'URL=https://app:${APP_PASSWORD}@host.example/x'; do
   branch src/app.txt "$line"
   run || fail "placeholder flagged: $line: $(cat "$work/out")"
 done
@@ -138,6 +165,40 @@ run && fail "a branch allowlisted its own secret"
 allow "$(sha "$aws")"
 branch src/app.txt "aws = $aws"
 run && fail "an allowlist entry without a reason lifts the finding"
+
+# A private key is lifted as a whole, header to END line: the header alone, or another key under the same
+# header, is not lifted.
+header="-----BEGIN RSA ""PRIVATE KEY-----"
+keyA=$(printf '%s\n' "$header" "$(rep MIIBabc1 3)" "$(rep xYz12Q 4)" "-----END RSA ""PRIVATE KEY-----")
+keyB=$(printf '%s\n' "$header" "$(rep MIIBdef2 3)" "$(rep pQr98S 4)" "-----END RSA ""PRIVATE KEY-----")
+allow "$(sha "$keyA") test key of the parser"
+branch src/a.pem "$keyA"
+run || fail "an allowlisted private key fails: $(cat "$work/out")"
+branch src/b.pem "$keyB"
+run && fail "the allowlist of key A lifts key B under the same header"
+grep -q "src/b.pem:1: private key" "$work/out" || fail "key B not reported: $(cat "$work/out")"
+allow "$(sha "$header") the header"
+branch src/a.pem "$keyA"
+run && fail "the hash of the header lifts a private key"
+allow "$(sha "$keyA") test key of the parser"
+git_ checkout -q -b both
+printf '%s\n' "$keyA" "$keyB" >"$repo/src/c.pem"
+git_ add -A
+git_ commit -q -m "feat: both keys"
+run && fail "two keys in a file, one allowlisted, pass"
+[ "$(grep -c "private key" "$work/out")" = 1 ] || fail "only key B should be reported: $(cat "$work/out")"
+allow "$(sha "$symbols") symbols in a password of a fixture"
+branch src/app.txt "  password = \"$symbols\""
+run || fail "an allowlisted password with symbols fails: $(cat "$work/out")"
+
+# The copy of the added lines is removed whatever way the scan ends.
+mkdir "$work/tmp" "$work/stub"
+real_git=$(command -v git)
+printf '#!/usr/bin/env bash\n[[ " $* " == *" diff "* ]] && exit 1\nexec %s "$@"\n' "$real_git" >"$work/stub/git"
+chmod +x "$work/stub/git"
+git_ checkout -q main
+(cd "$repo" && TMPDIR="$work/tmp" PATH="$work/stub:$PATH" "$cli" secret-scan) >"$work/out" 2>&1 && fail "the scan passes although git diff fails"
+[ -z "$(ls -A "$work/tmp")" ] || fail "temporary file left behind: $(ls "$work/tmp")"
 
 # No base branch to compare with: the scan says so and skips.
 other="$work/other"

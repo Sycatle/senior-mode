@@ -74,10 +74,11 @@ while IFS= read -r segment; do
     merge=false
     [ "${gs[0]:-} ${gs[1]:-}" = "pr merge" ] && merge=true
     # Quoted paths ("repos/$R/...") are no longer in $command: the API checks read the raw one.
-    api_opts=" ${w[*]:i+2} " write=false
+    api_opts=" ${w[*]:i+2} " write=false method=""
     if [ "${gs[0]:-}" = api ]; then
       if [[ $api_opts =~ \ (-X|--method)[\ =]?([A-Za-z]+)\  ]]; then
-        [[ ${BASH_REMATCH[2]^^} == GET ]] || write=true
+        method=${BASH_REMATCH[2]^^}
+        [ "$method" = GET ] || write=true
       elif [[ $api_opts =~ \ (-f|-F|--field|--raw-field|--input)[\ =] ]]; then
         write=true
       fi
@@ -90,15 +91,15 @@ while IFS= read -r segment; do
       [[ ${gs[0]:-} == api && $raw =~ pulls/[^/[:space:]]+/merge|/merges|mergePullRequest|enablePullRequestAutoMerge ]] &&
         deny "a run session never merges, not through gh api either."
       # The rules that bound the run are the human's (spec 130, #116).
-      $write && [[ $raw =~ /rulesets([/?[:space:]\"\']|$)|/branches/[^[:space:]]+/protection ]] &&
+      [[ ($write == true && $raw =~ /rulesets([/?[:space:]\"\']|$)|/branches/[^[:space:]]+/protection) ||
+        (${gs[0]:-} == api && $raw =~ (create|update|delete)(RepositoryRuleset|BranchProtectionRule)) ]] &&
         deny "a run session never changes rulesets or branch protection: say in the pull request what a human should change."
     fi
     # The ruleset lets admins bypass it on purpose (spec 0001 §11); an agent running as an admin must not.
     $merge && [[ " ${w[*]:i+1} " =~ \ --admin[=\ ] ]] &&
       deny "gh pr merge --admin bypasses the required checks and review: a human must do it."
     # Through the API, an admin's merge bypasses the ruleset without any flag.
-    [[ ${gs[0]:-} == api && $raw =~ pulls/[^/[:space:]]+/merge([?[:space:]\"\']|$) &&
-      $api_opts =~ \ (-X|--method)[\ =]?PUT\  ]] &&
+    [[ $method == PUT && $raw =~ pulls/[^/[:space:]]+/merge([?[:space:]\"\']|$) ]] &&
       deny "merging through gh api can bypass the required checks: use gh pr merge without --admin."
     continue
   fi

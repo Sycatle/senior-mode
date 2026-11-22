@@ -22,7 +22,7 @@ nothing else.
 
 ## Outcome
 
-- All items pass: `senior-mode item set <issue> Status Ready`.
+- All items pass: `senior-mode item set <issue> Status Ready`; `senior-mode item get <issue> Status` reads it back.
 - Something is missing: keep the status, add the `needs-info` label
   (`gh issue edit <issue> --add-label needs-info`) and comment, in the project language and plain
   words, with the list of what is missing and, for each question, a recommended answer the user can

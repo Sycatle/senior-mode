@@ -13,10 +13,13 @@ mkdir -p "$work/stub"
 cat >"$work/stub/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >>"$GH_LOG"
-case "$*" in *item-add*) echo "ITEM_1" ;; esac
+case "$*" in
+  *item-add*) echo "ITEM_1" ;;
+  "api graphql"*) cat >"$GH_QUERY"; cat "$GH_ANSWER" ;;
+esac
 STUB
 chmod +x "$work/stub/gh"
-export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log"
+export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" GH_QUERY="$work/query.json" GH_ANSWER="$work/answer.json"
 
 repo="$work/repo"
 git init -q "$repo"
@@ -91,6 +94,30 @@ git -C "$repo" remote set-url origin git@github.com:acme/app.git
 : >"$GH_LOG"
 expect 0 - item set 7 Status Ready
 grep -q -- "--url https://github.com/acme/app/issues/7" "$GH_LOG" || fail "ssh remote not parsed: $(cat "$GH_LOG")"
+
+# item get: one GraphQL call reads the item of the configured Project (other Projects are ignored).
+cat >"$work/answer.json" <<'JSON'
+{"data": {"repository": {"issue": {"projectItems": {"nodes": [
+  {"project": {"id": "PVT_OTHER"}, "fieldValues": {"nodes": [{"name": "Done", "field": {"name": "Status"}}]}},
+  {"project": {"id": "PVT_1"}, "fieldValues": {"nodes": [{},
+    {"name": "Ready", "field": {"name": "Status"}}, {"name": "S", "field": {"name": "Size"}}]}}]}}}}}
+JSON
+: >"$GH_LOG"
+expect 0 Ready item get 12 Status
+expect 0 S item get 12 Size
+expect 0 $'#12 Status = Ready\n#12 Size = S' item get 12
+[ "$(grep -c graphql "$GH_LOG")" -eq 3 ] || fail "item get: not one GraphQL call per command: $(cat "$GH_LOG")"
+jq -e '.variables | .owner == "acme" and .name == "app" and .number == 12' "$GH_QUERY" >/dev/null ||
+  fail "item get: wrong query variables: $(cat "$GH_QUERY")"
+expect 0 "" item get 12 Priority
+echo '{"data": {"repository": {"issue": {"projectItems": {"nodes": []}}}}}' >"$work/answer.json"
+expect 1 - item get 12 Status
+grep -q "not on the board" "$work/err" || fail "item get: no message for an issue off the board: $(cat "$work/err")"
+echo '{"errors": [{"message": "Could not resolve to an Issue"}], "data": {"repository": {"issue": null}}}' >"$work/answer.json"
+expect 1 - item get 99
+grep -q "Could not resolve" "$work/err" || fail "item get: GitHub error not shown: $(cat "$work/err")"
+expect 1 - item get
+expect 1 - item get abc
 
 expect 1 - bogus
 (cd "$work" && "$cli" config get language 2>/dev/null) && fail "works outside a git repository"

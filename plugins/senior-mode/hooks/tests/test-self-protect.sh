@@ -130,6 +130,11 @@ for c in \
   'cp -r x .git' \
   'cp /tmp/c .git/config.worktree' \
   'rm -rf .git/*' \
+  'rm -rf .g\it' \
+  'r\m -rf .git' \
+  'rm .git/hoo\ks/pre-push' \
+  'echo x > .cla\ude/x' \
+  'rm -rf .git\/*' \
   'rm -rf .git/hoo*' \
   'rm -rf .git/h?oks' \
   'sudo -u nobody rm -rf .git' \
@@ -205,6 +210,8 @@ for c in \
   'cat .git/config.worktree' \
   'git config user.name t' \
   'rm -rf .git-old/*' \
+  'echo x\y > out.txt' \
+  'echo a\nb' \
   'cp .git/* /tmp/backup' \
   'ls .git/*' \
   'sudo -u nobody rm -rf build' \

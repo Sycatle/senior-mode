@@ -71,9 +71,10 @@ if [ "$tool" != Bash ]; then
 fi
 
 # Quoted text is data (commit messages, echo), never a target: replace it before parsing. A quoted
-# single word (a path) is unquoted instead. A backslash-newline continues the line, `>|` is one operator.
+# single word (a path) is unquoted instead. Outside quotes a backslash before a letter, digit or `/._~-` is dropped,
+# as the shell does (`.g\it`). A backslash-newline continues the line, `>|` is one operator.
 command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ") | gsub(">\\|"; ">")
-  | gsub("\"(?<w>[^\"\\\\\\s$`]*)\"|'"'"'(?<v>[^'"'"'\\s]*)'"'"'"; .w // .v)
+  | gsub("\"(?<w>[^\"\\\\\\s$`]*)\"|'"'"'(?<v>[^'"'"'\\s]*)'"'"'|\\\\(?=[A-Za-z0-9/._~-])"; .w // .v // "")
   | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
 
 redirect='^[^>]*>>?(.*)$'

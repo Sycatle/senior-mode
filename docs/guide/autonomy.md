@@ -154,8 +154,9 @@ Runs before every Bash command, in any repository where the plugin is enabled. I
 - skipping checks: `--no-verify`, `git commit -n`, `git -c core.hooksPath=...` (or
   `--config-env`), a `GIT_CONFIG_KEY_<n>=core.hooksPath` or `GIT_CONFIG_PARAMETERS` environment
   setting, and setting or unsetting `core.hooksPath` with `git config`, an empty value included
-  (reading it is allowed). An empty quote pair or a backslash inside a word (`--no""-verify`,
-  `--for\ce`) does not hide it;
+  (reading it is allowed). An empty quote pair or an unquoted backslash inside a word (`--no""-verify`,
+  `--for\ce`, `core.hooksPath\=x`, `\+main`) does not hide it, the backslash being dropped as the
+  shell does (an escaped space or quote goes with it);
 - `gh alias set` and `gh alias import`: an alias hides the command it runs from this guard;
 - force-push: `--force`, `-f`, `--force-with-lease`, `--force-if-includes`, a `+` refspec;
 - pushing every branch: `--all`, `--mirror`, `--branches`;

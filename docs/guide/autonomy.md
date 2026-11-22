@@ -231,6 +231,15 @@ command, not a model, applies these bounds:
   a stuck session is not failed work ([ADR 0014](../adr/0014-model-escalation-in-runs.md)). Its Status
   stays In progress; the label is the signal. Where the session has no group of its own (no tmux and
   no `setsid`, as on macOS), it is not killed: `run` says so, and still labels and records the ticket.
+- **Guards at the start** (with the `claude` CLI): `run` refuses to start unless the plugin is enabled
+  (`enabledPlugins` in `~/.claude/settings.json`, or `CLAUDE_CONFIG_DIR`, then the project's
+  `.claude/settings.json` and `settings.local.json`; a plugin loaded with `--plugin-dir` counts) and its
+  `hooks/hooks.json` is present. Once a day it also runs a short probe session (Haiku) that is asked to
+  run `git -c core.hooksPath=... init` on a temporary directory, a command the Bash guard denies and
+  that is harmless if it is not denied. If the deny does not show in the session's output, or the
+  directory was created, `run` starts nothing and says so; the output is in
+  `.git/senior-mode/probe.log`. The date of the last pass is in `.git/senior-mode/probe`. Under
+  another `agent.command` none of this runs: those hooks do not hold there anyway.
 - **Proof:** a session counts as delivered only if a pull request is open for its branch.
 - **Merge** ([ADR 0008](../adr/0008-merge-off-by-default.md)): off by default. With
   `autonomy.merge: true`, a pull request merges (`gh pr merge --rebase`) only when `senior-mode/ci`,

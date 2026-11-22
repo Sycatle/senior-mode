@@ -11,7 +11,7 @@ field() { # file key: value of a top-level frontmatter key
     f && index($0, k ": ") == 1 { sub(/^[^:]*: */, ""); print }' "$1"
 }
 for pin in scout:haiku:low researcher:sonnet:medium architect:opus:high test-author:sonnet:medium \
-  implementer:sonnet:medium reviewer:opus:high ops:haiku:low; do
+  implementer:sonnet:medium reviewer:opus:high security:opus:high ops:haiku:low; do
   IFS=: read -r name model effort <<<"$pin"
   file=$plugin/agents/$name.md
   [ -f "$file" ] || { err "$file: missing"; continue; }

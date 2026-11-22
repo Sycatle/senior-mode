@@ -190,6 +190,18 @@ run status --since 7d || fail "status with wip 2 failed: $(cat "$work/err")"
 grep -qx "In progress (2)" "$work/out" || fail "wip at the limit shown as over: $(cat "$work/out")"
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
 
+# The dependency audit (#142): on by default and quiet, shown when `audit: false` turns it off.
+run status --json --since 7d || fail "status --json failed: $(cat "$work/err")"
+[ "$(json .audit)" = true ] || fail "audit on by default: $(json .audit)"
+run status --since 7d || fail "status failed: $(cat "$work/err")"
+grep -qi "audit" "$work/out" && fail "status mentions the audit while it is on: $(cat "$work/out")"
+echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}, "audit": false}' >"$repo/.claude/senior-mode.json"
+run status --json --since 7d || fail "status --json with audit false failed: $(cat "$work/err")"
+[ "$(json .audit)" = false ] || fail "audit false in JSON: $(json .audit)"
+run status --since 7d || fail "status with audit false failed: $(cat "$work/err")"
+grep -qF "Dependency audit: off (audit: false)" "$work/out" || fail "audit off not shown: $(cat "$work/out")"
+echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
+
 # Board drift (#124): closed but not Done (#24, #26), open but Done (#25), In progress or In review with
 # no open pull request and no branch (#21; #17 has a branch, #18 and #22 a pull request).
 run status --json --since 7d || fail "status --json failed: $(cat "$work/err")"

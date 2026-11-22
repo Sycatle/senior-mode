@@ -43,6 +43,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 git init -q --bare -b main "$work/origin.git"
 repo="$work/app"
+wt=$repo/.git/senior-mode/worktrees
 git init -q -b main "$repo"
 git -C "$repo" remote add origin git@github.com:acme/app.git
 git -C "$repo" config url."$work/origin.git".insteadOf git@github.com:acme/app.git
@@ -83,22 +84,26 @@ issue "feat: add the next command, the daily session" '{"name": "type:feature"}'
 start 89 || fail "start exited non-zero: $(cat "$work/err")"
 branch=feat/89-add-the-next-command-the-daily-session
 grep -qx "branch $branch" "$work/out" || fail "branch line: $(cat "$work/out")"
-grep -qx "worktree $work/app-89" "$work/out" || fail "worktree line: $(cat "$work/out")"
-[ "$(git -C "$work/app-89" symbolic-ref --short HEAD)" = "$branch" ] || fail "worktree is not on $branch"
-[ -f "$work/app-89/new.txt" ] || fail "branch not started from the fetched origin/main"
+grep -qx "worktree $wt/89" "$work/out" || fail "worktree line: $(cat "$work/out")"
+[ "$(git -C "$wt/89" symbolic-ref --short HEAD)" = "$branch" ] || fail "worktree is not on $branch"
+[ -f "$wt/89/new.txt" ] || fail "branch not started from the fetched origin/main"
 git -C "$repo" config --get "branch.$branch.remote" >/dev/null && fail "branch tracks origin/main"
 logged "project item-edit --project-id PVT_1 --id ITEM --field-id F_S --single-select-option-id o3" ||
   fail "Status not set to In progress: $(cat "$GH_LOG")"
 grep -q '^#89 Status = In progress' "$work/out" || fail "status line: $(cat "$work/out")"
 
 # A new worktree gets its dependencies, installed in it with the command of its lockfile (#110).
-grep -qx "npm ci @ $work/app-89" "$PM_LOG" || fail "dependencies not installed in the new worktree: $(cat "$PM_LOG")"
-[ -d "$work/app-89/node_modules" ] || fail "no node_modules in the new worktree"
+grep -qx "npm ci @ $wt/89" "$PM_LOG" || fail "dependencies not installed in the new worktree: $(cat "$PM_LOG")"
+[ -d "$wt/89/node_modules" ] || fail "no node_modules in the new worktree"
+
+# The worktree lives in the git common dir, never beside the repository (#224); git status stays clean.
+compgen -G "$work/app-[0-9]*" >/dev/null && fail "a ticket worktree beside the repository: $(ls "$work")"
+[ -z "$(git -C "$repo" status --porcelain)" ] || fail "the main checkout is dirty: $(git -C "$repo" status --porcelain)"
 
 # Rerunning reuses the branch and the worktree.
 start 89 || fail "rerun failed: $(cat "$work/err")"
-grep -qx "worktree $work/app-89" "$work/out" || fail "rerun worktree line: $(cat "$work/out")"
-[ "$(git -C "$repo" worktree list | grep -c app-89)" -eq 1 ] || fail "rerun added a second worktree"
+grep -qx "worktree $wt/89" "$work/out" || fail "rerun worktree line: $(cat "$work/out")"
+[ "$(git -C "$repo" worktree list | grep -c "worktrees/89 ")" -eq 1 ] || fail "rerun added a second worktree"
 [ "$(wc -l <"$PM_LOG")" -eq 1 ] || fail "rerun installed again: $(cat "$PM_LOG")"
 # A reworded title does not fork the branch.
 issue "Another title" '{"name": "type:feature"}'
@@ -106,9 +111,25 @@ start 89 || fail "reworded title failed: $(cat "$work/err")"
 grep -qx "branch $branch" "$work/out" || fail "reworded title changed the branch: $(cat "$work/out")"
 
 # A branch left without a worktree gets one again.
-git -C "$repo" worktree remove "$work/app-89"
+git -C "$repo" worktree remove "$wt/89"
 start 89 || fail "existing branch failed: $(cat "$work/err")"
-[ "$(git -C "$work/app-89" symbolic-ref --short HEAD)" = "$branch" ] || fail "existing branch not checked out"
+[ "$(git -C "$wt/89" symbolic-ref --short HEAD)" = "$branch" ] || fail "existing branch not checked out"
+
+# Started from inside another worktree, the new one is still under the main repository's git dir.
+issue "From a worktree" ''
+(cd "$wt/89" && "$cli" start 88) >"$work/out" 2>"$work/err" || fail "start from a worktree failed: $(cat "$work/err")"
+grep -qx "worktree $wt/88" "$work/out" || fail "start from a worktree: $(cat "$work/out")"
+[ -d "$wt/88/.git" ] || [ -f "$wt/88/.git" ] || fail "no worktree at $wt/88"
+[ ! -e "$wt/89/senior-mode" ] || fail "worktree nested in the worktree it was started from"
+
+# A ticket already started under the old sibling path is reused, not started twice, and its path is said.
+issue "Old style" ''
+git -C "$repo" fetch -q origin
+git -C "$repo" worktree add -q --no-track -b feat/87-old-style "$work/app-87" origin/main
+start 87 || fail "start over an old-path worktree failed: $(cat "$work/err")"
+grep -qx "worktree $work/app-87" "$work/out" || fail "old-path worktree not reported: $(cat "$work/out")"
+[ ! -e "$wt/87" ] || fail "a second worktree was created next to the old-path one"
+[ "$(git -C "$repo" worktree list | grep -c 'feat/87-old-style')" -eq 1 ] || fail "old-path start added a worktree"
 
 # The type follows the label: bug, task, chore, none.
 issue "Crash on login" '{"name": "type:bug"}, {"name": "needs-info"}'
@@ -134,7 +155,7 @@ git -C "$other" push -q origin main
 issue "Own installer" ''
 : >"$PM_LOG"
 start 97 || fail "start 97 failed: $(cat "$work/err")"
-grep -qx "pnpm install --offline @ $work/app-97" "$PM_LOG" || fail "configured install not run: $(cat "$PM_LOG")"
+grep -qx "pnpm install --offline @ $wt/97" "$PM_LOG" || fail "configured install not run: $(cat "$PM_LOG")"
 grep -q '^npm' "$PM_LOG" && fail "lockfile command ran despite the configured one"
 issue "Broken installer" ''
 : >"$PM_LOG"
@@ -163,7 +184,7 @@ for bad in "" abc 0 "1 2"; do
   start $bad && fail "accepted '$bad'"
 done
 issue "Occupied" ''
-mkdir "$work/app-96"
+mkdir "$wt/96"
 start 96 && fail "started over an existing directory"
 git -C "$repo" show-ref -q --verify refs/heads/feat/96-occupied && fail "branch created despite the taken path"
 
@@ -174,7 +195,7 @@ start 102 && fail "started past the wip limit"
 grep -q '#89' "$work/err" || fail "wip refusal does not name the ticket in progress: $(cat "$work/err")"
 grep -qi 'finish' "$work/err" || fail "wip refusal does not suggest finishing it: $(cat "$work/err")"
 logged "project item-" && fail "board touched past the wip limit"
-[ -e "$work/app-102" ] && fail "worktree created past the wip limit"
+[ -e "$wt/102" ] && fail "worktree created past the wip limit"
 git -C "$repo" show-ref -q --verify refs/heads/feat/102-second-thing && fail "branch created past the wip limit"
 issue "feat: add the next command, the daily session" '{"name": "type:feature"}'
 start 89 || fail "the ticket already In progress refused: $(cat "$work/err")"
@@ -187,7 +208,7 @@ grep -q '#89' "$work/err" || fail "hand-set run: the wip refusal does not name t
 SENIOR_MODE_RUN=1 SENIOR_MODE_RUN_TOKEN_FILE="$work/token" start 102 && fail "a forged token file skipped the wip limit"
 SENIOR_MODE_RUN=1 SENIOR_MODE_RUN_TOKEN_FILE="$work/token" RUN_TOKEN=forged start 102 &&
   fail "a token set in the environment skipped the wip limit"
-[ -e "$work/app-102" ] && fail "worktree created by a hand-set run"
+[ -e "$wt/102" ] && fail "worktree created by a hand-set run"
 jq '.wip = 2' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
 issue "Third thing" ''
 start 103 || fail "wip 2 refused a second ticket: $(cat "$work/err")"

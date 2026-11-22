@@ -72,7 +72,10 @@ cat >"$work/stub/claude" <<'STUB'
 #!/usr/bin/env bash
 args=("$@")
 for ((i = 0; i < $#; i++)); do [ "${args[i]}" != --model ] || model=${args[i + 1]}; done
-echo "$(basename "$PWD") $model run=${SENIOR_MODE_RUN:-} ${*:1:$# - 1}" >>"$CLAUDE_LOG"
+# A ticket worktree is <git dir>/senior-mode/worktrees/<n>; the log names it app-<n>.
+tag=$(basename "$PWD")
+[[ $PWD == */senior-mode/worktrees/* ]] && tag=app-$tag
+echo "$tag $model run=${SENIOR_MODE_RUN:-} ${*:1:$# - 1}" >>"$CLAUDE_LOG"
 if [[ ${!#} == *"guard probe"* ]]; then
   case $(cat "$FIX/probe" 2>/dev/null || echo honour) in
     honour) echo '{"type": "user", "message": {"content": "senior-mode: skipping checks is denied (core.hooksPath); fix what the check reports instead."}}' ;;
@@ -87,7 +90,7 @@ if [[ $PWD == *-run-docs-* ]] && [ "$(cat "$FIX/docs" 2>/dev/null)" = hang ]; th
   echo "$$ $!" >"$FIX/pids-docs"
   wait
 fi
-n=$(sed -nE 's#.*/app-([0-9]+)$#\1#p' <<<"$PWD")
+n=$(sed -nE 's#.*/senior-mode/worktrees/([0-9]+)$#\1#p' <<<"$PWD")
 [ -n "$n" ] || exit 0
 fx=$FIX/claude-$n-$model
 [ -f "$fx" ] || exit 1
@@ -135,6 +138,7 @@ echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DI
 # A local origin whose path ends like a GitHub URL, so the slug reads acme/app.
 git init -q --bare -b main "$work/github.com/acme/app.git"
 repo="$work/app"
+wt=$repo/.git/senior-mode/worktrees
 git init -q -b main "$repo"
 git -C "$repo" remote add origin "$work/github.com/acme/app.git"
 mkdir -p "$repo/.claude"
@@ -194,9 +198,10 @@ echo '{"statuses": [{"context": "senior-mode/ci", "state": "success"}, {"context
 session 12-sonnet "failed: cannot build"
 session 12-opus "failed: still cannot build"
 run || fail "A: run failed: $(cat "$work/out")"
-[ "$(git -C "$work/app-10" branch --show-current 2>/dev/null)" = fix/10-ticket-10 ] ||
+[ "$(git -C "$wt/10" branch --show-current 2>/dev/null)" = fix/10-ticket-10 ] ||
   fail "A: no worktree on fix/10-ticket-10: $(git -C "$repo" worktree list)"
-git -C "$work/app-11" branch --show-current 2>/dev/null | grep -qx feat/11-ticket-11 || fail "A: no feat branch for #11"
+git -C "$wt/11" branch --show-current 2>/dev/null | grep -qx feat/11-ticket-11 || fail "A: no feat branch for #11"
+compgen -G "$work/app-[0-9]*" >/dev/null && fail "A: a ticket worktree beside the repository: $(ls "$work")"
 grep -q 'issue view 10 ' "$GH_LOG" || fail "A: the worktree was not opened by senior-mode start: $(cat "$GH_LOG")"
 grep -q 'app-10 sonnet run=1 -p --model sonnet --permission-mode bypassPermissions --output-format json' "$CLAUDE_LOG" ||
   fail "A: claude not called as expected: $(cat "$CLAUDE_LOG")"
@@ -308,7 +313,7 @@ board 50 '["type:bug"]'
 (cd "$repo" && "$cli" start 50) >/dev/null 2>&1 || fail "F: start 50 failed"
 session 50-sonnet delivered pr
 run || fail "F: run failed: $(cat "$work/out")"
-[ "$(git -C "$repo" worktree list | grep -c 'app-50 ')" -eq 1 ] || fail "F: not one worktree for #50: $(git -C "$repo" worktree list)"
+[ "$(git -C "$repo" worktree list | grep -c "worktrees/50 ")" -eq 1 ] || fail "F: not one worktree for #50: $(git -C "$repo" worktree list)"
 grep -q '^app-50 sonnet' "$CLAUDE_LOG" || fail "F: no session in the worktree of start: $(cat "$CLAUDE_LOG")"
 outcome_is_delivered 50
 

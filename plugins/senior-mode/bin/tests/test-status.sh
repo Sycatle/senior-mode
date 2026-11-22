@@ -147,6 +147,9 @@ for bad in "--max 0" "--max x" "--max" "--nope"; do
   run pick $bad && fail "pick accepted: $bad"
 done
 
+# #17 has a worktree in the git dir, #21 none (#224).
+git -C "$repo" worktree add -q -b feat/17-thing "$repo/.git/senior-mode/worktrees/17"
+
 # status --json: everything from one call.
 run status --json || fail "status --json failed: $(cat "$work/err")"
 [ "$(calls)" -eq 1 ] || fail "status makes $(calls) gh calls, wanted 1"
@@ -154,6 +157,8 @@ run status --json || fail "status --json failed: $(cat "$work/err")"
 [ "$(json '.done | map(.number)')" = "[5]" ] || fail "done since the default 7 days: $(json .done)"
 [ "$(json '.mergedPullRequests')" = 2 ] || fail "merged count: $(json .mergedPullRequests)"
 [ "$(json '.inProgress | map(.number)')" = "[17,21]" ] || fail "in progress: $(json .inProgress)"
+[ "$(json '.inProgress | map(.worktree)')" = "[\"$(cd "$repo" && pwd -P)/.git/senior-mode/worktrees/17\",null]" ] ||
+  fail "in progress worktrees: $(json '.inProgress')"
 [ "$(json '.inReview | map([.number, .pr])')" = "[[18,30],[22,31]]" ] || fail "in review: $(json .inReview)"
 [ "$(json '.blocked | map(.number)')" = "[14,15,19,21,23]" ] || fail "blocked: $(json .blocked)"
 [ "$(json '.blocked[] | select(.number == 21) | .reasons')" = '["waits for #99"]' ] || fail "blocked reasons: $(json .blocked)"
@@ -178,6 +183,10 @@ for want in "Done in the last 7d" "#5 Ticket 5" "2 pull requests merged" "In pro
   grep -qF -- "$want" "$work/out" || fail "plain status lacks '$want': $(cat "$work/out")"
 done
 grep -qF "#13" "$work/out" && fail "an L ticket is listed: $(cat "$work/out")"
+
+grep -qF "#17 Ticket 17 (worktree $(cd "$repo" && pwd -P)/.git/senior-mode/worktrees/17)" "$work/out" ||
+  fail "plain status does not show the worktree of #17: $(cat "$work/out")"
+grep -qx "  #21 Ticket 21" "$work/out" || fail "a ticket without worktree gets a path: $(cat "$work/out")"
 
 # Work in progress against the wip limit (#125): default 1, two tickets In progress.
 grep -qF "In progress (2, over the limit of 1)" "$work/out" || fail "wip over the limit not shown: $(cat "$work/out")"

@@ -13,7 +13,7 @@ issue: "#130"
 ## Problem
 
 senior-mode lets agents with a shell work unattended on a VPS (ADR 0003, 0008). Today the security
-of what they produce rests on one line of the `review` skill. Spec 0001 §16 says every preset checks
+of what they produce rests on one line of the `review` skill. Spec 0001 §14 says every preset checks
 for secrets, but no check does. Nothing audits dependencies. Nobody watches CVEs published after a
 merge. The review of #113 found seven ways a session can stall a run, loosen its own guards or slip
 past the work-in-progress limit (#115-#121, #145). A human who only frames must be able to trust
@@ -49,20 +49,27 @@ Review, two levels (#140, #141):
 - Given any other pull request, when `publish` runs, then it sets `senior-mode/security` to success
   with the description "not required: no protected zone, not L". `setup github` adds
   `senior-mode/security` to the ruleset's required checks.
+- Given `run_merge` (and the `next` skill's merge), then it merges only when `senior-mode/ci`,
+  `senior-mode/review` and `senior-mode/security` are all success on the head commit. ADR 0015
+  amends ADR 0008 on this point.
 
 Local checks before push (#142, #143):
 
 - Given a preset with a lockfile (npm or pnpm, pip, go, cargo), when `check` runs, then the
   ecosystem's audit runs and fails on a high or critical advisory, naming the package, the
-  advisory and the fixed version.
+  advisory and the fixed version. When the tool gives no severity for an advisory (often pip-audit,
+  govulncheck, cargo audit), the check passes and prints it as a warning; Dependabot is the net
+  for those.
 - Given the audit tool is missing, then the check fails and says how to install it. `audit: false`
   in the config turns the check off, and `status` shows it as off.
 - Given a diff `<base>...HEAD` that adds a line matching a secret pattern shipped in the plugin,
   when `check` runs, then it fails with the file, the line and the kind of secret. It never prints
   the value.
-- Given a value whose sha256 is in `.claude/secret-allowlist` with a reason, then the check passes.
-  That file is a protected zone, so a run session cannot write it (self-protect).
-- Spec 0001 §16 is corrected so it no longer claims secret scanning exists before this work.
+- Given a value whose sha256 is in `.claude/secret-allowlist` with a reason, as read from the base
+  branch (`git show <base>:.claude/secret-allowlist`), then the check passes. A pull request cannot
+  allowlist its own secret. `setup` adds the file to `protected`, and self-protect denies run
+  sessions writes to it.
+- Spec 0001 §14 is corrected so it no longer claims secret scanning exists before this work.
 
 GitHub native (#171, #172):
 
@@ -71,8 +78,9 @@ GitHub native (#171, #172):
 - Given a plan that allows it, when `setup github` runs, then Dependabot alerts, Dependabot
   security updates (grouped, high and critical only, no version updates), secret scanning and push
   protection are on. When the plan refuses, setup says so and continues.
-- Given a new high or critical alert, then exactly one triaged issue exists for it, through the same
-  path as #144.
+- Given a high or critical Dependabot or secret-scanning alert open on the repository, when `run`
+  starts or `retro` runs, then exactly one open triaged issue exists for it, through the same path
+  as #144; a second pass files nothing new.
 
 Triage of risks (#144, Severity):
 
@@ -89,9 +97,11 @@ Guard hardening (#115-#120, #145):
 
 - #115: Given a session runs longer than `autonomy.sessionTimeout` (default 90 minutes), then `run`
   kills it, labels the ticket `needs-human` with the log path, and counts it as a failure for the
-  breaker.
-- #116 (with #121): `guard-bash` denies `git config core.hooksPath` and writes under `.git/hooks`.
-  It denies `gh api` writes to rulesets, branch protection and the merge endpoint, whatever the
+  breaker. A timeout is not retried on a stronger model (ADR 0014 escalates failed work, not stuck
+  sessions).
+- #116 (with #121): `guard-bash` denies `git config core.hooksPath` and shell writes under
+  `.git/hooks` (in the checkout and in every worktree's common dir); `self-protect` denies Edit and
+  Write there. `guard-bash` denies `gh api` writes to rulesets, branch protection and the merge endpoint, whatever the
   variables in the path. Denying writes to commit statuses waits for the separate reviewer session
   (#150), which is the only one that may set them. It allows read-only `gh` calls such as `gh pr list --search
   merge`. `run_merge` refuses to merge when the base has no `.claude/senior-mode.json`.
@@ -111,15 +121,17 @@ Guard hardening (#115-#120, #145):
 
 - **Statuses.** `senior-mode/ci` and `senior-mode/review` keep their meaning. `senior-mode/security`
   is the third required context. The `security` agent sets it, or `publish` sets it when the pull
-  request is not concerned. Both decisions are mechanical (`protected`, the ticket's Size), so the
-  author agent cannot skip a review that is due.
+  request is not concerned. Whether the pass is due is mechanical (`protected`, the ticket's Size),
+  so `publish` never marks a due pass as not required. A ticket session could still post the status
+  itself through `gh api` until the separate reviewer session (#150) is the only one allowed to.
 - **Secret patterns** ship in `plugins/senior-mode/secret-patterns` (provider keys, private key
   headers, generic high-entropy assignments). There is no new dependency.
 - **Audit commands** live in each preset's checks: `npm audit --audit-level=high` or `pnpm audit
   --audit-level high`, `pip-audit`, `govulncheck ./...` and `cargo audit`. The JSON output is
   filtered to high and critical.
-- **Issues** go through `issue create`. The fingerprint search is `gh issue list --search
-  "security-id:<id>" --state open`.
+- **Issues** go through `issue create`. The fingerprint is searched as a quoted phrase in the body
+  (`gh issue list --state open --search '"security-id <id>" in:body'`), so it does not read as a
+  search qualifier.
 - Every decision is in ADR 0015.
 
 ## Rollout and risks
@@ -141,10 +153,10 @@ Guard hardening (#115-#120, #145):
 
 ## Test seams
 
-`check` with fixture diffs and stubbed audit tools (`test-senior-mode.sh`, a new `test-secret-scan.sh`).
+`check` with fixture diffs and stubbed audit tools (`test-check.sh`, a new `test-secret-scan.sh`).
 `publish` and `setup github` with the gh stub (`test-setup-github.sh`). `issue create --severity`
-and `pick`. `run`, `run_start`, `run_merge`, `start` and `schedule` (`test-run.sh`,
-`test-start.sh`). `guard-bash.sh` and `self-protect.sh` (`hooks/tests/`). The `review` skill and the
+and `pick` (`test-issue.sh`). `run`, `run_start`, `run_merge`, `start`, `schedule` and the e2e lock
+(`test-run.sh`, `test-start.sh`, `test-schedule.sh`, `test-e2e-lock.sh`). `guard-bash.sh` and `self-protect.sh` (`hooks/tests/`). The `review` skill and the
 `security` agent for the steps a model performs.
 
 ## Open questions

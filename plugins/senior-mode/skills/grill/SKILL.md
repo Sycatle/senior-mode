@@ -1,6 +1,6 @@
 ---
 name: grill
-description: Interview the user to settle every open product, design or architecture decision before work starts, in short rounds with a recommended answer for each question. Use when framing an idea, when a ticket has open questions, or when the user says "let's frame" or "cadrons".
+description: Interview the user to settle every open product, design or architecture decision before work starts, in short rounds with a recommended answer for each question. Use when framing an idea, when a ticket has open questions, or on "let's frame", "cadrons", "cadrer", "pose-moi tes questions".
 ---
 
 # Interview protocol

@@ -1,6 +1,6 @@
 ---
 name: triage
-description: Classify a request as S, M or L before any work and apply only the ceremony that size requires. Use at the start of every feature request, bug report, refactor or idea, and again when a ticket grows during work.
+description: Classify a request as S, M or L before any work and apply only the ceremony that size requires. Use at the start of every feature request, bug report, refactor or idea, and again when a ticket grows during work ("trie", "c'est quelle taille ?", "c'est gros ?").
 ---
 
 # Triage

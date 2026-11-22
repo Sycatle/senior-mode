@@ -1,6 +1,6 @@
 ---
 name: ready
-description: Check a ticket against the Definition of Ready and move it to Ready or flag what is missing. Use before a ticket is picked for work, after framing creates tickets, and before an autonomous run selects tickets.
+description: Check a ticket against the Definition of Ready and move it to Ready or flag what is missing. Use before a ticket is picked for work, after framing creates tickets, and before an autonomous run selects tickets ("est-ce prêt ?", "ticket prêt ?").
 ---
 
 # Definition of Ready

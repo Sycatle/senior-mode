@@ -28,6 +28,8 @@ Summarise in the configured language, in this order, skipping empty sections:
 1. One sentence: how things stand (for example, "two tickets in progress, one waiting for you").
 2. **Needs you** first: pull requests with `needs-human` or failing statuses, tickets with missing
    information. Say what to do for each ("review and merge #20", "answer the question on #19").
+   A "Board drift" section: closed tickets not Done can be repaired by the user with `senior-mode
+   status --fix`; the others need their decision (close it, resume it or move it back).
 3. Done since last time, in progress, in review, blocked.
 4. Next ticket and the release state.
 

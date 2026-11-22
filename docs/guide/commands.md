@@ -151,7 +151,7 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode schedule remove` | Disables and deletes the timer, or the tagged crontab line |
 | `senior-mode schedule status` | The next trigger and the result of the last scheduled run |
 | `senior-mode e2e-lock -- <command>` | Runs the command once one of `e2e.slots` machine-wide slots is free; `check` runs the check named `e2e` through it |
-| `senior-mode status [--json] [--since <dur>] [--watch [secs]]` | The dashboard of `/senior-mode:status`; `--since 7d` for a digest (`m`, `h`, `d`, `w`) |
+| `senior-mode status [--json] [--since <dur>] [--watch [secs]] [--fix]` | The dashboard of `/senior-mode:status`; `--since 7d` for a digest (`m`, `h`, `d`, `w`). A "Board drift" section lists closed tickets not Done, open tickets Done, and tickets In progress or In review with no pull request and no branch; `--fix` sets the closed ones Done and leaves the rest to you (not with `--watch`) |
 | `senior-mode retro [--json] [--since <dur>]` | The facts of `/senior-mode:retro` for the last 7 days or `--since`: done, cycle time, pull requests that needed a human, runs, reopened tickets, check failures, sizes |
 | `senior-mode statusline` | One offline line for Claude Code's status line (ticket, last check, run) |
 | `senior-mode setup statusline` | Writes the status line to the project's `.claude/settings.json` |

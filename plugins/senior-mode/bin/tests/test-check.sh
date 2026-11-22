@@ -44,10 +44,10 @@ grep -q setup "$work/out" || fail "no-checks message does not mention setup"
 
 config '{"checks":[{"name":"lint","run":"true"},{"name":"tests","run":"echo all good"}]}'
 run check || fail "check fails although every check passes: $(cat "$work/out")"
-grep -q "3/3 checks passed" "$work/out" || fail "summary missing: $(cat "$work/out")"
+grep -q "4/4 checks passed" "$work/out" || fail "summary missing: $(cat "$work/out")"
 : >"$GH_LOG"
 run publish || fail "publish fails after a passing check: $(cat "$work/out")"
-grep -q -- "api repos/acme/app/statuses/$(sha) -f state=success -f context=senior-mode/ci -f description=3/3 checks passed" "$GH_LOG" ||
+grep -q -- "api repos/acme/app/statuses/$(sha) -f state=success -f context=senior-mode/ci -f description=4/4 checks passed" "$GH_LOG" ||
   fail "success status not published as expected: $(cat "$GH_LOG")"
 
 config '{"checks":[{"name":"lint","run":"true"},{"name":"tests","run":"echo boom; exit 3"}]}'
@@ -65,7 +65,7 @@ config '{"checks":[{"name":"lint db","run":"echo \"skipped: tool not installed\"
 run check || fail "a skipped check fails the run: $(cat "$work/out")"
 grep -q "^skip  lint db: tool not installed$" "$work/out" || fail "skip reason not shown: $(cat "$work/out")"
 grep -q "^ok    tests$" "$work/out" || fail "the other check lost its ok: $(cat "$work/out")"
-grep -q "3/3 checks passed" "$work/out" || fail "a skipped check is not counted as passed: $(cat "$work/out")"
+grep -q "4/4 checks passed" "$work/out" || fail "a skipped check is not counted as passed: $(cat "$work/out")"
 
 # Git exports GIT_DIR to hooks, absolute in a linked worktree: a check must not inherit it, or a
 # test that runs git on a fixture writes into this repository.
@@ -206,7 +206,7 @@ git -C "$repo" add -A
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: pnpm"
 run check
 grep -q "run pnpm install --frozen-lockfile$" "$work/out" || fail "install command ignores the lockfile: $(cat "$work/out")"
-config '{"preset":"node","commands":{"install":"make deps"},"checks":[{"name":"typecheck","run":"true"}]}'
+config '{"preset":"node","audit":false,"commands":{"install":"make deps"},"checks":[{"name":"typecheck","run":"true"}]}'
 run check
 grep -q "run make deps$" "$work/out" || fail "configured install command not named: $(cat "$work/out")"
 mkdir "$repo/node_modules"

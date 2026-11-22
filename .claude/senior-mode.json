@@ -2,15 +2,38 @@
   "language": "en",
   "wip": 4,
   "preset": "generic",
-  "ci": { "mode": "local" },
+  "ci": {
+    "mode": "local"
+  },
   "checks": [
-    { "name": "plugin manifests", "run": "claude plugin validate --strict . && claude plugin validate --strict plugins/senior-mode" },
-    { "name": "shellcheck", "run": ".github/scripts/shellcheck.sh" },
-    { "name": "skill size", "run": ".github/scripts/skill-size.sh" },
-    { "name": "agent team", "run": ".github/scripts/agent-team.sh" },
-    { "name": "docs drift", "run": ".github/scripts/docs-drift.sh" },
-    { "name": "script tests", "run": "for t in $(git ls-files '*/test-*.sh'); do \"$t\" || exit 1; done" },
-    { "name": "commit subjects", "run": "plugins/senior-mode/templates/githooks/commit-msg --branch" }
+    {
+      "name": "plugin manifests",
+      "run": "claude plugin validate --strict . && claude plugin validate --strict plugins/senior-mode"
+    },
+    {
+      "name": "shellcheck",
+      "run": ".github/scripts/shellcheck.sh"
+    },
+    {
+      "name": "skill size",
+      "run": ".github/scripts/skill-size.sh"
+    },
+    {
+      "name": "agent team",
+      "run": ".github/scripts/agent-team.sh"
+    },
+    {
+      "name": "docs drift",
+      "run": ".github/scripts/docs-drift.sh"
+    },
+    {
+      "name": "script tests",
+      "run": "for t in $(git ls-files '*/test-*.sh'); do \"$t\" || exit 1; done"
+    },
+    {
+      "name": "commit subjects",
+      "run": "plugins/senior-mode/templates/githooks/commit-msg --branch"
+    }
   ],
   "project": {
     "owner": "Sycatle",
@@ -19,16 +42,43 @@
     "fields": {
       "Status": {
         "id": "PVTSSF_lAHOAZfEPs4BsA45zhqQ62Q",
-        "options": { "Backlog": "7d62c462", "Ready": "8b193bc4", "In progress": "dc1332f9", "In review": "c779c3f8", "Done": "1cb6dd98" }
+        "options": {
+          "Backlog": "7d62c462",
+          "Ready": "8b193bc4",
+          "In progress": "dc1332f9",
+          "In review": "c779c3f8",
+          "Done": "1cb6dd98"
+        }
       },
       "Priority": {
         "id": "PVTSSF_lAHOAZfEPs4BsA45zhqQ7KE",
-        "options": { "P0 now": "0f314413", "P1 next": "7084b777", "P2 later": "914b9638", "P3 someday": "f3696449" }
+        "options": {
+          "P0 now": "0f314413",
+          "P1 next": "7084b777",
+          "P2 later": "914b9638",
+          "P3 someday": "f3696449"
+        }
       },
       "Size": {
         "id": "PVTSSF_lAHOAZfEPs4BsA45zhqQ7Ko",
-        "options": { "S": "8efd7ff1", "M": "b7f4a701", "L": "9142c53d" }
+        "options": {
+          "S": "8efd7ff1",
+          "M": "b7f4a701",
+          "L": "9142c53d"
+        }
+      },
+      "Severity": {
+        "id": "PVTSSF_lAHOAZfEPs4BsA45zhq9RiY",
+        "options": {
+          "critical": "46242894",
+          "high": "c616b5d0",
+          "moderate": "8c781ad6",
+          "low": "c7710f8e"
+        }
       }
     }
+  },
+  "github": {
+    "protection": "ruleset"
   }
 }

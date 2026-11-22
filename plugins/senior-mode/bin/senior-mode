@@ -455,6 +455,19 @@ setup_fields() {
   done
 }
 
+# Names the Project's built-in workflows that keep Status true and are off. GitHub has no API to
+# turn them on, so this only says where.
+setup_board_workflows() {
+  local off
+  off=$(jq -nc --arg id "$1" '{variables: {id: $id}, query: "query($id: ID!) { node(id: $id) {
+    ... on ProjectV2 { workflows(first: 20) { nodes { name enabled } } } } }"}' |
+    gh_retry api graphql --input - --jq '[.data.node.workflows.nodes[]
+      | select((.name | IN("Item closed", "Pull request merged")) and (.enabled | not)) | .name] | join(", ")') ||
+    { echo "built-in workflows: could not read them; check Project → Workflows by hand"; return 0; }
+  [ -z "$off" ] ||
+    echo "built-in workflows off: $off; turn them on in the Project → Workflows (no API can), so the board moves to Done"
+}
+
 # Creates the senior-mode ruleset of the repository, or updates it.
 setup_ruleset() {
   local id
@@ -545,6 +558,7 @@ setup_github() {
     "$file" >"$file.tmp" || die "could not write .claude/senior-mode.json"
   mv "$file.tmp" "$file"
   echo "Project #$number $name: linked, fields Status, Priority, Size; ids cached in .claude/senior-mode.json"
+  setup_board_workflows "$id"
 
   labels='needs-human|d93f0b|Waiting for a human decision or merge
 needs-info|fbca04|Missing information before work can start

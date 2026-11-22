@@ -1054,47 +1054,17 @@ security_feature() { # label gh-api-arguments...
   fi
 }
 
-# Writes .github/dependabot.yml for the project's ecosystem (#172): security updates only, grouped, and
-# no version updates (a limit of 0 on those). Written, not committed, like CODEOWNERS; a file of the
-# project's own is kept. A project with no manifest of a known ecosystem gets none.
-setup_dependabot() { # root
-  local file=$1/.github/dependabot.yml eco=""
-  case $(project_preset "$1") in node) eco=npm ;; python) eco=pip ;; go) eco=gomod ;; rust) eco=cargo ;; esac
-  if [ -z "$eco" ]; then
-    echo "dependabot.yml: not written, no manifest of a supported ecosystem (npm, pip, gomod, cargo) found"
-  elif [ -e "$file" ]; then
-    echo "dependabot.yml: kept"
-  else
-    mkdir -p "$1/.github"
-    cat >"$file" <<YAML
-# Written by senior-mode setup github: security updates only, grouped; no version updates.
-version: 2
-updates:
-  - package-ecosystem: $eco
-    directory: "/"
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 0
-    groups:
-      security:
-        applies-to: security-updates
-        patterns:
-          - "*"
-YAML
-    echo "dependabot.yml: created .github/dependabot.yml for $eco, security updates only; commit it (setup commits nothing)"
-  fi
-}
-
-# GitHub's own scanners (ADR 0015, #172): Dependabot alerts and security updates, secret scanning and
-# push protection. Each may be refused by the plan; Dependabot alerts of any severity are opened,
-# the threshold applies where senior-mode files them as issues.
+# GitHub's own scanners (ADR 0015, #172, amended by #222): Dependabot alerts, secret scanning and push
+# protection. Each may be refused by the plan. Dependabot security updates stay off and no
+# dependabot.yml is written: GitHub has no severity filter for them, so alerts become issues only (#144
+# path, high and critical). A dependabot.yml of the project's own is left as it is.
 setup_security() { # root slug
   security_feature "Dependabot alerts" -X PUT "repos/$2/vulnerability-alerts"
-  security_feature "Dependabot security updates" -X PUT "repos/$2/automated-security-fixes"
   security_feature "secret scanning (with push protection)" -X PATCH "repos/$2" \
     -f "security_and_analysis[secret_scanning][status]=enabled" \
     -f "security_and_analysis[secret_scanning_push_protection][status]=enabled"
-  setup_dependabot "$1"
+  [ ! -e "$1/.github/dependabot.yml" ] ||
+    echo "dependabot.yml: untouched (senior-mode writes none; security updates are not turned on, alerts become issues)"
 }
 
 setup_github() {

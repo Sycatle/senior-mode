@@ -82,6 +82,19 @@ typed s5 senior-mode:frame
 edit allow s5 "$repo/src/app.js" "" "" "senior-mode frame end clears the frame"
 (cd "$work" && "$cli" frame end >/dev/null 2>&1) && fail "senior-mode frame end succeeds outside a repository"
 
+# A framing works in its own worktree (senior-mode frame start): docs/ there is writable, code is not.
+git -C "$repo" add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: config"
+git -C "$repo" worktree add -q -b docs/x "$work/repo-frame-x"
+typed s8 senior-mode:frame
+edit allow s8 "$work/repo-frame-x/docs/specs/12-login.md" Write "" "spec written in the framing worktree"
+edit allow s8 "$work/repo-frame-x/.claude/agent-memory/architect/MEMORY.md" Write "" "agent memory written in the framing worktree"
+edit deny s8 "$work/repo-frame-x/src/app.js" Write "" "code written in the framing worktree"
+edit deny s8 "$work/repo-frame-x/docs/../src/app.js" Write "" "path escaping docs/ in the framing worktree"
+edit deny s8 "$work/elsewhere/docs/specs/12-login.md" Write "" "docs/ outside every worktree of the repository"
+dir=$work/repo-frame-x edit allow s8 "$work/repo-frame-x/docs/specs/12-login.md" Write "" "spec written with the worktree as cwd"
+dir=$work/repo-frame-x edit deny s8 "$work/repo-frame-x/src/app.js" Write "" "code written with the worktree as cwd"
+
 dir=$bare typed s6 senior-mode:frame
 dir=$bare edit allow s6 "$bare/src/app.js" "" "" "repository without senior-mode config"
 

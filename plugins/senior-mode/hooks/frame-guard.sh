@@ -3,7 +3,8 @@
 # /senior-mode:frame, typed or invoked by the model, marks the session as framing; any other
 # senior-mode command or skill, SessionEnd or `senior-mode frame end` clears the mark. While it is
 # set, Edit, Write, MultiEdit and NotebookEdit outside docs/ are denied, subagents included (they
-# share the session id); agents' project memory (.claude/agent-memory/) is exempt, as in self-protect. Only the main conversation sets or clears the mark.
+# share the session id), in any worktree of the repository; agents' project memory
+# (.claude/agent-memory/) is exempt, as in self-protect. Only the main conversation sets or clears the mark.
 set -o pipefail
 # One jq call: this runs on every edit. The unit separator, not whitespace, keeps empty fields.
 IFS=$'\x1f' read -r event session cwd agent command tool skill path < <(jq -r '[.hook_event_name,
@@ -41,9 +42,12 @@ case $event in
     # No path resolution (GNU-only realpath -m): a ".." segment is simply never under docs/.
     # git resolves symlinks in the root, Claude Code sends paths as reached from the cwd: try both.
     here=$(cd "$cwd/$(git -C "$cwd" rev-parse --show-cdup)" 2>/dev/null && pwd) || here=$root
-    [[ $path != */../* && $path != */.. ]] &&
-      [[ $path == "$root"/docs/* || $path == "$here"/docs/* ||
-        $path == "$root"/.claude/agent-memory/* || $path == "$here"/.claude/agent-memory/* ]] && exit 0
+    # A framing works in its own worktree (`senior-mode frame start`): docs/ of any worktree counts.
+    if [[ $path != */../* && $path != */.. ]]; then
+      while IFS= read -r tree; do
+        [[ $path == "$tree"/docs/* || $path == "$tree"/.claude/agent-memory/* ]] && exit 0
+      done < <(printf '%s\n%s\n' "$root" "$here"; git -C "$root" worktree list --porcelain | sed -n 's/^worktree //p')
+    fi
     jq -nc --arg r "senior-mode: framing only writes under docs/ (specs, ADRs); ${path#"$root"/} is code or config. Do not work around this: stop and tell the user. They leave framing by starting another senior-mode command, or by running \`! senior-mode frame end\` themselves." \
       '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
     ;;

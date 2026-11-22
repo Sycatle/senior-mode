@@ -70,7 +70,7 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
 
 ## `spec`
 
-- **Rule.** One spec per M or L feature in `docs/specs/NNNN-slug.md`, from the template. Lifecycle
+- **Rule.** One spec per M or L feature in `docs/specs/<issue>-slug.md` (named after its issue), from the template. Lifecycle
   `draft`, `accepted`, `implemented`, `superseded` (never deleted). The `paths` field lists the code
   it governs; a PR touching those paths updates the spec or says `Spec-Unchanged: <reason>`.
 - **When.** When writing a spec, when code under a spec changes, near files in `docs/specs/`.
@@ -79,7 +79,7 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
 
 ## `adr`
 
-- **Rule.** One ADR per hard-to-reverse decision, in `docs/adr/NNNN-slug.md`, with at least two real
+- **Rule.** One ADR per hard-to-reverse decision, in `docs/adr/NNNN-slug.md` (numbered from `origin/main` when committed), with at least two real
   alternatives and the bad consequences too. Status `proposed`, `accepted`, `superseded`. An accepted
   ADR is never edited: a new ADR supersedes it. No ADR for small reversible choices.
 - **When.** For a hard-to-reverse choice, for every L ticket, near files in `docs/adr/`.

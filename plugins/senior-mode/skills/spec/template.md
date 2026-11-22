@@ -1,5 +1,5 @@
 ---
-id: NNNN
+id: <issue number>
 title: <what the user gets, in plain words>
 status: draft
 size: M

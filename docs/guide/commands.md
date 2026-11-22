@@ -45,9 +45,12 @@ State: **Available.**
   GitHub cannot answer. Then whether you accept the spec and ADRs.
 - **Produces.** A spec in `docs/specs/` (light for M, full for L), ADRs in `docs/adr/`, tickets on
   the board as vertical slices (size, priority, milestone, Given/When/Then criteria, test seams,
-  blockers; an epic with sub-issues for L), and a pull request with the documents on a branch
-  `docs/<issue>-<slug>`. Ends with at most five lines, then proactive suggestions.
-- **Limits.** A size S stops at once: it needs no framing. During framing, edits outside `docs/` are
+  blockers; an epic with sub-issues for L), and a pull request with the documents. It works in its
+  own worktree and branch `docs/<slug>` from `origin/main` (`senior-mode frame start`), so framings
+  can run in parallel; the spec is named after its issue (`docs/specs/<issue>-<slug>.md`) and ADR
+  numbers come from `origin/main`. Ends with at most five lines, then proactive suggestions.
+- **Limits.** A size S stops at once: it needs no framing. If the default branch has commits origin lacks, it
+  stops and asks you to push them first. During framing, edits outside `docs/` are
   denied, subagents included. Re-running is safe: an open issue with the same title is reused.
   Tickets stay in Backlog until the documents pull request is merged and the spec accepted.
 
@@ -150,6 +153,7 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode config get <key>` | Prints a config value, with defaults (see [Configuration](configuration.md)) |
 | `senior-mode protected [--base <ref>]` | Lists the files changed on the branch that match a `protected` glob (exit 0), or nothing (exit 1); used by the reviewer |
 | `senior-mode context` | Prints the session greeting and the current ticket (used by the `SessionStart` hook) |
+| `senior-mode frame start <idea>` | Makes the worktree `<repo>-frame-<slug>` and the branch `docs/<slug>` from `origin/main`; refuses when the default branch is ahead of origin |
 | `senior-mode frame end` | Ends every framing session in the repository, so edits outside `docs/` are allowed again |
 
 GitHub calls that fail for a passing reason (timeouts, server errors, rate limits) are retried up to

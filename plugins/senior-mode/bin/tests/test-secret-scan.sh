@@ -125,7 +125,8 @@ p=postgres://app:
 for pwd in Secret123 mySecret123 Test1234 Password123 password1 Zx9k; do
   kind "credentialed URL" "$pwd" "DATABASE_URL=${p}${pwd}@db.internal:5432/app"
 done
-kind "credentialed URL" "Zx9k" "REDIS_URL=redis://:Zx9k@cache.internal:6379"
+p=redis://:
+kind "credentialed URL" "Zx9k" "REDIS_URL=${p}Zx9k@cache.internal:6379"
 
 # A hunk in the middle of a file: the line number is the one of the new file, and a deleted line does not shift it.
 git_ checkout -q main

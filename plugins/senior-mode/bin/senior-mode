@@ -13,6 +13,7 @@ DEFAULTS='{
   "wip": 1,
   "protected": [],
   "secrets": [],
+  "audit": true,
   "envGuard": { "forbidden": [] },
   "review": { "sections": [] },
   "docs": { "extra": [] },
@@ -337,8 +338,16 @@ check_record() {
   printf '%s/%s\n' "$(git rev-parse --git-path senior-mode/checks)" "$1"
 }
 
-# Runs the built-in secret scan, then the configured checks, from the repository root. On a clean tree,
-# records the result for HEAD.
+# Whether `check` audits the dependencies (`audit`, on by default); anything but a boolean is an error.
+audit_enabled() {
+  local value
+  value=$(config_get audit)
+  [[ $value =~ ^(true|false)$ ]] || die "audit must be true or false, not $value"
+  [ "$value" = true ]
+}
+
+# Runs the built-in secret scan and dependency audit, then the configured checks, from the repository
+# root. On a clean tree, records the result for HEAD.
 check() {
   local file root count i name cmd output passed=0 failed="" state description names cmds
   file=$(config_file)
@@ -350,9 +359,10 @@ check() {
     echo "FAIL  dependencies not installed: run $(install_command "$root")"
     return 1
   fi
-  # The secret scan is not configurable: it runs first, on every preset (ADR 0015).
-  names=("secret scan")
-  cmds=("$(printf '%q' "$SELF") secret-scan")
+  # The secret scan is not configurable: it runs first, on every preset. The dependency audit follows, and
+  # `audit: false` turns it off (ADR 0015).
+  names=("secret scan" "dependency audit")
+  cmds=("$(printf '%q' "$SELF") secret-scan" "$(printf '%q' "$SELF") audit")
   for ((i = 0; i < count; i++)); do
     names+=("$(jq -r ".checks[$i].name" "$file")")
     cmds+=("$(jq -r ".checks[$i].run" "$file")")
@@ -375,6 +385,8 @@ check() {
       else
         echo "ok    $name"
       fi
+      # A warning of a passing check (an advisory with no severity) is shown, not lost.
+      { grep '^warning: ' "$output" || true; } | sed 's/^/      /'
     else
       failed="${failed:+$failed, }$name"
       echo "FAIL  $name"
@@ -477,6 +489,103 @@ secret_scan() {
   printf '%s\n' "$findings"
   echo "a value is lifted by \"<sha256 of the value> <reason>\" in .claude/secret-allowlist on $base (printf %s <value> | sha256sum)"
   return 1
+}
+
+# The dependency audit of `check` (#142, spec 130): the audit tool of each lockfile at the repository root
+# (pnpm-lock.yaml or package-lock.json, requirements.txt, go.sum, Cargo.lock), its JSON read into advisories.
+# A high or critical advisory fails, naming package, advisory and fixed version; any other is a warning, an
+# advisory with no severity too (pip-audit, govulncheck and cargo audit give none; Dependabot covers it).
+# A missing tool, or one that gives no usable answer, fails: nothing was audited. Runs as its own process
+# (`senior-mode audit`).
+audit_scan() {
+  local root rc=0 found=false eco err
+  audit_enabled || {
+    echo "skipped: off (audit: false)"
+    return 0
+  }
+  root=$(git rev-parse --show-toplevel)
+  err=$(mktemp)
+  # shellcheck disable=SC2064 # expand now: $err is local and gone when the trap runs
+  trap "rm -f '$err'" EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  for eco in pnpm:pnpm-lock.yaml npm:package-lock.json pip:requirements.txt go:go.sum cargo:Cargo.lock; do
+    [ -f "$root/${eco#*:}" ] || continue
+    # pnpm's lockfile wins over a leftover package-lock.json.
+    [ "${eco%%:*}" != npm ] || [ ! -f "$root/pnpm-lock.yaml" ] || continue
+    found=true
+    audit_one "$root" "${eco%%:*}" "$err" || rc=1
+  done
+  [ "$found" = true ] || echo "skipped: no lockfile (package-lock.json, pnpm-lock.yaml, requirements.txt, go.sum, Cargo.lock)"
+  return "$rc"
+}
+
+# Audits the project at $1 with the tool of ecosystem $2 (stderr to the file $3). The filter turns the
+# tool's JSON (all of it, as an array of documents) into [{severity, package, advisory, fixed}]; it fails on
+# a document that is not that tool's report, so an error answer is never read as a clean audit.
+# shellcheck disable=SC2016 # jq programs, not shell
+audit_one() {
+  local root=$1 eco=$2 err=$3 bin hint filter maxrc=1 out rc=0 adv reason blocking line
+  local argv=()
+  case $eco in
+    npm)
+      bin=npm hint="install Node.js from https://nodejs.org" argv=(npm audit --json)
+      # via lists the advisories (objects) and the packages vulnerable through another (strings).
+      filter='[.[0].vulnerabilities | to_entries[].value as $v | $v.via[] | select(type == "object")
+        | {severity, package: .name, advisory: ((.url // .title) | split("/") | last),
+           fixed: ($v.fixAvailable | if type == "object" then (if .name == $v.name then .version else "\(.name) \(.version)" end)
+             elif . == true then "a newer version (npm audit fix)" else "" end)}]'
+      ;;
+    pnpm)
+      bin=pnpm hint="run npm install -g pnpm" argv=(pnpm audit --json)
+      filter='[.[0].advisories | to_entries[].value | {severity, package: .module_name,
+        advisory: (.github_advisory_id // (.url | split("/") | last)),
+        fixed: (if (.patched_versions // "") | IN("", "<0.0.0") then "" else .patched_versions end)}]'
+      ;;
+    pip)
+      # pip-audit before 2.7 printed the list of dependencies itself.
+      bin=pip-audit hint="run pipx install pip-audit (or pip install pip-audit)" argv=(pip-audit -r requirements.txt -f json)
+      filter='[(.[0] | if type == "array" then . else .dependencies end)[] | . as $d | .vulns[]
+        | {severity: null, package: $d.name, advisory: .id, fixed: ((.fix_versions // []) | join(", "))}]'
+      ;;
+    go)
+      # govulncheck -json exits 0 whatever it finds. A finding whose first frame names a function is a
+      # vulnerability the code calls; the others only require or import the module.
+      bin=govulncheck hint="run go install golang.org/x/vuln/cmd/govulncheck@latest" argv=(govulncheck -json ./...)
+      maxrc=0
+      filter='[.[] | select(.finding) | .finding | select(.trace[0].function)
+        | {severity: null, package: .trace[0].module, advisory: .osv, fixed: (.fixed_version // "")}]'
+      ;;
+    cargo)
+      bin=cargo-audit hint="run cargo install cargo-audit --locked" argv=(cargo audit --json)
+      filter='[.[0].vulnerabilities.list[] | {severity: null, package: .package.name, advisory: .advisory.id,
+        fixed: ((.versions.patched // []) | join(", "))}]'
+      ;;
+  esac
+  command -v "$bin" >/dev/null || {
+    echo "$bin not installed: $hint"
+    return 1
+  }
+  out=$(cd "$root" && "${argv[@]}" 2>"$err") || rc=$?
+  if [ -n "$out" ] && [ "$rc" -le "$maxrc" ] &&
+    adv=$(jq -sc "$filter | map(.severity |= (if . == null then null else ascii_downcase end)) | unique" <<<"$out" 2>/dev/null); then
+    :
+  else
+    echo "${argv[*]}: no usable answer (exit $rc)"
+    # What the tool says of itself: an error object on stdout (npm, pnpm), else its last words on stderr.
+    reason=$({ jq -r '(.error // empty) | if type == "object" then (.summary // .message // empty) else . end' <<<"$out" 2>/dev/null
+      tail -n 3 "$err"; } | head -n 3)
+    [ -z "$reason" ] || echo "  ${reason//$'\n'/$'\n'  }"
+    return 1
+  fi
+  line='def line: "\(.severity // "no severity"): \(.package) \(.advisory), "
+    + (if .fixed == "" then "no fixed version" else "fixed in \(.fixed)" end);'
+  jq -r "$line"'.[] | select(.severity | IN("high", "critical") | not) | "warning: " + line' <<<"$adv"
+  blocking=$(jq -r "$line"'.[] | select(.severity | IN("high", "critical")) | line' <<<"$adv")
+  [ -z "$blocking" ] || {
+    printf '%s\n' "$blocking"
+    return 1
+  }
 }
 
 file_owner() { stat -c %u "$1" 2>/dev/null || stat -f %u "$1"; }
@@ -2438,6 +2547,10 @@ case "${1:-}" in
   secret-scan)
     [ $# -eq 1 ] || usage
     secret_scan
+    ;;
+  audit)
+    [ $# -eq 1 ] || usage
+    audit_scan
     ;;
   publish)
     [ $# -le 2 ] || usage

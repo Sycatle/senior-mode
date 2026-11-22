@@ -55,6 +55,10 @@ expect 0 90 config get autonomy.sessionTimeout
 config '{}'
 expect 0 false config get autonomy.merge
 expect 1 - config get autonomy.autoMerge
+expect 0 true config get audit
+config '{"audit":false}'
+expect 0 false config get audit
+config '{}'
 
 # Documented optional keys read as empty when absent (a list for the list keys, an empty line for a
 # string), and as set when present; a key nobody documents is still an error.

@@ -179,6 +179,19 @@ git init -q -b main "$rd"
 setup "$rd"
 grep -qx '# R&D' "$rd/CLAUDE.md" || fail "repository name with & mangled: $(head -1 "$rd/CLAUDE.md")"
 
+# A repository with an AGENTS.md (scaffolded by a framework): the new CLAUDE.md points to it, no skeleton.
+ag="$work/agents"
+git init -q -b main "$ag"
+printf '# Agents\nRun npm test.\n' >"$ag/AGENTS.md"
+setup "$ag"
+grep -qx '@AGENTS.md' "$ag/CLAUDE.md" || fail "CLAUDE.md does not import AGENTS.md: $(cat "$ag/CLAUDE.md")"
+grep -q '^## Code map' "$ag/CLAUDE.md" && fail "skeleton duplicated next to AGENTS.md"
+grep -q '^## Principles' "$ag/CLAUDE.md" || fail "Principles missing from the CLAUDE.md pointing to AGENTS.md"
+grep -qx '# agents' "$ag/CLAUDE.md" || fail "CLAUDE.md not titled with the repository name"
+grep -q 'to fill' "$work/out" && fail "setup asks to fill a skeleton that is not there: $(cat "$work/out")"
+grep -q 'AGENTS.md' "$work/out" || fail "AGENTS.md not reported: $(cat "$work/out")"
+[ "$(cat "$ag/AGENTS.md")" = "$(printf '# Agents\nRun npm test.')" ] || fail "AGENTS.md changed"
+
 # commit subjects: nothing to check without commits; a remote without a known default branch fails
 # and says how to fix it, instead of reading the whole history.
 (cd "$rd" && .githooks/commit-msg --branch) 2>"$work/err" || fail "--branch fails without commits: $(cat "$work/err")"

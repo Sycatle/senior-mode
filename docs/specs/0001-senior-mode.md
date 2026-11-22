@@ -112,7 +112,7 @@ Natural-language triggers in any language route to them ("let's frame", "cadrons
 
 | Command | Purpose | Agents |
 |---|---|---|
-| `setup` | Adopt a repo (new or existing): detect stack, choose preset, create the Project and its fields, labels, branch protection, CI, release-please, git hooks, issue and PR templates, `CLAUDE.md` with Principles, `.claude/senior-mode.json`. Idempotent; re-run to repair. | scout, ops |
+| `setup` | Adopt a repo (new or existing): detect stack, choose preset, create the Project and its fields, labels, branch protection, CI, release-please, git hooks, issue and PR templates, `CLAUDE.md` with Principles (importing `AGENTS.md` when the repository has one), `.claude/senior-mode.json`. The language is proposed from the user's `CLAUDE.md` or conversation. The status line is set for this project only. Idempotent; re-run to repair. | scout, ops |
 | `frame` | Idea → interview rounds → alternatives → spec → ADR(s) → tickets as vertical slices with acceptance criteria, dependencies, size, priority, milestone. Ends with a summary of proactive suggestions the user did not ask for. | scout, researcher, architect, ops |
 | `next [#issue]` | The daily session: short state of the board, open PRs needing a human (offered for review or merge first), then picks the top Ready ticket and delivers it with the user in the loop (TDD, commits, PR, review). Never merges without the user's explicit yes. | ops, test-author, implementer, reviewer |
 | `run` | Autonomous delivery of up to N Ready tickets, one headless session per ticket (section 10, ADR 0007). | all |

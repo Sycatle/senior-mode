@@ -6,7 +6,7 @@
     "**/rbac/**", ".env*", "**/secrets/**", "*.pem", "*.key", "**/payments/**", "**/billing/**",
     "**/stripe/**", ".github/workflows/**", ".github/actions/**", ".github/CODEOWNERS", ".githooks/**",
     ".gitlab-ci.yml", "Dockerfile*", "docker-compose*", "compose.y*ml", "**/infra/**",
-    "**/terraform/**", "**/k8s/**", "*.tf", ".claude/settings*.json", ".claude/senior-mode.json"
+    "**/terraform/**", "**/k8s/**", "*.tf", ".claude/settings*.json", ".claude/senior-mode.json", ".claude/secret-allowlist"
   ],
   "frameworks": { "next": { "protected": ["middleware.*", "src/middleware.*", "proxy.*", "src/proxy.*"] } },
   "release": {

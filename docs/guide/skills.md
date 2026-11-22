@@ -7,7 +7,7 @@ Every skill is a step of the delivery lifecycle and a role of the team
 |---|---|
 | Lead | `triage`, `frame`, `spec`, `adr`, `grill`, `ready` |
 | Developer | `tdd` (refactoring is a mode of it), `verify`, `commit` |
-| Reviewer | `review`, with explain, UI and dependencies-and-data sections |
+| Reviewer | `review`, with explain, security, UI and dependencies-and-data sections |
 | Release and ops | `run`, `next`, `status`, `docs` |
 | Learning | `retro` |
 
@@ -104,6 +104,10 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
 - **Sections.** Loaded only when they apply:
   - the brief for the person who merges, always: what changes for users, risks and protected zones
     touched, what was tested and what was not, and questions to ask the author, in plain language;
+  - security, always: injection, authorisation, secrets, unsafe shell, supply chain and data exposure,
+    each finding with `file:line` and the fix, rated critical, high, moderate or low. A high or
+    critical finding blocks: `senior-mode/review` is set to `failure`, never `success`. Moderate and
+    low are reported only. Risks outside the diff are listed for triage, with no exploit detail;
   - UI, when the diff touches front-end files: screenshots of the touched pages if the project's
     Playwright is there, accessibility basics, component consistency, empty, loading and error
     states;

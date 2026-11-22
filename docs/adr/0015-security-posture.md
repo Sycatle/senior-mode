@@ -61,5 +61,6 @@ hooks. The posture has to hold on GitHub Free as well as with GitHub's security 
 - Three required statuses instead of two. `setup github` must add the third without blocking open
   pull requests.
 - The plugin maintains the audit of each ecosystem (keyed on its lockfile) and the secret patterns.
+  Amended (#142): this line said "each preset maintains an audit command"; the audit is a built-in step of `check`, as the Decision says.
 - An Opus pass on L tickets and protected zones costs more, on purpose, where a miss costs most.
 - Until #175, enforcement against a session that escapes the hooks rests on the hooks themselves.

@@ -42,6 +42,18 @@ cp "$d/.claude/senior-mode.json" "$work/before"
 setup "$d"
 cmp -s "$work/before" "$d/.claude/senior-mode.json" || fail "second run changed the config"
 
+# A crate that already has a version is the last release: the manifest holds it, the next release bumps it.
+d=$(project versioned Cargo.toml)
+printf '[workspace.package]\nversion = "9.9.9"\n\n[package] # the crate\nname = "app"\nversion = "1.3.0"\n\n[dependencies]\nserde = { version = "1.0.200" }\n' >"$d/Cargo.toml"
+setup "$d"
+[ "$(jq -r '."."' "$d/.release-please-manifest.json")" = 1.3.0 ] || fail "manifest not seeded from Cargo.toml: $(cat "$d/.release-please-manifest.json")"
+[ "$(jq -r '.packages["."]["initial-version"]' "$d/release-please-config.json")" = 0.1.0 ] || fail "initial-version taken from Cargo.toml"
+grep -q "first release follows 1.3.0 (Cargo.toml)" "$work/out" || fail "seeded version not reported: $(cat "$work/out")"
+d=$(project inherited Cargo.toml)
+printf '[package]\nname = "app"\nversion.workspace = true\n' >"$d/Cargo.toml"
+setup "$d"
+[ "$(jq -r '."."' "$d/.release-please-manifest.json")" = 0.0.0 ] || fail "an inherited version was read: $(cat "$d/.release-please-manifest.json")"
+
 # Detection order: package.json keeps node; Cargo.toml comes before Python files; a stored preset wins.
 d=$(project withnode Cargo.toml)
 echo '{"scripts": {"test": "vitest run"}}' >"$d/package.json"

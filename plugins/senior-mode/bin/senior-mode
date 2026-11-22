@@ -1012,16 +1012,22 @@ protected() {
   # --no-renames: a file moved out of a protected zone is listed under its old path too.
   files=$(git -c core.quotePath=false diff --name-only --no-renames "$base...HEAD") ||
     die "cannot compare with $base"
-  matches=$(jq -Rrn --argjson g "$globs" '
+  matches=$(protected_match "$globs" <<<"$files")
+  [ -n "$matches" ] || return 1
+  printf '%s\n' "$matches"
+}
+
+# The file names on stdin that match a glob of the JSON list $1, as `protected` reads them.
+# shellcheck disable=SC2016 # a jq program, not shell
+protected_match() {
+  jq -Rrn --argjson g "$1" '
     def re:
       (if startswith("/") then .[1:] elif contains("/") then . else "**/" + . end) as $g
       | "^" + ([$g | match("\\*\\*/|\\*\\*|\\*|\\?|[^*?]+"; "g").string
           | if . == "**/" then "(.*/)?" elif . == "**" then ".*" elif . == "*" then "[^/]*" elif . == "?" then "[^/]"
             else gsub("(?<c>[.+^$(){}|\\[\\]\\\\])"; "\\" + .c) end] | join("")) + "$";
     ($g | map(re)) as $res
-    | inputs | select(. as $f | any($res[]; . as $r | $f | test($r)))' <<<"$files")
-  [ -n "$matches" ] || return 1
-  printf '%s\n' "$matches"
+    | inputs | select(. as $f | any($res[]; . as $r | $f | test($r)))'
 }
 
 # The Project items, and with $1 = true the repository facts that `status` adds, in one GraphQL
@@ -1667,13 +1673,13 @@ It is back in Backlog. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in th
 # A delivered ticket: merged when merging is on and every bound holds (ADR 0003, 0008), else listed
 # for a human with the reason. $2 is the open pull request as the REST list gives it.
 run_merge() {
-  local n=$1 pr sha reason="" missing
+  local n=$1 pr sha reason="" missing files zones
   pr=$(jq -r '.[0].number' <<<"$2")
   sha=$(jq -r '.[0].head.sha' <<<"$2")
   if [ "$RUN_MERGE" != true ]; then
     reason="merging is off (autonomy.merge)"
-  elif [ "$RUN_PROTECTION" = none ]; then
-    reason="the server enforces no branch protection (github.protection is none)"
+  elif [ "$RUN_PROTECTION" != ruleset ]; then
+    reason="the server enforces no branch protection (github.protection is ${RUN_PROTECTION:-unset})"
   elif jq -e '[.[0].labels[]?.name] | index("needs-human")' <<<"$2" >/dev/null; then
     reason="labelled needs-human"
   elif ! missing=$(gh_retry api "repos/$RUN_SLUG/commits/$sha/status" | jq -r '["senior-mode/ci", "senior-mode/review"]
@@ -1681,7 +1687,14 @@ run_merge() {
     reason="its statuses could not be read"
   elif [ -n "$missing" ]; then
     reason="$missing not green"
-  elif gh pr merge "$pr" --rebase -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
+  # The command applies the protected zones, not the reviewer: the files GitHub would merge, against
+  # the globs of the base branch, so a pull request cannot unprotect itself. --match-head-commit
+  # refuses a head pushed after these checks.
+  elif ! files=$(gh_retry api "repos/$RUN_SLUG/pulls/$pr/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)'); then
+    reason="its changed files could not be read"
+  elif zones=$(protected_match "$RUN_GLOBS" <<<"$files") && [ -n "$zones" ]; then
+    reason="it touches a protected zone ($(paste -sd, - <<<"$zones" | sed 's/,/, /g'))"
+  elif gh pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
     RUN_MERGED+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
     RUN_PRS+=("#$pr")
     return 0
@@ -1758,7 +1771,7 @@ run() {
   local max="" parallel="" n title t
   local -a queue=() running=() still=() RUN_MERGED=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
   local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=()
-  local RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION
+  local RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS
   local RUN_FAILS=0 RUN_STOP=""
   while [ $# -gt 0 ]; do
     case $1 in
@@ -1785,6 +1798,13 @@ run() {
   RUN_ROOT=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
   git fetch -q origin || echo "senior-mode: could not fetch origin; starting from the last fetched state" >&2
   RUN_BASE=$(default_branch) || die "no default branch found"
+  # Protected zones as the base branch has them; a branch cannot edit its own.
+  RUN_GLOBS='[]'
+  if git cat-file -e "$RUN_BASE:.claude/senior-mode.json" 2>/dev/null; then
+    RUN_GLOBS=$(git show "$RUN_BASE:.claude/senior-mode.json" | jq -c '.protected // []') || RUN_GLOBS=null
+  fi
+  jq -e 'type == "array" and all(type == "string")' <<<"$RUN_GLOBS" >/dev/null ||
+    die "protected in .claude/senior-mode.json of $RUN_BASE must be an array of globs"
   RUN_STAMP=$(date +%Y%m%d-%H%M%S)-$$
   RUN_DIR=$(git rev-parse --path-format=absolute --git-common-dir)/senior-mode/runs/$RUN_STAMP
   data=$(board_data false) || exit 1

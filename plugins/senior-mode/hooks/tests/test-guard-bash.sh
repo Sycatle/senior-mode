@@ -77,6 +77,20 @@ expect allow 'gh pr merge 3 --rebase --delete-branch'
 expect allow 'gh pr comment 3 --body "merge with --admin is for humans"'
 expect allow 'gh pr view 3 --admin'
 
+# In a run session nothing merges: senior-mode run merges after its own checks.
+export SENIOR_MODE_RUN=1
+expect deny 'gh pr merge 5 --rebase'
+expect deny 'gh pr merge 5 --squash --auto'
+expect deny 'gh -R a/b pr merge 5'
+expect deny 'gh api repos/a/b/pulls/5/merge -X PUT'
+expect deny 'gh api repos/a/b/merges -f base=main -f head=feat/x'
+expect deny "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'"
+expect deny "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {pullRequestId: \"x\"}) { clientMutationId } }'"
+expect allow 'gh pr view 5 --json mergeable'
+expect allow 'gh pr create --title "fix: merge sort" --body x'
+expect allow 'gh api repos/a/b/pulls/5'
+unset SENIOR_MODE_RUN
+
 git -C "$repo" switch -q feat/2-local
 reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason' \
   <<<"$(jq -nc --arg d "$repo" '{tool_input: {command: "git push --force"}, cwd: $d}' | "$hook")")

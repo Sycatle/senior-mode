@@ -19,7 +19,7 @@ Review from the diff, the spec and the tests, not from the author's summary.
 
 - **Design:** the simplest that meets the criteria (KISS, YAGNI), one responsibility, no duplication.
 - **Correctness:** edge cases, errors handled at boundaries, none swallowed, no race.
-- **Security:** inputs validated, authorisation checked, no secrets, safe queries and rendering.
+- **Security:** `security.md`; a high or critical finding blocks.
 - **Tests:** behaviour, deterministic; none skipped or weakened.
 - **Readability:** names say intent, fits the code around it.
 - **History:** atomic Conventional Commits that each pass.
@@ -29,15 +29,15 @@ Review from the diff, the spec and the tests, not from the author's summary.
 Run `senior-mode protected` on the branch (`--base <ref>` if it does not target the default branch).
 Exit 0 lists files: a protected zone is touched, so the verdict is at best "approve, human merge":
 add the label `needs-human`, set `senior-mode/review` to `pending`, never `success`, and name the
-files. Exit 1: no match, but globs miss things: still judge the diff for migrations,
-security, auth, permissions, secrets, payments, CI, infrastructure, major dependency upgrades, an
-L ticket or an ADR.
+files. Exit 1: no match, but globs miss things: still judge the diff for migrations, security, auth,
+permissions, secrets, payments, CI, infrastructure, major upgrades, an L ticket or an ADR.
 
 ## Brief and extra sections
 
 Read only what applies, from `${CLAUDE_SKILL_DIR}`:
 
 - `explain.md`: always. The plain-language brief for the person who merges.
+- `security.md`: always, never optional.
 - `ui.md`: when the diff touches front-end files (pages, components, styles).
 - `dependencies-and-data.md`: when dependencies change or the diff handles data (manifests,
   schemas, logs, exports, third-party calls).
@@ -51,10 +51,10 @@ Read only what applies, from `${CLAUDE_SKILL_DIR}`:
 Post one PR comment (`gh pr comment`) in the project language:
 
 - **Verdict:** approve, approve with human merge, or changes requested.
-- **Brief**, then **Spec axis**, **Standards axis** and each extra section: `file:line` findings,
-  blocking or not, each with the fix.
+- **Brief**, then each axis and extra section (Security included): `file:line` findings, blocking
+  or not, each with the fix.
 - **Not verified:** what you only read or did not run.
 
-Then set the status `senior-mode/review` on the head commit: `success` when approved, `failure`
-when changes are requested, `pending` for human merge
+Then set `senior-mode/review` on the head commit: `success` when approved, `failure` when changes
+are requested (always for high or critical Security), `pending` for human merge
 (`gh api repos/<owner>/<repo>/statuses/<sha> -f state=... -f context=senior-mode/review -f description=...`).

@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
 # PreToolUse on Bash: denies git commands that skip checks, force-push, push to the default branch or
 # discard commits of a shared branch, switch the hooks off (core.hooksPath), and gh pr merge --admin
-# (spec 0001 §10); in a run, any merge and any change to rulesets or branch protection (spec 130).
+# (spec 0001 §10), the same through the GIT_CONFIG_KEY_<n> environment or a gh alias; in a run, any
+# merge and any change to rulesets or branch protection (spec 130).
 # Prints a deny decision, or nothing to allow.
 # A guardrail for honest mistakes, not a sandbox: `bash -c "..."` and the like are not parsed.
 set -o pipefail
 input=$(cat)
 # Quoted text is data (commit messages, echo), never options: replace it before parsing. A quoted
-# single word (a URL, a ref) is unquoted instead. A backslash-newline continues the line.
+# single word (a URL, a ref) is unquoted instead; an empty pair is an argument (`core.hooksPath ""`),
+# not nothing. A backslash-newline continues the line.
 command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
-  | gsub("\"(?<w>[^\"\\\\\\s$`]*)\"|'"'"'(?<v>[^'"'"'\\s]*)'"'"'"; .w // .v)
+  | gsub("\"(?<w>[^\"\\\\\\s$`]+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'"; .w // .v)
   | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
 cwd=$(jq -r '.cwd // empty' <<<"$input")
 raw=$(jq -r '.tool_input.command // ""' <<<"$input")
+# The gh api checks read the endpoint, not the text of a body, header or filter: drop the values of
+# the options that take one, keeping what is quoted in the endpoint (`"repos/$R/pulls/$N/merge"`).
+raw_ep=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
+  | gsub("(?<f>\\s(-f|-F|-H|-q|-t|--field|--raw-field|--header|--jq|--template|--input)(\\s+|=)?)(\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"'|[^\\s\"'"'"'])+"; "\(.f)V")' <<<"$input")
 
 deny() {
   jq -nc --arg r "senior-mode: $1" \
@@ -58,8 +64,20 @@ check_push() {
 
 while IFS= read -r segment; do
   read -ra w <<<"$segment"
+  # Leading words that only set up the command: assignments, export, wrappers. A git setting handed
+  # over through the environment switches the hooks off as surely as -c does.
   i=0
-  while [[ ${w[i]:-} == *=* || ${w[i]:-} == command || ${w[i]:-} == exec ]]; do i=$((i + 1)); done
+  while [[ ${w[i]:-} == *=* || ${w[i]:-} =~ ^(command|exec|export|declare|typeset|readonly)$ ]]; do
+    [[ ${w[i],,} =~ ^git_config_key_[0-9]+=[\"\']?core\.hookspath ]] && deny_skip "GIT_CONFIG_KEY core.hooksPath"
+    i=$((i + 1))
+  done
+  # env, sudo, xargs... run what follows: look for the gh or git behind them, options and values included.
+  if [[ ${w[i]##*/} =~ ^(env|sudo|doas|xargs|nohup|time|nice)$ ]]; then
+    while [ "$i" -lt "${#w[@]}" ] && ! [[ ${w[i]##*/} =~ ^(gh|git)$ ]]; do
+      [[ ${w[i],,} =~ ^git_config_key_[0-9]+=[\"\']?core\.hookspath ]] && deny_skip "GIT_CONFIG_KEY core.hooksPath"
+      i=$((i + 1))
+    done
+  fi
   if [ "${w[i]##*/}" = gh ] 2>/dev/null; then
     # The command and subcommand are the first two words that are not options (-R takes a value).
     gs=() skip=false
@@ -71,6 +89,9 @@ while IFS= read -r segment; do
         *) gs+=("$a"); [ ${#gs[@]} -lt 2 ] || break ;;
       esac
     done
+    # An alias is a command this guard cannot read: `gh alias set pm "pr merge --admin"`.
+    [[ ${gs[0]:-} == alias && ${gs[1]:-} =~ ^(set|import)$ ]] &&
+      deny "gh alias set or import is denied: an alias hides the command it runs from the guard, so run the command itself."
     merge=false
     [ "${gs[0]:-} ${gs[1]:-}" = "pr merge" ] && merge=true
     # Quoted paths ("repos/$R/...") are no longer in $command: the API checks read the raw one.
@@ -88,10 +109,10 @@ while IFS= read -r segment; do
     if [ "${SENIOR_MODE_RUN:-}" = 1 ]; then
       $merge && deny "a run session never merges: senior-mode run merges after its own checks, or a human does."
       # A GraphQL mutation sits in quoted text, which $command no longer holds: read the raw one.
-      [[ ${gs[0]:-} == api && $raw =~ pulls/[^/[:space:]]+/merge|/merges|mergePullRequest|enablePullRequestAutoMerge ]] &&
+      [[ ${gs[0]:-} == api && ($raw_ep =~ pulls/[^/[:space:]]+/merge|/merges || $raw =~ mergePullRequest|enablePullRequestAutoMerge) ]] &&
         deny "a run session never merges, not through gh api either."
       # The rules that bound the run are the human's (spec 130, #116).
-      [[ ($write == true && $raw =~ /rulesets([/?[:space:]\"\']|$)|/branches/[^[:space:]]+/protection) ||
+      [[ ($write == true && $raw_ep =~ /rulesets([/?[:space:]\"\']|$)|/branches/[^[:space:]]+/protection) ||
         (${gs[0]:-} == api && $raw =~ (create|update|delete)(RepositoryRuleset|BranchProtectionRule)) ]] &&
         deny "a run session never changes rulesets or branch protection: say in the pull request what a human should change."
     fi
@@ -99,7 +120,7 @@ while IFS= read -r segment; do
     $merge && [[ " ${w[*]:i+1} " =~ \ --admin[=\ ] ]] &&
       deny "gh pr merge --admin bypasses the required checks and review: a human must do it."
     # Through the API, an admin's merge bypasses the ruleset without any flag.
-    [[ $method == PUT && $raw =~ pulls/[^/[:space:]]+/merge([?[:space:]\"\']|$) ]] &&
+    [[ $method == PUT && $raw_ep =~ pulls/[^/[:space:]]+/merge([?[:space:]\"\']|$) ]] &&
       deny "merging through gh api can bypass the required checks: use gh pr merge without --admin."
     continue
   fi
@@ -109,7 +130,8 @@ while IFS= read -r segment; do
   while [[ ${w[i]:-} == -* ]]; do
     case ${w[i]} in
       -C) dir=$(cd "$dir" 2>/dev/null && cd "${w[i + 1]}" 2>/dev/null && pwd) || dir=$cwd; i=$((i + 2)) ;;
-      -c) [[ ${w[i + 1]} == core.hooksPath=* ]] && deny_skip "core.hooksPath"; i=$((i + 2)) ;;
+      -c) [[ ${w[i + 1],,} == core.hookspath=* ]] && deny_skip "core.hooksPath"; i=$((i + 2)) ;;
+      --config-env=*) [[ ${w[i],,} == --config-env=core.hookspath=* ]] && deny_skip "core.hooksPath"; i=$((i + 1)) ;;
       *) i=$((i + 1)) ;;
     esac
   done

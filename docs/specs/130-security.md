@@ -88,10 +88,13 @@ Triage of risks (#144, Severity):
   create --severity` sets it and adds the label `security`.
 - Given an agent finds a risk outside its ticket, then it files an issue with `--severity`, and the
   body carries no exploit detail. It is deduplicated by a fingerprint in the body (`security-id:
-  <sha256 of kind, path and rule>`) against open issues.
+  <sha256 of kind, path and rule>`) against open issues: `issue create --kind <k> --path <p> --rule
+  <r>` adds the line, and an open issue that carries it is printed instead of filing another.
 - Critical is P0 and is first in `pick`. High is P1.
 - A critical finding in a public repository also opens a private security advisory, which holds
-  the details.
+  the details: `--details-file <file|->` is read into a draft advisory (`gh api` POST
+  `repos/{owner}/{repo}/security-advisories`), required in a public repository and never put in the
+  issue. A private repository gets a message instead.
 
 Guard hardening (#115-#120, #145):
 

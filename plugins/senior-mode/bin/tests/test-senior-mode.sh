@@ -51,6 +51,7 @@ expect 0 5 config get autonomy.maxTickets
 expect 0 true config get autonomy.merge
 expect 0 2 config get autonomy.maxConsecutiveFailures
 expect 0 true config get autonomy.escalate
+expect 0 90 config get autonomy.sessionTimeout
 config '{}'
 expect 0 false config get autonomy.merge
 expect 1 - config get autonomy.autoMerge

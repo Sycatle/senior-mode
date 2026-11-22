@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Tests for `senior-mode run`. Offline: gh, claude and tmux are stubs. gh answers the board query and
 # the REST calls from fixtures in $FIX; claude plays a ticket session from $FIX/claude-<n>-<model>
-# (line 1: the outcome to write, empty for none; line 2: "pr" to open a pull request).
+# (line 1: the outcome to write, empty for none; line 2: "pr" to open a pull request; line 3: "hang" to
+# never end, with a child process, recorded in $FIX/pids-<n>, to check that a killed session leaves none).
 # The per-ticket outcome files `run` leaves are checked against the records of fixture-runs.sh, the same
 # ones test-retro.sh feeds to `retro`.
 # shellcheck disable=SC2016 # jq programs and stub bodies, not expanded here
@@ -37,6 +38,7 @@ case "$*" in
     n=$(sed -E 's#.*/sha([0-9]+)/status#\1#' <<<"$*")
     cat "$FIX/status-$n" 2>/dev/null || echo '{"statuses": []}' ;;
   "api repos/acme/app/issues/"*"/comments"*) echo '{}' ;;
+  "api repos/acme/app/issues/"*"/labels"*) echo '[]' ;;
   "pr merge"*) ;;
   *) echo "unexpected: $*" >&2; exit 1 ;;
 esac
@@ -50,6 +52,11 @@ n=$(sed -nE 's#.*/app-([0-9]+)$#\1#p' <<<"$PWD")
 [ -n "$n" ] || exit 0
 fx=$FIX/claude-$n-$model
 [ -f "$fx" ] || exit 1
+if [ "$(sed -n 3p "$fx")" = hang ]; then
+  sleep 300 &
+  echo "$$ $!" >"$FIX/pids-$n"
+  wait
+fi
 outcome=$(sed -n 1p "$fx")
 [ -z "$outcome" ] || echo "$outcome" >"$SENIOR_MODE_RUN_OUTCOME"
 [ "$(sed -n 2p "$fx")" != pr ] ||
@@ -63,7 +70,7 @@ case $1 in
   has-session) [ -f "$FIX/tmux-session" ] ;;
   new-session | new-window)
     touch "$FIX/tmux-session"
-    bash -c "${*: -1}" >/dev/null 2>&1 &
+    setsid bash -c "${*: -1}" >/dev/null 2>&1 &
     ;;
 esac
 STUB
@@ -100,7 +107,7 @@ board() {
   done
   jq -nc --argjson i "$items" '{data: {node: {items: {pageInfo: {hasNextPage: false}, nodes: $i}}}}' >"$FIX/board.json"
 }
-session() { printf '%s\n%s\n' "$2" "${3:-}" >"$FIX/claude-$1"; }
+session() { printf '%s\n%s\n%s\n' "$2" "${3:-}" "${4:-}" >"$FIX/claude-$1"; }
 green='{"statuses": [{"context": "senior-mode/ci", "state": "success"}, {"context": "senior-mode/review", "state": "success"}]}'
 # outcome_is <ticket>: the outcome file of the ticket, in .git/senior-mode/runs/<stamp>/<n>.json, holds the
 # fixture record and a finishedAt time.
@@ -273,6 +280,29 @@ run || fail "J: run failed: $(cat "$work/out")"
 grep -q 'pr merge' "$GH_LOG" && fail "J: merged without the base branch's protected zones"
 grep -q 'Waiting for a human.*#80.*protected zones could not be read' "$work/out" ||
   fail "J: report misses why #80 waits: $(cat "$work/out")"
+
+# K: a session that outlives autonomy.sessionTimeout (1 minute, scaled to a second) is killed with its
+# processes, the ticket gets needs-human and a comment with the log path, stays In progress, is not retried
+# on Opus and counts for the breaker (#115). #91 is never started.
+config '{"maxConsecutiveFailures": 1, "sessionTimeout": 1}'
+board 90 '[]' 91 '[]'
+session 90-sonnet "" "" hang
+session 91-sonnet delivered pr
+SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "K: run failed: $(cat "$work/out")"
+grep -q 'app-90 opus' "$CLAUDE_LOG" && fail "K: a timed out session was retried on Opus"
+grep -q 'app-91' "$CLAUDE_LOG" && fail "K: the breaker did not count the timeout"
+grep -q 'issues/90/labels.*needs-human' "$GH_LOG" || fail "K: #90 not labelled needs-human: $(cat "$GH_LOG")"
+grep -q '90-sonnet.log' "$GH_LOG" || fail "K: no comment with the log path on #90"
+grep -q 'item-edit.*--single-select-option-id o0' "$GH_LOG" && fail "K: #90 was set back to Backlog"
+grep -q 'Failed.*#90.*timed out after 1 minute' "$work/out" || fail "K: report misses the timeout: $(cat "$work/out")"
+jq -e '.outcome == "failed" and .escalated == false and .reason == "timed out after 1 minute"' \
+  "$repo/.git/senior-mode/runs/"*"/90.json" >/dev/null || fail "K: #90 not recorded as timed out"
+read -r -a pids <"$FIX/pids-90"
+for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && fail "K: process $pid of the session is still alive"; done
+for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
+config '{"sessionTimeout": 0}'
+run && fail "K: sessionTimeout 0 accepted"
+grep -q 'sessionTimeout' "$work/out" || fail "K: bad sessionTimeout not named: $(cat "$work/out")"
 
 # E: nothing Ready, bad arguments.
 config '{}'

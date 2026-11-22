@@ -179,7 +179,15 @@ git -C "$repo" show-ref -q --verify refs/heads/feat/102-second-thing && fail "br
 issue "feat: add the next command, the daily session" '{"name": "type:feature"}'
 start 89 || fail "the ticket already In progress refused: $(cat "$work/err")"
 issue "Second thing" ''
-SENIOR_MODE_RUN=1 start 102 || fail "a run refused by wip: $(cat "$work/err")"
+# #145: only `run`, which holds the token in memory, skips the limit; a variable set by hand does not,
+# even with a token file of its own and the token in the environment.
+SENIOR_MODE_RUN=1 start 102 && fail "a hand-set SENIOR_MODE_RUN skipped the wip limit"
+grep -q '#89' "$work/err" || fail "hand-set run: the wip refusal does not name the ticket: $(cat "$work/err")"
+(umask 077; echo forged >"$work/token")
+SENIOR_MODE_RUN=1 SENIOR_MODE_RUN_TOKEN_FILE="$work/token" start 102 && fail "a forged token file skipped the wip limit"
+SENIOR_MODE_RUN=1 SENIOR_MODE_RUN_TOKEN_FILE="$work/token" RUN_TOKEN=forged start 102 &&
+  fail "a token set in the environment skipped the wip limit"
+[ -e "$work/app-102" ] && fail "worktree created by a hand-set run"
 jq '.wip = 2' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
 issue "Third thing" ''
 start 103 || fail "wip 2 refused a second ticket: $(cat "$work/err")"

@@ -1778,16 +1778,37 @@ start_base() {
   printf '%s\n' "$base"
 }
 
-# senior-mode frame start <idea>: the worktree `<repo>-frame-<slug>` and the branch `docs/<slug>` of a
+# Every worktree senior-mode makes (a ticket, a framing, the docs session of a run) is
+# `<git common dir>/senior-mode/worktrees/<name>`, never a sibling of the repository (#224): $1 is the
+# git common dir, $2 the name (`<issue>`, `frame-<slug>`, `run-docs-<stamp>`). The same path from any
+# worktree. One built before #224 stays beside the repository; `branch_worktree` finds it by its branch.
+worktree_path() {
+  printf '%s/senior-mode/worktrees/%s\n' "$1" "$2"
+}
+
+# The path of the worktree of repository $1 that has branch $2 checked out; nothing when there is none.
+branch_worktree() {
+  git -C "$1" worktree list --porcelain | awk -v b="refs/heads/$2" '$1 == "worktree" {p = substr($0, 10)} $1 == "branch" && $2 == b {print p}'
+}
+
+# The worktrees of the tickets in the repository of $1, as `<issue> <path>` lines, wherever they are:
+# any worktree on a branch `<type>/<issue>-<slug>`.
+ticket_worktrees() {
+  git -C "$1" worktree list --porcelain | awk '$1 == "worktree" {p = substr($0, 10)}
+    $1 == "branch" && match($2, /^refs\/heads\/[a-z]+\/[0-9]+(-|$)/) {
+      n = substr($2, 12); sub(/^[a-z]+\//, "", n); sub(/[^0-9].*/, "", n); print n, p}'
+}
+
+# senior-mode frame start <idea>: the worktree `frame-<slug>` and the branch `docs/<slug>` of a
 # framing (spec 0001 §8), from origin's default branch, so parallel framings never share a working tree
 # or branch. Refuses when the local default branch holds commits origin lacks: they would ride along in
 # the framing's pull request.
 frame_start() {
-  local name main base branch path local_branch ahead
+  local name common main base branch path local_branch ahead
   name=$(slugify "${1:-}")
   [ -n "$name" ] || usage
-  main=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
-  main=${main%/.git}
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
+  main=${common%/.git}
   git -C "$main" fetch -q origin 2>/dev/null || die "cannot fetch origin"
   base=$(start_base "$main") || die "no default branch to frame from"
   local_branch=${base#origin/}
@@ -1797,8 +1818,10 @@ frame_start() {
       die "$local_branch is ahead of $base by $ahead commit(s) (unpushed, such as a setup commit): push or open a pull request for them first, then frame again"
   fi
   branch=docs/$name
-  path=$(dirname "$main")/$(basename "$main")-frame-$name
-  if [ ! -e "$path" ]; then
+  path=$(branch_worktree "$main" "$branch")
+  if [ -z "$path" ]; then
+    path=$(worktree_path "$common" "frame-$name")
+    [ ! -e "$path" ] || die "$path exists and is not the worktree of $branch"
     if git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
       git -C "$main" worktree add -q "$path" "$branch" >/dev/null || die "cannot create the worktree"
     else
@@ -1835,21 +1858,6 @@ wip_check() {
     die "work in progress is at its limit (wip $limit): $others. Finish it first (merge, or set it back to Ready), or raise wip in .claude/senior-mode.json"
 }
 
-# Where the worktree of ticket $2 is created: inside the git common dir $1 (so never a sibling of the
-# repository, and the same from any worktree), as senior-mode/worktrees/<issue>. A ticket started
-# before #224 keeps its worktree beside the repository; `ticket_worktrees` finds it by its branch.
-ticket_worktree_path() {
-  printf '%s/senior-mode/worktrees/%s\n' "$1" "$2"
-}
-
-# The worktrees of the tickets in the repository of $1, as `<issue> <path>` lines, wherever they are:
-# any worktree on a branch `<type>/<issue>-<slug>`.
-ticket_worktrees() {
-  git -C "$1" worktree list --porcelain | awk '$1 == "worktree" {p = substr($0, 10)}
-    $1 == "branch" && match($2, /^refs\/heads\/[a-z]+\/[0-9]+(-|$)/) {
-      n = substr($2, 12); sub(/^[a-z]+\//, "", n); sub(/[^0-9].*/, "", n); print n, p}'
-}
-
 # senior-mode start <issue>: the worktree and the branch `<type>/<issue>-<slug>` of a ticket, then Status
 # In progress. Shared by `next` and `run`. The branch type follows the `type:` label (feature: feat, bug:
 # fix, task and chore: chore; feat without a label). The branch starts from the default branch, fetched
@@ -1878,12 +1886,12 @@ start() {
   # The branch of an earlier start wins, whatever its slug.
   branch=$(git -C "$main" for-each-ref --format='%(refname:short)' "refs/heads/$type/$issue-*" | head -1)
   branch=${branch:-$type/$issue${name:+-$name}}
-  existing=$(git -C "$main" worktree list --porcelain | awk -v b="refs/heads/$branch" '$1 == "worktree" {p = substr($0, 10)} $1 == "branch" && $2 == b {print p}')
+  existing=$(branch_worktree "$main" "$branch")
   if [ -n "$existing" ]; then
     path=$existing
   else
     created=true
-    path=$(ticket_worktree_path "$common" "$issue")
+    path=$(worktree_path "$common" "$issue")
     [ ! -e "$path" ] || die "$path exists and is not the worktree of $branch"
     if ! git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
       git -C "$main" fetch -q origin 2>/dev/null || true
@@ -2549,7 +2557,7 @@ run_finish() {
 # shellcheck disable=SC2016 # lines of the script, expanded when it runs
 run_docs() {
   local wt branch=docs/run-$RUN_STAMP script=$RUN_DIR/docs.sh reason="" rc started=$SECONDS
-  wt="$(dirname "$RUN_ROOT")/$(basename "$RUN_ROOT")-run-docs-$RUN_STAMP"
+  wt=$(worktree_path "$(git rev-parse --path-format=absolute --git-common-dir)" "run-docs-$RUN_STAMP")
   git fetch -q origin 2>/dev/null || true
   git worktree add -q -b "$branch" "$wt" "$RUN_BASE" 2>/dev/null || {
     echo "docs: no worktree, skipped" >&2

@@ -95,6 +95,22 @@ kind "Azure storage key" "$azure" "conn;$azure;"
 symbols='P@ss!w0rd#2024'"$(rep xyz 1)"
 kind "generic secret" "$symbols" "  password = \"$symbols\""
 
+# Review of #196: a password is a placeholder only when it equals a placeholder word (digits and punctuation
+# ignored) or is a template, not when it contains test or pass, or is URL-encoded; the user may be empty; JWTs.
+p=postgres://app:
+pwtest="test$(rep Zx9kQ4mW 2)"
+kind "credentialed URL" "$pwtest" "DATABASE_URL=${p}${pwtest}@db.internal:5432/app"
+pwpass="Pass$(rep Zx9kQ4mW 2)"
+kind "credentialed URL" "$pwpass" "DATABASE_URL=${p}${pwpass}@db.internal:5432/app"
+pwenc="Zx9k%40Q4mW%21$(rep Zx9kQ4mW 2)"
+kind "credentialed URL" "$pwenc" "DATABASE_URL=${p}${pwenc}@db.internal:5432/app"
+p=redis://:
+pwredis=$(rep Zx9kQ4mW 2)
+kind "credentialed URL" "$pwredis" "REDIS_URL=${p}${pwredis}@cache.internal:6379"
+p=eyJ
+jwt="${p}$(rep hbGciOiJI 2).eyJ$(rep c3ViIjoi 3).$(rep Zx9kQ4mW 4)"
+kind "JSON Web Token" "$jwt" "Authorization: Bearer $jwt"
+
 # A hunk in the middle of a file: the line number is the one of the new file, and a deleted line does not shift it.
 git_ checkout -q main
 printf 'a\nb\nc\nd\ne\nf\ng\nh\n' >"$repo/src/long.txt"
@@ -121,7 +137,11 @@ grep -q "^ok    secret scan$" "$work/out" || fail "ok not shown: $(cat "$work/ou
 # shellcheck disable=SC2016 # the lines are literal text, not expansions
 for line in 'password = "changeme"' 'token = "your-token-here"' 'secret = "<generated at deploy>"' 'const token = getToken()' \
   'password: ${DB_PASSWORD_VALUE_1}' 'token = tokens[index1234567890]' 'secret = this.config.secretValue1234' \
-  'DATABASE_URL=postgres://user:password@localhost/db' 'URL=https://app:${APP_PASSWORD}@host.example/x'; do
+  'DATABASE_URL=postgres://user:password@localhost/db' 'URL=https://app:${APP_PASSWORD}@host.example/x' \
+  'URL=postgres://app:Password123@db.internal/app' 'URL=postgres://app:your-password@db.internal/app' \
+  'URL=redis://:<password>@cache.internal:6379' 'URL=postgres://app:%s%s%s@db.internal/app' \
+  'URL=postgres://app:********@db.internal/app' 'URL=redis://:changeme@cache.internal:6379' \
+  'token = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0'; do
   branch src/app.txt "$line"
   run || fail "placeholder flagged: $line: $(cat "$work/out")"
 done

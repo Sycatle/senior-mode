@@ -519,16 +519,16 @@ secret_scan() {
           if (tolower(v) ~ /example|changeme|placeholder|your|dummy|sample|xxxx/) next
         }
         mode == "url" {
-          # A password is a placeholder when it is short, a template (${X}, <x>, %s, ***, $X), or equals a
-          # placeholder word once digits and punctuation are dropped; containing "test" or "%" is not enough.
+          # A password is not reported when it is a template (${X}, $(X), $X, {X}, %(x)s, %s, <x>, ***) or when
+          # the whole of it is a placeholder word, digits kept: a short password, or Secret123, is a real one.
+          # No {n,m} interval: mawk, BSD awk and busybox do not all read it.
           pw = m
           sub(/^[^:]*:\/\/[^:\/@]*:/, "", pw)
           sub(/@.*/, "", pw)
-          if (length(pw) <= 5) next
-          if (pw ~ /[$][{]|<[^>]+>|%s|[*][*][*]|[{][{]|^[$][A-Za-z_][A-Za-z0-9_]*$/) next
+          if (pw ~ /[$][{(]|<[^>]+>|%s|%[(][^)]*[)]s|[{][A-Za-z_][A-Za-z0-9_.-]*[}]|[*][*][*]|[{][{]|^[$][A-Za-z_][A-Za-z0-9_]*$/) next
           w = tolower(pw)
-          gsub(/[^a-z]/, "", w)
-          if (w ~ /^(pass(word|wd)?|secret|example|changeme|changeit|placeholder|dummy|sample|test(ing)?|x+|user(name)?|(your|my)(pass(word|wd)?|secret)?(here)?)$/) next
+          gsub(/[_-]/, "", w)
+          if (w ~ /^(pass(word|wd)?|secret|example|changeme|changeit|placeholder|dummy|sample|test(ing)?|user(name)?|(your|my)(pass(word|wd)?|secret)?(here)?)$/ || w ~ /^xxx+$/) next
         }
         { printf "%s%s%s%s%s\n", n, s, kind, s, (mode == "block" ? "" : v) }'
     done <"$patterns" |

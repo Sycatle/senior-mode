@@ -103,7 +103,7 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   `commit-msg` hook is senior-mode's own.
 - Checks you add by hand are kept on re-run. `senior-mode setup repo --command test="npm test"`
   replaces the command of the check with the same name.
-- `senior-mode check` prints `ok`, `skip` or `FAIL` per check, with the last 20 lines of a failure.
+- `senior-mode check` prints `ok`, `skip` or `FAIL` per check, with the last 20 lines of a failure (the dependency audit shows every blocking advisory, up to 100).
   A check whose first output line is `skipped: <reason>` passes and prints `skip <name>: <reason>`,
   so a check that had nothing to do is visible instead of a silent `ok`.
 - A node project that declares dependencies but has no `node_modules` fails at once with
@@ -155,7 +155,15 @@ A high or critical advisory fails the check and is printed as `critical: <packag
 `pip-audit`, `govulncheck` (only the vulnerabilities your code calls) and `cargo audit` give no
 severity, so Dependabot is the net for those. A missing tool fails the check and says how to install
 it, and so does a tool that gives no usable answer (no network): nothing was audited. Without any of
-these lockfiles the step shows as `skip`. Yarn, Bun, uv and Poetry lockfiles are not audited yet.
+these lockfiles the step shows as `skip`. Yarn, Bun, uv and Poetry lockfiles are not audited yet, and
+only the repository root is looked at: a `go.sum`, `Cargo.lock` or `requirements.txt` in a
+subdirectory is not audited (a root pnpm or npm lockfile covers its workspaces). `requirements.txt` is
+not a lockfile: `pip-audit` resolves what is unpinned when it runs, so the result is for today's
+resolution. A dependency `pip-audit` skips (a local path, `-e`, a package the index does not know) is a
+`warning: not audited:` line.
+
+Each tool runs under `timeout` (600 seconds, `SENIOR_MODE_AUDIT_TIMEOUT` changes it) when the machine
+has it, and a tool that hangs fails the check saying it timed out; without `timeout`, nothing bounds it.
 
 `"audit": false` turns the step off, and `senior-mode status` prints `Dependency audit: off` while it
 is. Turning it off is a human's call.

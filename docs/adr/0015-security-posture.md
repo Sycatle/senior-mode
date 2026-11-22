@@ -35,6 +35,7 @@ hooks. The posture has to hold on GitHub Free as well as with GitHub's security 
   audit tools give none) is a warning, not a block; Dependabot covers it. GitHub's scanners (Dependabot alerts and
   security updates for high and critical only, secret scanning, push protection, CODEOWNERS) watch
   the whole repository and the CVEs published after a merge.
+  Amended (#222): the Decision lists Dependabot security updates for high and critical only; GitHub has no severity filter for them, so `setup github` turns them off (no `automated-security-fixes`, no `dependabot.yml`) and Dependabot alerts become issues only, through the #144 path.
 - **Exceptions are human.** Secret false positives are lifted by a sha256 in
   `.claude/secret-allowlist`, a protected zone no session can write.
 - **Risks become issues.** Each risk becomes an issue with a Severity field and the label
@@ -64,4 +65,3 @@ hooks. The posture has to hold on GitHub Free as well as with GitHub's security 
   Amended (#142): this line said "each preset maintains an audit command"; the audit is a built-in step of `check`, as the Decision says.
 - An Opus pass on L tickets and protected zones costs more, on purpose, where a miss costs most.
 - Until #175, enforcement against a session that escapes the hooks rests on the hooks themselves.
-  Amended (#222): the Decision lists Dependabot security updates for high and critical only; GitHub has no severity filter for them, so `setup github` turns them off (no `automated-security-fixes`, no `dependabot.yml`) and Dependabot alerts become issues only, through the #144 path.

@@ -918,11 +918,20 @@ codeowners_pattern() {
 # GitHub reads .github/CODEOWNERS before the root's and docs/'s: it never creates that shadow over a
 # file of the project (the ownership there would be lost without a word), and names one it finds.
 # The globs CODEOWNERS cannot spell are listed in the block too, so the file says what it leaves out.
+# Sets codeowners_owns to true when the file owns a protected zone, the only case where the ruleset can
+# require code owner review: an owner who is the author could never get the approval.
 setup_codeowners() { # root owner globs-json slug
   local file=$1/.github/CODEOWNERS glob pat entries="" skipped="" block new verb shadow="" s there
+  codeowners_owns=false
   for s in CODEOWNERS docs/CODEOWNERS; do [ ! -e "$1/$s" ] || shadow+="${shadow:+ and }$s"; done
   if [ -n "$shadow" ] && [ ! -e "$file" ]; then
-    echo "CODEOWNERS: $shadow would be shadowed by .github/CODEOWNERS, which GitHub reads first, and its ownership lost; .github/CODEOWNERS not written. Move it to .github/CODEOWNERS, then run setup github again, or add the protected zones to it by hand"
+    # GitHub reads the root's before docs/'s: with both, docs/ is already ignored and only the root's is lost.
+    if [ -e "$1/CODEOWNERS" ] && [ -e "$1/docs/CODEOWNERS" ]; then
+      shadow="CODEOWNERS would be shadowed by .github/CODEOWNERS, which GitHub reads first, and its ownership lost (docs/CODEOWNERS is already ignored by GitHub, the root's is read first)"
+    else
+      shadow="$shadow would be shadowed by .github/CODEOWNERS, which GitHub reads first, and its ownership lost"
+    fi
+    echo "CODEOWNERS: $shadow; .github/CODEOWNERS not written. Move it to .github/CODEOWNERS, then run setup github again, or add the protected zones to it by hand"
     return 0
   fi
   [ -z "$shadow" ] ||
@@ -935,12 +944,12 @@ setup_codeowners() { # root owner globs-json slug
   [ -z "$skipped" ] || block+="# left to the reviewer, CODEOWNERS has no spelling for them: $skipped"$'\n'
   block+="# senior-mode:end"
   if [ ! -e "$file" ]; then
-    [ -n "$entries" ] || return 0
+    [ -n "$entries$skipped" ] || return 0
     mkdir -p "$1/.github"
     printf '%s\n' "$block" >"$file"
     verb=created
   elif ! grep -qE '^# senior-mode:(begin|end)' "$file"; then
-    [ -n "$entries" ] || return 0
+    [ -n "$entries$skipped" ] || return 0
     printf '%s\n\n%s\n' "$(cat "$file")" "$block" >"$file"
     verb=updated
   # One opening marker, then one closing marker, else awk refuses and the file is left alone.
@@ -948,15 +957,20 @@ setup_codeowners() { # root owner globs-json slug
       /^# senior-mode:begin/ { if (seen++) bad = 1; print ENVIRON["BLOCK"]; skip = 1; next }
       /^# senior-mode:end/ { if (!skip) bad = 1; skip = 0; next }
       !skip { print } END { exit (bad || skip) }' "$file"); then
-    echo "CODEOWNERS: senior-mode markers broken, file left untouched; restore one begin and one end marker"
+    echo "CODEOWNERS: senior-mode markers broken, file left untouched, so it is not counted as owning the protected zones; restore one begin and one end marker"
     return 0
   elif [ "$new" != "$(cat "$file")" ]; then
     printf '%s\n' "$new" >"$file"
     verb=updated
   fi
+  if [ -z "$entries" ]; then
+    [ -z "${verb:-}" ] ||
+      echo "CODEOWNERS: $verb .github/CODEOWNERS, no protected zone owned; commit it (setup commits nothing)"
+    return 0
+  fi
+  codeowners_owns=true
   [ -z "${verb:-}" ] ||
     echo "CODEOWNERS: $verb .github/CODEOWNERS, protected zones owned by @$2; commit it (setup commits nothing), the ruleset reads the default branch's copy"
-  [ -n "$entries" ] || return 0
   # Said on every run, a rerun that changes nothing included: until the default branch holds this very
   # file, GitHub reads no CODEOWNERS from it and the review requirement binds nothing.
   if there=$(gh_retry api "repos/$4/contents/.github/CODEOWNERS" -H "Accept: application/vnd.github.raw" 2>/dev/null); then
@@ -1068,7 +1082,7 @@ setup_security() { # root slug
 }
 
 setup_github() {
-  local root file slug owner name owner_type project number id fields labels label color description err ci="" globs review=false codeowner
+  local root file slug owner name owner_type project number id fields labels label color description err ci="" globs review=false codeowner codeowners_owns=false
   case "$*" in "") ;; "--ci local" | "--ci actions") ci=$2 ;; *) usage ;; esac
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
@@ -1117,12 +1131,14 @@ type:chore|ededed|Maintenance with no user-visible change'
     die "protected in .claude/senior-mode.json must be an array of globs"
   codeowner=""
   if [ "$globs" != "[]" ]; then
-    review=true
     # A user owns their repository; an organization is no CODEOWNERS owner, the signed-in user is.
     codeowner=$owner
     [ "$owner_type" != Organization ] || codeowner=$(gh_retry api user --jq .login) || die "cannot read your GitHub login"
   fi
   setup_codeowners "$root" "$codeowner" "$globs" "$slug"
+  review=$codeowners_owns
+  [ "$globs" = "[]" ] || [ "$review" = true ] ||
+    echo "code owners: code owner review is not required, no CODEOWNERS entry owns the protected zones (a rule requiring it would wait for an approval nobody can give)"
 
   # Before the workflows: a refused ruleset forces ci.mode local, which decides what happens to them.
   if err=$(setup_ruleset "$slug" "$review" 2>&1 >/dev/null); then

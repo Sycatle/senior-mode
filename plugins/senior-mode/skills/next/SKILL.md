@@ -28,7 +28,8 @@ Argument: $ARGUMENTS (a ticket number; empty means the top of `pick`). Answer in
 8. **Review.** `reviewer` agent in a fresh context; at most two fix rounds by the `implementer`.
 9. **Merge.** Report the verdict and the link, then ask whether to merge. Only on a clear yes, and
    when both statuses are green and the pull request is not `needs-human`: `ops` agent,
-   `gh pr merge <pr> --rebase --delete-branch`. Then invoke skill `docs`; do not wait for its pull
+   `gh pr merge <pr> --rebase --delete-branch`, then `senior-mode item set <n> Status Done`. Then
+   invoke skill `docs`; do not wait for its pull
    request. Offer the next ticket.
 
 Never skip a step to go faster; stop and say why when one fails twice.

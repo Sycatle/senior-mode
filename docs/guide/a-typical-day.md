@@ -94,9 +94,10 @@ When `senior-mode/ci` and `senior-mode/review` are green on an up-to-date branch
 gh pr merge 43 --rebase --delete-branch
 ```
 
-The ruleset refuses the merge until both statuses are green. `Closes #42` closes the ticket. The
-spec says GitHub's built-in Project workflows set `Done` on merge; if your board does not, run
-`senior-mode item set 42 Status Done`.
+The ruleset refuses the merge until both statuses are green. `Closes #42` closes the ticket. Then
+`senior-mode item set 42 Status Done`: `next` and `run` do it after their merges, and `setup` names
+the Project's built-in workflows ("Item closed", "Pull request merged") that are off, which you turn
+on in the Project's Workflows page to cover merges made by hand.
 
 To publish a release from the merged commits:
 

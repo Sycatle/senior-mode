@@ -288,7 +288,7 @@ command, not a model, applies these bounds:
   The docs session that follows merges is bounded by the same timeout and killed the same way. It has
   no ticket, so nothing is labelled: `run` says so on stderr and in its report, and records the outcome
   in `docs-outcome.json` next to the ticket records (`retro` does not read it). Its branch and worktree
-  are kept, and `run` ends normally.
+  (`.git/senior-mode/worktrees/run-docs-<stamp>`) are kept, and `run` ends normally.
 - **Guards at the start** (with the `claude` CLI): `run` refuses to start unless the plugin is enabled
   for ticket sessions and its `hooks/hooks.json` is present. Ticket sessions run in fresh worktrees of
   the default branch, so only `enabledPlugins` in the user settings (`~/.claude/settings.json`, or

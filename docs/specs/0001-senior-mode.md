@@ -128,8 +128,9 @@ descriptions, and the `language` config key for replies and documents.
   the Ready items of the Project, open, ordered by Priority (P0 first), then milestone due date (none
   last), then number. It leaves out size L, tickets with an open "blocked by" link or the `blocked`
   label, and tickets with `needs-info` (a Ready ticket should not have it; the label wins).
-- `senior-mode start <issue>` is the other step `next` and `run` share: it creates the worktree next to
-  the main checkout (`<repository>-<issue>`) and the branch `<type>/<issue>-<slug>`, from the default
+- `senior-mode start <issue>` is the other step `next` and `run` share: it creates the worktree in the
+  git common dir of the main checkout (`.git/senior-mode/worktrees/<issue>`, the same from any worktree,
+  never a sibling folder; a ticket started beside the repository before #224 keeps its worktree) and the branch `<type>/<issue>-<slug>`, from the default
   branch fetched first (no upstream is set), then sets Status `In progress`. The type follows the
   issue's `type:` label (`feature` feat, `bug` fix, `task` and `chore` chore; feat without a label); the
   slug is the title without its Conventional prefix, lowercase ASCII (accents are transliterated with
@@ -141,7 +142,7 @@ descriptions, and the `language` config key for replies and documents.
 - `senior-mode status [--json] [--since <dur>] [--watch [secs]]` reads the Project items and the
   repository facts (open pull requests with their statuses, recently closed issues and merged pull
   requests, the latest release) in one GraphQL query; only a Project of more than 100 items takes
-  another call. Sections: done, in progress, in review, blocked or missing information (`blocked` or
+  another call. Sections: done, in progress (each ticket with the path of its worktree), in review, blocked or missing information (`blocked` or
   `needs-info` label, an open dependency on a ticket already started), waiting for a human
   (`needs-human` pull requests and tickets, failing statuses), next Ready (top three of `pick`),
   release (latest release, open release pull request).
@@ -309,7 +310,7 @@ the merge are applied by the command, not by a model. It takes the first N ticke
 for each, at most P at a time:
 
 - opens the ticket with `senior-mode start <issue>` (section 7), the same code path as the daily
-  session: the worktree `<repo>-<issue>` (a sibling of the main checkout), the branch
+  session: the worktree `.git/senior-mode/worktrees/<issue>` of the main checkout, the branch
   `<type>/<issue>-<slug>` from the default branch (`fix` for `type:bug`, `chore` for `type:task` and
   `type:chore`, else `feat`), reused when they exist, and the status `In progress`; a ticket that
   cannot be opened is given up;

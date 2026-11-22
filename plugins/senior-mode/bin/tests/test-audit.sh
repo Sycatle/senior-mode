@@ -16,6 +16,7 @@ cat >"$work/stub/audit-tool" <<'STUB'
 #!/usr/bin/env bash
 name=$(basename "$0")
 echo "$name $*" >>"$AUDIT_LOG"
+[ ! -f "$FIX/$name.sleep" ] || sleep "$(cat "$FIX/$name.sleep")"
 cat "$FIX/$name.json"
 exit "$(cat "$FIX/$name.rc" 2>/dev/null || echo 0)"
 STUB
@@ -242,6 +243,21 @@ JSON
 jq -c 'select(.finding | not) // select(.finding.trace | length == 1)' \
   "$work/fix/govulncheck-called.json" >"$work/fix/govulncheck-quiet.json"
 
+# pip-audit skips a dependency it cannot audit (a local path, -e, a package the index does not know): the
+# entry has a skip_reason and no vulns.
+cat >"$work/fix/pip-audit-skipped.json" <<'JSON'
+{
+  "dependencies": [
+    { "name": "flask", "version": "0.5", "vulns": [
+      { "id": "PYSEC-2019-179", "fix_versions": ["1.0"], "aliases": ["CVE-2019-1010083"], "description": "Flask before 1.0." } ] },
+    { "name": "loc", "skip_reason": "Dependency not found on PyPI and could not be audited: loc (0.1)" },
+    { "name": "mylib", "skip_reason": "Dependency has no version specified" }
+  ],
+  "fixes": []
+}
+JSON
+jq '.dependencies |= map(select(.skip_reason))' "$work/fix/pip-audit-skipped.json" >"$work/fix/pip-audit-onlyskipped.json"
+
 # cargo audit --json: no severity, only a CVSS vector.
 cat >"$work/fix/cargo-vulns.json" <<'JSON'
 {
@@ -286,7 +302,7 @@ run() { (cd "$repo" && "$cli" check) >"$work/out" 2>&1; }
 # lock <lockfile>: the only lockfile of the repository, and no tool has run.
 lock() {
   rm -f "$repo/package-lock.json" "$repo/pnpm-lock.yaml" "$repo/requirements.txt" "$repo/go.sum" "$repo/Cargo.lock" \
-    "$work"/fix/*.rc
+    "$work"/fix/*.rc "$work"/fix/*.sleep
   : >"$AUDIT_LOG"
   [ -z "$1" ] || echo x >"$repo/$1"
 }
@@ -352,6 +368,8 @@ grep -q "registry.npmjs.org" "$work/out" || fail "npm: the reason is lost: $(cat
 : >"$work/fix/npm.json"
 run && fail "npm: an empty answer passes"
 grep -q "^FAIL  dependency audit$" "$work/out" || fail "npm: empty answer not reported: $(cat "$work/out")"
+grep -q "the tool gave no output" "$work/out" || fail "npm: no reason given for an empty answer: $(cat "$work/out")"
+grep -qE "^ +$" "$work/out" && fail "npm: a blank reason line: $(cat "$work/out" | cat -A | head -20)"
 use npm npm-clean
 
 # pnpm, when its lockfile is there (before npm's).
@@ -363,6 +381,33 @@ grep -qx "pnpm audit --json" "$AUDIT_LOG" || fail "pnpm: wrong command: $(cat "$
 grep -q "^npm" "$AUDIT_LOG" && fail "pnpm: npm ran as well"
 grep -qE "critical: minimist GHSA-xvch-5gv4-984h, fixed in >=1.2.6" "$work/out" || fail "pnpm: package, advisory and fix not named: $(cat "$work/out")"
 grep -qE "warning: moderate: minimist GHSA-vh95-rmgr-6w4m" "$work/out" || fail "pnpm: moderate not a warning: $(cat "$work/out")"
+
+# A failing audit shows every blocking advisory, not the last 20 lines; a very long list is capped.
+many() { # <count>: that many critical advisories, as pnpm prints them
+  jq -nc --argjson n "$1" '{advisories: ([range($n)] | map({key: "\(.)", value: {id: ., title: "t", module_name: "pkg\(.)",
+    patched_versions: ">=2.0.0", severity: "critical", github_advisory_id: "GHSA-\(.)"}}) | from_entries)}'
+}
+lock pnpm-lock.yaml
+many 30 >"$work/fix/pnpm.json"
+run && fail "many: 30 critical advisories pass"
+for i in 0 15 29; do
+  grep -qF "critical: pkg$i GHSA-$i, fixed in >=2.0.0" "$work/out" || fail "many: advisory $i is not shown: $(tail -n 5 "$work/out")"
+done
+many 130 >"$work/fix/pnpm.json"
+run && fail "many: 130 critical advisories pass"
+[ "$(grep -c "critical: pkg" "$work/out")" -eq 100 ] || fail "many: $(grep -c "critical: pkg" "$work/out") advisories shown, wanted the cap of 100"
+grep -qF "... 30 more blocking advisories" "$work/out" || fail "many: the cap is not said: $(tail -n 5 "$work/out")"
+use pnpm pnpm-critical
+
+# A tool that hangs is stopped by `timeout` when there is one, and the check says so.
+if command -v timeout >/dev/null; then
+  lock package-lock.json
+  use npm npm-clean
+  echo 5 >"$work/fix/npm.sleep"
+  (cd "$repo" && SENIOR_MODE_AUDIT_TIMEOUT=1 "$cli" check) >"$work/out" 2>&1 && fail "timeout: a hanging audit passes"
+  grep -q "^FAIL  dependency audit$" "$work/out" || fail "timeout: not reported: $(cat "$work/out")"
+  grep -q "timed out after 1 s" "$work/out" || fail "timeout: not said: $(cat "$work/out")"
+fi
 
 # pip: no severity, so the advisories are warnings, once each; the check passes.
 lock requirements.txt
@@ -378,6 +423,18 @@ jq '.dependencies' "$work/fix/pip-audit-vulns.json" >"$work/fix/pip-audit-old.js
 use pip-audit pip-audit-old
 run || fail "pip: the list format fails: $(cat "$work/out")"
 grep -q "warning: no severity: flask PYSEC-2023-62" "$work/out" || fail "pip: the list format is not read: $(cat "$work/out")"
+use pip-audit pip-audit-vulns
+
+# A dependency pip-audit skipped is a warning, not an unusable answer.
+use pip-audit pip-audit-skipped
+run || fail "pip: a skipped dependency fails the audit: $(cat "$work/out")"
+grep -q "^ok    dependency audit$" "$work/out" || fail "pip: skipped: not ok: $(cat "$work/out")"
+grep -qF "warning: not audited: loc (Dependency not found on PyPI and could not be audited: loc (0.1))" "$work/out" ||
+  fail "pip: a skipped dependency is not shown: $(cat "$work/out")"
+grep -qF "warning: not audited: mylib (Dependency has no version specified)" "$work/out" || fail "pip: second skipped dependency: $(cat "$work/out")"
+grep -qE "warning: no severity: flask PYSEC-2019-179, fixed in 1.0$" "$work/out" || fail "pip: the advisories next to a skipped dependency are lost: $(cat "$work/out")"
+use pip-audit pip-audit-onlyskipped
+run || fail "pip: only skipped dependencies fail the audit: $(cat "$work/out")"
 use pip-audit pip-audit-vulns
 
 # go: a called vulnerability is a warning (no severity); one that is only required is not reported.

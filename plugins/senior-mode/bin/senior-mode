@@ -390,7 +390,8 @@ check() {
     else
       failed="${failed:+$failed, }$name"
       echo "FAIL  $name"
-      tail -n 20 "$output" | sed 's/^/      /'
+      # The audit lists every blocking advisory (it caps them itself); another check shows its last lines.
+      tail -n "$([ "$name" = "dependency audit" ] && echo 300 || echo 20)" "$output" | sed 's/^/      /'
     fi
   done
   rm -f "$output"
@@ -525,8 +526,8 @@ audit_scan() {
 # a document that is not that tool's report, so an error answer is never read as a clean audit.
 # shellcheck disable=SC2016 # jq programs, not shell
 audit_one() {
-  local root=$1 eco=$2 err=$3 bin hint filter maxrc=1 out rc=0 adv reason blocking line
-  local argv=()
+  local root=$1 eco=$2 err=$3 bin hint filter maxrc=1 out rc=0 adv reason line limit=${SENIOR_MODE_AUDIT_TIMEOUT:-600}
+  local argv=() bound=()
   case $eco in
     npm)
       bin=npm hint="install Node.js from https://nodejs.org" argv=(npm audit --json)
@@ -545,8 +546,10 @@ audit_one() {
     pip)
       # pip-audit before 2.7 printed the list of dependencies itself.
       bin=pip-audit hint="run pipx install pip-audit (or pip install pip-audit)" argv=(pip-audit -r requirements.txt -f json)
-      filter='[(.[0] | if type == "array" then . else .dependencies end)[] | . as $d | .vulns[]
-        | {severity: null, package: $d.name, advisory: .id, fixed: ((.fix_versions // []) | join(", "))}]'
+      # A dependency it skipped (a local path, -e, not on the index) has a skip_reason and no vulns.
+      filter='[(.[0] | if type == "array" then . else .dependencies end)[] | . as $d
+        | ((.vulns // [])[] | {severity: null, package: $d.name, advisory: .id, fixed: ((.fix_versions // []) | join(", "))}),
+          (select(.skip_reason) | {severity: null, package: $d.name, skipped: .skip_reason})]'
       ;;
     go)
       # govulncheck -json exits 0 whatever it finds. A finding whose first frame names a function is a
@@ -566,26 +569,45 @@ audit_one() {
     echo "$bin not installed: $hint"
     return 1
   }
-  out=$(cd "$root" && "${argv[@]}" 2>"$err") || rc=$?
+  # A tool that hangs (a registry that does not answer) would hang `check` and the pre-push hook with it.
+  ! command -v timeout >/dev/null || bound=(timeout "$limit")
+  out=$(cd "$root" && ${bound[@]+"${bound[@]}"} "${argv[@]}" 2>"$err") || rc=$?
   if [ -n "$out" ] && [ "$rc" -le "$maxrc" ] &&
     adv=$(jq -sc "$filter | map(.severity |= (if . == null then null else ascii_downcase end)) | unique" <<<"$out" 2>/dev/null); then
     :
   else
+    if [ "$rc" -eq 124 ] && [ ${#bound[@]} -gt 0 ]; then
+      echo "${argv[*]}: timed out after $limit s (SENIOR_MODE_AUDIT_TIMEOUT), nothing was audited"
+      return 1
+    fi
     echo "${argv[*]}: no usable answer (exit $rc)"
     # What the tool says of itself: an error object on stdout (npm, pnpm), else its last words on stderr.
     reason=$({ jq -r '(.error // empty) | if type == "object" then (.summary // .message // empty) else . end' <<<"$out" 2>/dev/null
-      tail -n 3 "$err"; } | head -n 3)
-    [ -z "$reason" ] || echo "  ${reason//$'\n'/$'\n'  }"
+      tail -n 3 "$err"; } | { grep -v '^[[:space:]]*$' || true; } | head -n 3)
+    reason=${reason:-the tool gave no output (offline?)}
+    echo "  ${reason//$'\n'/$'\n'  }"
     return 1
   fi
-  line='def line: "\(.severity // "no severity"): \(.package) \(.advisory), "
-    + (if .fixed == "" then "no fixed version" else "fixed in \(.fixed)" end);'
-  jq -r "$line"'.[] | select(.severity | IN("high", "critical") | not) | "warning: " + line' <<<"$adv"
-  blocking=$(jq -r "$line"'.[] | select(.severity | IN("high", "critical")) | line' <<<"$adv")
-  [ -z "$blocking" ] || {
-    printf '%s\n' "$blocking"
-    return 1
-  }
+  # A dependency a tool skipped is a warning with its reason; any other line names the advisory.
+  line='def line: if .skipped then "not audited: \(.package) (\(.skipped))"
+    else "\(.severity // "no severity"): \(.package) \(.advisory), "
+      + (if .fixed == "" then "no fixed version" else "fixed in \(.fixed)" end) end;'
+  jq -r "$line"'.[] | select(.severity | IN("high", "critical") | not) | "warning: " + line' <<<"$adv" |
+    audit_cap 20 "warning: ... " warnings
+  # Blocking lines come last, whole up to a generous cap: `check` shows the end of a failure.
+  jq -r "$line"'.[] | select(.severity | IN("high", "critical")) | line' <<<"$adv" | audit_cap 100 "... " "blocking advisories"
+  [ "$(jq '[.[] | select(.severity | IN("high", "critical"))] | length' <<<"$adv")" -eq 0 ]
+}
+
+# Prints at most $1 lines of stdin, then "<$2><n> more <$3>".
+audit_cap() {
+  local n=$1 more=$2 what=$3 total=0 line
+  while IFS= read -r line; do
+    total=$((total + 1))
+    [ "$total" -gt "$n" ] || printf '%s\n' "$line"
+  done
+  [ "$total" -le "$n" ] || echo "$more$((total - n)) more $what"
+  return 0
 }
 
 file_owner() { stat -c %u "$1" 2>/dev/null || stat -f %u "$1"; }

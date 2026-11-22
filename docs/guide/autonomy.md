@@ -72,6 +72,26 @@ the intended "merging a protected zone stays human" until agents get an identity
 On a private repository with a free GitHub plan, rulesets are refused. Setup says so and continues;
 the git hooks and the Bash guard still apply, but GitHub will not enforce the statuses.
 
+### GitHub's scanners
+
+`setup github` also switches on Dependabot alerts, Dependabot security updates, secret scanning and
+push protection (`vulnerability-alerts`, `automated-security-fixes` and `security_and_analysis` of the
+repository API), and says for each whether it is `on` or `not enabled` with GitHub's reason: a plan
+that refuses (HTTP 403 or 422, as private repositories without GitHub Advanced Security do) does not
+stop setup. It writes `.github/dependabot.yml` for the project's ecosystem (npm, pip, gomod or cargo,
+from the preset), with a group for security updates and `open-pull-requests-limit: 0`, so Dependabot
+opens no version-update pull requests; a file of your own is kept, and setup does not commit it.
+GitHub offers no severity filter for security updates in that file: they come for every severity,
+and the High-or-critical threshold applies where senior-mode files the alerts as issues.
+
+When `run` starts and when `retro` runs, each open high or critical Dependabot alert and each open
+secret-scanning alert (treated as critical) gets one `security` issue, through
+`senior-mode issue create --kind --path --rule`: the alert's `security-id` makes a second pass file
+nothing new. The body names the package or secret type and links the alert; it holds no
+vulnerability detail and never the secret's value. Moderate and low alerts are left to Dependabot.
+An alert list GitHub refuses (scanning not enabled, no permission, 404) is reported and does not stop
+the command.
+
 ## `needs-human`
 
 The `needs-human` label marks a pull request that waits for a person. It is added by the
@@ -217,6 +237,8 @@ adopted, it suggests `/senior-mode:setup`.
 session per ticket, each in its own worktree, with `SENIOR_MODE_RUN=1`. The `senior-mode run`
 command, not a model, applies these bounds:
 
+- **Alerts first:** before it looks at the board, `run` files the open high or critical alerts of
+  GitHub's scanners as issues (see [GitHub's scanners](#githubs-scanners)).
 - **Batch:** at most `autonomy.maxTickets` tickets (default 3), `autonomy.parallel` at a time
   (default 1), taken in the order of `senior-mode pick`.
 - **Retry on Opus:** a ticket that fails on Sonnet is tried once more on Opus, from the same worktree

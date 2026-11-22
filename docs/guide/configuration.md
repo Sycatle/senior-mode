@@ -200,6 +200,10 @@ the pre-push hook is the only gate, because nothing makes GitHub wait for the st
 public, then run `senior-mode setup github` again to get the ruleset and `"ruleset"`; `ci.mode` stays
 `local` until you pass `--ci actions`.
 
+`setup github` also turns on Dependabot alerts and security updates, secret scanning and push
+protection where the plan allows it, and writes `.github/dependabot.yml` (security updates only, no
+version updates); see [GitHub's scanners](autonomy.md#githubs-scanners).
+
 ## Presets
 
 | Preset | State | Commands |

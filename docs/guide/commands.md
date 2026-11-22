@@ -25,7 +25,7 @@ State: **Available.**
   your yes to the list of changes; for a stack without a `package.json`, how to lint, typecheck,
   test and build; your yes before adding a missing linter or test runner.
 - **Produces.** A Project board with `Status`, `Priority`, `Size` and `Severity`; labels; rebase-only merges;
-  the `senior-mode` ruleset; `.github/CODEOWNERS` for the protected zones; `.claude/senior-mode.json`; git hooks; `CLAUDE.md` Principles; PR and
+  the `senior-mode` ruleset; `.github/CODEOWNERS` for the protected zones; Dependabot alerts and security updates, secret scanning and push protection (where the plan allows) and `.github/dependabot.yml`; `.claude/senior-mode.json`; git hooks; `CLAUDE.md` Principles; PR and
   issue templates; permissions; release-please config; in `actions` mode, a workflow. Ends with a
   plain summary and the Project URL.
 
@@ -109,6 +109,8 @@ State: **Available.** Triggers: "run", "lance", "enchaîne en autonomie".
   Sonnet is retried once on Opus (`autonomy.escalate`). Logs stay in `.git/senior-mode/runs/`, with one
   `<n>.json` per ticket that says how it ended (`delivered`, `outgrown` or `failed`, whether it went
   to Opus, why, when).
+- **Alerts.** First, it files one `security` issue for each open high or critical Dependabot alert and
+  each open secret-scanning alert (once: the second pass finds them), then picks tickets.
 - **Merging** is off by default: the run stops at pull requests with `senior-mode/ci`,
   `senior-mode/review` and `senior-mode/security` set. With `autonomy.merge: true` it merges what is green, not `needs-human`,
   on a repository with server-side protection. See [Autonomy](autonomy.md#run).
@@ -127,7 +129,8 @@ State: **Available.**
 - **Produces.** A summary in the `language` of your config, and up to three issue drafts (a
   `CLAUDE.md` pitfall, a protected glob, a check, a ticket split rule), each with the tickets and pull
   requests that justify it. Nothing is created or edited until you say yes.
-- **Data.** From GitHub (two calls) and from this machine: the results of `senior-mode check` and, when
+- **Data.** First it files the open high or critical Dependabot and secret-scanning alerts as issues,
+  as `run` does. Then, from GitHub (two calls) and from this machine: the results of `senior-mode check` and, when
   `run` has written them, its outcomes in `.git/senior-mode/runs/`. Without them, the runs section says
   so. `senior-mode retro --since 14d` widens the period.
 
@@ -138,7 +141,7 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 
 | Command | What it does |
 |---|---|
-| `senior-mode setup github [--ci local\|actions]` | The GitHub side of setup: Project, fields, labels, merge settings, workflows, ruleset, CODEOWNERS for the protected zones |
+| `senior-mode setup github [--ci local\|actions]` | The GitHub side of setup: Project, fields, labels, merge settings, workflows, ruleset, CODEOWNERS for the protected zones, Dependabot, secret scanning and push protection (`.github/dependabot.yml` is written, not committed) |
 | `senior-mode setup repo [--command <name>=<cmd>]...` | The repository side of setup; `--command` stores a lint, typecheck, test, build (or, for node, e2e) command and its check, or `install=<cmd>`, the command `start` runs in a new worktree |
 | `senior-mode check` | Runs the secret scan of the branch's added lines, the [dependency audit](configuration.md#dependency-audit) of the lockfile (off with `audit: false`), then the check list; on a clean tree, records the result for the current commit; a node project without `node_modules` fails first with `dependencies not installed: run <cmd>` |
 | `senior-mode publish [commit]` | Sends the recorded result to GitHub as `senior-mode/ci` (the commit must be pushed), and sets `senior-mode/security`: success "not required: no protected zone, not L", else pending until the `security` agent has judged (see [Autonomy](autonomy.md#required-statuses)) |

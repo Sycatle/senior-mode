@@ -25,7 +25,7 @@ State: **Available.**
   your yes to the list of changes; for a stack without a `package.json`, how to lint, typecheck,
   test and build; your yes before adding a missing linter or test runner.
 - **Produces.** A Project board with `Status`, `Priority`, `Size` and `Severity`; labels; rebase-only merges;
-  the `senior-mode` ruleset; `.claude/senior-mode.json`; git hooks; `CLAUDE.md` Principles; PR and
+  the `senior-mode` ruleset; `.github/CODEOWNERS` for the protected zones; `.claude/senior-mode.json`; git hooks; `CLAUDE.md` Principles; PR and
   issue templates; permissions; release-please config; in `actions` mode, a workflow. Ends with a
   plain summary and the Project URL.
 
@@ -138,7 +138,7 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 
 | Command | What it does |
 |---|---|
-| `senior-mode setup github [--ci local\|actions]` | The GitHub side of setup: Project, fields, labels, merge settings, workflows, ruleset |
+| `senior-mode setup github [--ci local\|actions]` | The GitHub side of setup: Project, fields, labels, merge settings, workflows, ruleset, CODEOWNERS for the protected zones |
 | `senior-mode setup repo [--command <name>=<cmd>]...` | The repository side of setup; `--command` stores a lint, typecheck, test, build (or, for node, e2e) command and its check, or `install=<cmd>`, the command `start` runs in a new worktree |
 | `senior-mode check` | Runs the check list; on a clean tree, records the result for the current commit; a node project without `node_modules` fails first with `dependencies not installed: run <cmd>` |
 | `senior-mode publish [commit]` | Sends the recorded result to GitHub as `senior-mode/ci` (the commit must be pushed) |

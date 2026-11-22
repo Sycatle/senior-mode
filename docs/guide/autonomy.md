@@ -26,10 +26,28 @@ it verified ([ADR 0006](../adr/0006-local-ci.md)). Teams that need independent C
 - requires linear history, and blocks deleting the branch and force-pushing to it;
 - requires `senior-mode/ci` and `senior-mode/review` on a branch that is up to date with the default
   branch;
-- requires no approving review count (the `reviewer` status replaces it).
+- requires no approving review count (the `reviewer` status replaces it), except for code owners:
+  when `protected` has globs, it requires code owner review (see below).
 
 It adds to any existing protection and does not rewrite it. Repository admins may bypass it,
 explicitly, with `gh pr merge --admin`. Agents may not: the Bash guard denies it.
+
+### Code owners
+
+When `protected` has globs, `setup github` writes `.github/CODEOWNERS` with one line per glob
+owned by the repository owner (on an organization, by the user signed in to `gh`), inside a block
+marked `# senior-mode:begin` and `# senior-mode:end`, and the ruleset requires code owner review. A
+rerun rewrites only that block: entries you add by hand, above or below it, are kept. In a new
+block at the end of an existing file, the block wins where patterns overlap, as GitHub reads the
+last match. A glob CODEOWNERS cannot express (whitespace, a leading `#` or `!`, brackets) is named
+and left out. Setup writes the file and does not commit it: commit it, as the ruleset reads the
+copy on the default branch.
+
+Agents act with the owner's identity, and GitHub never lets an author approve their own pull
+request. A pull request that touches a protected zone therefore cannot get the required review: the
+owner merges it by hand with `gh pr merge --admin`, which the Bash guard denies to agents. That is
+the intended "merging a protected zone stays human" until agents get an identity of their own
+(#175).
 
 On a private repository with a free GitHub plan, rulesets are refused. Setup says so and continues;
 the git hooks and the Bash guard still apply, but GitHub will not enforce the statuses.

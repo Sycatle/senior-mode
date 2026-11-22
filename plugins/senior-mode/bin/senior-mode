@@ -1298,6 +1298,7 @@ STATUS_JQ='. as $d | $d.items as $items | {
       + [$d.prs[] | select(.failing | length > 0) | {kind: "pull request", number, title, why: ("failing: " + (.failing | join(", ")))}]
       + [$items[] | select(.open and (.labels | index("needs-human"))) | {kind: "ticket", number, title, why: "needs a human decision"}])
     | group_by([.kind, .number]) | map(.[0] + {why: (map(.why) | join("; "))})),
+  wip: {limit: $wip, count: ([$items[] | select(.open and .status == "In progress")] | length)},
   next: ($d | pick | .[:3] | map({number, title, priority, size, milestone})),
   release: {latest: $d.release, pr: ([$d.prs[] | select(.branch | startswith("release-please")) | {number, title}][0])}
 }'
@@ -1309,7 +1310,8 @@ STATUS_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" e
   "senior-mode · \(.repository) · \(.generatedAt)", "",
   sec("\($head) (\(.done | length))"; [.done[] | ticket] + (if .mergedPullRequests > 0
     then ["\(.mergedPullRequests) pull request\(if .mergedPullRequests > 1 then "s" else "" end) merged"] else [] end)),
-  sec("In progress (\(.inProgress | length))"; [.inProgress[] | ticket]),
+  sec("In progress (\(.inProgress | length)\(if .wip.count > .wip.limit then ", over the limit of \(.wip.limit)" else "" end))";
+    [.inProgress[] | ticket]),
   sec("In review (\(.inReview | length))"; [.inReview[] | ticket + (if .pr then " (pull request #\(.pr))" else "" end)]),
   sec("Blocked or missing information (\(.blocked | length))"; [.blocked[] | ticket + ": " + (.reasons | join(", "))]),
   sec("Waiting for a human (\(.waiting | length))"; [.waiting[] | "\(.kind) #\(.number) \(.title): \(.why)"]),
@@ -1321,7 +1323,7 @@ STATUS_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" e
 
 # One status report. $1 json|text, $2 --since duration or "", $3 true to move the "last time" mark.
 status_once() {
-  local json=$1 since=$2 save=$3 root cache now_s now since_iso head data out
+  local json=$1 since=$2 save=$3 root cache now_s now since_iso head data out wip
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   cache=$root/.claude/senior-mode/status-seen
   now_s=$(date +%s)
@@ -1337,7 +1339,10 @@ status_once() {
     head="Done in the last 7d"
   fi
   data=$(board_data true) || return 1
-  out=$(jq -c --arg now "$now" --arg since "$since_iso" --arg repo "$(repo_slug)" "$PICK_DEF$STATUS_JQ" <<<"$data") ||
+  wip=$(config_get wip)
+  [[ $wip =~ ^[1-9][0-9]*$ ]] || die "wip must be a positive whole number, not $wip"
+  out=$(jq -c --arg now "$now" --arg since "$since_iso" --arg repo "$(repo_slug)" --argjson wip "$wip" \
+    "$PICK_DEF$STATUS_JQ" <<<"$data") ||
     die "could not build the status"
   if [ "$json" = true ]; then
     printf '%s\n' "$out"

@@ -163,6 +163,17 @@ for want in "Done in the last 7d" "#5 Ticket 5" "2 pull requests merged" "In pro
 done
 grep -qF "#13" "$work/out" && fail "an L ticket is listed: $(cat "$work/out")"
 
+# Work in progress against the wip limit (#125): default 1, two tickets In progress.
+grep -qF "In progress (2, over the limit of 1)" "$work/out" || fail "wip over the limit not shown: $(cat "$work/out")"
+run status --json --since 7d || fail "status --json failed: $(cat "$work/err")"
+[ "$(json .wip)" = '{"limit":1,"count":2}' ] || fail "wip in JSON: $(json .wip)"
+echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}, "wip": 2}' >"$repo/.claude/senior-mode.json"
+run status --json --since 7d || fail "status --json with wip 2 failed: $(cat "$work/err")"
+[ "$(json .wip)" = '{"limit":2,"count":2}' ] || fail "wip 2 in JSON: $(json .wip)"
+run status --since 7d || fail "status with wip 2 failed: $(cat "$work/err")"
+grep -qx "In progress (2)" "$work/out" || fail "wip at the limit shown as over: $(cat "$work/out")"
+echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
+
 # Quiet board: every section says nothing rather than disappearing.
 jq -c '.data.node.items.nodes = [] | .data.repository.pullRequests.nodes = [] | .data.repository.closed.nodes = []
   | .data.repository.merged.nodes = [] | .data.repository.latestRelease = null' "$FIX/page-first.json" >"$FIX/quiet.json"

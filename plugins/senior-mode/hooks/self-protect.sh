@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # PreToolUse on Edit, Write, MultiEdit, NotebookEdit and Bash: during an autonomous run
 # (SENIOR_MODE_RUN=1), denies changes to the files that guard the run, `.github/workflows/**`,
-# `.claude/**` and `.githooks/**` at the repository root (spec 0001 §10, self-protection), so an
+# `.claude/**` and `.githooks/**` at the repository root, and the git hooks and config (spec 0001
+# §10, self-protection; #116), so an
 # agent cannot weaken its own barriers. Outside a run it does nothing. Prints a deny decision, or
 # nothing to allow.
 # A guardrail for honest mistakes, not a sandbox, like guard-bash.sh: a Bash command is read as
@@ -17,9 +18,11 @@ IFS=$'\x1f' read -r event tool cwd path < <(jq -r '[.hook_event_name, .tool_name
 root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || exit 0
 # git resolves symlinks in the root, Claude Code sends paths as reached from the cwd: try both.
 here=$(cd "$cwd/$(git -C "$cwd" rev-parse --show-cdup)" 2>/dev/null && pwd) || here=$root
+# The git hooks and config (core.hooksPath) of every worktree live in the common dir (#116).
+common=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
 
 deny() { # path as written
-  jq -nc --arg r "senior-mode: during a run, $1 belongs to the project's own guard rails (workflows, .claude/, .githooks/) and an agent does not change them. Do not work around this: leave that change out, say in the pull request that a human has to make it, and carry on with the rest." \
+  jq -nc --arg r "senior-mode: during a run, $1 belongs to the project's own guard rails (workflows, .claude/, .githooks/, the git hooks and config) and an agent does not change them. Do not work around this: leave that change out, say in the pull request that a human has to make it, and carry on with the rest." \
     '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
   exit 0
 }
@@ -45,6 +48,7 @@ check() {
   [ -n "$p" ] || return 0
   [[ $p == /* ]] || p=$cwd/$p
   p=$(normalize "$p")
+  [[ -n $common && ($p == "$common"/hooks || $p == "$common"/hooks/* || $p == "$common"/config) ]] && deny "$1"
   for r in "$root" "$here"; do
     [[ $p == "$r"/* ]] || continue
     rel=${p#"$r"/}

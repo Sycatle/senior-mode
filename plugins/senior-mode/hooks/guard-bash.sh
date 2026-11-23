@@ -4,7 +4,8 @@
 # (spec 0001 §10), the same through the GIT_CONFIG_KEY_<n> environment, another config file, an include,
 # an editor, a git or gh alias; in a run, any merge and any change to rulesets or branch protection
 # (spec 130); in a session whose SENIOR_MODE_ROLE is not `reviewer`, posting the commit status
-# senior-mode/review (spec 131, ADR 0017); with no role (a manual session) that is allowed.
+# senior-mode/review (spec 131, ADR 0017); with no role (a manual session) that is allowed. Also credentials
+# in a git URL (#434), and local content sent out by gh gist, curl or wget outside egress.allow (#435).
 # Prints a deny decision, or nothing to allow.
 # A guardrail for honest mistakes, not a sandbox: `bash -c "..."`, `eval` and the like are not parsed, and
 # a variable that stands for a whole word is not followed (`git push origin $B`, `gh api -X $M ...`), nor is a
@@ -114,6 +115,71 @@ deny() {
 }
 deny_skip() { deny "skipping checks is denied ($1); fix what the check reports instead."; }
 deny_force() { deny "force-push is denied: it rewrites history others may have fetched. Push new commits instead."; }
+
+# A URL with a user and a password or token in it (the `credentialed URL` of secret-patterns, #434).
+re_creds_url='^[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]:@]*:[^/[:space:]@]+@'
+
+# Local content leaving the machine (#435): the hosts of `egress.allow` in the nearest config may receive it.
+egress_allowed() { # url
+  local host=${1#*://} r=$cwd
+  host=${host%%[/:?#]*}
+  host=${host##*@}
+  [ -n "$host" ] && [[ $1 == *://* ]] || return 1
+  while [ ! -f "$r/.claude/senior-mode.json" ]; do
+    [ -n "$r" ] && [ "$r" != / ] || return 1
+    r=${r%/*}
+  done
+  jq -e --arg h "${host,,}" '(.egress.allow // []) | if type == "array" then any(.[]; ascii_downcase == $h) else false end' \
+    "$r/.claude/senior-mode.json" >/dev/null 2>&1
+}
+deny_egress() {
+  deny "$1 is denied: local content does not leave the machine from an agent session. If the host is yours, a human adds it to egress.allow in .claude/senior-mode.json."
+}
+# True when the curl option $1 with the value $2 reads what it sends from a file.
+curl_sends() {
+  case $1 in
+    -T | --upload-file) return 0 ;;
+    -d | --data | --data-binary | --data-ascii | --json) [[ $2 == @* ]] ;;
+    --data-urlencode) [[ $2 =~ ^[^=]*@ ]] ;;
+    -F | --form) [[ $2 =~ =[@\<] ]] ;;
+    *) return 1 ;;
+  esac
+}
+# curl or wget sending a file: the body or the upload is read from disk. $1 curl|wget, then the words.
+# curl's short options cluster (`-sd @f`, `-d@f`); one that takes a value ends the cluster.
+check_upload() {
+  local tool=$1 a pending="" url="" sends=false c j
+  shift
+  for a in "$@"; do
+    if [ -n "$pending" ]; then
+      [ "$pending" = --url ] && url=$a
+      curl_sends "$pending" "$a" && sends=true
+      pending=""
+      continue
+    fi
+    if [ "$tool" = wget ]; then
+      [[ $a =~ ^--(post|body)-file(=|$) ]] && sends=true
+    else
+      case $a in
+        --url=*) url=${a#*=} ;;
+        --*=*) curl_sends "${a%%=*}" "${a#*=}" && sends=true ;;
+        --upload-file | --data | --data-binary | --data-ascii | --data-urlencode | --json | --form | --url) pending=$a ;;
+        --*) ;;
+        -?*)
+          for ((j = 1; j < ${#a}; j++)); do
+            c=${a:j:1}
+            [[ $c =~ [dFTHXoAubceKmwxrEUYyzCQD] ]] || continue
+            if [ $((j + 1)) -eq ${#a} ]; then pending=-$c; else curl_sends "-$c" "${a:j+1}" && sends=true; fi
+            break
+          done
+          ;;
+      esac
+    fi
+    [[ -z $url && $a == *://* && $a != -* ]] && url=$a
+  done
+  $sends || return 0
+  egress_allowed "$url" || deny_egress "$tool sending a local file${url:+ to $url}"
+}
 
 current() { git -C "$dir" symbolic-ref --short -q HEAD; }
 is_default() {
@@ -251,6 +317,7 @@ while IFS= read -r segment; do
     # An alias is a command this guard cannot read: `gh alias set pm "pr merge --admin"`.
     [[ ${gs[0]:-} == alias && ${gs[1]:-} =~ ^(set|import)$ ]] &&
       deny "gh alias set or import is denied: an alias hides the command it runs from the guard, so run the command itself."
+    [[ ${gs[0]:-} == gist && ${gs[1]:-} =~ ^(create|new|edit)$ ]] && deny_egress "gh gist ${gs[1]}"
     merge=false
     [ "${gs[0]:-} ${gs[1]:-}" = "pr merge" ] && merge=true
     # Quoted paths ("repos/$R/...") are no longer in $command: the API checks read the raw one.
@@ -319,6 +386,11 @@ while IFS= read -r segment; do
     # A request with a body or a method is a write: curl to the statuses endpoint.
     [[ " ${w[*]:i+1} " =~ \ (-[a-zA-Z]*[XdFT]|--(request|data[a-z-]*|form|json|upload-file))[[:space:]=] && $flat =~ $re_status_ep ]] &&
       check_review_status
+    check_upload curl "${w[@]:i+1}"
+    continue
+  fi
+  if [ "${w[i]##*/}" = wget ] 2>/dev/null; then
+    check_upload wget "${w[@]:i+1}"
     continue
   fi
   [ "${w[i]##*/}" = git ] 2>/dev/null || continue
@@ -341,6 +413,13 @@ while IFS= read -r segment; do
     abbr "$a" --no-verify 4 && deny_skip "--no-verify"
     [[ $sub == commit && $a =~ ^-[a-zA-Z]*n[a-zA-Z]*$ ]] && deny_skip "commit -n"
   done
+  # A token written into a remote comes back with every `git remote -v` (#434).
+  if [[ $sub =~ ^(clone|fetch|push|pull|remote)$ ]]; then
+    for a in ${args[@]+"${args[@]}"}; do
+      [[ $a =~ $re_creds_url ]] &&
+        deny "git $sub with credentials in the URL is denied: they would be stored in the remote and printed back. Authenticate with gh auth login or a credential helper, and use the plain URL."
+    done
+  fi
   case $sub in
     push) check_push ${args[@]+"${args[@]}"} ;;
     config)

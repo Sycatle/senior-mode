@@ -316,7 +316,7 @@ grep -q '^pr close 50 --comment .*#51' "$GH_LOG" || fail "--fix did not close #5
 [ "$(grep -c '^pr close' "$GH_LOG")" -eq 1 ] || fail "--fix closed more than the superseded pull request: $(grep '^pr close' "$GH_LOG")"
 grep -q '^api -X DELETE repos/acme/app/git/refs/heads/chore/60-lost$' "$GH_LOG" || fail "--fix did not delete chore/60-lost: $(cat "$GH_LOG")"
 [ "$(grep -c 'DELETE' "$GH_LOG")" -eq 1 ] || fail "--fix deleted another branch: $(grep DELETE "$GH_LOG")"
-grep -qE 'issues/21 ' "$GH_LOG" && grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" || fail "--fix did not move #21 to Ready: $(cat "$GH_LOG")"
+{ grep -qE 'issues/21 ' "$GH_LOG" && grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG"; } || fail "--fix did not move #21 to Ready: $(cat "$GH_LOG")"
 grep -q '^issue comment 21 --body' "$GH_LOG" || fail "--fix did not comment on #21: $(cat "$GH_LOG")"
 [ "$(grep -n '^Hygiene' "$work/out" | cut -d: -f1)" -lt "$(grep -n '^fixed: pull request #50' "$work/out" | cut -d: -f1)" ] ||
   fail "--fix acted before the report: $(cat "$work/out")"

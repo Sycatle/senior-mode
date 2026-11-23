@@ -1749,6 +1749,7 @@ HYGIENE_MORE_QUERY='query($owner: String!, $name: String!, $prs: Boolean!, $bran
 }'
 
 # How the hygiene report keeps a pull request and a branch.
+# shellcheck disable=SC2016 # a jq program, not shell
 HYGIENE_NODES='def hpr: {number, title, branch: .headRefName, updatedAt, body};
   def hbr: {name, prs: .associatedPullRequests.totalCount};
   def more($p): if $p.hasNextPage then $p.endCursor else null end;'

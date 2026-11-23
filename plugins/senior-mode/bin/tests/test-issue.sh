@@ -321,5 +321,23 @@ LINK_ERR="HTTP 422: cycle" create --title "Z" --body-file "$work/body.md" --size
   fail "a failed link exits zero"
 grep -q cycle "$work/err" || fail "link error not shown: $(cat "$work/err")"
 
+# An issue an agent files (an unattended session: SENIOR_MODE_RUN) ends with the line `filed-by: agent`, which
+# `ready` reads (#154); a person's issue, and a security-id one from a person, do not.
+filed_body() { jq -r --arg t "$1" '.[] | select(.title == $t) | .body' "$FIX/issues.json"; }
+create --title "By a person" --body-file "$work/body.md" --size S --priority "P1 next" || fail "person: create failed: $(cat "$work/err")"
+filed_body "By a person" | grep -q 'filed-by: agent' && fail "an issue filed by a person carries the agent marker"
+SENIOR_MODE_RUN=1 create --title "By an agent" --body-file "$work/body.md" --size S --priority "P1 next" ||
+  fail "agent: create failed: $(cat "$work/err")"
+[ "$(filed_body "By an agent" | grep -c '^filed-by: agent$')" -eq 1 ] || fail "agent issue misses its marker: $(filed_body "By an agent")"
+filed_body "By an agent" | grep -q 'Given a, when b, then c' || fail "agent issue lost its own body: $(filed_body "By an agent")"
+printf '## Acceptance criteria\n- Given from stdin.\n' | SENIOR_MODE_RUN=1 create --title "By an agent, stdin" --body-file - --size S --priority "P1 next" ||
+  fail "agent stdin: create failed: $(cat "$work/err")"
+filed_body "By an agent, stdin" | grep -q 'Given from stdin' || fail "agent issue read from stdin lost its body"
+filed_body "By an agent, stdin" | grep -q '^filed-by: agent$' || fail "agent issue read from stdin misses its marker"
+SENIOR_MODE_RUN=1 create --title "Risk by an agent" --body-file "$work/body.md" --size S --severity high --kind k --path p.sh --rule r --no-advisory ||
+  fail "agent risk: create failed: $(cat "$work/err")"
+filed_body "Risk by an agent" | grep -q '^filed-by: agent$' || fail "agent risk misses its marker"
+filed_body "Risk by an agent" | grep -q '^security-id: ' || fail "agent risk lost its security-id"
+
 [ "$failures" -eq 0 ] && echo "issue: all cases pass"
 exit "$failures"

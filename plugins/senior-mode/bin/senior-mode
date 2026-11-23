@@ -3990,6 +3990,67 @@ serve_report() {
   RUN_FAILED=() RUN_WAITING=() RUN_MERGED=() RUN_NOT_DONE=() RUN_REVIEWED=() RUN_NOT_REVIEW=() RUN_PRS=()
 }
 
+# Ready by rule (#272), once a poll: `ready --pr <n>` for each framing pull request (branch docs/...) merged since
+# the last poll, then `ready` for the tickets agents filed. The time of the last poll that went well is kept in
+# <serve dir>/ready-last: a failure leaves it, so the pull requests are read again at the next poll, and a
+# restart does not miss what merged while serve was down. The first poll only sets the mark.
+serve_ready() {
+  local now last prs pr ok=true
+  now=$(serve_now)
+  last=$(cat "$SERVE_DIR/ready-last" 2>/dev/null) || last=""
+  [[ $last =~ ^[0-9]+$ ]] || last=$now
+  if prs=$(gh_retry pr list --repo "$RUN_SLUG" --state merged --limit 50 --json number,headRefName,mergedAt); then
+    while IFS= read -r pr; do
+      [ -n "$pr" ] || continue
+      "$SELF" ready --pr "$pr" || ok=false
+    done < <(jq -r --argjson l "$last" '.[] | select((.headRefName | startswith("docs/")) and ((.mergedAt | fromdateiso8601) > $l)) | .number' <<<"$prs")
+  else
+    echo "serve: cannot list the merged pull requests; trying again at the next poll" >&2
+    ok=false
+  fi
+  "$SELF" ready || ok=false
+  [ "$ok" = false ] || echo "$now" >"$SERVE_DIR/ready-last"
+}
+
+# After a crash or a restart (#272): a ticket serve launched (its <n>.sh is in the serve dir) whose session is
+# not one of this serve's, is still In progress and has no live session goes back to Ready, to be picked again
+# (its worktree and branch are kept). Once autonomy.maxConsecutiveFailures recoveries are used up it gets
+# needs-human instead. Left alone: a session still alive, a ticket whose end serve already read (its <n>.json is
+# newer than its <n>.sh), a ticket with needs-human. The recoveries are counted in <n>.recovered.
+serve_recover() {
+  local f n data count
+  local -a cand=()
+  for f in "$SERVE_DIR"/*.sh; do
+    [ -e "$f" ] || continue
+    n=$(basename "$f" .sh)
+    [[ $n =~ ^[0-9]+$ ]] || continue
+    [[ " ${running[*]-} " != *" $n "* ]] || continue
+    if [ -f "$SERVE_DIR/$n.json" ] && [ "$SERVE_DIR/$n.json" -nt "$f" ]; then continue; fi
+    if [ -f "$SERVE_DIR/$n.exit" ] || [ ! -f "$SERVE_DIR/$n.pgid" ] || run_dead "$n"; then cand+=("$n"); fi
+  done
+  [ ${#cand[@]} -gt 0 ] || return 0
+  if ! data=$(board_data false); then
+    echo "serve: cannot read the board to recover tickets; trying again at the next poll" >&2
+    return 0
+  fi
+  for n in "${cand[@]}"; do
+    jq -e --argjson n "$n" '.items[] | select(.number == $n and .open and .status == "In progress" and (.labels | index("needs-human") | not))' \
+      <<<"$data" >/dev/null || continue
+    count=$(cat "$SERVE_DIR/$n.recovered" 2>/dev/null) || count=0
+    [[ $count =~ ^[0-9]+$ ]] || count=0
+    count=$((count + 1))
+    echo "$count" >"$SERVE_DIR/$n.recovered"
+    if [ "$count" -ge "$RUN_MAXFAIL" ]; then
+      echo "serve: #$n has lost its session $count times; needs-human"
+      notify needs-human "$n" "serve found the ticket In progress with no live session $count times (autonomy.maxConsecutiveFailures); the session files are in $SERVE_DIR"
+    elif (item_set "$n" Status Ready) >/dev/null; then
+      echo "serve: #$n was In progress with no live session; back to Ready (recovery $count of $((RUN_MAXFAIL - 1)))"
+    else
+      echo "#$n: could not set the Status back to Ready" >&2
+    fi
+  done
+}
+
 # One poll: reads the sessions that ended, trips the breaker, then, unless held or at a ceiling, starts the
 # Ready tickets in `pick` order while there is a free slot.
 serve_poll() {
@@ -4000,6 +4061,8 @@ serve_poll() {
   run_reap
   serve_report
   serve_breaker
+  serve_recover
+  serve_ready
   # Hook point (#150, #151): the reviewer sessions of pull requests waiting for review and the integrator
   # pass go here, behind the same hold and ceilings (serve_hold, serve_ceiling) and the same slots.
   if reason=$(serve_hold "$now"); then

@@ -449,7 +449,7 @@ command, not a model, applies these bounds:
 ### Ready by rule
 
 `senior-mode ready [--pr <n>] [--dry-run]` takes the human out of the step between framing and delivery
-(`serve` calls it after a framing pull request merges). It looks at Backlog tickets that are open and have
+(`serve` runs `ready --pr <n>` at each poll for the framing pull requests merged since the last poll, then `ready` for the tickets agents filed; the time of the last poll that went well is kept in `.git/senior-mode/serve/ready-last`). It looks at Backlog tickets that are open and have
 neither `needs-human` nor `needs-info`: with `--pr`, the tickets named (`#n`) in the body of the merged
 framing pull request `n` (its branch must be `docs/...`); without it, the tickets an agent filed, that is
 whose body ends with `filed-by: agent` (`issue create` adds it in an unattended session).
@@ -465,6 +465,14 @@ whose body ends with `filed-by: agent` (`issue create` adds it in an unattended 
 
 The check is mechanical: the [`ready` skill](skills.md) still judges what a script cannot (spec, open
 questions, test seams).
+
+### After a crash
+
+When `serve` starts again after a crash or a restart, it looks at the tickets it launched (their `<n>.sh` is under
+`.git/senior-mode/serve/`) that are still In progress with no live session, without a `needs-human` label and
+whose end it never read. Each goes back to Ready and is picked again, its worktree and branch kept. The recoveries of a
+ticket are counted in `<n>.recovered`: when the count reaches `autonomy.maxConsecutiveFailures`, the ticket gets
+`needs-human` instead (an [alert](#alerts)). A session that is still alive is left alone.
 
 ### Session slots
 

@@ -590,7 +590,7 @@ started 23 || fail "J: the batch is one slot, #23 should have started: $(cat "$C
 started 24 && fail "J: #24 overlaps #23 and started with it"
 grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 3 || fail "J: #21, #22 and #23 not all In progress"
 for n in 21 22; do
-  grep -q "Waiting for a human.*#$n.*pull request #121" "$work/out" || fail "J: #$n is not reported with the one pull request: $(cat "$work/out")"
+  grep -q "Status set to In review: #$n " "$work/out" || fail "J: #$n of the batch not set In review: $(cat "$work/out")"
 done
 grep -c 'item-edit.*--single-select-option-id o3' "$GH_LOG" | grep -qx 3 || fail "J: the delivered tickets are not In review"
 outcome_of 21 delivered J
@@ -807,6 +807,18 @@ grep -q 'Merged: #67' "$work/out" || fail "W: the merge is not reported: $(cat "
 [ "$(done_count)" = 1 ] || fail "W: #67 not Done: $(grep item-edit "$GH_LOG")"
 once || fail "W: serve failed: $(cat "$work/out")"
 grep -q "^pr merge 166 --rebase --match-head-commit $sha66" "$GH_LOG" || fail "W: #66 not merged at the next poll"
+# A batch (#263): one pull request, merged under its lead; every ticket of the batch is Done.
+boardx "68:In review:S:P0 now" "69:In review:S:P1 next"
+prs_reset
+sha68=$(mkbranch feat/68-x f68.txt)
+pr 168 feat/68-x "$sha68" clean
+green "$sha68"
+echo "68 69" >"$state/68.batch"
+once || fail "W: serve failed: $(cat "$work/out")"
+grep -q "^pr merge 168 --rebase --match-head-commit $sha68 -R acme/app$" "$GH_LOG" || fail "W: the batch pull request not merged: $(grep '^pr ' "$GH_LOG")"
+grep -q 'Merged: #69' "$work/out" || fail "W: #69 of the batch not reported merged: $(cat "$work/out")"
+[ "$(done_count)" = 2 ] || fail "W: #68 and #69 not both Done: $(grep item-edit "$GH_LOG")"
+rm -f "$state/68.batch"
 # What waits: needs-human, a missing success, a protected zone, merge off, a merge that fails.
 boardx "66:In review:S:P1 next"
 prs_reset

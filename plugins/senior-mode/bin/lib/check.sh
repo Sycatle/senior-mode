@@ -152,7 +152,7 @@ spec_drift_warn() {
 # hook's stdin is the pushed refs) the checks get the changed paths in SENIOR_MODE_CHANGED_FILES, so one that
 # can narrow itself to them does; that run is not recorded, because publish needs a full one.
 check() {
-  local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log
+  local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp
   file=$(config_file)
   unset SENIOR_MODE_CHANGED_FILES
   if [ "${1:-}" = --pre-push ]; then
@@ -182,16 +182,25 @@ check() {
     cmds+=("$(jq -r ".checks[$i].run" "$file")")
   done
   count=${#names[@]}
-  output=$(mktemp)
+  # Parallel sessions run `check` at the same time (#295): this run has a directory of its own, mktemp's name
+  # being unique, for its output and for the TMPDIR its checks see, so that no two runs share a temp path.
+  rundir=$(mktemp -d)
+  output=$rundir/output
+  mkdir "$rundir/tmp"
   for ((i = 0; i < count; i++)); do
     name=${names[i]}
     cmd=${cmds[i]}
     started=$(now_ms)
-    # End-to-end suites are heavy: parallel tickets share e2e.slots of them per machine.
-    [ "$name" != e2e ] || cmd="$(printf '%q' "$SELF") e2e-lock -- bash -c $(printf '%q' "$cmd")"
+    runtmp=$rundir/tmp
+    # End-to-end suites are heavy: parallel tickets share e2e.slots of them per machine. Their lock is
+    # machine-wide, so only the suite gets the private TMPDIR, not the lock (its fallback directory is in TMPDIR).
+    if [ "$name" = e2e ]; then
+      cmd="$(printf '%q' "$SELF") e2e-lock -- env TMPDIR=$(printf '%q' "$runtmp") bash -c $(printf '%q' "$cmd")"
+      runtmp=${TMPDIR:-/tmp}
+    fi
     # Git exports GIT_DIR to hooks, absolute in a linked worktree: a check that runs git on a test
     # fixture would write into this repository.
-    if (cd "$root" && for v in $(git rev-parse --local-env-vars); do unset "$v"; done && bash -c "$cmd") \
+    if (cd "$root" && for v in $(git rev-parse --local-env-vars); do unset "$v"; done && export TMPDIR=$runtmp && bash -c "$cmd") \
       >"$output" 2>&1; then
       took=$(since_ms "$started")
       passed=$((passed + 1))
@@ -213,7 +222,8 @@ check() {
       [ -z "$log" ] || echo "      full log: $log"
     fi
   done
-  rm -f "$output" "$scope"
+  rm -rf "$rundir"
+  rm -f "$scope"
   spec_drift_warn
   if [ -z "$failed" ]; then
     state=success description="$passed/$count checks passed"

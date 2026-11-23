@@ -59,6 +59,10 @@ fi
 
 jobs=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
 out=$(mktemp -d)
+# Two runs at once (parallel sessions, #295) share nothing: the test files get a temp directory and a lock
+# directory (XDG_RUNTIME_DIR, where the machine-wide lock files go) of this run only.
+mkdir -m 700 "$out/tmp" "$out/runtime"
+export TMPDIR=$out/tmp XDG_RUNTIME_DIR=$out/runtime
 trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$out"' EXIT
 
 # Runs one file with its own output; the result file appears when it is done.

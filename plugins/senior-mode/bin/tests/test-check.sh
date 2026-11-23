@@ -292,5 +292,19 @@ kept=$(find "$logs" -type f | wc -l)
 [ -f "$(sed -n 's/^      full log: //p' "$work/out")" ] || fail "the new log was removed"
 [ -e "$logs/old-30.log" ] && [ ! -e "$logs/old-1.log" ] || fail "the oldest logs were not the ones removed: $(printf "%s " "$logs"/* | head -c 300)"
 
+# Two checks started together in two worktrees both pass (#295): each run gives its checks a temp directory of
+# its own, so a fixed name under TMPDIR never collides, and removes it when it ends.
+config "$(jq -nc --arg d "$work" '{audit: false, checks: [{name: "fixed name", run: ("mkdir \"$TMPDIR/fixed-name\" && sleep 1 && echo \"$TMPDIR\" >>" + $d + "/tmps")}]}')"
+git -C "$repo" worktree add -q --detach "$work/wt2"
+: >"$work/tmps"
+(cd "$repo" && "$cli" check) >"$work/out1" 2>&1 &
+p1=$!
+(cd "$work/wt2" && "$cli" check) >"$work/out2" 2>&1 &
+p2=$!
+wait "$p1" || fail "the first of two concurrent checks fails: $(cat "$work/out1")"
+wait "$p2" || fail "the second of two concurrent checks fails: $(cat "$work/out2")"
+[ "$(sort -u "$work/tmps" | wc -l)" = 2 ] || fail "the checks share a temp directory: $(cat "$work/tmps")"
+[ ! -e "$(head -n 1 "$work/tmps")" ] || fail "the temp directory of a run is left behind"
+
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

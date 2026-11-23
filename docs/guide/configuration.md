@@ -123,6 +123,11 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   This repository's `script tests` check (`.github/scripts/script-tests.sh`) runs its test files in
   parallel, one per CPU, and on a push only those the changed paths touch: a changed test, or a test that
   names the changed file; a path no test names (or `bin/senior-mode`) runs them all.
+- Two `check` runs at once (parallel sessions in two worktrees) share no temp path: each run gives its checks
+  a `TMPDIR` of its own, removed when it ends (the `e2e` suite gets one too, its machine-wide slot lock
+  does not), and the `script tests` check gives its test files a temp directory and an `XDG_RUNTIME_DIR`
+  of their own. A check that needs a port or a fixed name derives it from `TMPDIR`, or from
+  `SENIOR_MODE_E2E_SLOT` for the `e2e` check, never from a constant.
 - A node project that declares dependencies but has no `node_modules` fails at once with
   `dependencies not installed: run <install command>`, before any check runs.
 - When `envGuard.forbidden` lists something, setup adds the `env guard` check (below).

@@ -4469,7 +4469,9 @@ serve_finish_review() {
 }
 
 # An integrator session is over: the pull request it opened on the -rN branch supersedes the old one, which is
-# closed (the new one is reviewed like any other); without one, the old pull request is a person's.
+# closed (the new one is reviewed like any other); without one, the old pull request is a person's. The ticket
+# is recorded as delivered and left In review, on the new pull request: serve_recover reads a ticket whose end
+# was never recorded as a lost session (#285).
 serve_finish_integrator() {
   local n=$1 old new outcome
   old=$(cat "$RUN_DIR/$n.oldpr" 2>/dev/null) || old=""
@@ -4477,6 +4479,8 @@ serve_finish_integrator() {
   new=$(gh_retry api "repos/$RUN_SLUG/pulls?head=${RUN_SLUG%%/*}:${RUN_BRANCH[$n]}&state=open" --jq '.[0].number // empty') || new=""
   if [ -n "$new" ] && [ "$outcome" = delivered ]; then
     RUN_FAILS=0
+    run_record "$n" delivered ""
+    run_review "$n"
     gh api "repos/$RUN_SLUG/issues/$old/comments" -f body="Superseded by #$new, which resolves the conflicts with $RUN_BASE." >/dev/null || true
     gh_retry api "repos/$RUN_SLUG/pulls/$old" -X PATCH -f state=closed >/dev/null || echo "#$n: could not close pull request #$old" >&2
     echo "#$n: pull request #$new supersedes #$old"

@@ -305,6 +305,19 @@ expect allow 'gh api -X GET $EP'
 expect allow 'gh api -X POST repos/$R/issues/5/comments -f body=x'
 expect allow 'gh api -X POST "repos/$R/issues/$N/comments" -f body="x"'
 expect allow 'gh api -X PATCH repos/a/b/issues/5 -f state=closed -H "X-Y: $Z"'
+expect allow 'gh api repos/$REPO/pulls --jq .'
+expect allow 'gh api repos/${REPO}/pulls'
+expect allow 'gh api orgs/$ORG/repos --paginate'
+expect allow 'gh api repos/o/r/pulls/$N'
+expect allow 'gh api repos/o/r/commits/$SHA/status'
+expect allow 'gh api repos/$R/statuses/$SHA -f state=success -f context=senior-mode/review -f description=ok'
+expect allow 'gh api repos/$R/issues/5/comments -X POST -f body=x'
+expect allow 'gh api -X POST repos/$R/issues/5/comments -f body=x'
+expect allow 'gh api --method POST repos/$R/issues/5/comments -f body=x'
+expect allow 'gh api --method=POST repos/$R/issues/5/comments -f body=x'
+expect allow 'gh api -H "Accept: x" -X PATCH repos/$R/issues/$N -f state=closed'
+expect allow 'gh api repos/$R/issues/$N/labels --input l.json'
+expect allow 'gh pr view $N --json title'
 expect allow 'gh api repos/a/b/issues -f title=x --jq ".[]"; echo $x'
 expect allow 'gh api -X PUT repos/a/b/issues/5/lock -f lock_reason=$R'
 # #228: a `;`, a `|`, a `)` or a redirection right after `merge` does not hide the merge endpoint.
@@ -323,6 +336,14 @@ expect deny "GIT_CONFIG_PARAMETERS=\"'user.name=a b' \$(cat p)\" git commit -m x
 expect deny "GIT_CONFIG_PARAMETERS='user.name=a b'\$X git status"
 expect deny "export GIT_CONFIG_PARAMETERS=\"'a=b c' \\\$X\""
 expect allow "GIT_CONFIG_PARAMETERS=\"'user.name=a b' 'user.email=t@t'\" git status"
+expect deny "GIT_CONFIG_PARAMETERS=\"'alias.x=commit --no-verify'\" git x"
+expect deny "GIT_CONFIG_PARAMETERS=\"'alias.pf=push --force'\" git pf"
+expect deny "GIT_CONFIG_PARAMETERS=\"'alias.x=!git push --force'\" git x"
+expect deny "GIT_CONFIG_PARAMETERS=\"'alias.h=config core.hooksPath /x'\" git h"
+expect deny "export GIT_CONFIG_PARAMETERS=\"'alias.x=commit --no-verify'\""
+expect deny "env GIT_CONFIG_PARAMETERS=\"'user.name=a' 'alias.x=commit --no-verify'\" git x"
+expect allow "GIT_CONFIG_PARAMETERS=\"'alias.co=checkout'\" git co main"
+expect allow "GIT_CONFIG_PARAMETERS=\"'alias.st=status -sb'\" git st"
 
 expect allow 'git status' feat/2-local
 expect allow 'git push -u origin feat/2-local'
@@ -425,6 +446,19 @@ expect allow 'gh api repos/o/r/rulesets --jq '"'"'.[].name | test("a\\.b")'"'"
 expect allow 'gh api repos/o/r/branches/main/protection --jq '"'"'.url | sub("\\.";"")'"'"
 expect allow 'gh api repos/o/r/rulesets --jq x\.y -X GET'
 expect allow 'gh api $EP'
+expect allow 'gh api repos/$REPO/pulls --jq .'
+expect allow 'gh api repos/${REPO}/pulls'
+expect allow 'gh api orgs/$ORG/repos --paginate'
+expect allow 'gh api repos/o/r/pulls/$N'
+expect allow 'gh api repos/o/r/commits/$SHA/status'
+expect allow 'gh api repos/$R/statuses/$SHA -f state=success -f context=senior-mode/review -f description=ok'
+expect allow 'gh api repos/$R/issues/5/comments -X POST -f body=x'
+expect allow 'gh api -X POST repos/$R/issues/5/comments -f body=x'
+expect allow 'gh api --method POST repos/$R/issues/5/comments -f body=x'
+expect allow 'gh api --method=POST repos/$R/issues/5/comments -f body=x'
+expect allow 'gh api -H "Accept: x" -X PATCH repos/$R/issues/$N -f state=closed'
+expect allow 'gh api repos/$R/issues/$N/labels --input l.json'
+expect allow 'gh pr view $N --json title'
 unset SENIOR_MODE_RUN
 
 git -C "$repo" switch -q feat/2-local

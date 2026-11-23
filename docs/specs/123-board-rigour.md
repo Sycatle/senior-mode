@@ -15,9 +15,9 @@ issue: "#123"
 The board is the source of truth for state (ADR 0002), yet nothing kept it true when work ended. On
 2026-11-22 the senior-mode board had 24 closed tickets still In progress and 8 more in In review,
 Ready or no status: the Project's built-in "Item closed" and "Pull request merged" workflows were
-off, `run` and `next` never set Done, and `status` reads closed items but only to list what was
-done, so it showed nothing wrong. Everyone reading the board (the user, `next`, `run`, `retro`) was misled, and nothing limited
-how much work was started at once.
+off, `run` and `next` never set Done, and `status` dropped the closed board items (it kept only
+the open ones), so it showed nothing wrong. Everyone reading the board (the user, `next`, `run`,
+`retro`) was misled, and nothing limited how much work was started at once.
 
 ## Acceptance criteria
 

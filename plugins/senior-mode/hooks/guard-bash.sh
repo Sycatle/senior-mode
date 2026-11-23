@@ -3,7 +3,8 @@
 # discard commits of a shared branch, switch the hooks off (core.hooksPath), and gh pr merge --admin
 # (spec 0001 §10), the same through the GIT_CONFIG_KEY_<n> environment, another config file, an include,
 # an editor, a git or gh alias; in a run, any merge and any change to rulesets or branch protection
-# (spec 130).
+# (spec 130); in a session whose SENIOR_MODE_ROLE is not `reviewer`, posting the commit status
+# senior-mode/review (spec 131, ADR 0017); with no role (a manual session) that is allowed.
 # Prints a deny decision, or nothing to allow.
 # A guardrail for honest mistakes, not a sandbox: `bash -c "..."`, `eval` and the like are not parsed, and
 # a variable that stands for a whole word is not followed (`git push origin $B`, `gh api -X $M ...`), nor is a
@@ -92,6 +93,18 @@ check_split() { # word [option|command]
   else [[ $n =~ ^(\$([A-Za-z_][A-Za-z0-9_]*|\{[^}]*\}))+$ ]] && return 0
   fi
   deny "a word split by a variable ($1) hides the option or command from the guard: write it out."
+}
+
+# Only a reviewer session sets senior-mode/review (spec 131, #150; ADR 0017). SENIOR_MODE_ROLE unset is a
+# manual session: unchanged. Read in the flattened command (quotes and backslashes removed): a context
+# written `senior-mode/rev""iew`, or left to a variable, is a post the guard cannot tell from the real one.
+role=${SENIOR_MODE_ROLE:-}
+re_status_ep='/statuses([/?]|$)'
+re_review_ctx='senior-mode/(review|[^[:space:]]*\$)|context[^[:space:]]*\$|createcommitstatus'
+check_review_status() { # the command posts to a statuses endpoint, or to GraphQL
+  [ -n "$role" ] && [ "$role" != reviewer ] && [[ $flat =~ $re_review_ctx ]] &&
+    deny "posting the commit status senior-mode/review is denied in a session with SENIOR_MODE_ROLE=$role: only a reviewer session sets it. Leave the review to the reviewer."
+  return 0
 }
 
 deny() {
@@ -279,6 +292,9 @@ while IFS= read -r segment; do
         esac
       done
     fi
+    if [ "${gs[0]:-}" = api ]; then
+      { [ "${gs[1]:-}" = graphql ] || [[ $write == true && $ep =~ $re_status_ep ]]; } && check_review_status
+    fi
     # In a run only `senior-mode run` merges, after its own checks (ADR 0008): the ticket session,
     # which can post its own statuses, must never merge, whatever autonomy.merge says.
     if [ "${SENIOR_MODE_RUN:-}" = 1 ]; then
@@ -297,6 +313,12 @@ while IFS= read -r segment; do
     # Through the API, an admin's merge bypasses the ruleset without any flag.
     [[ $method == PUT && ($ep =~ pulls/[^/[:space:]]+/merge([^[:alnum:]_.-]|$) || $ep =~ $re_vmerge) ]] &&
       deny "merging through gh api can bypass the required checks: use gh pr merge without --admin."
+    continue
+  fi
+  if [ "${w[i]##*/}" = curl ] 2>/dev/null; then
+    # A request with a body or a method is a write: curl to the statuses endpoint.
+    [[ " ${w[*]:i+1} " =~ \ (-[a-zA-Z]*[XdFT]|--(request|data[a-z-]*|form|json|upload-file))[[:space:]=] && $flat =~ $re_status_ep ]] &&
+      check_review_status
     continue
   fi
   [ "${w[i]##*/}" = git ] 2>/dev/null || continue

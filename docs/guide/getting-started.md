@@ -123,6 +123,14 @@ again after an error, or to switch CI mode:
 
 The script form, if you prefer: `senior-mode setup github --ci actions`, then `senior-mode setup repo`.
 
+### Leaving
+
+`senior-mode setup remove` lists what it would take out of the repository and changes nothing;
+`senior-mode setup remove --apply` does it: a pull request removes the git hooks, the config and the
+blocks and templates setup added, then the `senior-mode` ruleset and the labels no issue uses go, and
+the workflows setup disabled are turned back on. The Project and the issues stay. It is safe to run again after an
+interruption. See [commands](commands.md) for the full list.
+
 ## Your first framing
 
 Run `frame` with your idea in a sentence or two:

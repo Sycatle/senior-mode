@@ -225,6 +225,19 @@ setup_security() { # root slug
     echo "dependabot.yml: untouched (senior-mode writes none; security updates are not turned on, alerts become issues)"
 }
 
+# The labels `setup github` creates, as name|color|description; the type labels only on a personal account
+# (organizations use issue types). `setup remove` deletes them again.
+LABELS='needs-human|d93f0b|Waiting for a human decision or merge
+needs-info|fbca04|Missing information before work can start
+blocked|b60205|Blocked by something outside this ticket
+security|ee0701|A security risk, with its Severity on the board
+triage|fbca04|External report, not qualified yet: serve never picks it
+qualified|0e8a16|Qualified by a collaborator: serve may pick it though its author is external'
+TYPE_LABELS='type:feature|a2eeef|New capability for users
+type:bug|d73a4a|Something does not work as specified
+type:task|c5def5|Work that is neither a feature nor a bug
+type:chore|ededed|Maintenance with no user-visible change'
+
 setup_github() {
   local root file slug owner name owner_type owner_node private template project number id how fields labels label color description err ci="" globs checks review=false codeowner codeowners_owns=false reason
   local migrate=false dry=false upgrade=false
@@ -275,17 +288,8 @@ setup_github() {
   setup_cycle "$id" "$file"
   setup_board_workflows "$id"
 
-  labels='needs-human|d93f0b|Waiting for a human decision or merge
-needs-info|fbca04|Missing information before work can start
-blocked|b60205|Blocked by something outside this ticket
-security|ee0701|A security risk, with its Severity on the board
-triage|fbca04|External report, not qualified yet: serve never picks it
-qualified|0e8a16|Qualified by a collaborator: serve may pick it though its author is external'
-  [ "$owner_type" = Organization ] || labels+='
-type:feature|a2eeef|New capability for users
-type:bug|d73a4a|Something does not work as specified
-type:task|c5def5|Work that is neither a feature nor a bug
-type:chore|ededed|Maintenance with no user-visible change'
+  labels=$LABELS
+  [ "$owner_type" = Organization ] || labels+=$'\n'$TYPE_LABELS
   while IFS='|' read -r label color description; do
     gh_retry label create "$label" --repo "$slug" --color "$color" --description "$description" --force >/dev/null
   done <<<"$labels"

@@ -196,6 +196,8 @@ outcome_is_delivered() {
   jq -e '.outcome == "delivered"' "$repo/.git/senior-mode/runs/"*/"$1.json" >/dev/null || fail "#$1 not recorded as delivered"
 }
 run() { : >"$GH_LOG"; : >"$CLAUDE_LOG"; : >"$SYACODE_LOG"; (cd "$repo" && "$cli" run "$@") >"$work/out" 2>&1; }
+# run_dir: the run directory of the last `run`, as it said it ("sessions and logs in <dir>").
+run_dir() { sed -nE 's/^run: .*logs in (.*)$/\1/p' "$work/out" | head -n 1; }
 
 # A: three tickets two at a time in tmux; merging on. #10 merges; #11 succeeds on Opus but its review
 # is not green; #12 fails on Sonnet and on Opus.
@@ -433,7 +435,7 @@ read -r -a pids <"$FIX/pids-docs"
 for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && fail "R: process $pid of the docs session is still alive"; done
 for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
 jq -e '.session == "docs" and .outcome == "failed" and .reason == "docs session timed out after 1 minute" and (.finishedAt | length > 0)' \
-  "$repo/.git/senior-mode/runs/"*"/docs-outcome.json" >/dev/null || fail "R: the docs timeout is not recorded: $(cat "$repo"/.git/senior-mode/runs/*/docs-outcome.json)"
+  "$(run_dir)/docs-outcome.json" >/dev/null || fail "R: the docs timeout is not recorded: $(cat "$(run_dir)/docs-outcome.json")"
 grep -q 'docs session timed out after 1 minute' "$work/out" || fail "R: report misses the docs timeout: $(cat "$work/out")"
 grep -q 'issues/.*labels' "$GH_LOG" && fail "R: a docs timeout labelled a ticket"
 rm -f "$FIX/docs"
@@ -441,7 +443,7 @@ board 111 '[]'
 session 111-sonnet delivered pr
 echo "$green" >"$FIX/status-111"
 run || fail "R: run failed: $(cat "$work/out")"
-jq -e '.session == "docs" and .outcome == "done" and .reason == null' "$repo/.git/senior-mode/runs/"*"/docs-outcome.json" >/dev/null ||
+jq -e '.session == "docs" and .outcome == "done" and .reason == null' "$(run_dir)/docs-outcome.json" >/dev/null ||
   fail "R: a docs session that finished is not recorded done"
 
 # M: before a run starts (#117): the plugin must be enabled and hooks.json present, and once a day a probe

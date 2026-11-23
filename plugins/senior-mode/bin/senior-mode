@@ -4495,6 +4495,23 @@ It is labelled needs-human: a person decides what happens next." >/dev/null || e
   serve_note "nh$pr" "#$n ${RUN_TITLE[$n]:-}: pull request #$pr, $reason"
 }
 
+# Whether a run_blocker reason $1 is one no poll will lift: merging off, no server protection, a protected zone.
+# A status not green yet, a mergeable state or an unreadable answer is transient: the next poll looks again.
+serve_permanent() {
+  case $1 in
+    "merging is off"* | "the server enforces no branch protection"* | "it touches a protected zone"* | "the protected zones could not be read"*) ;;
+    *) return 1 ;;
+  esac
+}
+
+# A pull request that cannot merge on its own (#282): the alert of #155 on the pull request (label, comment with
+# the reason, webhook), needs-human on its ticket too. Candidates skip needs-human, so the next poll leaves it be.
+serve_stuck() {
+  local t=$1 pr=$2 reason=$3
+  notify needs-human "$pr" "pull request #$pr (ticket #$t) cannot merge on its own: $reason"
+  gh_retry api "repos/$RUN_SLUG/issues/$t/labels" -f 'labels[]=needs-human' >/dev/null || echo "#$t: could not label it needs-human" >&2
+}
+
 # The pull requests of tickets In review, in `pick` order, as `ticket pr sha branch title` lines: open, not a draft,
 # not needs-human, on a branch named <type>/<ticket>-... $1 is the board, $2 the open pull requests.
 # shellcheck disable=SC2016 # a jq program, not shell
@@ -4680,6 +4697,7 @@ serve_merge() {
   reason=$(run_blocker "$pr" "$sha" "$pull")
   if [ -n "$reason" ]; then
     serve_note "w$pr" "#$t ${RUN_TITLE[$t]:-}: pull request #$pr, $reason"
+    serve_permanent "$reason" && serve_stuck "$t" "$pr" "$reason"
     return 1
   fi
   state=$(jq -r '.mergeable_state // "unknown"' <<<"$pull")

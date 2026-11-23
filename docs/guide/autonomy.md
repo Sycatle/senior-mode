@@ -121,6 +121,7 @@ a `needs-human` pull request.
 `senior-mode serve` (and `run`) tells the human instead of waiting to be watched. A ticket that is
 labelled `needs-human` (a session that timed out, vanished or was stopped) or that failed gets the
 `needs-human` label and a comment that mentions `notify.mention` (the repository owner when empty).
+A pull request that `serve` can never merge (see above) gets the same, once.
 When `notify.webhook` is set, each alert is also sent as a JSON `POST`
 `{"event", "repo", "number", "url", "reason"}`, where `event` is `needs-human`, `failed` or `breaker`.
 The circuit breaker's pause has no ticket: it is only sent to the webhook (`number` and `url` are
@@ -308,7 +309,11 @@ the pull request reads back as merged. A pull request behind its base is rebased
 shows the same patches, check and publish run again on the new head and the review carries over, otherwise a new
 review is requested. A conflict starts an Opus `integrator` session on `<branch>-r2` (`-r3` once more, then
 `needs-human`), whose pull request supersedes and closes the old one. An M ticket without recorded red tests gets a
-`test-author` session before its ticket session. The usage limit and the breaker hold the launches, not the merges.
+`test-author` session before its ticket session. A pull request that can never merge on its own (`autonomy.merge`
+off, no server protection, a protected zone) gets `needs-human` on itself and its ticket, a comment with the reason
+and one [alert](#alerts), then is left alone and listed by `status` under "Waiting for a human"; a blocker that a
+later poll may lift (a status not green yet, an unknown merge state) is only logged and retried. The usage limit and
+the breaker hold the launches, not the merges.
 
 ### Secrets guard (`guard-secrets.sh`)
 

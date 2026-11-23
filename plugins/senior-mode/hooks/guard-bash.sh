@@ -152,6 +152,9 @@ while IFS= read -r segment; do
         *) gs+=("$a"); [ ${#gs[@]} -lt 2 ] || break ;;
       esac
     done
+    check_split "${gs[0]:-}" command
+    check_split "${gs[1]:-}" command
+    for a in "${w[@]:i+1}"; do check_split "$a" option; done
     # An alias is a command this guard cannot read: `gh alias set pm "pr merge --admin"`.
     [[ ${gs[0]:-} == alias && ${gs[1]:-} =~ ^(set|import)$ ]] &&
       deny "gh alias set or import is denied: an alias hides the command it runs from the guard, so run the command itself."
@@ -172,7 +175,29 @@ while IFS= read -r segment; do
     if [[ ${gs[0]:-} == api && $untrusted == true ]]; then
       opt='(^|[[:space:]])(-x|--method)'
       methods=$(grep -oE "$opt" <<<"$flat" | wc -l) gets=$(grep -oE "${opt}[[:space:]=]?get([[:space:]]|\$)" <<<"$flat" | wc -l)
-      if [ "$gets" -lt 1 ] || [ "$gets" -ne "$methods" ]; then method=PUT write=true; fi
+      if [ "$methods" -eq 0 ]; then
+        # No method option at all: gh api is a GET unless a field or an input makes it a POST.
+        write=false
+        [[ $flat =~ (^|[[:space:]])(-[a-zA-Z]*[fF]|--field|--raw-field|--input) ]] && write=true
+      elif [ "$gets" -ne "$methods" ]; then method=PUT write=true
+      fi
+    fi
+    # The endpoint is a variable alone (`gh api -X PUT "$EP"`): where a write goes cannot be read.
+    if [[ ${gs[0]:-} == api && $write == true ]]; then
+      skip=false seen=false
+      for a in "${w[@]:i+1}"; do
+        if ! $seen; then [ "$a" = api ] && seen=true; continue; fi
+        if $skip; then skip=false; continue; fi
+        case $a in
+          -X | --method | -H | --header | -f | -F | --field | --raw-field | -q | --jq | -t | --template | --input | --hostname | --cache | -p | --preview) skip=true ;;
+          -*) ;;
+          *)
+            [[ $a =~ ^(\$([A-Za-z_][A-Za-z0-9_]*|\{[^}]*\}))+$ ]] &&
+              deny "gh api with a write method and the endpoint in a variable is denied: the guard cannot read where it goes. Write the endpoint out."
+            break
+            ;;
+        esac
+      done
     fi
     # In a run only `senior-mode run` merges, after its own checks (ADR 0008): the ticket session,
     # which can post its own statuses, must never merge, whatever autonomy.merge says.
@@ -182,7 +207,7 @@ while IFS= read -r segment; do
       [[ ${gs[0]:-} == api && ($ep =~ pulls/[^/[:space:]]+/merge|/merges || $rawb =~ mergePullRequest|enablePullRequestAutoMerge) ]] &&
         deny "a run session never merges, not through gh api either."
       # The rules that bound the run are the human's (spec 130, #116).
-      [[ ($write == true && $ep =~ /rulesets([/?[:space:]\"\']|$)|/branches/[^[:space:]]+/protection) ||
+      [[ ($write == true && $ep =~ /rulesets([^[:alnum:]_.-]|$)|/branches/[^[:space:]]+/protection) ||
         (${gs[0]:-} == api && $rawb =~ (create|update|delete)(RepositoryRuleset|BranchProtectionRule)) ]] &&
         deny "a run session never changes rulesets or branch protection: say in the pull request what a human should change."
     fi
@@ -190,7 +215,7 @@ while IFS= read -r segment; do
     $merge && [[ " ${w[*]:i+1} " =~ \ --admin[=\ ] ]] &&
       deny "gh pr merge --admin bypasses the required checks and review: a human must do it."
     # Through the API, an admin's merge bypasses the ruleset without any flag.
-    [[ $method == PUT && $ep =~ pulls/[^/[:space:]]+/merge([?[:space:]\"\']|$) ]] &&
+    [[ $method == PUT && $ep =~ pulls/[^/[:space:]]+/merge([^[:alnum:]_.-]|$) ]] &&
       deny "merging through gh api can bypass the required checks: use gh pr merge without --admin."
     continue
   fi

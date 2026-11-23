@@ -164,7 +164,13 @@ Runs before every Bash command, in any repository where the plugin is enabled. I
   (reading it is allowed). An empty quote pair or an unquoted backslash inside a word (`--no""-verify`,
   `--for\ce`, `core.hooksPath\=x`, `\+main`) does not hide it, the backslash being dropped as the
   shell does (an escaped space or quote stays one character, so `core.hooksPath \ ` is a value, not
-  nothing);
+  nothing). A long option or a git or gh command split by a variable (`--for${x}ce`, `pu${x}sh`) is
+  denied; a variable alone (`git $sub`, `git push origin $B`) is not followed;
+- the indirections that reach the same switches: `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` set to
+  any file, `git config --edit` (an editor writes any key), `include.path` and `includeIf.<cond>.path`
+  set through `git config`, `-c`, `--config-env` or the environment (`git config --file <f>` is read
+  by its key like any other), and an `alias.<name>` whose value contains `--no-verify`, `--force` or
+  `core.hooksPath` (the value is read anywhere in the command). Reading any of these keys is allowed;
 - `gh alias set` and `gh alias import`: an alias hides the command it runs from this guard;
 - force-push: `--force`, `-f`, `--force-with-lease`, `--force-if-includes`, a `+` refspec;
 - pushing every branch: `--all`, `--mirror`, `--branches`;
@@ -173,26 +179,33 @@ Runs before every Bash command, in any repository where the plugin is enabled. I
   an upstream);
 - `gh pr merge --admin`, and a merge through `gh api` with `PUT` on `pulls/<n>/merge`, even when
   the number is a variable. `env`, `sudo`, `xargs` and the like in front of `gh` or `git` do not
-  hide the command; for `gh api`, only the endpoint counts, not the text of a `-f body=...`, as long
+  hide the command, and the endpoint is read up to any character that cannot continue the path
+  (`pulls/5/merge;`, `merge|`, `merge)`). A `gh api` write whose endpoint is only a variable (`-X PUT
+  "$EP"`, a `-f` or `--input` with `$EP`) is denied, since where it goes cannot be read; `-X $M` is
+  not followed. For `gh api`, only the endpoint counts, not the text of a `-f body=...`, as long
   as the quoting is plain (with a backslash, `$'...'` or a command substitution the whole command
   is read, without its backslashes (`pulls/5/me\rge`, `rule\sets`), a method that cannot be read
-  there counts as a write unless every one says `GET`, and a body that names a ruleset path is then
-  denied too);
+  there counts as a write unless every one says `GET`, a command with no `-X`, `-f`, `-F`, `--field`,
+  `--raw-field` or `--input` is a GET, and a body that names a ruleset path is then denied too);
 - in a `run` session (`SENIOR_MODE_RUN=1`), any merge: `gh pr merge`, and through `gh api` the
   merge endpoints and the `mergePullRequest` and `enablePullRequestAutoMerge` mutations; and any
   write to rulesets or branch protection, through `gh api` paths or GraphQL ruleset and
   branch-protection mutations. `gh pr list --search merge` and other read-only calls are allowed.
 
-It reads commands as written. It is a guardrail for honest mistakes, not a sandbox: `bash -c "..."`
-and other GraphQL calls are not parsed.
+It reads commands as written. It is a guardrail for honest mistakes, not a sandbox: `bash -c "..."`,
+`eval` and `sh -c` strings are not parsed, a variable holding a value (a method, a branch, a config key)
+is not followed, a `GIT_CONFIG_PARAMETERS` value that hides a `$` is refused rather than read, and other
+GraphQL calls are not parsed. Git accepts an unambiguous abbreviation of a long option (`--no-verif`):
+the guard reads the full names only.
 
 ### Self-protection (`self-protect.sh`)
 
 Active only while the environment variable `SENIOR_MODE_RUN=1` is set, which `run` does for the
 sessions it starts. Outside a run it does nothing. It denies Edit, Write, MultiEdit and NotebookEdit
 on `.github/workflows/**`, `.claude/**` and `.githooks/**` at the repository root, and on the git
-hooks, `.git/config` and `config.worktree` of the common dir (every worktree shares them), and
-the `.git` directory itself (`rm -rf .git`, `rm -rf .git/*`), and Bash commands that obviously write
+hooks, `.git/config` and `config.worktree` of the common dir (every worktree shares them), the
+`.git` directory itself (`rm -rf .git`, `rm -rf .git/*`), and its `refs`, `objects` and `worktrees`
+(`rm -rf .git/refs`; use `git worktree remove`), and Bash commands that obviously write
 there: redirections, `tee`, `cp`, `mv`, `rm`, `touch`, `truncate`, `chmod`, `chown`, `chgrp`,
 `install`, `ln`, `dd of=`, `sed -i`, `perl -i`, `git rm`, `git mv`, `git checkout` and
 `git restore` on those paths, also behind `sudo`, `env`, `xargs`, `nice`, `doas` and the like. An agent therefore cannot weaken the checks, the hooks or the

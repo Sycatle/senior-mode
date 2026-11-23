@@ -377,32 +377,32 @@ grep -q 'pr merge' "$GH_LOG" && fail "J: merged without the base branch's protec
 grep -q 'Waiting for a human.*#80.*protected zones could not be read' "$work/out" ||
   fail "J: report misses why #80 waits: $(cat "$work/out")"
 
-# K: a session that outlives autonomy.sessionTimeout (1 minute, scaled to a second) is killed with its
+# Q: a session that outlives autonomy.sessionTimeout (1 minute, scaled to a second) is killed with its
 # processes, the ticket gets needs-human and a comment with the log path, stays In progress, is not retried
 # on Opus and counts for the breaker (#115). #91 is never started.
 config '{"maxConsecutiveFailures": 1, "sessionTimeout": 1}'
 board 90 '[]' 91 '[]'
 session 90-sonnet "" "" hang
 session 91-sonnet delivered pr
-SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "K: run failed: $(cat "$work/out")"
-grep -q 'app-90 opus' "$CLAUDE_LOG" && fail "K: a timed out session was retried on Opus"
-grep -q 'app-91' "$CLAUDE_LOG" && fail "K: the breaker did not count the timeout"
-grep -q 'issues/90/labels.*needs-human' "$GH_LOG" || fail "K: #90 not labelled needs-human: $(cat "$GH_LOG")"
-grep -q '90-sonnet.log' "$GH_LOG" || fail "K: no comment with the log path on #90"
-grep -q 'item-edit.*--single-select-option-id o0' "$GH_LOG" && fail "K: #90 was set back to Backlog"
-grep -q 'Failed.*#90.*timed out after 1 minute' "$work/out" || fail "K: report misses the timeout: $(cat "$work/out")"
+SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "Q: run failed: $(cat "$work/out")"
+grep -q 'app-90 opus' "$CLAUDE_LOG" && fail "Q: a timed out session was retried on Opus"
+grep -q 'app-91' "$CLAUDE_LOG" && fail "Q: the breaker did not count the timeout"
+grep -q 'issues/90/labels.*needs-human' "$GH_LOG" || fail "Q: #90 not labelled needs-human: $(cat "$GH_LOG")"
+grep -q '90-sonnet.log' "$GH_LOG" || fail "Q: no comment with the log path on #90"
+grep -q 'item-edit.*--single-select-option-id o0' "$GH_LOG" && fail "Q: #90 was set back to Backlog"
+grep -q 'Failed.*#90.*timed out after 1 minute' "$work/out" || fail "Q: report misses the timeout: $(cat "$work/out")"
 jq -e '.outcome == "failed" and .escalated == false and .reason == "timed out after 1 minute"' \
-  "$repo/.git/senior-mode/runs/"*"/90.json" >/dev/null || fail "K: #90 not recorded as timed out"
+  "$repo/.git/senior-mode/runs/"*"/90.json" >/dev/null || fail "Q: #90 not recorded as timed out"
 read -r -a pids <"$FIX/pids-90"
-for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && fail "K: process $pid of the session is still alive"; done
+for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && fail "Q: process $pid of the session is still alive"; done
 for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
 config '{"sessionTimeout": 0}'
-run && fail "K: sessionTimeout 0 accepted"
-grep -q 'sessionTimeout' "$work/out" || fail "K: bad sessionTimeout not named: $(cat "$work/out")"
+run && fail "Q: sessionTimeout 0 accepted"
+grep -q 'sessionTimeout' "$work/out" || fail "Q: bad sessionTimeout not named: $(cat "$work/out")"
 config '{"sessionTimeout": 1441}'
 board
-run && fail "K: sessionTimeout above a day accepted"
-grep -q 'sessionTimeout' "$work/out" || fail "K: too long a sessionTimeout not named: $(cat "$work/out")"
+run && fail "Q: sessionTimeout above a day accepted"
+grep -q 'sessionTimeout' "$work/out" || fail "Q: too long a sessionTimeout not named: $(cat "$work/out")"
 
 # L: the recorded process group is not the session's (its leader is not <n>.sh): nothing is killed, run
 # says so, and the ticket is still labelled needs-human and recorded as timed out.
@@ -418,7 +418,7 @@ grep -q 'issues/92/labels.*needs-human' "$GH_LOG" || fail "L: #92 not labelled n
 jq -e '.outcome == "failed" and .reason == "timed out after 1 minute"' "$repo/.git/senior-mode/runs/"*"/92.json" >/dev/null ||
   fail "L: #92 not recorded as timed out"
 
-# N: the docs session after a merge is bounded by the same timeout (#120): killed with its processes, recorded
+# R: the docs session after a merge is bounded by the same timeout (#120): killed with its processes, recorded
 # in the run log (docs-outcome.json) and reported, and run ends normally. Without a timeout it is recorded done.
 config '{"sessionTimeout": 1, "merge": true}' '{"protection": "ruleset"}'
 board 110 '[]'
@@ -426,23 +426,23 @@ session 110-sonnet delivered pr
 echo "$green" >"$FIX/status-110"
 echo hang >"$FIX/docs"
 SECONDS=0
-SENIOR_MODE_TIMEOUT_UNIT=2 run || fail "N: run failed: $(cat "$work/out")"
-[ "$SECONDS" -lt 30 ] || fail "N: run hung on the docs session ($SECONDS s)"
-grep -qx 'pr merge 210 --rebase --match-head-commit sha110 -R acme/app' "$GH_LOG" || fail "N: #110 not merged: $(cat "$GH_LOG")"
+SENIOR_MODE_TIMEOUT_UNIT=2 run || fail "R: run failed: $(cat "$work/out")"
+[ "$SECONDS" -lt 30 ] || fail "R: run hung on the docs session ($SECONDS s)"
+grep -qx 'pr merge 210 --rebase --match-head-commit sha110 -R acme/app' "$GH_LOG" || fail "R: #110 not merged: $(cat "$GH_LOG")"
 read -r -a pids <"$FIX/pids-docs"
-for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && fail "N: process $pid of the docs session is still alive"; done
+for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && fail "R: process $pid of the docs session is still alive"; done
 for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
 jq -e '.session == "docs" and .outcome == "failed" and .reason == "docs session timed out after 1 minute" and (.finishedAt | length > 0)' \
-  "$repo/.git/senior-mode/runs/"*"/docs-outcome.json" >/dev/null || fail "N: the docs timeout is not recorded: $(cat "$repo"/.git/senior-mode/runs/*/docs-outcome.json)"
-grep -q 'docs session timed out after 1 minute' "$work/out" || fail "N: report misses the docs timeout: $(cat "$work/out")"
-grep -q 'issues/.*labels' "$GH_LOG" && fail "N: a docs timeout labelled a ticket"
+  "$repo/.git/senior-mode/runs/"*"/docs-outcome.json" >/dev/null || fail "R: the docs timeout is not recorded: $(cat "$repo"/.git/senior-mode/runs/*/docs-outcome.json)"
+grep -q 'docs session timed out after 1 minute' "$work/out" || fail "R: report misses the docs timeout: $(cat "$work/out")"
+grep -q 'issues/.*labels' "$GH_LOG" && fail "R: a docs timeout labelled a ticket"
 rm -f "$FIX/docs"
 board 111 '[]'
 session 111-sonnet delivered pr
 echo "$green" >"$FIX/status-111"
-run || fail "N: run failed: $(cat "$work/out")"
+run || fail "R: run failed: $(cat "$work/out")"
 jq -e '.session == "docs" and .outcome == "done" and .reason == null' "$repo/.git/senior-mode/runs/"*"/docs-outcome.json" >/dev/null ||
-  fail "N: a docs session that finished is not recorded done"
+  fail "R: a docs session that finished is not recorded done"
 
 # M: before a run starts (#117): the plugin must be enabled and hooks.json present, and once a day a probe
 # session tries a denied, inert command (git -c core.hooksPath=... init <tmp>/ran). The deny must show in

@@ -30,10 +30,10 @@ never overwritten. After `senior-mode setup github` adds the third check to an e
 repository, a pull request opened before needs `senior-mode publish` once more on its head. See
 [ADR 0015](../adr/0015-security-posture.md).
 
-Until the reviewer runs in a separate session ([#150](https://github.com/Sycatle/senior-mode/issues/150)),
-a ticket session can post `senior-mode/security` itself: the Bash guard does not block statuses.
-`run` checks the protected zones itself before it merges, whatever the statuses say, so only the
-auto-merge of an L ticket depends on this status being honest.
+A session with a [role](#session-roles) other than `reviewer` cannot post `senior-mode/review`: the
+Bash guard denies it. `senior-mode/security` is still open to a ticket session until the `security`
+agent gets a role of its own. `run` checks the protected zones itself before it merges, whatever the
+statuses say, so only the auto-merge of an L ticket depends on that status being honest.
 
 A status published from your machine is only as trustworthy as that machine: it names the commit
 it verified ([ADR 0006](../adr/0006-local-ci.md)). Teams that need independent CI use `actions` mode.
@@ -216,7 +216,8 @@ middle of `merge` (`/me${x}rge`), and an alias that runs a denied command by ano
 ### Self-protection (`self-protect.sh`)
 
 Active only while the environment variable `SENIOR_MODE_RUN=1` is set, which `run` does for the
-sessions it starts. Outside a run it does nothing. It denies Edit, Write, MultiEdit and NotebookEdit
+sessions it starts, and, for the red tests only, in a session with `SENIOR_MODE_ROLE=ticket` (see
+[Session roles](#session-roles)). Otherwise it does nothing. It denies Edit, Write, MultiEdit and NotebookEdit
 on `.github/workflows/**`, `.claude/**` and `.githooks/**` at the repository root, and on the git
 hooks, `.git/config` and `config.worktree` of the common dir (every worktree shares them), the
 `.git` directory itself (`rm -rf .git`, `rm -rf .git/*`), and its `refs`, `packed-refs`, `HEAD`,
@@ -238,6 +239,47 @@ writable: the reviewer and architect agents keep their project memory there. The
 leave the change out and say in the pull request that a human must make it.
 
 Like the Bash guard, it reads commands as written: a guardrail for honest mistakes, not a sandbox.
+
+### Session roles
+
+`SENIOR_MODE_ROLE` says what a session is for ([ADR 0017](../adr/0017-daemon-orchestration.md)): the
+process that starts the session sets it (`serve`, or a human who wants the same limits), and the hooks
+read it. Without it (a manual session) nothing below applies and the guards behave as before.
+
+| Role | May | May not |
+|---|---|---|
+| `ticket` | Edit code, add tests of its own, commit, push, open the pull request | Post `senior-mode/review`; edit, move or delete a red test (below) |
+| `test-author` | Write and commit the failing tests of an M ticket | Post `senior-mode/review` (it also edits no production code, by instruction) |
+| `reviewer` | Post `senior-mode/review` | Edit files (the agent has no Edit or Write tool) |
+| `integrator` | Merge pull requests as `serve` does | Post `senior-mode/review` |
+
+Any role but `reviewer` is denied `senior-mode/review`, as a status with that context posted with
+`gh api .../statuses/<sha>` (a write, or any `gh api graphql` that names it), or `curl` with a body to
+a statuses endpoint. Reading statuses is allowed. A context left to a variable
+(`-f context="$CTX"`) is denied too, since the guard cannot tell which status it sets.
+
+**Red tests (M tickets, [#191](https://github.com/Sycatle/senior-mode/issues/191)).** A separate
+`test-author` session writes and commits the failing tests, then `senior-mode red-tests record <n>`
+lists them in `.git/senior-mode/runs/<n>/red-tests`. In a session with `SENIOR_MODE_ROLE=ticket`, on a
+branch named `<type>/<n>-slug` with such a list, `self-protect.sh` (which then acts even outside a
+run) denies Edit, Write, MultiEdit and NotebookEdit on a listed file, and the Bash commands that
+write, move or delete one (redirections, `tee`, `rm`, `mv`, `cp`, `sed -i`, `truncate`, `git rm`,
+`git mv`, `git checkout`, `git restore`, the same way as the self-protection above), a directory that
+holds one included, and the list itself. The implementer may add tests of its own. A red test that is
+wrong stays as it is: the pull request says so and a human decides, and the review checks that the
+red tests still pass unchanged.
+
+Limits, as for the other guards: a guardrail for honest mistakes, not a sandbox. `bash -c "..."`,
+`eval`, scripts, a variable that stands for a whole path or endpoint, `python -c` and an editor
+started from Bash are not read, so a determined session can change a red test or post a status; the
+branch protection and the review of the pull request are the backstop (a changed red test shows in
+the diff). The ticket is read in the branch name of the session's directory: a `cd` to another worktree
+in the same command is not followed. The roles are set by whoever starts the session, and the serve
+loop that starts `test-author` and `reviewer` sessions comes with [#149](https://github.com/Sycatle/senior-mode/issues/149):
+until then `run` starts ticket sessions without a role, which still review and set the status
+themselves as described in [Run](#run). A reviewer that runs as a subagent of the ticket session
+shares its environment, so it cannot post the status once the role is `ticket`: that is the point
+of the separate session.
 
 ### Secrets guard (`guard-secrets.sh`)
 

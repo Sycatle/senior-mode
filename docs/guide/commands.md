@@ -164,6 +164,7 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode item get <issue> [field]` | Reads the board fields of a ticket in one call: the value of `field`, or every field set (`#42 Status = Ready`) |
 | `senior-mode config get <key>` | Prints a config value, with defaults (see [Configuration](configuration.md)) |
 | `senior-mode protected [--base <ref>]` | Lists the files changed on the branch that match a `protected` glob (exit 0), or nothing (exit 1); used by the reviewer |
+| `senior-mode red-tests record <issue>` | Records the files the `test-author` session committed on the ticket branch since the default branch, in `.git/senior-mode/runs/<issue>/red-tests` (one path per line), for the [guard](autonomy.md#session-roles) to keep read-only for the ticket session. Written once, so run it between the test-author and the implementer sessions; fails when the branch holds no commit yet |
 | `senior-mode context` | Prints the session greeting and the current ticket (used by the `SessionStart` hook) |
 | `senior-mode frame start <idea>` | Makes the worktree `~/.local/share/senior-mode/worktrees/<repo>/frame-<slug>` (a framing opened elsewhere earlier is reused) and the branch `docs/<slug>` from `origin/main`; refuses when the default branch is ahead of origin |
 | `senior-mode frame end` | Ends every framing session in the repository, so edits outside `docs/` are allowed again |

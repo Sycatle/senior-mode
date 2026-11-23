@@ -642,6 +642,31 @@ expect allow 'gh api -X PUT "$BASE/issues/5/lock" -f lock_reason=x'
 expect allow 'gh api -X PUT "$BASE/mergeable"'
 expect allow 'gh api -X PUT "$BASE/merge-queue"'
 
+# Review of #244: a ref made of variables around a slash is an ordinary branch name, with origin/HEAD set or not;
+# a quoted message that starts with -- and holds a variable is a value, not an option.
+expect allow 'git push origin "$PREFIX/$N"'
+expect allow 'git push origin $USER/$TOPIC'
+expect allow 'git push -u origin "$type/$slug"'
+expect allow 'git push origin HEAD:$team/$branch'
+expect allow 'git push origin HEAD:refs/heads/$a/$b'
+expect allow 'git push origin ${a}/${b}'
+expect allow 'git push origin "${a}/${b}"'
+expect allow 'git push origin $a/$b/$c'
+expect deny 'git push origin ma${x}in'
+git -C "$repo" remote set-head origin -d >/dev/null
+expect allow 'git push origin "$PREFIX/$N"'
+expect allow 'git push origin $USER/$TOPIC'
+expect allow 'git push origin HEAD:$team/$branch'
+expect deny 'git push origin ma${x}in'
+expect deny 'git push origin ma${x}er'
+git -C "$repo" remote set-head origin main >/dev/null
+expect allow 'git commit -m "--$x" --allow-empty'
+expect allow 'git commit -m "--$x-y" --allow-empty'
+expect allow 'gh pr comment 5 --body "--$x"'
+expect allow 'git commit -m "-$x"'
+expect deny 'git push --for${x}ce'
+expect deny 'git push --$x'
+
 reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason' \
   <<<"$(jq -nc --arg d "$repo" '{tool_input: {command: "git push --force"}, cwd: $d}' | "$hook")")
 grep -qi force <<<"$reason" || fail "deny reason does not name the rule: $reason"

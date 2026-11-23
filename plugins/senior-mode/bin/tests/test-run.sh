@@ -24,6 +24,18 @@ failures=0
 . "$(dirname "$0")/fixture-runs.sh"
 
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
+# alive <pid>: is the process still running after it was killed? A killed process is a zombie until its parent
+# reaps it, and a loaded machine can take seconds: polls up to 10 s for it to be gone (a zombie is gone) (#253).
+alive() {
+  local st
+  for _ in $(seq 100); do
+    st=$(ps -o stat= -p "$1" 2>/dev/null) || st=""
+    st=${st# }
+    [ -n "$st" ] && [ "${st:0:1}" != Z ] || return 1
+    sleep 0.1
+  done
+  return 0
+}
 
 mkdir -p "$work/stub" "$work/tmux" "$work/fix"
 cat >"$work/stub/gh" <<'STUB'
@@ -439,7 +451,7 @@ grep -q 'Failed.*#90.*timed out after 1 minute' "$work/out" || fail "Q: report m
 jq -e '.outcome == "failed" and .escalated == false and .reason == "timed out after 1 minute"' \
   "$repo/.git/senior-mode/runs/"*"/90.json" >/dev/null || fail "Q: #90 not recorded as timed out"
 read -r -a pids <"$FIX/pids-90"
-for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && fail "Q: process $pid of the session is still alive"; done
+for pid in "${pids[@]}"; do alive "$pid" && fail "Q: process $pid of the session is still alive"; done
 for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
 config '{"sessionTimeout": 0}'
 run && fail "Q: sessionTimeout 0 accepted"
@@ -475,7 +487,7 @@ SENIOR_MODE_TIMEOUT_UNIT=2 run || fail "R: run failed: $(cat "$work/out")"
 [ "$SECONDS" -lt 30 ] || fail "R: run hung on the docs session ($SECONDS s)"
 grep -qx 'pr merge 210 --rebase --match-head-commit sha110 -R acme/app' "$GH_LOG" || fail "R: #110 not merged: $(cat "$GH_LOG")"
 read -r -a pids <"$FIX/pids-docs"
-for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && fail "R: process $pid of the docs session is still alive"; done
+for pid in "${pids[@]}"; do alive "$pid" && fail "R: process $pid of the docs session is still alive"; done
 for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
 jq -e '.session == "docs" and .outcome == "failed" and .reason == "docs session timed out after 1 minute" and (.finishedAt | length > 0)' \
   "$(run_dir)/docs-outcome.json" >/dev/null || fail "R: the docs timeout is not recorded: $(cat "$(run_dir)/docs-outcome.json")"
@@ -509,14 +521,15 @@ SENIOR_MODE_TIMEOUT_UNIT=30 run || fail "R: run failed on a docs script that die
 jq -e '.session == "docs" and .outcome == "failed" and (.reason | test("ended without leaving its exit code"))' \
   "$(run_dir)/docs-outcome.json" >/dev/null || fail "R: the dead docs script is not recorded: $(cat "$(run_dir)/docs-outcome.json")"
 grep -q 'timed out' "$work/out" && fail "R: a dead docs script is reported as a timeout: $(cat "$work/out")"
-# The poll never overshoots the timeout: with a 5 s poll and a 2 s timeout the docs session is killed after about 2 s.
+# The poll never overshoots the timeout: with a 60 s poll and a 2 s timeout the docs session is killed long before
+# the poll comes round (a loaded machine delays it by seconds, never by the poll).
 echo hang >"$FIX/docs"
 board 114 '[]'
 session 114-sonnet delivered pr
 echo "$green" >"$FIX/status-114"
-SENIOR_MODE_POLL=5 SENIOR_MODE_TIMEOUT_UNIT=2 run || fail "R: run failed: $(cat "$work/out")"
+SENIOR_MODE_POLL=60 SENIOR_MODE_TIMEOUT_UNIT=2 run || fail "R: run failed: $(cat "$work/out")"
 docs_took=$(($(date +%s) - $(cat "$FIX/docs-start")))
-[ "$docs_took" -le 3 ] || fail "R: the docs session outlived its 2 s timeout by the poll interval ($docs_took s)"
+[ "$docs_took" -lt 30 ] || fail "R: the docs session outlived its 2 s timeout by the poll interval ($docs_took s)"
 read -r -a pids <"$FIX/pids-docs"
 for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
 rm -f "$FIX/docs"
@@ -609,11 +622,10 @@ rm -f "$probe" "$probe_failed" "$FIX/pids-probe"
 echo hangkids >"$FIX/probe"
 SENIOR_MODE_PROBE_TIMEOUT=1 run && fail "probe-group: run started although the probe session never ended"
 [ -s "$FIX/pids-probe" ] || fail "probe-group: the probe stub did not start its child"
-sleep 0.3
 pids=()
 read -r -a pids <"$FIX/pids-probe" || true
 for p in "${pids[@]}"; do
-  if kill -0 "$p" 2>/dev/null; then
+  if alive "$p"; then
     fail "probe-group: process $p of the probe survived its timeout"
     kill -KILL "$p" 2>/dev/null
   fi
@@ -633,11 +645,10 @@ kill -TERM "$rp" 2>/dev/null
 wait "$rp"
 git -C "$repo" worktree list | grep -q probe && fail "probe-signal: the probe worktree was left: $(git -C "$repo" worktree list)"
 [ -z "$(ls -A "$work/tmp")" ] || fail "probe-signal: the probe left its temporary directory: $(ls "$work/tmp")"
-sleep 0.3
 pids=()
 read -r -a pids <"$FIX/pids-probe" || true
 for p in "${pids[@]}"; do
-  if kill -0 "$p" 2>/dev/null; then
+  if alive "$p"; then
     fail "probe-signal: process $p of the probe survived the signal"
     kill -KILL "$p" 2>/dev/null
   fi
@@ -811,7 +822,7 @@ SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "P: run failed with perl as the fallback:
 grep -q 'Failed.*#130.*timed out after 1 minute' "$work/out" || fail "P: report misses the timeout: $(cat "$work/out")"
 grep -q 'not stopped' "$work/out" && fail "P: a session was not stopped with perl: $(cat "$work/out")"
 read -r -a pids <"$FIX/pids-130"
-for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && fail "P: process $pid of the session is still alive"; done
+for pid in "${pids[@]}"; do alive "$pid" && fail "P: process $pid of the session is still alive"; done
 for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
 PATH=$saved
 
@@ -888,13 +899,14 @@ grep -q 'Failed.*#150.*ended without leaving its exit code' "$work/out" || fail 
 grep -q 'timed out' "$work/out" && fail "T: a dead session is reported as a timeout: $(cat "$work/out")"
 jq -e '.outcome == "failed" and .escalated == false and (.reason | test("ended without leaving its exit code"))' \
   "$repo/.git/senior-mode/runs/"*"/150.json" >/dev/null || fail "T: #150 not recorded as a dead session"
-# The poll never sleeps past the timeout: with a 10 s poll and a 2 s timeout the session is stopped after about 2 s.
+# The poll never sleeps past the timeout: with a 60 s poll and a 2 s timeout the session is stopped long before
+# the poll comes round.
 config '{"sessionTimeout": 1}'
 board 152 '[]'
 session 152-sonnet "" "" hang
 SECONDS=0
-SENIOR_MODE_POLL=10 SENIOR_MODE_TIMEOUT_UNIT=2 run || fail "T: run failed: $(cat "$work/out")"
-[ "$SECONDS" -lt 8 ] || fail "T: the ticket loop slept past the 2 s timeout ($SECONDS s)"
+SENIOR_MODE_POLL=60 SENIOR_MODE_TIMEOUT_UNIT=2 run || fail "T: run failed: $(cat "$work/out")"
+[ "$SECONDS" -lt 30 ] || fail "T: the ticket loop slept past the 2 s timeout ($SECONDS s)"
 grep -q 'Failed.*#152.*timed out after 1 minute' "$work/out" || fail "T: report misses the timeout of #152: $(cat "$work/out")"
 read -r -a pids <"$FIX/pids-152"
 for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done

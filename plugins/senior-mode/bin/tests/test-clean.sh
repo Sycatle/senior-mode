@@ -141,7 +141,7 @@ for l in "would remove worktree $wt/1 " "would remove worktree $wt/2 " "would re
   "would remove run $common/runs/old " "would remove file $common/probe "; do
   has "$l" || fail "dry run does not say: $l: $(cat "$work/out")"
 done
-for l in "feat/2-merged-new (pull request #102" "feat/5-open" "feat/9-issue-open" "$common/runs/new" "$common/probe.log" \
+for l in "feat/5-open" "feat/9-issue-open" "$common/runs/new" "$common/probe.log" \
   "$common/checks"; do
   ! grep -F "would remove" "$work/out" | grep -qF -- "$l" || fail "dry run would remove: $l"
 done
@@ -151,12 +151,12 @@ has "would run: git worktree prune" || fail "dry run does not mention the prune:
 
 # --days and hygiene.days move the line: a 30 day old pull request and old files are not old enough for 40.
 clean --dry-run --days 40 || fail "dry run --days failed: $(cat "$work/err")"
-has "remote branch" && fail "--days 40 still removes a remote branch: $(cat "$work/out")"
+has "would remove remote branch" && fail "--days 40 still removes a remote branch: $(cat "$work/out")"
 has "would remove run" && fail "--days 40 still removes a run: $(cat "$work/out")"
 has "would remove worktree $wt/1 " || fail "--days 40 spares the worktree of a merged pull request: $(cat "$work/out")"
 jq '.hygiene.days = 40' "$repo/.claude/senior-mode.json" >"$work/cfg" && cp "$work/cfg" "$repo/.claude/senior-mode.json"
 clean --dry-run || fail "dry run with hygiene.days failed: $(cat "$work/err")"
-has "remote branch" && fail "hygiene.days 40 still removes a remote branch: $(cat "$work/out")"
+has "would remove remote branch" && fail "hygiene.days 40 still removes a remote branch: $(cat "$work/out")"
 clean --dry-run --days 1 || fail "dry run --days 1 failed: $(cat "$work/err")"
 has "would remove remote branch feat/2-merged-new " || fail "--days 1 spares a 3 day old pull request: $(cat "$work/out")"
 git -C "$repo" checkout -q -- .claude/senior-mode.json

@@ -281,7 +281,7 @@ grep -q 'needs a data migration' "$work/out" || fail "C: report misses the reaso
 [ "$(grep -c '^pr list' "$GH_LOG")" -eq 2 ] || fail "C: clean not called at the start and the end: $(cat "$GH_LOG")"
 [ "$(grep -n '^pr list' "$GH_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n '^issue view 30 ' "$GH_LOG" | head -1 | cut -d: -f1)" ] ||
   fail "C: clean did not run before the first ticket: $(cat "$GH_LOG")"
-[ "$(grep -n '^pr list' "$GH_LOG" | tail -1 | cut -d: -f1)" -gt "$(grep -n '^issue view 30 ' "$GH_LOG" | tail -1 | cut -d: -f1)" ] ||
+[ "$(grep -n '^pr list' "$GH_LOG" | tail -1 | cut -d: -f1)" -gt "$(grep -n 'issues/30/comments' "$GH_LOG" | tail -1 | cut -d: -f1)" ] ||
   fail "C: clean did not run after the last ticket: $(cat "$GH_LOG")"
 outcome_is 30
 

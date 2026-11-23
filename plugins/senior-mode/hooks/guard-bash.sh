@@ -12,13 +12,14 @@ set -o pipefail
 input=$(cat)
 # Quoted text is data (commit messages, echo), never options: replace it before parsing. A quoted
 # single word (a URL, a ref) is unquoted instead, and so is a quoted variable (`"$EP"`, `--for"$x"ce`)
-# or a quoted word with variables in it (`"core.hooks${x}Path"`), which the checks below must still see.
+# or a quoted word with variables in it (`"core.hooks${x}Path"`), which the checks below must still see; not one
+# that starts with a dash (`-m "--$x"` is a message, not an option).
 # An empty pair touching a word (`--for""ce`) is removed; alone it is an argument (`core.hooksPath ""`)
 # and stays, as `Q`. Outside quotes a backslash is dropped as the shell does (`--for\ce`,
 # `core.hooksPath\=x`); an escaped space or quote becomes `Q`, so it neither splits a word nor opens a
 # quote, and a value made only of them is still an argument. A backslash-newline continues the line.
 command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
-  | gsub("\"(?<x>(?:\\$(?:\\{[^}\"\\\\\\s]*\\}|[A-Za-z_][A-Za-z0-9_]*))+)\"|\"(?<w>[^\"\\\\\\s$`]+)\"|\"(?<y>(?:[^\"\\\\\\s$`;|&()<>]|\\$(?:\\{[^}\"\\\\\\s]*\\}|[A-Za-z_][A-Za-z0-9_]*))+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'|(?<=\\S)(?:\"\"|'"'"''"'"')|(?:\"\"|'"'"''"'"')(?=\\S)|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')|\\\\(?<c>[^\\n \"'"'"'])|\\\\(?<e>[ \"'"'"'])"; .x // .w // .y // .v // .g // .c // (if .e then "Q" else "" end))
+  | gsub("\"(?<x>(?:\\$(?:\\{[^}\"\\\\\\s]*\\}|[A-Za-z_][A-Za-z0-9_]*))+)\"|\"(?<w>[^\"\\\\\\s$`]+)\"|\"(?<y>(?!-)(?:[^\"\\\\\\s$`;|&()<>]|\\$(?:\\{[^}\"\\\\\\s]*\\}|[A-Za-z_][A-Za-z0-9_]*))+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'|(?<=\\S)(?:\"\"|'"'"''"'"')|(?:\"\"|'"'"''"'"')(?=\\S)|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')|\\\\(?<c>[^\\n \"'"'"'])|\\\\(?<e>[ \"'"'"'])"; .x // .w // .y // .v // .g // .c // (if .e then "Q" else "" end))
   | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
 cwd=$(jq -r '.cwd // empty' <<<"$input")
 raw=$(jq -r '.tool_input.command // ""' <<<"$input")
@@ -152,7 +153,8 @@ var_default() { # ref, as written: [+]src:dst
   p=${p#refs/heads/}
   [[ -n ${p//\*/} ]] || return 1
   head=$(git -C "$dir" symbolic-ref --short -q refs/remotes/origin/HEAD)
-  for b in ${head:+${head#origin/}} ${head:-main master}; do
+  if [ -n "$head" ]; then set -- "${head#origin/}"; else set -- main master; fi
+  for b in "$@"; do
     # shellcheck disable=SC2053 # $p is a glob: the variables left open
     [[ $b == $p ]] && return 0
   done

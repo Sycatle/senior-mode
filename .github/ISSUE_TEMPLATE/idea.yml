@@ -1,0 +1,28 @@
+name: Idea
+description: Suggest a change or a new capability
+labels: ["triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. A maintainer reads it before any work starts: an issue from outside the
+        team stays in the triage inbox until it is qualified. For an open question or a "how do I",
+        use [Discussions](https://github.com/Sycatle/senior-mode/discussions) instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What is hard or missing today, and for whom.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: The behaviour you expect, in a few sentences. No need for a design.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered

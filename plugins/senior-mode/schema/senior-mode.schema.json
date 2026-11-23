@@ -1,0 +1,188 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/Sycatle/senior-mode/main/plugins/senior-mode/schema/senior-mode.schema.json",
+  "title": "senior-mode project configuration (.claude/senior-mode.json)",
+  "description": "The configuration of a project that uses senior-mode. `senior-mode config validate` (run by `check` and `doctor`) reads this file: it understands type, enum, minimum, maximum, pattern, properties, additionalProperties, items, deprecated, x-replacedBy and x-deprecatedValues.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string", "description": "This schema, for the editor." },
+    "language": { "type": "string", "enum": ["en", "fr"], "description": "Language of the templates and of what Claude writes for you." },
+    "preset": {
+      "type": "string",
+      "enum": ["node", "generic", "python", "go", "rust", "typescript"],
+      "x-deprecatedValues": { "typescript": "node" },
+      "description": "Stack preset; setup detects it."
+    },
+    "framework": { "type": "string", "description": "`next` when Next.js is a dependency." },
+    "commands": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Commands of the preset (lint, typecheck, test, build, e2e, format, install)."
+    },
+    "checks": {
+      "type": "array",
+      "description": "The check list, run in order.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "run": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "protected": { "type": "array", "items": { "type": "string" }, "description": "Globs of protected zones. Layers add to it, none removes from it." },
+    "secrets": { "type": "array", "items": { "type": "string" }, "description": "Extra globs of the secrets guard. Layers add to it." },
+    "audit": { "type": "boolean", "description": "false turns off the dependency audit of `check`." },
+    "wip": { "type": "integer", "minimum": 1, "description": "Open tickets In progress at once." },
+    "slot": { "type": "string", "description": "A shell command that derives the environment of a session slot." },
+    "ci": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "mode": { "type": "string", "enum": ["local", "actions"] } }
+    },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protection": { "type": "string", "enum": ["", "ruleset", "none"], "description": "Written by setup github." },
+        "requiredChecks": { "type": "boolean", "description": "false keeps setup github from adding required status checks to the ruleset." }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minPackageAgeDays": { "type": "integer", "minimum": 1, "description": "A new dependency fails check when its package was first published fewer days ago." },
+        "minWeeklyDownloads": { "type": "integer", "minimum": 1, "description": "A new dependency fails check when its package had fewer downloads last week." }
+      }
+    },
+    "project": {
+      "type": "object",
+      "description": "The Project board; written by setup github.",
+      "additionalProperties": false,
+      "properties": {
+        "owner": { "type": "string" },
+        "number": { "type": "integer", "minimum": 1 },
+        "id": { "type": "string" },
+        "fields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "options": { "type": "object", "additionalProperties": { "type": "string" } }
+            }
+          }
+        },
+        "migration": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "number": { "type": "integer", "minimum": 1 }, "id": { "type": "string" } }
+        }
+      }
+    },
+    "board": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "template": { "type": "string" },
+        "archiveAfterDays": { "type": "integer", "minimum": 1 },
+        "iterationDays": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "hygiene": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "days": { "type": "integer", "minimum": 1 } }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prLines": { "type": "integer", "minimum": 1 },
+        "diffLines": {
+          "type": "object",
+          "description": "Changed-line budget of a pull request by Size.",
+          "additionalProperties": false,
+          "properties": {
+            "S": { "type": "integer", "minimum": 1 },
+            "M": { "type": "integer", "minimum": 1 },
+            "L": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "envGuard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "forbidden": { "type": "array", "items": { "type": "string" } } }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "sections": { "type": "array", "items": { "type": "string" } } }
+    },
+    "docs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "extra": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "path": { "type": "string", "minLength": 1 }, "purpose": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "autonomy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxTickets": { "type": "integer", "minimum": 1 },
+        "parallel": { "type": "integer", "minimum": 1 },
+        "maxConsecutiveFailures": { "type": "integer", "minimum": 1 },
+        "merge": { "type": "boolean" },
+        "escalate": { "type": "boolean" },
+        "sessionTimeout": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Minutes." },
+        "schedule": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "HH:MM." },
+        "ticketsPerHour": { "type": "integer", "minimum": 1 },
+        "sessionsPerHour": { "type": "integer", "minimum": 0 },
+        "minMemoryMB": { "type": "integer", "minimum": 0 },
+        "userSettings": { "type": "boolean", "description": "Whether run and serve sessions load the owner's user-level Claude Code configuration." }
+      }
+    },
+    "serve": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "interval": { "type": "integer", "minimum": 1 },
+        "grace": { "type": "integer", "minimum": 0 },
+        "breakerCooldown": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "notify": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mention": { "type": "string" },
+        "webhook": { "type": "string", "pattern": "^(https?://.+)?$" },
+        "digest": { "type": "boolean" }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "command": { "type": "string", "minLength": 1 } }
+    },
+    "e2e": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "slots": { "type": "integer", "minimum": 1 } }
+    }
+  }
+}

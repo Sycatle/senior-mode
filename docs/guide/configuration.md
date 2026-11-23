@@ -80,6 +80,32 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 (`protected`, `secrets`, `envGuard.forbidden`, `review.sections`, `docs.extra`, `github.protection`, `slot`)
 print `[]` (an empty line for `github.protection` and `slot`) when absent (`github.requiredChecks` prints `true`); a key the plugin does not know is an error.
 
+## Validation and the JSON schema
+
+The file has a JSON schema, `plugins/senior-mode/schema/senior-mode.schema.json`. `setup repo` writes
+its URL as `$schema` in `.claude/senior-mode.json` (an existing `$schema` is kept), so an editor
+completes the keys and flags a typo as you write it.
+
+`senior-mode config validate` reads the file against the same schema, with no other dependency than `jq`,
+and `check` runs it as its `config` step:
+
+```
+error: autonomy.maxTicket: unknown key, did you mean maxTickets
+error: ci.mode: "actoins" is not one of "local", "actions", did you mean "actions"
+error: autonomy.sessionTimeout: 0 is below the minimum 1
+warning: preset: "typescript" is deprecated, use "node"
+```
+
+- An **unknown key** is an error, with the closest known key when there is one: a typo no longer
+  falls silently back to a default.
+- A value **out of its domain** (a type, a list of values, a bound, a pattern) is an error that says
+  what is allowed.
+- A **deprecated** key or value is a warning, with its replacement; `check` prints it under the `ok`
+  of the step.
+
+A key that the plugin reads but the schema lacks is a bug of the plugin: a test keeps every key of the
+defaults in the schema.
+
 ## Project review sections
 
 `review.sections` is a list of Markdown checklist files, relative to the repository root. The

@@ -32,8 +32,8 @@ regulation leaks into its core.
 - **Visibility:** `status --watch` + statusline; rich UI left to syacode.
 - **Digest for non-technical readers:** user-facing changelog of `docs` + `status --since`.
 - **Agent machines:** non-root user, `claude` resolved outside non-login PATH; GitHub Free fallback.
-- **Later:** evals and marketplace (v1.0) after real use; release-please start version from
-  Cargo.toml / pyproject.toml.
+- **Later:** evals and marketplace (v1.0) after real use. The release-please start version from
+  Cargo.toml / pyproject.toml is delivered (#99, #168).
 
 ## Shared contract
 
@@ -43,12 +43,16 @@ Config keys: `autonomy.maxTickets` (3), `autonomy.parallel` (1), `autonomy.merge
 `github.protection`, `review.sections` (project checklist files), `language`.
 Env `SENIOR_MODE_RUN=1` during a run. Shared bin helper: `senior-mode pick`.
 
-## Status (2026-11-22)
+## Status (2026-11-23)
 
+- Released: 0.2.0 (2026-11-22), 0.3.0, 0.4.0 and 0.5.0 (2026-11-23). Milestones v0.1 to v0.5 are closed
+  with no open issue.
 - Done: rework, wave 2, retro, ADRs 0007-0014, all in PR #113 (`integration/tonight`, 80 commits,
-  closes #71-#111, supersedes #79 #82 #85). `check` 6/6.
-- Dogfooded on Sycatle/senior-mode-sandbox: setup, frame (findings -> #101-#110).
-- Not dogfooded: run, schedule, next, retro, review, docs (stubbed tests only).
+  closes #71-#111, supersedes #79 #82 #85); the security wave (0.3.0), the autonomy daemon `serve`
+  (0.4.0) and the board wave (0.5.0).
+- Dogfooded on Sycatle/senior-mode-sandbox: setup, frame, and run, schedule, next, retro, review, docs
+  (#133-#138); the daemon with parallel tickets and provoked conflicts (#157).
+- Left: milestone v1.0 (#132, #158, #159, #160), and #169 and #175, deferred by the owner, no milestone.
 
 ## Decisions (framing 2026-11-22)
 
@@ -79,7 +83,7 @@ Mission: a proactive team, pragmatic, paranoid about quality and above all secur
 - **Dogfooding:** real `claude -p --plugin-dir` sessions on Sycatle/senior-mode-sandbox, run and
   schedule with `autonomy.merge: false`, on sya-dev-01 as a non-root user. Findings become issues.
 
-## Autonomy target (framing 2026-11-22, wave v0.4, to frame as an L before it starts)
+## Autonomy target (framing 2026-11-22, wave v0.4, delivered in 0.4.0)
 
 Goal: the human only frames; on the VPS, sessions run continuously over every Ready issue by
 priority, massively parallel, isolated, with senior-level rigour enforced by the tool, not advised.
@@ -118,8 +122,8 @@ Order: board rigour -> 0.2.0 -> security 0.3.0 -> autonomy daemon 0.4.0 -> proof
 - Everything still to come is an issue on the board; this file keeps the why, not the list.
   Waves not yet framed are an L epic with their known pieces as Backlog sub-issues: none is Ready
   before the wave's framing (spec, ADRs, human acceptance).
-- Dogfooding of run, schedule, next, retro, review and docs is in v0.3, before the security work:
-  its findings feed both waves. It waits on Claude being logged in on sya-dev-01 (#132).
+- Dogfooding of run, schedule, next, retro, review and docs was in v0.3, before the security work:
+  its findings fed both waves. Claude being logged in on sya-dev-01 (#132) is now a v1.0 item.
 - Reviewer unavailable (usage window, rate limit): wait, `senior-mode/review` stays pending. The
   author may review only on the owner's explicit request, says so in the comment, and an
   independent re-review is filed (first case: #128 and #129, re-review #166). ADR in #148.
@@ -132,14 +136,9 @@ Order: board rigour -> 0.2.0 -> security 0.3.0 -> autonomy daemon 0.4.0 -> proof
 
 ## Next
 
-Done 2026-11-22: #113 (82 commits), #122 (docs drift, docs pass), board rigour #123 #124 #125
-(#127 #128 #129).
+Done: 0.2.0 (#167), 0.3.0 (security epic #130, dogfooding #133-#138), 0.4.0 (autonomy epic #131,
+sandbox proof #157), 0.5.0 (board #176-#181).
 
-1. v0.2: release 0.2.0 (#167), independent re-review (#166), small follow-ups #161-#165.
-2. v0.3: Claude on sya-dev-01 (#132, a human), dogfooding #133-#138, then the security epic #130
-   (frame it first; sub-issues #139-#145 and #115-#121) -> 0.3.0.
-3. v0.4: frame the autonomy epic #131 (sub-issues #146-#156), deliver it, sandbox proof #157 -> 0.4.0.
-4. v1.0: a week of the daemon on senior-mode (#158), evals green (#159), then the human releases 1.0
-   on the marketplace (#160).
-5. v0.5 Board: #176-#180.
-6. Later, no milestone: #168 (release start version), #169 (spec/code drift), #175 (agent identity).
+1. v1.0: Claude logged in on sya-dev-01 (#132, a human), a week of the daemon on senior-mode (#158),
+   evals green (#159), then the human releases 1.0 on the marketplace (#160).
+2. Later, no milestone, deferred by the owner: #169 (spec/code drift), #175 (agent identity).

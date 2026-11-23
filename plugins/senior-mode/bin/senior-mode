@@ -114,6 +114,10 @@ case "${1:-}" in
     [ $# -eq 1 ] || usage
     audit_scan
     ;;
+  deps)
+    [ $# -eq 1 ] || usage
+    deps_scan
+    ;;
   publish)
     [ $# -le 2 ] || usage
     publish "${2:-}"

@@ -202,6 +202,245 @@ audit_cap() {
   return 0
 }
 
+# The registry dependencies a manifest declares, one name per line, from its text on stdin; $1 is its file name.
+# Local, git and URL dependencies are left out: no registry holds them. An npm alias (x: "npm:real@1") names the
+# real package; a PyPI name is normalized (PEP 503); a Go module is the path `require` names, indirect ones left out.
+# shellcheck disable=SC2016 # jq and awk programs, not shell
+deps_names() {
+  case $1 in
+    package.json)
+      jq -r '[.dependencies, .devDependencies, .optionalDependencies, .peerDependencies | objects | to_entries[]
+        | select(.value | type == "string")
+        | if (.value | startswith("npm:")) then .value[4:] | sub("@[^@/]*$"; "")
+          elif (.value | test("^(workspace|file|link|git|git\\+[a-z]+|github|gitlab|bitbucket|https?|portal|patch):|^[./~]")) then empty
+          else .key end] | unique[]' 2>/dev/null || true
+      ;;
+    requirements*.txt)
+      awk '{ sub(/[ \t]#.*/, ""); sub(/^#.*/, "") }
+        /^[ \t]*-/ || /:\/\// { next }
+        match($0, /^[ \t]*[A-Za-z0-9][A-Za-z0-9._-]*/) { n = substr($0, RSTART, RLENGTH); gsub(/[ \t]/, "", n); print n }'
+      ;;
+    pyproject.toml)
+      # [project] dependencies and optional-dependencies (arrays of PEP 508 strings), and Poetry's dependency tables.
+      awk 'function name(s) { if (match(s, /^[A-Za-z0-9][A-Za-z0-9._-]*/)) print substr(s, RSTART, RLENGTH) }
+        function strings(line,   q) { while (match(line, /"[^"]*"|'"'"'[^'"'"']*'"'"'/)) {
+            q = substr(line, RSTART + 1, RLENGTH - 2); if (q !~ /:\/\//) name(q); line = substr(line, RSTART + RLENGTH) } }
+        /^[ \t]*\[/ { sect = $0; gsub(/[ \t]/, "", sect); arr = 0; next }
+        arr { strings($0); if ($0 ~ /\]/) arr = 0; next }
+        (sect == "[project]" && /^[ \t]*dependencies[ \t]*=/) || sect == "[project.optional-dependencies]" {
+          if (!/=/) next
+          v = $0; sub(/^[^=]*=/, "", v); strings(v); if (v ~ /\[/ && v !~ /\]/) arr = 1; next }
+        sect ~ /^\[tool\.poetry\.((group\.[^.]+\.)?dependencies|dev-dependencies)\]$/ && /=/ {
+          if (/(path|git|url)[ \t]*=/) next
+          k = $0; sub(/[ \t]*=.*/, "", k); gsub(/["'"'"' \t]/, "", k); if (k != "python") name(k) }'
+      ;;
+    Cargo.toml)
+      # [dependencies], [dev-dependencies], [build-dependencies], [target.*.dependencies], [workspace.dependencies],
+      # and the [dependencies.<name>] form. A path or git dependency is left out; `package = "x"` renames.
+      awk 'function out() { if (pend != "" && !local) print pend; pend = ""; local = 0 }
+        /^[ \t]*\[/ { out(); h = $0; gsub(/[ \t\[\]]/, "", h); tab = 0
+          if (h ~ /(^|\.)((dev|build)-)?dependencies$/) tab = 1
+          else if (match(h, /(^|\.)((dev|build)-)?dependencies\./)) { pend = substr(h, RSTART + RLENGTH); local = 0 }
+          next }
+        pend != "" { if (/^[ \t]*(path|git)[ \t]*=/) local = 1
+          if (/^[ \t]*package[ \t]*=/) { p = $0; sub(/^[^=]*=[ \t]*"/, "", p); sub(/".*/, "", p); pend = p }
+          next }
+        tab && /=/ {
+          k = $0; sub(/[ \t]*=.*/, "", k); gsub(/["'"'"' \t]/, "", k)
+          if (k ~ /\.workspace$/ || /workspace[ \t]*=[ \t]*true/ || /(path|git)[ \t]*=/) next
+          if (match($0, /package[ \t]*=[ \t]*"[^"]*"/)) { k = substr($0, RSTART, RLENGTH); sub(/^[^"]*"/, "", k); sub(/"$/, "", k) }
+          print k }
+        END { out() }'
+      ;;
+    go.mod)
+      awk '/^[ \t]*\/\// { next }
+        /^require[ \t]*\(/ { blk = 1; next }
+        blk && /^[ \t]*\)/ { blk = 0; next }
+        /\/\/[ \t]*indirect/ { next }
+        blk && NF >= 2 { print $1; next }
+        /^require[ \t]/ && NF >= 3 { print $2 }'
+      ;;
+  esac
+}
+
+# The ecosystem of a manifest file name: npm, pypi, crates or go; nothing for another file.
+deps_ecosystem() {
+  case $1 in
+    package.json) echo npm ;;
+    requirements*.txt | pyproject.toml) echo pypi ;;
+    Cargo.toml) echo crates ;;
+    go.mod) echo go ;;
+  esac
+}
+
+# The dependencies the branch adds, as "<ecosystem> <name>" lines: those of the manifests it changes (at HEAD) that
+# the same manifest did not declare where the branch left $1.
+deps_added() {
+  local from=$1 path file eco
+  git -c core.quotePath=false diff --name-only --no-renames --diff-filter=AM "$from" HEAD | while IFS= read -r path; do
+    file=${path##*/}
+    eco=$(deps_ecosystem "$file")
+    [ -n "$eco" ] || continue
+    comm -23 <(git show "HEAD:$path" 2>/dev/null | deps_names "$file" | deps_normal "$eco" | sort -u) \
+      <(git show "$from:$path" 2>/dev/null | deps_names "$file" | deps_normal "$eco" | sort -u) | sed "s/^/$eco /"
+  done | sort -u
+}
+
+# PyPI names compare as PEP 503 says (case and runs of -_. do not matter); other names are kept as they are.
+deps_normal() {
+  if [ "$1" = pypi ]; then tr 'A-Z' 'a-z' | sed -E 's/[-_.]+/-/g'; else cat; fi
+}
+
+# GETs $1 into the file $2 and prints the HTTP code; fails when the registry could not be reached.
+deps_get() {
+  curl -sS -L --max-time "${SENIOR_MODE_REGISTRY_TIMEOUT:-15}" -A "senior-mode dependency check" -o "$2" -w '%{http_code}' "$1" 2>/dev/null
+}
+
+# What the registry of ecosystem $1 says of package $2, as "<verdict> <created epoch> <weekly downloads>": verdict
+# found, missing or offline; a creation date or a download count it does not give is "-". $3 is a scratch file.
+# shellcheck disable=SC2016 # jq programs, not shell
+deps_lookup() {
+  local eco=$1 name=$2 tmp=$3 code created="-" weekly="-" esc v first
+  local iso='sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601'
+  case $eco in
+    npm)
+      code=$(deps_get "https://registry.npmjs.org/${name/\//%2F}" "$tmp") || { echo offline; return; }
+      [ "$code" != 404 ] || { echo missing; return; }
+      [ "$code" = 200 ] || { echo offline; return; }
+      created=$(jq -r "(.time.created // empty) | $iso" "$tmp" 2>/dev/null) || created=""
+      if [ "$(deps_get "https://api.npmjs.org/downloads/point/last-week/$name" "$tmp")" = 200 ]; then
+        weekly=$(jq -r '.downloads // empty' "$tmp" 2>/dev/null) || weekly=""
+      fi
+      ;;
+    pypi)
+      code=$(deps_get "https://pypi.org/pypi/$name/json" "$tmp") || { echo offline; return; }
+      [ "$code" != 404 ] || { echo missing; return; }
+      [ "$code" = 200 ] || { echo offline; return; }
+      created=$(jq -r "[.releases[][]?.upload_time_iso_8601 | select(.)] | min // empty | $iso" "$tmp" 2>/dev/null) || created=""
+      if [ "$(deps_get "https://pypistats.org/api/packages/$name/recent" "$tmp")" = 200 ]; then
+        weekly=$(jq -r '.data.last_week // empty' "$tmp" 2>/dev/null) || weekly=""
+      fi
+      ;;
+    crates)
+      code=$(deps_get "https://crates.io/api/v1/crates/$name" "$tmp") || { echo offline; return; }
+      [ "$code" != 404 ] || { echo missing; return; }
+      [ "$code" = 200 ] || { echo offline; return; }
+      created=$(jq -r "(.crate.created_at // empty) | $iso" "$tmp" 2>/dev/null) || created=""
+      # crates.io counts the last 90 days: about 13 weeks.
+      weekly=$(jq -r '.crate.recent_downloads // empty | . / 13 | floor' "$tmp" 2>/dev/null) || weekly=""
+      ;;
+    go)
+      # The module proxy escapes capitals as !<lower>; it gives no download counts.
+      esc=$(sed -E 's/([A-Z])/!\1/g' <<<"$name" | tr 'A-Z' 'a-z')
+      code=$(deps_get "https://proxy.golang.org/$esc/@v/list" "$tmp") || { echo offline; return; }
+      [[ $code != 404 && $code != 410 ]] || { echo missing; return; }
+      [ "$code" = 200 ] || { echo offline; return; }
+      # The age of the oldest version; a module with only pseudo-versions has none listed: its latest.
+      first=$({ grep -v '^$' "$tmp" || true; } | sort -V | head -n 1)
+      v="https://proxy.golang.org/$esc/@latest"
+      [ -z "$first" ] || v="https://proxy.golang.org/$esc/@v/$first.info"
+      code=$(deps_get "$v" "$tmp") || { echo offline; return; }
+      [[ $code != 404 && $code != 410 ]] || { echo missing; return; }
+      [ "$code" = 200 ] || { echo offline; return; }
+      created=$(jq -r "(.Time // empty) | $iso" "$tmp" 2>/dev/null) || created=""
+      ;;
+  esac
+  echo "found ${created:--} ${weekly:--}"
+}
+
+# The popular names within one or two edits of $2 (one for a name of up to five letters), from the list of
+# ecosystem $1 in `popular-packages`; nothing when $2 is itself on it.
+deps_near() {
+  awk -v eco="$1" -v n="$2" '
+    function lev(a, b,   i, j, la, lb, c, d, prev, cur) {
+      la = length(a); lb = length(b)
+      for (j = 0; j <= lb; j++) prev[j] = j
+      for (i = 1; i <= la; i++) {
+        cur[0] = i
+        for (j = 1; j <= lb; j++) {
+          c = prev[j - 1] + (substr(a, i, 1) != substr(b, j, 1))
+          d = prev[j] + 1; if (d < c) c = d
+          d = cur[j - 1] + 1; if (d < c) c = d
+          cur[j] = c
+        }
+        for (j = 0; j <= lb; j++) prev[j] = cur[j]
+      }
+      return prev[lb]
+    }
+    BEGIN { max = length(n) > 5 ? 2 : 1 }
+    $1 == eco { p[$2] = 1 }
+    END {
+      if (n in p) exit
+      for (q in p) { d = length(q) - length(n); if (d < 0) d = -d; if (d <= max && lev(n, q) <= max) out = out (out == "" ? "" : ", ") q }
+      if (out != "") print out
+    }' "$(dirname "$SELF")/../popular-packages"
+}
+
+# The dependency check of `check` (#302): each dependency the branch adds to a package.json, requirements*.txt,
+# pyproject.toml, Cargo.toml or go.mod is looked up on its registry. It fails when the package does not exist (an
+# invented name), was first published less than security.minPackageAgeDays days ago, or had fewer than
+# security.minWeeklyDownloads downloads last week (Go's proxy gives none). A name one or two edits from a popular
+# package is a warning. A registry that cannot be reached leaves its packages unchecked, said as such, never passed.
+# Runs as its own process (`senior-mode deps`).
+deps_scan() {
+  local base from added eco name tmp verdict created weekly days floor now near fails="" warns="" unchecked="" checked=0
+  base=$(default_branch) || {
+    echo "skipped: no base branch"
+    return 0
+  }
+  from=$(git merge-base "$base" HEAD) || die "cannot compare with $base"
+  added=$(deps_added "$from")
+  [ -n "$added" ] || {
+    echo "skipped: no new dependency"
+    return 0
+  }
+  days=$(config_get security.minPackageAgeDays)
+  floor=$(config_get security.minWeeklyDownloads)
+  [[ $days =~ ^[1-9][0-9]*$ ]] || die "security.minPackageAgeDays must be a whole number of days from 1, not $days"
+  [[ $floor =~ ^[1-9][0-9]*$ ]] || die "security.minWeeklyDownloads must be a whole number from 1, not $floor"
+  command -v curl >/dev/null || {
+    echo "skipped: curl not installed, so the new dependencies were not checked: $(paste -sd, - <<<"$added" | sed 's/,/, /g')"
+    return 0
+  }
+  tmp=$(mktemp)
+  # shellcheck disable=SC2064 # expand now: $tmp is local and gone when the trap runs
+  trap "rm -f '$tmp'" EXIT
+  now=$(date +%s)
+  while read -r eco name; do
+    read -r verdict created weekly < <(deps_lookup "$eco" "$name" "$tmp")
+    case $verdict in
+      offline)
+        unchecked+="${unchecked:+, }$eco $name"
+        continue
+        ;;
+      missing) fails+="$eco $name: not on the registry; an invented or mistyped name?"$'\n' ;;
+      found)
+        if ! [[ $created =~ ^[0-9]+$ ]]; then
+          warns+="warning: $eco $name: the registry gives no publication date, its age was not checked"$'\n'
+        elif [ $(((now - created) / 86400)) -lt "$days" ]; then
+          fails+="$eco $name: first published $(((now - created) / 86400)) days ago, under security.minPackageAgeDays ($days)"$'\n'
+        fi
+        if [[ $weekly =~ ^[0-9]+$ ]] && [ "$weekly" -lt "$floor" ]; then
+          fails+="$eco $name: $weekly downloads last week, under security.minWeeklyDownloads ($floor)"$'\n'
+        fi
+        ;;
+    esac
+    checked=$((checked + 1))
+    near=$(deps_near "$eco" "$name")
+    [ -z "$near" ] || warns+="warning: $eco $name: one or two letters from the popular $near; is it the package you meant?"$'\n'
+  done <<<"$added"
+  if [ "$checked" -eq 0 ]; then
+    echo "skipped: no registry answered, so the new dependencies were not checked: $unchecked"
+    return 0
+  fi
+  [ -z "$unchecked" ] || warns+="warning: not checked, the registry did not answer: $unchecked"$'\n'
+  printf '%s' "$warns"
+  [ -n "$fails" ] || return 0
+  printf '%s' "$fails"
+  echo "a dependency that is right after all: wait until it is old enough, or pick a better known package"
+  return 1
+}
+
 # The machine-wide directory of the lock files `$1` (flock), made on first use: under XDG_RUNTIME_DIR, else
 # a private senior-mode-$1-<uid> directory of TMPDIR. Other users share /tmp, so a directory that is a link,
 # not ours or open to others is refused.

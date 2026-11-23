@@ -2968,7 +2968,8 @@ run_detach() {
 }
 
 # Writes the script of a ticket session on a model and starts it in a window of the tmux session
-# senior-mode-run, else in the background. The script leaves <n>.exit when the session ends. A window
+# senior-mode-run, else in the background. serve gives a session a role (RUN_ROLE[<n>], the SENIOR_MODE_ROLE the
+# guards read) and may give it a directory of its own (RUN_CWD[<n>]); run gives none. The script leaves <n>.exit when the session ends. A window
 # that tmux does not start fails the ticket at once (run_halt) and returns 1: no session would ever
 # leave <n>.exit, and run would wait for the whole timeout.
 # shellcheck disable=SC2016 # lines of the script, expanded when it runs
@@ -2981,9 +2982,9 @@ run_launch() {
     echo '#!/usr/bin/env bash'
     # Its process group, for run_timeout to kill the session with everything it started.
     printf 'ps -o pgid= -p $$ | tr -d " " >%q\n' "$RUN_DIR/$n.pgid"
-    printf 'cd %q || exit 1\n' "${RUN_WT[$n]}"
-    printf 'SENIOR_MODE_RUN=1 SENIOR_MODE_RUN_OUTCOME=%q %q -p --model %q --permission-mode bypassPermissions --output-format json' \
-      "$RUN_DIR/$n.outcome" "$RUN_CLAUDE" "$model"
+    printf 'cd %q || exit 1\n' "${RUN_CWD[$n]:-${RUN_WT[$n]}}"
+    printf 'SENIOR_MODE_RUN=1 %sSENIOR_MODE_RUN_OUTCOME=%q %q -p --model %q --permission-mode bypassPermissions --output-format json' \
+      "${RUN_ROLE[$n]:+SENIOR_MODE_ROLE=${RUN_ROLE[$n]} }" "$RUN_DIR/$n.outcome" "$RUN_CLAUDE" "$model"
     [ -z "${SENIOR_MODE_PLUGIN_DIR:-}" ] || printf ' --plugin-dir %q' "$SENIOR_MODE_PLUGIN_DIR"
     printf ' "$(cat %q)" >%q 2>%q\n' "$RUN_DIR/$n.prompt" "$RUN_DIR/$n-$model.json" "$RUN_DIR/$n-$model.log"
     printf 'echo $? >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit"
@@ -3009,8 +3010,8 @@ run_launch() {
 }
 
 # Opens the ticket with `senior-mode start` (worktree, branch and Status In progress, named and tracked
-# as everywhere else), then launches it on Sonnet. A ticket that cannot be opened is given up.
-run_start() {
+# as everywhere else). A ticket that cannot be opened is given up.
+run_open() {
   local n=$1 out rc=0
   out=$(SENIOR_MODE_RUN=1 SENIOR_MODE_RUN_TOKEN_FILE="$RUN_DIR/token" start "$n" 2>"$RUN_DIR/$n.err") || rc=$?
   RUN_BRANCH[$n]=$(sed -n 's/^branch //p' <<<"$out")
@@ -3020,8 +3021,14 @@ run_start() {
     return 1
   fi
   [ "$rc" -eq 0 ] || echo "#$n: could not set the Status In progress: $(head -n 1 "$RUN_DIR/$n.err")" >&2
-  run_prompt "$n" "${RUN_TITLE[$n]}" "${RUN_BRANCH[$n]}" >"$RUN_DIR/$n.prompt"
-  run_launch "$n" sonnet
+}
+
+# Opens the ticket (run_open), then launches its session on Sonnet with the prompt of RUN_PROMPT (run's own
+# by default).
+run_start() {
+  run_open "$1" || return 1
+  "${RUN_PROMPT:-run_prompt}" "$1" "${RUN_TITLE[$1]}" "${RUN_BRANCH[$1]}" >"$RUN_DIR/$1.prompt"
+  run_launch "$1" sonnet
 }
 
 # A ticket whose session cannot go on, as opposed to failed work: labelled needs-human with a comment
@@ -3112,41 +3119,51 @@ run_timeout() {
     "An autonomous senior-mode run stopped this ticket's session (autonomy.sessionTimeout)" "The session log is"
 }
 
-# A delivered ticket: merged when merging is on and every bound holds (ADR 0003, 0008), else listed
-# for a human with the reason. $2 is the open pull request as the REST list gives it.
-run_merge() {
-  local n=$1 pr sha reason="" missing files zones
-  pr=$(jq -r '.[0].number' <<<"$2")
-  sha=$(jq -r '.[0].head.sha' <<<"$2")
+# Why the pull request $1 (head $2, $3 its REST object) may not merge on its own, in one phrase, or nothing when
+# every bound holds (ADR 0003, 0008, 0018): merging is on, the server enforces protection, no needs-human, the
+# three statuses green on the head, no protected zone among the files GitHub would merge.
+run_blocker() {
+  local pr=$1 sha=$2 missing files zones
   if [ "$RUN_MERGE" != true ]; then
-    reason="merging is off (autonomy.merge)"
+    echo "merging is off (autonomy.merge)"
   elif [ "$RUN_PROTECTION" != ruleset ]; then
-    reason="the server enforces no branch protection (github.protection is ${RUN_PROTECTION:-unset})"
-  elif jq -e '[.[0].labels[]?.name] | index("needs-human")' <<<"$2" >/dev/null; then
-    reason="labelled needs-human"
+    echo "the server enforces no branch protection (github.protection is ${RUN_PROTECTION:-unset})"
+  elif jq -e '[.labels[]?.name] | index("needs-human")' <<<"$3" >/dev/null; then
+    echo "labelled needs-human"
   elif ! missing=$(gh_retry api "repos/$RUN_SLUG/commits/$sha/status" | jq -r '["senior-mode/ci", "senior-mode/review", "senior-mode/security"]
       - [.statuses[] | select(.state == "success") | .context] | join(" and ")'); then
-    reason="its statuses could not be read"
+    echo "its statuses could not be read"
   elif [ -n "$missing" ]; then
-    reason="$missing not green"
+    echo "$missing not green"
   # The command applies the protected zones, not the reviewer: the files GitHub would merge, against
-  # the globs of the base branch, so a pull request cannot unprotect itself. --match-head-commit
-  # refuses a head pushed after these checks.
+  # the globs of the base branch, so a pull request cannot unprotect itself.
   elif [ "$RUN_ZONES_KNOWN" != true ]; then
-    reason="the protected zones could not be read: $RUN_BASE has no .claude/senior-mode.json"
+    echo "the protected zones could not be read: $RUN_BASE has no .claude/senior-mode.json"
   elif ! files=$(gh_retry api "repos/$RUN_SLUG/pulls/$pr/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)'); then
-    reason="its changed files could not be read"
+    echo "its changed files could not be read"
   elif zones=$(protected_match "$RUN_GLOBS" <<<"$files") && [ -n "$zones" ]; then
-    reason="it touches a protected zone ($(paste -sd, - <<<"$zones" | sed 's/,/, /g'))"
-  elif gh pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
-    RUN_MERGED+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
-    RUN_PRS+=("#$pr")
-    (item_set "$n" Status Done) >/dev/null || {
-      echo "#$n: merged, but could not set the Status Done" >&2
-      RUN_NOT_DONE+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
-    }
-    return 0
-  else
+    echo "it touches a protected zone ($(paste -sd, - <<<"$zones" | sed 's/,/, /g'))"
+  fi
+}
+
+# A delivered ticket: merged when merging is on and every bound holds (run_blocker), else listed for a human
+# with the reason. $2 is the open pull request as the REST list gives it. --match-head-commit refuses a head
+# pushed after the checks.
+run_merge() {
+  local n=$1 pr sha reason
+  pr=$(jq -r '.[0].number' <<<"$2")
+  sha=$(jq -r '.[0].head.sha' <<<"$2")
+  reason=$(run_blocker "$pr" "$sha" "$(jq -c '.[0]' <<<"$2")")
+  if [ -z "$reason" ]; then
+    if gh pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
+      RUN_MERGED+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
+      RUN_PRS+=("#$pr")
+      (item_set "$n" Status Done) >/dev/null || {
+        echo "#$n: merged, but could not set the Status Done" >&2
+        RUN_NOT_DONE+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
+      }
+      return 0
+    fi
     reason="the merge failed: $(head -n 1 "$RUN_DIR/$n.merge")"
   fi
   RUN_WAITING+=("#$n ${RUN_TITLE[$n]}: pull request #$pr, $reason")
@@ -3176,7 +3193,8 @@ run_finish() {
     delivered)
       RUN_FAILS=0
       run_record "$n" delivered "${RUN_REASON[$n]:-}"
-      run_merge "$n" "$pulls"
+      # serve leaves the review and the merge to its reviewer and integrator passes.
+      [ -n "${RUN_ROLE[$n]:-}" ] || run_merge "$n" "$pulls"
       ;;
     outgrown:*)
       RUN_STOP="#$n outgrew its size"
@@ -3404,14 +3422,15 @@ run_token_new() {
 
 # One look at the sessions in `running` (the caller's array): finished ones are read (run_finish), the ones
 # past autonomy.sessionTimeout are killed (run_timeout), the others stay. RUN_ON_EXIT, when set, names a
-# function that gets a finished session first and returns 0 when it took care of it (serve: a usage limit).
+# function that gets a finished session first and returns 0 when it took care of it (serve: a usage limit);
+# RUN_FINISH names the one that reads how it went (default run_finish; serve: one per role).
 # SENIOR_MODE_TIMEOUT_UNIT: seconds in a minute of autonomy.sessionTimeout (default 60), for the tests.
 run_reap() {
   local n still=()
   for n in "${running[@]}"; do
     if [ -f "$RUN_DIR/$n.exit" ]; then
       if [ -n "${RUN_ON_EXIT:-}" ] && "$RUN_ON_EXIT" "$n"; then continue; fi
-      run_finish "$n" && continue
+      "${RUN_FINISH:-run_finish}" "$n" && continue
     elif [ $((SECONDS - RUN_STARTED[$n])) -ge $((RUN_TIMEOUT * ${SENIOR_MODE_TIMEOUT_UNIT:-60})) ]; then
       run_timeout "$n"
       continue
@@ -3429,7 +3448,7 @@ run_reap() {
 run() {
   local max="" parallel="" n title t left
   local -a queue=() running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
-  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=()
+  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=()
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP=""
   while [ $# -gt 0 ]; do
@@ -3715,7 +3734,7 @@ serve_drain() {
 serve_loop() {
   local interval old sleeper
   local -a running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
-  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=()
+  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=()
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP="" RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP="" RUN_ON_EXIT=serve_limit RUN_LAUNCH_LOG
   local SERVE_DIR SERVE_COMMON SERVE_TERM=false SERVE_PARALLEL SERVE_PER_HOUR SERVE_MIN_MEM SERVE_COOLDOWN SERVE_GRACE

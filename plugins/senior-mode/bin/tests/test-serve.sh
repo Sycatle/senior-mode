@@ -472,6 +472,20 @@ grep -q 'issues/96/labels.*needs-human' "$GH_LOG" || fail "M: #96 not needs-huma
 grep -q 'issues/96/comments.*needs a human' "$GH_LOG" || fail "M: #96 not commented: $(cat "$GH_LOG")"
 grep -q 'recover' "$work/out" || fail "M: recovery not said: $(cat "$work/out")"
 
+# N: a batch session lost in a crash puts every ticket of the batch back to Ready (#263).
+config '{"maxConsecutiveFailures": 3}'
+items="[]"
+for n in 97 98; do fitem "$n" "In progress" '[]' "x"; done
+fboard
+fresh
+mkdir -p "$state"
+echo '#!/usr/bin/env bash' >"$state/97.sh"
+echo 4999995 >"$state/97.pgid"
+echo "97 98" >"$state/97.batch"
+once || fail "N: serve failed: $(cat "$work/out")"
+[ "$(grep -c 'item-edit.*--single-select-option-id o1' "$GH_LOG")" = 2 ] || fail "N: #97 and #98 not both set Ready: $(grep item-edit "$GH_LOG")"
+grep -q '#98 was In progress' "$work/out" || fail "N: #98 of the batch not recovered: $(cat "$work/out")"
+
 # H: install and uninstall of the systemd user unit.
 config '{}' '{"grace": 120}'
 unit=$XDG_CONFIG_HOME/systemd/user/senior-mode-serve.service

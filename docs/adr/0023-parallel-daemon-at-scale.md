@@ -1,5 +1,5 @@
 ---
-id: 0022
+id: 0023
 title: The daemon merges in trains, builds on unmerged work, and shares one board across machines with git-ref leases
 status: accepted
 spec: 327

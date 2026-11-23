@@ -4,7 +4,7 @@ title: The daemon runs many tickets at once, on many machines, without breaking 
 status: accepted
 size: L
 paths: ["plugins/senior-mode/bin/lib/serve.sh", "plugins/senior-mode/bin/lib/board.sh", "plugins/senior-mode/bin/lib/guard.sh", "plugins/senior-mode/bin/lib/check.sh", "plugins/senior-mode/bin/lib/setup.sh", "plugins/senior-mode/bin/lib/status.sh", "plugins/senior-mode/bin/lib/run.sh", "plugins/senior-mode/bin/lib/prompts.sh", "plugins/senior-mode/bin/lib/lease.sh", "plugins/senior-mode/agents/**", "plugins/senior-mode/presets/**", "plugins/senior-mode/templates/**", "docs/guide/**"]
-adrs: ["0017", "0018", "0022"]
+adrs: ["0017", "0018", "0023"]
 issue: "#327"
 ---
 

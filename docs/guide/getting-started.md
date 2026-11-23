@@ -55,7 +55,8 @@ Before changing anything, setup:
   name), or copies the "senior-mode template" Project (`board.template`), which brings the views, fields
   and built-in workflows; it makes the copy public when the repository is, then names any view or workflow
   the copy lacks, and where to add it. An existing Project is never replaced: setup lists what the template
-  has and it lacks and points to `--migrate`, which builds a new Project from the template with every item
+  has and it lacks and points to `--upgrade`, which only adds the missing fields and options to the board
+  (`--dry-run` lists them first), or to `--migrate`, which builds a new Project from the template with every item
   and field value of the old one (see [commands](commands.md)). It writes the Project's short description and README in the project `language`: what
   each Status means, the Definition of Ready, who moves what, and a link to `docs/specs/`; only the block
   between the `senior-mode:begin` and `senior-mode:end` markers is rewritten on a rerun, and the rest of

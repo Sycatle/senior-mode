@@ -136,7 +136,9 @@ if [[ $PWD == */senior-mode/worktrees/*/run-docs-* ]] && [ "$(cat "$FIX/docs" 2>
   wait
 fi
 n=$(sed -nE 's#.*/senior-mode/worktrees/[^/]+/([0-9]+)$#\1#p' <<<"$PWD")
-[ -n "$n" ] || exit 0
+# #299: the token use the session prints, which its script appends to the ledger.
+usage='{"result": "ok", "modelUsage": {"claude-'$model'": {"inputTokens": 3, "outputTokens": 5, "cacheReadInputTokens": 11, "cacheCreationInputTokens": 7, "cacheCreationEphemeral1hInputTokens": 2}}}'
+[ -n "$n" ] || { echo "$usage"; exit 0; }
 echo "$n ${SENIOR_MODE_SLOT:-none} ${PORT:-none}" >>"$FIX/slot-seen"
 fx=$FIX/claude-$n-$model
 [ -f "$fx" ] || exit 1
@@ -169,7 +171,7 @@ outcome=$(sed -n 1p "$fx")
 [ ! -f "$FIX/external-$n" ] || { jq -c "$(cat "$FIX/external-$n")" "$FIX/pulls-$n" >"$FIX/pulls-$n.x" && mv "$FIX/pulls-$n.x" "$FIX/pulls-$n"; }
 [ "$(sed -n 3p "$fx")" != slow ] || sleep 3
 echo "end $n" >>"$FIX/trace"
-echo '{"result": "ok"}'
+echo "$usage"
 STUB
 cat >"$work/tmux/tmux" <<'STUB'
 #!/usr/bin/env bash
@@ -293,6 +295,12 @@ grep -q 'Failed.*#12.*still cannot build' "$work/out" || fail "A: report misses 
 outcome_is 10
 outcome_is 11
 outcome_is 12
+# #299: every session, the docs one included, left its tokens in the ledger.
+[ "$(jq -sc '[.[] | [.ticket, .role, .model]] | sort' "$repo/.git/senior-mode/usage.jsonl" 2>&1)" = \
+  '[[null,"docs","claude-sonnet"],[10,"ticket","claude-sonnet"],[11,"ticket","claude-opus"],[11,"ticket","claude-sonnet"],[12,"ticket","claude-opus"],[12,"ticket","claude-sonnet"]]' ] ||
+  fail "A: the token ledger: $(cat "$repo/.git/senior-mode/usage.jsonl" 2>&1)"
+jq -e 'select(.ticket == 10) | [.input, .output, .cacheRead, .cacheWrite5m, .cacheWrite1h] == [3, 5, 11, 5, 2] and (.at | test("^20[0-9-]+T"))' \
+  "$repo/.git/senior-mode/usage.jsonl" >/dev/null || fail "A: the tokens of #10: $(cat "$repo/.git/senior-mode/usage.jsonl")"
 # #153: every session sees a slot of 1..2 and the port its slot command derives.
 awk '$2 !~ /^[12]$/ || $3 != 4000 + $2 {bad = 1} END {exit bad}' "$FIX/slot-seen" || fail "A: a session without its slot and port: $(cat "$FIX/slot-seen")"
 git -C "$repo" status --porcelain | grep -q . && fail "A: run left the checkout dirty: $(git -C "$repo" status --porcelain)"

@@ -146,6 +146,17 @@ printf 'failure\nfailed: lint\n' >"$checks/aaaaaaa111111111111111111111111111111
 printf 'success\n6/6 checks passed\n' >"$checks/bbbbbbb2222222222222222222222222222222222"
 printf 'failure\nfailed: test\n' >"$checks/ccccccc3333333333333333333333333333333333"
 touch -d "20 days ago" "$checks/ccccccc3333333333333333333333333333333333"
+# #299: the token ledger the session scripts append to. A dated model id prices as its model; an unknown
+# model keeps its tokens without a price; a corrupt line and a line outside the period are left out.
+{
+  usage() { jq -nc --argjson n "$1" --arg r "$2" --arg m "$3" --arg at "$4" --argjson u "$5" '{ticket: $n, role: $r, model: $m, at: $at} + $u'; }
+  usage 10 ticket claude-opus-5-5 "$(ago $DAY)" '{"input": 1000, "output": 2000, "cacheRead": 1000000, "cacheWrite5m": 0, "cacheWrite1h": 100000}'
+  usage 10 reviewer claude-sonnet-5-5-20261001 "$(ago $DAY)" '{"input": 0, "output": 10000, "cacheRead": 0, "cacheWrite5m": 200000, "cacheWrite1h": 0}'
+  echo 'not json {'
+  usage 11 ticket claude-mystery-1 "$(ago $DAY)" '{"input": 500, "output": 500, "cacheRead": 0, "cacheWrite5m": 0, "cacheWrite1h": 0}'
+  usage null docs claude-sonnet-5-5 "$(ago $DAY)" '{"input": 0, "output": 1000, "cacheRead": 0, "cacheWrite5m": 0, "cacheWrite1h": 0}'
+  usage 12 ticket claude-opus-5-5 "$(ago $((20 * DAY)))" '{"input": 1, "output": 1, "cacheRead": 0, "cacheWrite5m": 0, "cacheWrite1h": 0}'
+} >"$repo/.git/senior-mode/usage.jsonl"
 
 run() { : >"$GH_LOG"; : >"$FIX/board-bodies"; : >"$FIX/history-bodies"; : >"$FIX/status-updates"; (cd "$repo" && "$cli" "$@") >"$work/out" 2>"$work/err"; }
 json() { jq -c "$1" "$work/out"; }
@@ -178,6 +189,12 @@ since_sent=$(jq -r '.variables.since' "$FIX/history-bodies")
 [ "$(json '.checkFailures[0].commit')" = '"aaaaaaa"' ] || fail "check failure commit: $(json .checkFailures)"
 [ "$(json '.sizes | map([.number, .size, .lines, .limit, .over])')" = '[[5,"S",40,50,false],[6,"M",900,400,true],[7,"S",10,50,false]]' ] ||
   fail "sizes: $(json .sizes)"
+[ "$(json '.usage.prices.date')" = "\"$(jq -r .date "$(dirname "$cli")/lib/prices.json")\"" ] || fail "usage prices date: $(json .usage.prices)"
+[ "$(json '.usage.tickets | map([.ticket, .usd])')" = '[[null,0.01],[10,1.644],[11,null]]' ] || fail "usage per ticket: $(json .usage.tickets)"
+[ "$(json '.usage.tickets[1].roles | map([.role, .usd, .output, .cacheWrite5m, .cacheWrite1h])')" = '[["reviewer",0.6,10000,200000,0],["ticket",1.044,2000,0,100000]]' ] ||
+  fail "usage per role: $(json '.usage.tickets[1]')"
+[ "$(json '.usage.tickets[2] | [.input, .unpriced]')" = '[500,["claude-mystery-1"]]' ] || fail "unpriced model: $(json '.usage.tickets[2]')"
+[ "$(json '.usage.total | [.usd, .unpriced, .input]')" = '[1.654,["claude-mystery-1"],1500]' ] || fail "usage total: $(json .usage.total)"
 
 # --since widens the window for every source.
 run retro --json --since 30d || fail "--since failed: $(cat "$work/err")"
@@ -205,7 +222,10 @@ run retro || fail "retro failed: $(cat "$work/err")"
 for want in "Done in the last 7d (3)" "#5 Ticket 5" "Cycle time" "median 63h" "worst 96h (#6 Ticket 6)" \
   "Needed a human" "pull request #41 PR 41: needs-human label; changes requested by alice: Split this in two" \
   "Failed or escalated runs" "#20: failed: the session said delivered but there is no open pull request" "#11: escalated: tests do not pass" \
-  "Reopened" "#8 Ticket 8" "Check failures" "aaaaaaa: failed: lint" "Estimates against reality" "#6 M: 900 lines"; do
+  "Reopened" "#8 Ticket 8" "Check failures" "aaaaaaa: failed: lint" "Estimates against reality" "#6 M: 900 lines" \
+  "Token use (estimated at the API prices of" "#10 ticket: input 1k, output 2k, cache read 1M, cache write 100k · \$1.04" \
+  "#10 reviewer: input 0, output 10k, cache read 0, cache write 200k · \$0.6" "#11 ticket: input 500, output 500, cache read 0, cache write 0 · no price" \
+  "run docs: input 0, output 1k" "total: input 1.5k, output 13.5k, cache read 1M, cache write 300k · \$1.65 (no price for claude-mystery-1)"; do
   grep -qF -- "$want" "$work/out" || fail "plain retro lacks '$want': $(cat "$work/out")"
 done
 grep -qF "#4 " "$work/out" && fail "a ticket outside the period is listed: $(cat "$work/out")"

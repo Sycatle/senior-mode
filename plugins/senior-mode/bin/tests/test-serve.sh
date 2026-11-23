@@ -132,7 +132,7 @@ case $(sed -n 4p "$fx") in
   review:*) echo "senior-mode/review $(sed -n 4p "$fx" | cut -d: -f2)" >>"$FIX/status-$(git rev-parse HEAD)" ;;
   commit) echo "red $n" >"tests-$n.txt"; git add "tests-$n.txt"; git -c user.name=t -c user.email=t@t commit -q -m "test: red tests" ;;
 esac
-echo '{"result": "ok"}'
+echo '{"result": "ok", "modelUsage": {"claude-'"$model"'": {"inputTokens": 1, "outputTokens": 2}}}'
 STUB
 cat >"$work/stub/curl" <<'STUB'
 #!/usr/bin/env bash
@@ -877,6 +877,8 @@ fresh
 once || fail "S: serve failed: $(cat "$work/out")"
 grep -q '^app-review-61 opus run=1 role=reviewer$' "$CLAUDE_LOG" || fail "S: no reviewer session: $(cat "$CLAUDE_LOG")"
 [ "$(status_of "$sha" senior-mode/review)" = success ] || fail "S: the reviewer's status is missing"
+jq -se 'any(.[]; .ticket == 61 and .role == "reviewer" and .model == "claude-opus" and .output == 2)' "$repo/.git/senior-mode/usage.jsonl" >/dev/null ||
+  fail "S: the reviewer's tokens are not in the ledger: $(cat "$repo/.git/senior-mode/usage.jsonl" 2>&1)"
 [ -z "$(find "$XDG_DATA_HOME/senior-mode/worktrees" -name review-61 2>/dev/null)" ] || fail "S: the review worktree is left"
 grep -q 'reviewed: senior-mode/review is success' "$work/out" || fail "S: the review is not said: $(cat "$work/out")"
 st "$sha" "senior-mode/ci pending"

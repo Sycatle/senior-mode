@@ -83,6 +83,21 @@ run_detach() {
   fi
 }
 
+# The tokens of a session, one line per model it used, from the JSON that `claude -p --output-format json` prints (#299).
+# shellcheck disable=SC2016 # a jq program, not shell
+USAGE_JQ='(.modelUsage // {}) | to_entries[] | .value as $u | ($u.cacheCreationEphemeral1hInputTokens // 0) as $h
+  | {ticket: $n, role: $r, at: $t, model: .key, input: ($u.inputTokens // 0), output: ($u.outputTokens // 0),
+     cacheRead: ($u.cacheReadInputTokens // 0), cacheWrite5m: ((($u.cacheCreationInputTokens // 0) - $h) | if . < 0 then 0 else . end), cacheWrite1h: $h}'
+
+# The line of a session script that appends the tokens of the session to <git common dir>/senior-mode/usage.jsonl,
+# the ledger `retro` reads: the session logs are overwritten by the next session of the same ticket and model.
+# $1 the ticket (null for none), $2 the role, $3 the session JSON. A session that left no JSON adds nothing.
+# shellcheck disable=SC2016 # a line of the script, expanded when it runs
+run_usage_line() {
+  printf 'jq -c --argjson n %q --arg r %q --arg t "$(date -u +%s)" %q %q >>%q 2>/dev/null || true\n' "$1" "$2" '%Y-%m-%dT%H:%M:%SZ' \
+    "$USAGE_JQ" "$3" "$RUN_USAGE"
+}
+
 # Writes the script of a ticket session on a model and starts it in a window of the tmux session
 # senior-mode-run, else in the background. serve gives a session a role (RUN_ROLE[<n>], the SENIOR_MODE_ROLE the
 # guards read) and may give it a directory of its own (RUN_CWD[<n>]); run gives none. The script leaves <n>.exit when the session ends. A window
@@ -108,7 +123,9 @@ run_launch() {
       "${RUN_ROLE[$n]:+SENIOR_MODE_ROLE=${RUN_ROLE[$n]} }" "$RUN_DIR/$n.outcome" "${parallel:-$(config_get autonomy.parallel)}" "$SELF" "$RUN_CLAUDE" "$model"
     [ ${#SESSION_FLAGS[@]} -eq 0 ] || printf ' %q' "${SESSION_FLAGS[@]}"
     printf ' "$(cat %q)" >%q 2>%q\n' "$RUN_DIR/$n.prompt" "$RUN_DIR/$n-$model.json" "$RUN_DIR/$n-$model.log"
-    printf 'echo $? >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit"
+    echo 'rc=$?'
+    run_usage_line "$n" "${RUN_ROLE[$n]:-ticket}" "$RUN_DIR/$n-$model.json"
+    printf 'echo $rc >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit"
   } >"$script"
   cmd="bash $(printf '%q' "$script")"
   if command -v tmux >/dev/null; then
@@ -523,7 +540,9 @@ run_docs() {
     printf 'SENIOR_MODE_RUN=1 %q -p --model sonnet --permission-mode bypassPermissions --output-format json' "$RUN_CLAUDE"
     [ ${#SESSION_FLAGS[@]} -eq 0 ] || printf ' %q' "${SESSION_FLAGS[@]}"
     printf ' "$(cat %q)" >%q 2>%q\n' "$RUN_DIR/docs.prompt" "$RUN_DIR/docs.json" "$RUN_DIR/docs.log"
-    printf 'echo $? >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/docs.exit" "$RUN_DIR/docs.exit" "$RUN_DIR/docs.exit"
+    echo 'rc=$?'
+    run_usage_line null docs "$RUN_DIR/docs.json"
+    printf 'echo $rc >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/docs.exit" "$RUN_DIR/docs.exit" "$RUN_DIR/docs.exit"
   } >"$script"
   run_detach "$script"
   pid=$!
@@ -686,6 +705,7 @@ run_prepare() {
   RUN_SLUG=$(repo_slug)
   # The main checkout, even when run from a ticket worktree (they live in its .git, or beside it).
   RUN_ROOT=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+  RUN_USAGE=$(git rev-parse --path-format=absolute --git-common-dir)/senior-mode/usage.jsonl
   git_bound fetch -q origin || echo "senior-mode: could not fetch origin; starting from the last fetched state" >&2
   RUN_BASE=$(default_branch) || die "no default branch found"
   run_guards "$(git rev-parse --path-format=absolute --git-common-dir)"

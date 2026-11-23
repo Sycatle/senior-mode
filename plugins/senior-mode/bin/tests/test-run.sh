@@ -687,6 +687,11 @@ grep -q 'timed out' "$work/out" && fail "O: the report talks of a timeout: $(cat
 grep -q 'session started' "$work/out" && fail "O: a session is reported started: $(cat "$work/out")"
 grep -q 'issues/120/labels.*needs-human' "$GH_LOG" || fail "O: #120 not labelled needs-human: $(cat "$GH_LOG")"
 grep -q 'issues/120/comments' "$GH_LOG" || fail "O: no comment on #120"
+# The comment says tmux's error is in a file, not that a session log exists (no session ever started).
+grep -q "could not start this ticket's session: the session window did not start: tmux: server exited unexpectedly" "$GH_LOG" ||
+  fail "O: the comment on #120 does not say the window did not start: $(grep -A3 'issues/120/comments' "$GH_LOG")"
+grep -q "tmux's error output is \`.*/120.tmux\`" "$GH_LOG" || fail "O: the comment on #120 does not point at tmux's error output"
+grep -q 'The session log is `.*/120' "$GH_LOG" && fail "O: the comment on #120 names a session log that does not exist"
 grep -q 'item-edit.*--single-select-option-id o0' "$GH_LOG" && fail "O: #120 was set back to Backlog"
 grep -q 'Not started.*#121' "$work/out" || fail "O: the breaker did not count the failed window: $(cat "$work/out")"
 jq -e '.outcome == "failed" and .escalated == false and (.reason | test("window did not start"))' \

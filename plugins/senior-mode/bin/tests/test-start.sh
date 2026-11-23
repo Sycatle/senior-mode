@@ -38,12 +38,14 @@ STUB
 done
 export PM_LOG="$work/pm.log"
 : >"$PM_LOG"
-export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" SENIOR_MODE_RETRY_DELAY=0
+# Worktrees go to $XDG_DATA_HOME/senior-mode/worktrees/<repo>-<hash>/<name> (#224): never the real home.
+export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" SENIOR_MODE_RETRY_DELAY=0 XDG_DATA_HOME="$work/xdg"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 git init -q --bare -b main "$work/origin.git"
 repo="$work/app"
-wt=$repo/.git/senior-mode/worktrees
+# <basename of the main checkout>-<8 hex of the cksum of its absolute path>
+wt=$XDG_DATA_HOME/senior-mode/worktrees/app-$(printf '%08x' "$(printf '%s' "$repo" | cksum | cut -d' ' -f1)")
 git init -q -b main "$repo"
 git -C "$repo" remote add origin git@github.com:acme/app.git
 git -C "$repo" config url."$work/origin.git".insteadOf git@github.com:acme/app.git
@@ -96,7 +98,9 @@ grep -q '^#89 Status = In progress' "$work/out" || fail "status line: $(cat "$wo
 grep -qx "npm ci @ $wt/89" "$PM_LOG" || fail "dependencies not installed in the new worktree: $(cat "$PM_LOG")"
 [ -d "$wt/89/node_modules" ] || fail "no node_modules in the new worktree"
 
-# The worktree lives in the git common dir, never beside the repository (#224); git status stays clean.
+# The worktree lives in the user's data dir, never beside the repository nor under its .git (#224).
+case $wt in "$work"/xdg/senior-mode/worktrees/app-????????) ;; *) fail "unexpected worktree root $wt" ;; esac
+[ -z "$(ls -A "$repo/.git/senior-mode" 2>/dev/null)" ] || fail "something was created under .git/senior-mode: $(ls "$repo/.git/senior-mode")"
 compgen -G "$work/app-[0-9]*" >/dev/null && fail "a ticket worktree beside the repository: $(ls "$work")"
 [ -z "$(git -C "$repo" status --porcelain)" ] || fail "the main checkout is dirty: $(git -C "$repo" status --porcelain)"
 
@@ -115,7 +119,7 @@ git -C "$repo" worktree remove "$wt/89"
 start 89 || fail "existing branch failed: $(cat "$work/err")"
 [ "$(git -C "$wt/89" symbolic-ref --short HEAD)" = "$branch" ] || fail "existing branch not checked out"
 
-# Started from inside another worktree, the new one is still under the main repository's git dir.
+# Started from inside another worktree, the new one is still under the main repository's directory.
 issue "From a worktree" ''
 (cd "$wt/89" && "$cli" start 88) >"$work/out" 2>"$work/err" || fail "start from a worktree failed: $(cat "$work/err")"
 grep -qx "worktree $wt/88" "$work/out" || fail "start from a worktree: $(cat "$work/out")"
@@ -130,6 +134,24 @@ start 87 || fail "start over an old-path worktree failed: $(cat "$work/err")"
 grep -qx "worktree $work/app-87" "$work/out" || fail "old-path worktree not reported: $(cat "$work/out")"
 [ ! -e "$wt/87" ] || fail "a second worktree was created next to the old-path one"
 [ "$(git -C "$repo" worktree list | grep -c 'feat/87-old-style')" -eq 1 ] || fail "old-path start added a worktree"
+
+# A ticket started under .git/senior-mode/worktrees (the first form of #224) is reused too.
+issue "Git dir style" ''
+git -C "$repo" worktree add -q --no-track -b feat/86-git-dir-style "$repo/.git/senior-mode/worktrees/86" origin/main
+start 86 || fail "start over a .git-path worktree failed: $(cat "$work/err")"
+grep -qx "worktree $repo/.git/senior-mode/worktrees/86" "$work/out" || fail ".git-path worktree not reported: $(cat "$work/out")"
+[ ! -e "$wt/86" ] || fail "a second worktree was created next to the .git-path one"
+
+# Two clones with the same name never share a directory.
+mkdir -p "$work/clones"
+git clone -q "$work/origin.git" "$work/clones/app"
+git -C "$work/clones/app" remote set-url origin git@github.com:acme/app.git
+git -C "$work/clones/app" config url."$work/origin.git".insteadOf git@github.com:acme/app.git
+issue "Second clone" ''
+(cd "$work/clones/app" && "$cli" start 85) >"$work/out" 2>"$work/err" || fail "start in a second clone failed: $(cat "$work/err")"
+second=$(sed -n 's/^worktree //p' "$work/out")
+case $second in "$XDG_DATA_HOME"/senior-mode/worktrees/app-????????/85) ;; *) fail "second clone worktree: $second" ;; esac
+[ "$(dirname "$second")" != "$wt" ] || fail "two clones named app share $wt"
 
 # The type follows the label: bug, task, chore, none.
 issue "Crash on login" '{"name": "type:bug"}, {"name": "needs-info"}'

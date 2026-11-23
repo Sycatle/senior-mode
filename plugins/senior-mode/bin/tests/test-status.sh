@@ -25,7 +25,7 @@ after=$(jq -r '.variables.after // "first"' <<<"$body")
 cat "$FIX/page-$after.json"
 STUB
 chmod +x "$work/stub/gh"
-export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" FIX="$work/fix" SENIOR_MODE_RETRY_DELAY=0
+export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" FIX="$work/fix" SENIOR_MODE_RETRY_DELAY=0 XDG_DATA_HOME="$work/xdg"
 
 repo="$work/repo"
 git init -q "$repo"
@@ -147,8 +147,10 @@ for bad in "--max 0" "--max x" "--max" "--nope"; do
   run pick $bad && fail "pick accepted: $bad"
 done
 
-# #17 has a worktree in the git dir, #21 none (#224).
-git -C "$repo" worktree add -q -b feat/17-thing "$repo/.git/senior-mode/worktrees/17"
+# #17 has a worktree in the data dir, #21 none (#224).
+wt17=$work/xdg/senior-mode/worktrees/app-0/17
+git -C "$repo" worktree add -q -b feat/17-thing "$wt17"
+
 
 # status --json: everything from one call.
 run status --json || fail "status --json failed: $(cat "$work/err")"
@@ -157,8 +159,15 @@ run status --json || fail "status --json failed: $(cat "$work/err")"
 [ "$(json '.done | map(.number)')" = "[5]" ] || fail "done since the default 7 days: $(json .done)"
 [ "$(json '.mergedPullRequests')" = 2 ] || fail "merged count: $(json .mergedPullRequests)"
 [ "$(json '.inProgress | map(.number)')" = "[17,21]" ] || fail "in progress: $(json .inProgress)"
-[ "$(json '.inProgress | map(.worktree)')" = "[\"$(cd "$repo" && pwd -P)/.git/senior-mode/worktrees/17\",null]" ] ||
+[ "$(json '.inProgress | map(.worktree)')" = "[\"$(cd "$wt17" && pwd -P)\",null]" ] ||
   fail "in progress worktrees: $(json '.inProgress')"
+# A worktree on a branch `start` never makes (docs/21-notes) is not #21's.
+git -C "$repo" worktree add -q -b docs/21-notes "$work/notes"
+run status --json || fail "status --json with a docs worktree failed: $(cat "$work/err")"
+[ "$(json '.inProgress[1].worktree')" = null ] || fail "docs/21-notes attached to #21: $(json .inProgress)"
+git -C "$repo" worktree remove "$work/notes"
+git -C "$repo" branch -q -D docs/21-notes
+run status --json || fail "status --json failed again: $(cat "$work/err")"
 [ "$(json '.inReview | map([.number, .pr])')" = "[[18,30],[22,31]]" ] || fail "in review: $(json .inReview)"
 [ "$(json '.blocked | map(.number)')" = "[14,15,19,21,23]" ] || fail "blocked: $(json .blocked)"
 [ "$(json '.blocked[] | select(.number == 21) | .reasons')" = '["waits for #99"]' ] || fail "blocked reasons: $(json .blocked)"
@@ -184,7 +193,7 @@ for want in "Done in the last 7d" "#5 Ticket 5" "2 pull requests merged" "In pro
 done
 grep -qF "#13" "$work/out" && fail "an L ticket is listed: $(cat "$work/out")"
 
-grep -qF "#17 Ticket 17 (worktree $(cd "$repo" && pwd -P)/.git/senior-mode/worktrees/17)" "$work/out" ||
+grep -qF "#17 Ticket 17 (worktree $(cd "$wt17" && pwd -P))" "$work/out" ||
   fail "plain status does not show the worktree of #17: $(cat "$work/out")"
 grep -qx "  #21 Ticket 21" "$work/out" || fail "a ticket without worktree gets a path: $(cat "$work/out")"
 
@@ -223,6 +232,11 @@ for want in "Board drift (4)" "#24 Ticket 24: closed but In review" "#26 Ticket 
   grep -qF -- "$want" "$work/out" || fail "drift section lacks '$want': $(cat "$work/out")"
 done
 grep -q 'item-edit' "$GH_LOG" && fail "status without --fix changed the board"
+# A local branch that was never pushed counts as a branch: #21 is not stale while one exists.
+git -C "$repo" branch feat/21-local-only
+run status --json --since 7d || fail "status --json with a local branch failed: $(cat "$work/err")"
+[ "$(json '.drift | map(.number)')" = '[24,26,25]' ] || fail "a local branch does not count: $(json .drift)"
+git -C "$repo" branch -q -D feat/21-local-only
 # --fix sets the closed ones Done and leaves the rest, saying why.
 cfg_fields='{"project": {"id": "PVT_1", "owner": "acme", "number": 3, "fields": {"Status": {"id": "F_S",
   "options": {"Backlog": "o0", "In review": "o3", "Done": "o4"}}}}}'

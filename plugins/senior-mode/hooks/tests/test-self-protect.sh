@@ -15,7 +15,7 @@ git init -q -b main "$repo"
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: start"
 mkdir -p "$repo/web"
 git -C "$repo" worktree add -q "$work/wt" -b feat/1-x
-tw=$repo/.git/senior-mode/worktrees/2
+tw=$work/xdg/senior-mode/worktrees/repo-0a1b2c3d/2
 git -C "$repo" worktree add -q "$tw" -b feat/2-y
 link=$work/link
 ln -s "$repo" "$link"
@@ -65,13 +65,13 @@ dir=$repo/web edit deny "../.claude/settings.json" Edit "" "relative path taken 
 dir=$link edit deny "$link/.github/workflows/ci.yml" Edit "" "reached through a symlink"
 dir=$work/wt edit deny "$work/wt/.githooks/pre-push" Edit "" "inside a linked worktree"
 dir=$work/wt edit deny ".claude/settings.json" Edit "" "relative path inside a linked worktree"
-# #224: a ticket worktree lives under <git dir>/senior-mode/worktrees; its files are the project's, so its
-# code is editable and its guard rails are still denied.
-dir=$tw edit allow "$tw/src/app.js" Write "" "code in a worktree under the git dir"
-dir=$tw edit allow "src/app.js" Edit "" "relative code path in a worktree under the git dir"
-dir=$tw edit deny "$tw/.claude/settings.json" Edit "" "guard rails of a worktree under the git dir"
-dir=$tw edit deny ".githooks/pre-push" Edit "" "relative guard rails of a worktree under the git dir"
-dir=$tw edit deny "$repo/.git/hooks/pre-push" Write "" "the git hooks from a worktree under the git dir"
+# #224: a ticket worktree lives under $XDG_DATA_HOME/senior-mode/worktrees; its files are the project's,
+# so its code is editable, its guard rails are still denied, and so are the git hooks of the repository.
+dir=$tw edit allow "$tw/src/app.js" Write "" "code in a worktree under the data dir"
+dir=$tw edit allow "src/app.js" Edit "" "relative code path in a worktree under the data dir"
+dir=$tw edit deny "$tw/.claude/settings.json" Edit "" "guard rails of a worktree under the data dir"
+dir=$tw edit deny ".githooks/pre-push" Edit "" "relative guard rails of a worktree under the data dir"
+dir=$tw edit deny "$repo/.git/hooks/pre-push" Write "" "the git hooks from a worktree under the data dir"
 dir=$tw bash_ allow "echo x > src/app.js" "$tw"
 dir=$tw bash_ deny "echo x > .github/workflows/ci.yml" "$tw"
 # #116: the git hooks and the git config (core.hooksPath) guard the run too, worktrees included.

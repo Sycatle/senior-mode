@@ -72,7 +72,7 @@ cat >"$work/stub/claude" <<'STUB'
 #!/usr/bin/env bash
 args=("$@")
 for ((i = 0; i < $#; i++)); do [ "${args[i]}" != --model ] || model=${args[i + 1]}; done
-# A ticket worktree is <git dir>/senior-mode/worktrees/<n>; the log names it app-<n>.
+# A ticket worktree is $XDG_DATA_HOME/senior-mode/worktrees/<repo>-<hash>/<n>; the log names it app-<n>.
 tag=$(basename "$PWD")
 [[ $PWD == */senior-mode/worktrees/* ]] && tag=app-$tag
 echo "$tag $model run=${SENIOR_MODE_RUN:-} ${*:1:$# - 1}" >>"$CLAUDE_LOG"
@@ -85,13 +85,13 @@ if [[ ${!#} == *"guard probe"* ]]; then
   esac
   exit 0
 fi
-[[ $PWD == */senior-mode/worktrees/run-docs-* ]] && echo "$PWD" >>"$FIX/docs-pwd"
-if [[ $PWD == */senior-mode/worktrees/run-docs-* ]] && [ "$(cat "$FIX/docs" 2>/dev/null)" = hang ]; then
+[[ $PWD == */senior-mode/worktrees/*/run-docs-* ]] && echo "$PWD" >>"$FIX/docs-pwd"
+if [[ $PWD == */senior-mode/worktrees/*/run-docs-* ]] && [ "$(cat "$FIX/docs" 2>/dev/null)" = hang ]; then
   sleep 300 &
   echo "$$ $!" >"$FIX/pids-docs"
   wait
 fi
-n=$(sed -nE 's#.*/senior-mode/worktrees/([0-9]+)$#\1#p' <<<"$PWD")
+n=$(sed -nE 's#.*/senior-mode/worktrees/[^/]+/([0-9]+)$#\1#p' <<<"$PWD")
 [ -n "$n" ] || exit 0
 fx=$FIX/claude-$n-$model
 [ -f "$fx" ] || exit 1
@@ -132,14 +132,14 @@ STUB
 sed 's/CLAUDE_LOG/SYACODE_LOG/' "$work/stub/claude" >"$work/stub/syacode"
 chmod +x "$work/stub/"* "$work/tmux/tmux"
 export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" CLAUDE_LOG="$work/claude.log" SYACODE_LOG="$work/syacode.log" TMUX_LOG="$work/tmux.log" \
-  FIX="$work/fix" SENIOR_MODE_RETRY_DELAY=0 SENIOR_MODE_POLL=0.1 CLAUDE_CONFIG_DIR="$work/claude-home"
+  FIX="$work/fix" SENIOR_MODE_RETRY_DELAY=0 XDG_DATA_HOME="$work/xdg" SENIOR_MODE_POLL=0.1 CLAUDE_CONFIG_DIR="$work/claude-home"
 mkdir -p "$CLAUDE_CONFIG_DIR"
 echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DIR/settings.json"
 
 # A local origin whose path ends like a GitHub URL, so the slug reads acme/app.
 git init -q --bare -b main "$work/github.com/acme/app.git"
 repo="$work/app"
-wt=$repo/.git/senior-mode/worktrees
+wt=$XDG_DATA_HOME/senior-mode/worktrees/app-$(printf '%08x' "$(printf '%s' "$repo" | cksum | cut -d' ' -f1)")
 git init -q -b main "$repo"
 git -C "$repo" remote add origin "$work/github.com/acme/app.git"
 mkdir -p "$repo/.claude"
@@ -222,7 +222,7 @@ grep -c 'item-edit.*--single-select-option-id o0' "$GH_LOG" | grep -qx 1 || fail
 grep -c 'item-edit.*--single-select-option-id o4' "$GH_LOG" | grep -qx 1 || fail "A: only the merged ticket is set Done"
 grep -c 'new-session\|new-window' "$TMUX_LOG" | grep -qx 5 || fail "A: not one tmux window per session: $(cat "$TMUX_LOG")"
 grep -q 'docs' "$CLAUDE_LOG" || fail "A: no docs session after a merge"
-grep -q "^$wt/run-docs-" "$FIX/docs-pwd" 2>/dev/null || fail "A: the docs session did not run under the git dir: $(cat "$FIX/docs-pwd" 2>&1)"
+grep -q "^$wt/run-docs-" "$FIX/docs-pwd" 2>/dev/null || fail "A: the docs session did not run under the data dir: $(cat "$FIX/docs-pwd" 2>&1)"
 compgen -G "$work/app-*" >/dev/null && fail "A: a worktree beside the repository: $(ls "$work")"
 grep -q 'Merged.*#10' "$work/out" || fail "A: report misses the merge: $(cat "$work/out")"
 grep -q 'Waiting for a human.*#11.*senior-mode/review' "$work/out" || fail "A: report misses #11 waiting: $(cat "$work/out")"

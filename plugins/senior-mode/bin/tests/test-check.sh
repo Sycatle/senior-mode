@@ -248,5 +248,29 @@ rm -rf "$repo/node_modules"
 echo '{"name": "app"}' >"$repo/package.json"
 run check || fail "a project with no dependencies needs no node_modules: $(cat "$work/out")"
 
+# Spec drift (#169): an accepted spec whose paths changed after it, with no Spec-Unchanged line, is a
+# warning line of `check`; it never changes the exit code. No accepted spec, no line.
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
+commit() { git -C "$repo" add -A && git -C "$repo" -c user.name=t -c user.email=t@t commit -q "$@"; }
+run check || fail "check fails before any spec: $(cat "$work/out")"
+grep -q "spec drift" "$work/out" && fail "spec drift reported with no spec: $(cat "$work/out")"
+mkdir -p "$repo/docs/specs" "$repo/src"
+printf -- '---\nid: 1\ntitle: Alpha\nstatus: accepted\npaths: ["src/**"]\n---\n' >"$repo/docs/specs/0001-alpha.md"
+commit -m "docs(spec): alpha"
+run check || fail "check fails on a spec with no drift: $(cat "$work/out")"
+grep -q "spec drift" "$work/out" && fail "spec drift reported with no change after the spec: $(cat "$work/out")"
+echo a >"$repo/src/a.txt"
+commit -m "feat: a"
+run check || fail "drift changes the exit code: $(cat "$work/out")"
+grep -q "^warn  spec drift: docs/specs/0001-alpha.md: 1 commit " "$work/out" || fail "drift not warned about: $(cat "$work/out")"
+echo b >"$repo/src/b.txt"
+commit -m "feat: b" -m "Spec-Unchanged: internal only"
+run check || fail "check fails: $(cat "$work/out")"
+grep -q "^warn  spec drift: docs/specs/0001-alpha.md: 1 commit " "$work/out" || fail "a Spec-Unchanged commit is counted: $(cat "$work/out")"
+config '{"audit":false,"checks":[{"name":"bad","run":"false"}]}'
+run check && fail "a failing check passes"
+grep -q "^warn  spec drift" "$work/out" || fail "the warning is lost when a check fails: $(cat "$work/out")"
+grep -q "^FAIL  bad" "$work/out" || fail "the failing check is not shown: $(cat "$work/out")"
+
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

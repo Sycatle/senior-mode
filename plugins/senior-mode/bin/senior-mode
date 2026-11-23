@@ -3239,9 +3239,23 @@ run_record() {
     reason: (if $r == "" then null else $r end), model: $m, finishedAt: $t}' >"$RUN_DIR/$1.json"
 }
 
+# Sets a ticket In review when its Status is anything else, and says so in the report; a write that
+# fails is listed too. A Status that cannot be read counts as not In review.
+run_review() {
+  local n=$1 current
+  current=$( (item_get "$n" Status) 2>/dev/null) || current=""
+  [ "$current" != "In review" ] || return 0
+  if (item_set "$n" Status "In review") >/dev/null; then
+    RUN_REVIEWED+=("#$n ${RUN_TITLE[$n]}")
+  else
+    echo "#$n: could not set the Status In review" >&2
+    RUN_NOT_REVIEW+=("#$n ${RUN_TITLE[$n]}")
+  fi
+}
+
 # Reads how a finished session went. Returns 1 when the ticket goes on (a retry on Opus).
 run_finish() {
-  local n=$1 outcome pulls='[]'
+  local n=$1 outcome pulls='[]' waiting
   outcome=$(head -n 1 "$RUN_DIR/$n.outcome" 2>/dev/null) || outcome=""
   [ -n "$outcome" ] || outcome="failed: the session ended without saying how it went (exit code $(cat "$RUN_DIR/$n.exit"), log in $RUN_DIR)"
   if [ "$outcome" = delivered ]; then
@@ -3253,7 +3267,10 @@ run_finish() {
     delivered)
       RUN_FAILS=0
       run_record "$n" delivered "${RUN_REASON[$n]:-}"
+      waiting=${#RUN_WAITING[@]}
       run_merge "$n" "$pulls"
+      # Left for a human, the ticket is In review whatever its session did (#261); a merged one is Done.
+      if [ ${#RUN_WAITING[@]} -gt "$waiting" ]; then run_review "$n"; fi
       ;;
     outgrown:*)
       RUN_STOP="#$n outgrew its size"
@@ -3505,7 +3522,7 @@ run_reap() {
 # headless claude session in its own worktree (spec 0001 §10, ADR 0007), then reports in plain words.
 run() {
   local max="" parallel="" n title t left
-  local -a queue=() running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
+  local -a queue=() running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_REVIEWED=() RUN_NOT_REVIEW=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
   local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=()
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP=""
@@ -3572,6 +3589,8 @@ run() {
   [ -z "$RUN_STOP" ] || echo "The run stopped early: $RUN_STOP."
   for t in "${RUN_MERGED[@]}"; do echo "Merged: $t"; done
   for t in "${RUN_NOT_DONE[@]}"; do echo "Status not set to Done: $t"; done
+  for t in "${RUN_REVIEWED[@]}"; do echo "Status set to In review: $t"; done
+  for t in "${RUN_NOT_REVIEW[@]}"; do echo "Status not set to In review: $t"; done
   for t in "${RUN_WAITING[@]}"; do echo "Waiting for a human: $t"; done
   for t in "${RUN_FAILED[@]}"; do echo "Failed: $t"; done
   for n in "${queue[@]}"; do echo "Not started: #$n ${RUN_TITLE[$n]}"; done
@@ -3712,8 +3731,10 @@ serve_ceiling() {
 serve_report() {
   local t
   for t in "${RUN_FAILED[@]}"; do echo "Failed: $t"; done
+  for t in "${RUN_REVIEWED[@]}"; do echo "Status set to In review: $t"; done
+  for t in "${RUN_NOT_REVIEW[@]}"; do echo "Status not set to In review: $t"; done
   for t in "${RUN_WAITING[@]}"; do echo "Waiting for a human: $t"; done
-  RUN_FAILED=() RUN_WAITING=() RUN_MERGED=() RUN_NOT_DONE=() RUN_PRS=()
+  RUN_FAILED=() RUN_WAITING=() RUN_MERGED=() RUN_NOT_DONE=() RUN_REVIEWED=() RUN_NOT_REVIEW=() RUN_PRS=()
 }
 
 # One poll: reads the sessions that ended, trips the breaker, then, unless held or at a ceiling, starts the
@@ -3794,7 +3815,7 @@ serve_drain() {
 # <git common dir>/senior-mode/serve/. SENIOR_MODE_SERVE_ONCE=1 polls once, waits for its sessions and exits.
 serve_loop() {
   local interval old sleeper
-  local -a running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
+  local -a running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_REVIEWED=() RUN_NOT_REVIEW=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
   local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=()
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP="" RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP="" RUN_ON_EXIT=serve_limit RUN_LAUNCH_LOG

@@ -1155,6 +1155,24 @@ fresh
 once || fail "Y: serve failed: $(cat "$work/out")"
 [ ! -s "$CLAUDE_LOG" ] || fail "Y: a third resolution started: $(cat "$CLAUDE_LOG")"
 grep -q 'issues/182/labels' "$GH_LOG" || fail "Y: a third conflict is not needs-human"
+# An integrator writes in its ticket's files: a Ready ticket whose Paths overlap waits for it (#426); a disjoint one runs.
+config '{"parallel": 3}'
+boardx "84:In review:S:P1 next" "85:Ready:S:P1 next" "86:Ready:S:P1 next"
+paths_of 84 'src/lib/math.ts'
+paths_of 85 'src/lib/math.ts'
+paths_of 86 'docs/guide/**'
+prs_reset
+sha84=$(mkbranch feat/84-x f84.txt)
+pr 184 feat/84-x "$sha84" dirty
+green "$sha84"
+session 84-opus-integrator delivered pr:302
+for n in 85 86; do session "$n-sonnet" delivered pr; done
+fresh
+once || fail "Y: serve failed: $(cat "$work/out")"
+grep -q '^app-84-r2 opus run=1 role=integrator$' "$CLAUDE_LOG" || fail "Y: no integrator session for #84: $(cat "$CLAUDE_LOG")"
+started 85 && fail "Y: #85 started next to the integrator of #84, on the same Paths: $(cat "$CLAUDE_LOG")"
+started 86 || fail "Y: the disjoint #86 did not start next to the integrator: $(cat "$CLAUDE_LOG")"
+config '{}'
 
 # Z: the trust gate (#427). A Ready ticket is never launched when its author is not a collaborator, or when it
 # carries `triage`, unless a collaborator qualified it (`qualified`); the same ticket goes once it is trusted.

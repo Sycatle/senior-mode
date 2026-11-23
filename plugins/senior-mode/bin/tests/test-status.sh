@@ -224,6 +224,12 @@ run status --json --since 7d || fail "status --json with wip 2 failed: $(cat "$w
 [ "$(json .wip)" = '{"limit":2,"count":2}' ] || fail "wip 2 in JSON: $(json .wip)"
 run status --since 7d || fail "status with wip 2 failed: $(cat "$work/err")"
 grep -qx "In progress (2)" "$work/out" || fail "wip at the limit shown as over: $(cat "$work/out")"
+# A wip of 0 or a string is refused (#163), not read as a limit.
+for bad in 0 '"two"'; do
+  echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}, "wip": '"$bad"'}' >"$repo/.claude/senior-mode.json"
+  run status --json --since 7d && fail "status accepted wip $bad"
+  grep -q 'wip must be a positive whole number' "$work/err" || fail "wip $bad refusal not explained: $(cat "$work/err")"
+done
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
 
 # The dependency audit (#142): on by default and quiet, shown when `audit: false` turns it off.
@@ -276,6 +282,12 @@ run status --fix --json --since 7d || fail "status --fix --json failed: $(cat "$
 grep -q '^pr list' "$GH_LOG" || fail "--fix --json did not clean"
 run status --fix --watch && fail "--fix --watch accepted"
 grep -q 'watch' "$work/err" || fail "--fix --watch refusal not explained: $(cat "$work/err")"
+# A repair of a closed ticket that fails (#163): said as "not fixed:", and the command fails.
+export GH_FAIL_ON="project item-edit"
+run status --fix --since 7d && fail "--fix exits zero when the Status could not be set Done"
+grep -q '^not fixed: #24 .*Done' "$work/out" || fail "failed Done repair of #24 not said: $(cat "$work/out")"
+grep -q '^fixed: #24' "$work/out" && fail "#24 said fixed although the edit failed: $(cat "$work/out")"
+unset GH_FAIL_ON
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
 
 # Hygiene (#226): stale pull requests, remote branches with no pull request, pull requests that another

@@ -70,7 +70,9 @@ case "$*" in
       jq --argjson v "$v" '(.data.node.fields.nodes[] | select(.id == $v.field)
         | .options) = ($v.options | map(.id //= ("O_" + .name)))' "$FIX/fields.json" >"$FIX/f" &&
         mv "$FIX/f" "$FIX/fields.json"
-    elif grep -q workflows <<<"$body"; then respond <"$FIX/workflows-project.json"
+    elif grep -q workflows <<<"$body"; then
+      [ ! -f "$FIX/workflows-fail" ] || { echo "HTTP 403: forbidden" >&2; exit 1; }
+      respond <"$FIX/workflows-project.json"
     else respond <"$FIX/fields.json"; fi ;;
 esac
 STUB
@@ -172,6 +174,13 @@ setup
 grep -q 'Pull request merged' "$work/out" || fail "one workflow off not named"
 grep -q 'Item closed' "$work/out" && fail "an enabled workflow named as off"
 project_workflows true true
+# The workflows query fails (#163): setup still succeeds and says to check by hand.
+touch "$FIX/workflows-fail"
+setup
+rm -f "$FIX/workflows-fail"
+grep -q 'built-in workflows: could not read them; check Project → Workflows by hand' "$work/out" ||
+  fail "an unreadable workflows query is not said: $(cat "$work/out")"
+grep -q 'built-in workflows off' "$work/out" && fail "workflows reported off when they could not be read: $(cat "$work/out")"
 
 # A field deleted on the board is created again.
 jq 'del(.data.node.fields.nodes[] | select(.name == "Size"))' "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"

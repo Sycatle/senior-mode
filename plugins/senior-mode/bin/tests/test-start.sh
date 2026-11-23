@@ -234,6 +234,14 @@ SENIOR_MODE_RUN=1 SENIOR_MODE_RUN_TOKEN_FILE="$work/token" RUN_TOKEN=forged star
 jq '.wip = 2' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
 issue "Third thing" ''
 start 103 || fail "wip 2 refused a second ticket: $(cat "$work/err")"
+# A wip of 0 or a string is refused (#163), not read as a limit.
+issue "Fourth thing" ''
+for bad in 0 '"two"'; do
+  jq --argjson w "$bad" '.wip = $w' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+  start 104 && fail "started with wip $bad"
+  grep -q 'wip must be a positive whole number' "$work/err" || fail "wip $bad refusal not explained: $(cat "$work/err")"
+  [ -e "$wt/104" ] && fail "worktree created with wip $bad"
+done
 jq 'del(.wip)' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
 unset GH_IN_PROGRESS
 : >"$GH_LOG"

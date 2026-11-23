@@ -227,16 +227,18 @@ setup_security() { # root slug
 
 setup_github() {
   local root file slug owner name owner_type owner_node private template project number id how fields labels label color description err ci="" globs checks review=false codeowner codeowners_owns=false reason
-  local migrate=false dry=false
+  local migrate=false dry=false upgrade=false
   while [ $# -gt 0 ]; do
     case $1 in
       --ci) [ "${2:-}" = local ] || [ "${2:-}" = actions ] || usage; ci=$2; shift 2 ;;
       --migrate) migrate=true; shift ;;
+      --upgrade) upgrade=true; shift ;;
       --dry-run) dry=true; shift ;;
       *) usage ;;
     esac
   done
-  [ "$dry" = false ] || [ "$migrate" = true ] || usage
+  [ "$dry" = false ] || [ "$migrate" = true ] || [ "$upgrade" = true ] || usage
+  [ "$upgrade" = false ] || { [ "$migrate" = false ] && [ -z "$ci" ]; } || usage
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   mkdir -p "$root/.claude"
@@ -250,6 +252,11 @@ setup_github() {
   IFS='|' read -r owner_type owner_node private < <(gh_retry api "repos/$slug" \
     --jq '[.owner.type, .owner.node_id, (.private | tostring)] | join("|")') || die "cannot read $slug on GitHub"
   template=$(jq -r --argjson d "$DEFAULTS" '($d * .).board.template' "$file")
+  # The Project only: no ruleset, label, repository setting or workflow, whatever github.requiredChecks says.
+  if [ "$upgrade" = true ]; then
+    setup_upgrade "$file" "$dry" "$owner"
+    return 0
+  fi
   checks=$(jq -r --argjson d "$DEFAULTS" '($d * .).github.requiredChecks | tojson' "$file")
   [ "$checks" = true ] || [ "$checks" = false ] || die "github.requiredChecks in .claude/senior-mode.json must be true or false"
 
@@ -261,11 +268,7 @@ setup_github() {
   read -r number id how <<<"$project"
   setup_fields "$id"
   fields=$(board_fields "$id") || die "could not read the fields of Project #$number"
-  jq --arg o "$owner" --argjson n "$number" --arg id "$id" --argjson f "$fields" \
-    '.project = {owner: $o, number: $n, id: $id, fields: ($f | map(select(.name | IN("Status", "Priority", "Size", "Severity", "Paths")))
-      | map({key: .name, value: (if .options then {id, options: (.options | map({key: .name, value: .id}) | from_entries)} else {id} end)}) | from_entries)}' \
-    "$file" >"$file.tmp" || die "could not write .claude/senior-mode.json"
-  mv "$file.tmp" "$file"
+  cache_project "$file" "$owner" "$number" "$id" "$fields" false
   echo "Project #$number $name: linked, fields Status, Priority, Size, Severity, Paths; ids cached in .claude/senior-mode.json"
   setup_board_template "$id" "$how"
   setup_board_readme "$id" "$slug" "$(jq -r '.language // "en"' "$file")"

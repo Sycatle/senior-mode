@@ -335,6 +335,9 @@ command, not a model, applies these bounds:
   The merge names the head it checked (`--match-head-commit`), so a later push is refused.
   Everything else waits for a human, and the report says why. The ticket session itself never
   merges: the Bash guard denies it any merge.
+- **Hygiene:** `run` calls `senior-mode clean` when it starts, before it looks at the board, and when it
+  ends if it ran tickets (see [Hygiene](#hygiene)). A failing `clean` is reported on stderr and does not
+  stop the run.
 - **Agent:** the headless CLI is `agent.command` (default `claude`), for the tickets and the docs
   session, scheduled or not. Another compatible CLI, such as syacode, can replace it, but senior-mode's
   hooks and guards do not hold under it until it implements them (Sycatle/syacode#13 to #18): use it
@@ -343,6 +346,30 @@ command, not a model, applies these bounds:
   `e2e` through `senior-mode e2e-lock`, which exports the slot number as `SENIOR_MODE_E2E_SLOT`. The lock files live in `$XDG_RUNTIME_DIR/senior-mode-e2e`, else in
   a private `senior-mode-e2e-<uid>` directory of `$TMPDIR` (or `/tmp`); a directory that is a link, not yours or not
   mode 0700 is refused.
+
+### Hygiene
+
+`senior-mode clean [--dry-run] [--days N]` removes what is finished, so worktrees and branches do not
+pile up. It runs by itself at the start and the end of a `run` and after the report of
+`senior-mode status --fix`, and on demand. What is merged or closed comes from the pull request on
+GitHub, never from git ancestry, so squash and rebase merges are handled.
+
+- **Removed:** the worktrees, wherever they are (beside the repository, under `.git/senior-mode/worktrees`
+  or in the data directory: they are read from `git worktree list`), and the local branches whose pull
+  request is merged or closed, or whose ticket is closed and that has no pull request; the remote
+  branches whose pull request was merged or closed more than N days ago, if their tip is still the
+  head of that pull request; the run directories (`.git/senior-mode/runs/<stamp>`, with their logs,
+  records and token files) and the `probe` and `probe.log` files with no activity for N days; then
+  `git worktree prune`. N is `--days`, else `hygiene.days` (default 14). `retro` reads the run records,
+  so a `--since` longer than N days sees fewer runs.
+- **Kept, and listed with the reason** (the exit status stays 0): a worktree with uncommitted changes
+  (untracked files count); a branch whose commits are on no remote branch, not in the default branch
+  and not in its pull request (a merged pull request whose branch GitHub deleted still holds them);
+  a locked worktree; a branch or remote branch of a ticket In progress on the board.
+- **Never touched:** the main worktree, the current one and the branches they have checked out, a
+  branch with an open pull request.
+- **`--dry-run`** prints each line as `would remove ...` and changes nothing. A real run prints
+  `removed ...`. If GitHub or the board cannot be read, `clean` stops before removing anything.
 
 ### Scheduled runs
 

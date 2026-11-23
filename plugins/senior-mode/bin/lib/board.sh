@@ -417,6 +417,54 @@ ready_missing() {
   printf '%s\n' "$reasons"
 }
 
+# The tickets a pull request body closes (Closes, Fixes or Resolves #n, any case), one number a line, sorted.
+pr_closed_tickets() {
+  grep -oiE '\b(close[sd]?|fix(e[sd])?|resolve[sd]?)[: ]+#[0-9]+' <<<"$1" | grep -oE '[0-9]+$' | sort -nu || true
+}
+
+# What stops the pull request $2 of $1 (owner/name) from being ready to merge on account of the tickets it
+# closes, in one phrase, or nothing. $3 is its REST object. Starts with "not ready: " when the pull request
+# itself is at fault (#297): it closes several tickets and some are named by no commit (`Refs #n` or
+# `Closes #n`), the rule of one commit per ticket. A pull request that closes no ticket, or one, is not held to
+# it. Other phrases say what could not be read.
+delivery_blocker() {
+  local slug=$1 pr=$2 pull=$3 tickets=() n missing="" msgs
+  mapfile -t tickets < <(pr_closed_tickets "$(jq -r '.body // ""' <<<"$pull")")
+  [ "${#tickets[@]}" -gt 0 ] || return 0
+  if [ "${#tickets[@]}" -gt 1 ]; then
+    msgs=$(gh_retry api "repos/$slug/pulls/$pr/commits" --paginate --jq '.[].commit.message') || {
+      echo "its commits could not be read"
+      return 0
+    }
+    for n in "${tickets[@]}"; do
+      grep -qiE "\b(refs?|closes?|fix(es)?|resolves?)[: ]+#$n([^0-9]|\$)" <<<"$msgs" || missing+=${missing:+, }#$n
+    done
+    [ -z "$missing" ] || {
+      echo "not ready: it closes ${#tickets[@]} tickets and no commit references $missing (one commit per ticket, ending with Refs #n or Closes #n)"
+      return 0
+    }
+  fi
+}
+
+# senior-mode ready --pr <n> on an open pull request that is no framing one: whether it is ready to merge on
+# account of its tickets (see delivery_blocker). Says so, and fails when it is not.
+ready_delivery() {
+  local slug=$1 pr=$2 pull reason
+  pull=$(gh_retry api "repos/$slug/pulls/$pr") || die "cannot read pull request #$pr"
+  reason=$(delivery_blocker "$slug" "$pr" "$pull")
+  case $reason in
+    "") echo "pull request #$pr is ready" ;;
+    "not ready: "*)
+      echo "pull request #$pr is $reason"
+      return 1
+      ;;
+    *)
+      echo "pull request #$pr cannot be checked: $reason"
+      return 1
+      ;;
+  esac
+}
+
 # senior-mode ready [--pr <n>] [--dry-run]: tickets become Ready by rule, with no human step (#154).
 # Candidates are the Backlog tickets without `needs-human` or `needs-info`: with --pr, those the merged
 # framing pull request n (branch docs/...) names; without it, those an agent filed. A ticket with nothing
@@ -439,6 +487,11 @@ ready() {
   slug=$(repo_slug)
   if [ -n "$pr" ]; then
     info=$(gh_retry pr view "$pr" --repo "$slug" --json state,headRefName,body) || die "cannot read pull request #$pr"
+    # An open pull request that is no framing one is a delivery: whether it is ready to merge (#297, #303).
+    if [ "$(jq -r '.state' <<<"$info")" = OPEN ] && [[ $(jq -r '.headRefName' <<<"$info") != docs/* ]]; then
+      ready_delivery "$slug" "$pr"
+      return
+    fi
     [ "$(jq -r '.state' <<<"$info")" = MERGED ] || die "pull request #$pr is not merged: its tickets are not Ready until it is"
     [[ $(jq -r '.headRefName' <<<"$info") == docs/* ]] ||
       die "pull request #$pr is not a framing pull request (its branch is not docs/...)"

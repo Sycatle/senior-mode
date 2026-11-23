@@ -94,6 +94,7 @@ check_env() {
   if [[ $1 == GIT_CONFIG_PARAMETERS=* ]]; then
     [[ ${1,,} == *hookspath* || $flat == *hookspath* ]] && deny_skip "GIT_CONFIG_PARAMETERS core.hooksPath"
     [[ $flat =~ (include|includeif\.[^[:space:]]*)\.path ]] && deny_skip "GIT_CONFIG_PARAMETERS include.path"
+    [[ $flat == *alias.* ]] && alias_bad && deny_skip "GIT_CONFIG_PARAMETERS alias that runs a denied option"
     local re='GIT_CONFIG_PARAMETERS=(\"([^\"\\]|\\.)*\"|'"'"'[^'"'"']*'"'"'|[^[:space:]\"'"'"'])+' rest=$raw
     while [[ $rest =~ $re ]]; do
       [[ ${BASH_REMATCH[0]} == *[\$\`]* ]] && deny_skip "GIT_CONFIG_PARAMETERS set to a value that is not a literal"
@@ -147,13 +148,14 @@ while IFS= read -r segment; do
     for a in "${w[@]:i+1}"; do
       if $skip; then skip=false; continue; fi
       case $a in
-        -R | --repo) skip=true ;;
+        -R | --repo | -X | --method) skip=true ;;
         -*) ;;
         *) gs+=("$a"); [ ${#gs[@]} -lt 2 ] || break ;;
       esac
     done
+    # The words that name the command, not the endpoint of `gh api` (`repos/$R/pulls` is a path, not a split word).
     check_split "${gs[0]:-}" command
-    check_split "${gs[1]:-}" command
+    [ "${gs[0]:-}" = api ] || check_split "${gs[1]:-}" command
     for a in "${w[@]:i+1}"; do check_split "$a" option; done
     # An alias is a command this guard cannot read: `gh alias set pm "pr merge --admin"`.
     [[ ${gs[0]:-} == alias && ${gs[1]:-} =~ ^(set|import)$ ]] &&

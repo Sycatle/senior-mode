@@ -2208,9 +2208,6 @@ ref_path() {
   jq -rn --arg n "$1" '$n | split("/") | map(@uri) | join("/")'
 }
 
-# Whether the ticket $2 of repository $1 still looks abandoned on a fresh read, for a repair at $3 days.
-# Prints why not when it does not. The report may be minutes old, and a run on another machine leaves
-# no worktree here: the board, the issue, the open pull requests and the branches are read again.
 # What a fresh read of an issue answers: its state, its last update and its board item (a Status change moves the
 # item, not the issue).
 # shellcheck disable=SC2016 # a GraphQL query, not shell
@@ -2219,13 +2216,16 @@ ORPHAN_QUERY='query($owner: String!, $name: String!, $number: Int!) {
     updatedAt project { id }
     fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } } } } } } }
 }'
+# Whether the ticket $2 of repository $1 still looks abandoned on a fresh read, for a repair at $3 days.
+# Prints why not when it does not. The report may be minutes old, and a run on another machine leaves
+# no worktree here: the board, the issue, the open pull requests and the branches are read again.
 orphan_check() {
   local slug=$1 n=$2 days=$3 project answer live state status activity heads
   project=$(jq -r '.project.id // empty' "$(config_file)")
   answer=$(jq -nc --arg q "$ORPHAN_QUERY" --arg o "${slug%%/*}" --arg n "${slug#*/}" --argjson i "$n" \
-    '{query: $q, variables: {owner: $o, name: $n, number: $i}}' | gh_retry api graphql --input -) &&
-    live=$(jq -r --arg p "$project" '.data.repository.issue as $i | [$i.projectItems.nodes[] | select(.project.id == $p)][0] as $m
-      | [$i.state, ([$m.fieldValues.nodes[] | select(.field.name == "Status") | .name][0] // "empty"), ([$i.updatedAt, $m.updatedAt] | max)] | @tsv' <<<"$answer") ||
+    '{query: $q, variables: {owner: $o, name: $n, number: $i}}' | gh_retry api graphql --input -) || { echo "could not read the issue"; return 1; }
+  live=$(jq -r --arg p "$project" '.data.repository.issue as $i | [$i.projectItems.nodes[] | select(.project.id == $p)][0] as $m
+    | [$i.state, ([$m.fieldValues.nodes[] | select(.field.name == "Status") | .name][0] // "empty"), ([$i.updatedAt, $m.updatedAt] | max)] | @tsv' <<<"$answer") ||
     { echo "could not read the issue"; return 1; }
   IFS=$'\t' read -r state status activity <<<"$live"
   [ "$status" = "In progress" ] || { echo "its Status is $status now"; return 1; }

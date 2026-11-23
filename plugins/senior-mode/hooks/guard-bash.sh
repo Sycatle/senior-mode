@@ -68,12 +68,14 @@ check_kv() {
 # A variable inside a config key (`core.hooks${x}Path`) hides it: true when the key, with the variables left
 # open, can be core.hooksPath or include.path and a variable shares a dot-separated part with literal text.
 # A part that is only a variable (`core.$k`, `$s.hooksPath`, `"$key"`) is a value the guard does not follow.
+# shellcheck disable=SC2016 # a sed program, not shell
 var_glob() { sed -E 's/\$(\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)/*/g' <<<"$1"; }
 split_key() { # word
   local p=${1,,}
   [[ $p == *\$* ]] || return 1
   p=$(var_glob "$p")
   [[ $p =~ (^|\.)[^.]*(\*[^.*]|[^.*]\*)[^.]*(\.|$) ]] || return 1
+  # shellcheck disable=SC2053 # $p is a glob: the variables left open
   [[ core.hookspath == $p || include.path == $p ]]
 }
 # A word split by a variable (`--for${x}ce`, `pu${x}sh`) hides what it says from this guard; a variable
@@ -150,7 +152,10 @@ var_default() { # ref, as written: [+]src:dst
   p=${p#refs/heads/}
   [[ -n ${p//\*/} ]] || return 1
   head=$(git -C "$dir" symbolic-ref --short -q refs/remotes/origin/HEAD)
-  for b in ${head:+${head#origin/}} ${head:-main master}; do [[ $b == $p ]] && return 0; done
+  for b in ${head:+${head#origin/}} ${head:-main master}; do
+    # shellcheck disable=SC2053 # $p is a glob: the variables left open
+    [[ $b == $p ]] && return 0
+  done
   return 1
 }
 
@@ -312,7 +317,7 @@ while IFS= read -r segment; do
             core.hookspath) key=hooks ;;
             include.path | includeif.*.path) key=include ;;
             alias.*) key="alias" ;;
-            *) split_key "$k" && key=split ;;
+            *) split_key "$k" && key="split" ;;
           esac
         elif [[ $a != -* ]]; then
           case $key in

@@ -14,6 +14,7 @@ definitions only (functions, constants): top-level statements stay in the entry 
 resolves `lib/` from its own real path (`readlink -f`), so it works through a symlink and the plugin cache.
 
 - `common.sh`: defaults, `die`, config (`config_get`), `gh_retry`, small shared helpers.
+- `config.sh`: the schema walker and `config validate` (schema in `plugins/senior-mode/schema/`).
 - `board.sh`: Project items and fields, `issue create`, security alerts, `ready`, `pick`, `start`.
 - `release.sh`: `release` (release-please).
 - `check.sh`: `check`, spec drift, `security_verdict`, `publish`.

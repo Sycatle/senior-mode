@@ -634,7 +634,8 @@ setup_repo() {
   ours=false
   ! grep -q '^# senior-mode:' "$root/.githooks/commit-msg" 2>/dev/null || ours=true
   out=0
-  json_update "$file" '.preset = $pn | .commands = ($d.commands // {}) + (.commands // {}) + $c
+  json_update "$file" '(if has("$schema") then . else {"$schema": $sch} + . end)
+    | .preset = $pn | .commands = ($d.commands // {}) + (.commands // {}) + $c
     | if $d.framework then .framework = $d.framework else . end | .commands as $all
     | ($p[0].commands | map(select($all[.] != null) | {name: ., run: $all[.]})) as $derived
     | ($derived + (if $ours then $p[0].checks else [] end)
@@ -646,7 +647,7 @@ setup_repo() {
       else (($p[0].protected // []) + ($p[0].frameworks[.framework // ""].protected // [])) as $g
         | if ($g | length) > 0 then .protected = $g else . end end' \
     --argjson c "$commands" --argjson ours "$ours" --argjson guard "$guard" --slurpfile p "$preset" --arg pn "$pname" \
-    --argjson d "$detected" || out=$?
+    --argjson d "$detected" --arg sch "$CONFIG_SCHEMA_URL" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
   echo "preset: $pname$(jq -r --argjson d "$detected" '[if $d.typescript == true then "TypeScript"
     elif $d.typescript == false then "JavaScript" else empty end, .framework // empty]

@@ -327,7 +327,7 @@ lock ""
 run || fail "no lockfile: the check fails: $(cat "$work/out")"
 grep -q "^skip  dependency audit: no lockfile" "$work/out" || fail "no lockfile: not shown as skipped: $(cat "$work/out")"
 [ ! -s "$AUDIT_LOG" ] || fail "no lockfile: a tool ran: $(cat "$AUDIT_LOG")"
-grep -q "4/4 checks passed" "$work/out" || fail "no lockfile: summary: $(cat "$work/out")"
+grep -q "5/5 checks passed" "$work/out" || fail "no lockfile: summary: $(cat "$work/out")"
 
 # npm: a critical advisory fails the check, naming the package, the advisory and the fixed version; the
 # moderate one is a warning.

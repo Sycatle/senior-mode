@@ -8,12 +8,14 @@ SELF=$(readlink -f "${BASH_SOURCE[0]}")
 LIB=$(dirname "$SELF")/lib
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish] | clean [--dry-run] [--days N] | statusline | retro [--since <dur> | --iteration [<name>]] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions] [--migrate|--upgrade] [--dry-run] | setup repo [--command <name>=<command>]... | setup remove [--apply] | setup statusline"
+  die "usage: senior-mode config get <key> | config validate [--json] | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish] | clean [--dry-run] [--days N] | statusline | retro [--since <dur> | --iteration [<name>]] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions] [--migrate|--upgrade] [--dry-run] | setup repo [--command <name>=<command>]... | setup remove [--apply] | setup statusline"
 }
 
 # The modules hold definitions only: function bodies and constants, no statement runs at load time.
 # shellcheck source=lib/common.sh
 . "$LIB/common.sh"
+# shellcheck source=lib/config.sh
+. "$LIB/config.sh"
 # shellcheck source=lib/board.sh
 . "$LIB/board.sh"
 # shellcheck source=lib/release.sh
@@ -126,8 +128,11 @@ case "${1:-}" in
     publish "${2:-}"
     ;;
   config)
-    [ $# -eq 3 ] && [ "$2" = get ] || usage
-    config_get "$3"
+    case ${2:-} in
+      get) [ $# -eq 3 ] || usage; config_get "$3" ;;
+      validate) shift 2; config_validate "$@" ;;
+      *) usage ;;
+    esac
     ;;
   item)
     case ${2:-} in

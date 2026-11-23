@@ -81,6 +81,7 @@ case "$*" in
         [ -z "${TEMPLATE_ERR:-}" ] || { echo "$TEMPLATE_ERR" >&2; exit 1; }
         respond <"$FIX/template-project.json"
       else respond <"$FIX/workflows-project.json"; fi
+    elif grep -q 'readme' <<<"$body"; then respond <"$FIX/board.json"
     elif grep -q workflows <<<"$body"; then
       [ ! -f "$FIX/workflows-fail" ] || { echo "HTTP 403: forbidden" >&2; exit 1; }
       respond <"$FIX/workflows-project.json"
@@ -224,6 +225,66 @@ cp "$repo/.claude/senior-mode.json" "$work/before"
   fail "setup succeeds although the template cannot be copied"
 grep -q "Could not resolve" "$work/err" || fail "copy error not reported: $(cat "$work/err")"
 cmp -s "$work/before" "$repo/.claude/senior-mode.json" || fail "config rewritten after a failed copy"
+
+# The Project README and short description state the process, in the project language (#178); only the
+# block between the markers is rewritten.
+readme() { jq -r '.data.node.readme // ""' "$FIX/board.json"; }
+short() { jq -r '.data.node.shortDescription // ""' "$FIX/board.json"; }
+set_board() { jq -n --arg r "$1" --arg d "$2" '{data: {node: {readme: $r, shortDescription: $d}}}' >"$FIX/board.json"; }
+lang() { jq --arg l "$1" '.language = $l' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"; }
+set_board "" ""
+lang fr
+setup
+for want in "<!-- senior-mode:begin" "<!-- senior-mode:end -->" "Backlog" "Ready" "In progress" "In review" "Done" "Définition de Ready" \
+  "Qui déplace quoi" "https://github.com/acme/app/tree/HEAD/docs/specs"; do
+  readme | grep -qF -- "$want" || fail "README without '$want': $(readme)"
+done
+readme | grep -qF "{{" && fail "README placeholder left: $(readme)"
+[ -n "$(short)" ] || fail "no short description"
+short | grep -q "Tableau senior-mode" || fail "short description not in the project language: $(short)"
+grep -q "board README: written" "$work/out" || fail "README write not reported: $(cat "$work/out")"
+# A rerun changes nothing.
+setup
+logged "UpdateProjectV2Input" && fail "a rerun rewrites the README: $(cat "$GH_LOG")"
+grep -q "board README: written" "$work/out" && fail "a rerun reports a write: $(cat "$work/out")"
+# English, and a language without templates falls back to it.
+for l in en de; do
+  set_board "" ""
+  lang "$l"
+  setup
+  readme | grep -qF "Definition of Ready" || fail "$l: README not in English: $(readme)"
+  readme | grep -qF "Who moves what" || fail "$l: README without who moves what: $(readme)"
+  short | grep -q "senior-mode board" || fail "$l: short description not in English: $(short)"
+done
+# Text around the block survives, above and below; a change of language rewrites the block alone.
+lang en
+setup
+printf '# Our board\n\nKeep this.\n\n%s\n\n## Notes\nAnd this.' "$(readme)" >"$work/readme"
+set_board "$(cat "$work/readme")" "$(short)"
+lang fr
+setup
+readme | grep -qF "Définition de Ready" || fail "block not rewritten in the new language: $(readme)"
+readme | grep -qF "Definition of Ready" && fail "the old block stayed: $(readme)"
+[ "$(readme | head -4)" = "$(head -4 "$work/readme")" ] || fail "text above the block changed: $(readme)"
+readme | tail -2 | grep -qF "And this." || fail "text below the block lost: $(readme)"
+[ "$(readme | grep -c 'senior-mode:begin')" = 1 ] || fail "block duplicated: $(readme)"
+short | grep -q "Tableau senior-mode" || fail "our short description not updated with the language: $(short)"
+# A README with no block gets one at the end.
+set_board "Hand written board notes." ""
+setup
+[ "$(readme | head -1)" = "Hand written board notes." ] || fail "hand written README rewritten: $(readme)"
+readme | grep -qF "senior-mode:begin" || fail "block not appended: $(readme)"
+# A short description of the user's own stays.
+set_board "" "My board, my words"
+setup
+[ "$(short)" = "My board, my words" ] || fail "the user's short description replaced: $(short)"
+# Broken markers: left untouched, and said.
+set_board $'before\n<!-- senior-mode:begin\nno end' ""
+setup
+[ "$(readme)" = $'before\n<!-- senior-mode:begin\nno end' ] || fail "broken markers: README rewritten: $(readme)"
+grep -q "markers broken" "$work/out" || fail "broken markers not said: $(cat "$work/out")"
+set_board "" ""
+lang fr
 
 # A required check someone added by hand to the ruleset survives the update (merged, not replaced), and
 # ours are not listed twice.

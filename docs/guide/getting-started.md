@@ -55,7 +55,10 @@ Before changing anything, setup:
   name), or copies the "senior-mode template" Project (`board.template`), which brings the views, fields
   and built-in workflows; it makes the copy public when the repository is, then names any view or workflow
   the copy lacks, and where to add it. An existing Project is never replaced: setup lists what the template
-  has and it lacks. It makes sure the fields `Status` (Backlog, Ready, In progress, In review,
+  has and it lacks. It writes the Project's short description and README in the project `language`: what
+  each Status means, the Definition of Ready, who moves what, and a link to `docs/specs/`; only the block
+  between the `senior-mode:begin` and `senior-mode:end` markers is rewritten on a rerun, and the rest of
+  the README is kept. It makes sure the fields `Status` (Backlog, Ready, In progress, In review,
   Done), `Priority` (P0 now, P1 next, P2 later, P3 someday), `Size` (S, M, L) and `Severity` (critical, high,
   moderate, low) exist. Options and values already there are kept. Severity is a tie-break within a
   Priority, not a priority: a critical ticket moved by hand to P1 still comes after a P0. A project

@@ -44,7 +44,7 @@ case "$*" in
     st="" cx=""
     for a in "$@"; do case $a in state=*) st=${a#state=} ;; context=*) cx=${a#context=} ;; esac; done
     echo "$cx $st" >>"$FIX/status-$sha" ;;
-  "api repos/acme/app/pulls?state=open"*) { cat "$FIX/open-prs.json" 2>/dev/null || echo '[]'; } | respond ;;
+  "api repos/acme/app/pulls?state=open"*) [ ! -f "$FIX/gh-hang" ] || sleep 30; { cat "$FIX/open-prs.json" 2>/dev/null || echo '[]'; } | respond ;;
   "api repos/acme/app/pulls/"[0-9]*" -X PATCH"*) touch "$FIX/closed-$(sed -E 's#^api repos/acme/app/pulls/([0-9]+).*#\1#' <<<"$*")" ;;
   "pr view "*"--json state --jq .state") cat "$FIX/state-$3" 2>/dev/null || echo OPEN ;;
   "pr merge "*)
@@ -627,6 +627,19 @@ started 61 || fail "Z: no session for #61: $(cat "$CLAUDE_LOG")"
 started 62 && fail "Z: #62 started in the poll of #61, with the same Paths"
 started 63 || fail "Z: the disjoint #63 did not start: $(cat "$CLAUDE_LOG")"
 [ "$(grep -c '^app-' "$CLAUDE_LOG")" -eq 2 ] || fail "Z: not exactly two sessions: $(cat "$CLAUDE_LOG")"
+
+# Y2: a gh call that hangs after a network blip does not stall serve (#382): it is cut, retried, and the poll goes on.
+config '{}'
+board 64
+session 64-sonnet delivered pr
+touch "$FIX/gh-hang"
+fresh
+start=$SECONDS
+SENIOR_MODE_GH_TIMEOUT=1 once || fail "Y2: serve failed: $(cat "$work/out")"
+rm -f "$FIX/gh-hang"
+[ $((SECONDS - start)) -lt 60 ] || fail "Y2: the hanging gh call was not cut: $((SECONDS - start))s"
+grep -q 'cannot read the open pull requests; trying again at the next poll' "$work/out" || fail "Y2: not said: $(cat "$work/out")"
+started 64 || fail "Y2: the poll did not go on to launch #64: $(cat "$work/out")"
 
 # I: options and config are checked.
 (cd "$repo" && "$cli" serve --bogus) >"$work/out" 2>&1 && fail "I: an unknown option was accepted"

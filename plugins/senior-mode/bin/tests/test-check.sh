@@ -212,7 +212,7 @@ pushed "refs/heads/feat/11-z $(sha) refs/heads/feat/11-z $old" || fail "pre-push
 [ "$(sort "$work/scope" | paste -sd' ')" = "a/x.txt b/y.txt" ] || fail "changed paths of an update: $(cat "$work/scope")"
 run publish && fail "a narrowed run was recorded for publishing"
 pushed "refs/heads/feat/12-new $(sha) refs/heads/feat/12-new $zero"
-grep -qx "a/x.txt" "$work/scope" && grep -qx "b/y.txt" "$work/scope" || fail "changed paths of a new branch: $(cat "$work/scope")"
+[ "$(grep -cx -e "a/x.txt" -e "b/y.txt" "$work/scope")" = 2 ] || fail "changed paths of a new branch: $(cat "$work/scope")"
 pushed "refs/heads/feat/11-z $(sha) refs/heads/feat/11-z 1111111111111111111111111111111111111111"
 [ "$(cat "$work/scope")" = FULL ] || fail "an unknown remote commit did not mean a full run: $(cat "$work/scope")"
 pushed "(delete) $zero refs/heads/old $old"

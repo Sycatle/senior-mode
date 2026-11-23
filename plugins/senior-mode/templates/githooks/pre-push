@@ -11,14 +11,43 @@ count=$(jq '.checks // [] | length' "$config" 2>/dev/null) || { echo "pre-push: 
 # fixture would write into this repository.
 for v in $(git rev-parse --local-env-vars); do unset "$v"; done
 output=$(mktemp)
-trap 'rm -f "$output"' EXIT
+changed=$(mktemp)
+trap 'rm -f "$output" "$changed"' EXIT
+# The paths this push changes, from the lines git gives this hook on stdin (<ref> <sha> <remote ref> <remote sha>),
+# for the checks that can narrow themselves to them (SENIOR_MODE_CHANGED_FILES). Anything that cannot be worked
+# out (a deletion, a remote commit this clone lacks, a new branch with no origin base) leaves it unset: full run.
+unset SENIOR_MODE_CHANGED_FILES
+scoped=true
+while read -r _ sha _ rsha; do
+  if [[ $sha =~ ^0+$ ]]; then scoped=false; break; fi
+  if [[ $rsha =~ ^0+$ ]]; then
+    from=
+    for b in origin/HEAD origin/main origin/master; do
+      from=$(git -C "$root" merge-base "$sha" "$b" 2>/dev/null) && break
+      from=
+    done
+  else
+    from=$rsha
+    git -C "$root" cat-file -e "$from^{commit}" 2>/dev/null || from=
+  fi
+  if [ -z "$from" ] || ! git -C "$root" -c core.quotePath=false diff --name-only --no-renames "$from" "$sha" >>"$changed"; then
+    scoped=false
+    break
+  fi
+  scoped=found
+done
+[ "$scoped" = found ] && export SENIOR_MODE_CHANGED_FILES=$changed
+# Milliseconds (whole seconds where this bash has no EPOCHREALTIME), and a duration as "1.2s".
+now_ms() { local t=${EPOCHREALTIME:-}; t=${t/[.,]/}; if [ -n "$t" ]; then echo $((t / 1000)); else echo $((SECONDS * 1000)); fi; }
+took() { local ms=$(($(now_ms) - $1)); printf '%d.%ds' $((ms / 1000)) $((ms % 1000 / 100)); }
 failed=0
 for ((i = 0; i < count; i++)); do
   name=$(jq -r ".checks[$i].name" "$config")
+  started=$(now_ms)
   if (cd "$root" && bash -c "$(jq -r ".checks[$i].run" "$config")") </dev/null >"$output" 2>&1; then
-    echo "ok    $name"
+    echo "ok    $name ($(took "$started"))"
   else
-    echo "FAIL  $name"
+    echo "FAIL  $name ($(took "$started"))"
     tail -n 20 "$output" | sed 's/^/      /'
     failed=$((failed + 1))
   fi

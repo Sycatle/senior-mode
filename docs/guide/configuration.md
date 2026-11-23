@@ -103,9 +103,16 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   `commit-msg` hook is senior-mode's own.
 - Checks you add by hand are kept on re-run. `senior-mode setup repo --command test="npm test"`
   replaces the command of the check with the same name.
-- `senior-mode check` prints `ok`, `skip` or `FAIL` per check, with the last 20 lines of a failure (the dependency audit shows every blocking advisory, up to 100).
+- `senior-mode check` prints `ok`, `skip` or `FAIL` per check with the time it took, with the last 20 lines of a failure (the dependency audit shows every blocking advisory, up to 100).
   A check whose first output line is `skipped: <reason>` passes and prints `skip <name>: <reason>`,
   so a check that had nothing to do is visible instead of a silent `ok`.
+- On a push the `pre-push` hook gives the checks the paths the push changes, in a file named by
+  `SENIOR_MODE_CHANGED_FILES` (unset when they cannot be worked out: a deletion, a new branch with no
+  base). A check that can narrow itself to them does; the others ignore it. A narrowed run is not
+  recorded for `publish`: `senior-mode check` without `--pre-push`, `publish` and CI run every check in full.
+  This repository's `script tests` check (`.github/scripts/script-tests.sh`) runs its test files in
+  parallel, one per CPU, and on a push only those the changed paths touch: a changed test, or a test that
+  names the changed file; a path no test names (or `bin/senior-mode`) runs them all.
 - A node project that declares dependencies but has no `node_modules` fails at once with
   `dependencies not installed: run <install command>`, before any check runs.
 - When `envGuard.forbidden` lists something, setup adds the `env guard` check (below).

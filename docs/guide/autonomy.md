@@ -195,6 +195,16 @@ The plugin's hooks apply to the main session and to every agent.
 
 Runs before every Bash command, in any repository where the plugin is enabled. It denies:
 
+- credentials in a git URL (#434): `git clone`, `fetch`, `pull`, `push` or `remote` (`add`, `set-url`) with a
+  URL that carries a user and a password or token (`https://` then `user:token@` before the host), which git would store in
+  the remote and print back with `git remote -v`. Authenticate with `gh auth login` or a credential
+  helper and use the plain URL; `git remote -v` itself stays allowed;
+- local content leaving the machine (#435): `gh gist create` (or `new`) and `gh gist edit`; `curl` sending
+  a file (`-d @file`, `--data @`, `--data-binary @`, `--data-urlencode name@file`, `-F name=@file` or
+  `=<file`, `-T`, `--upload-file`) and `wget --post-file` or `--body-file`, unless the target host is in
+  [`egress.allow`](configuration.md#keys-the-plugin-reads-today). The plugin's own calls (the
+  `notify.webhook` of the CLI) do not go through the agent's Bash tool. Best-effort, like the rest: a script,
+  another language or `bash -c` is not parsed;
 - skipping checks: `--no-verify`, `git commit -n`, `git -c core.hooksPath=...` (or
   `--config-env`), a `GIT_CONFIG_KEY_<n>=core.hooksPath` or `GIT_CONFIG_PARAMETERS` environment
   setting, and setting or unsetting `core.hooksPath` with `git config`, an empty value included
@@ -341,16 +351,30 @@ the breaker hold the launches, not the merges.
 Runs before every `Read`, `Grep`, `Glob` and Bash command, in any repository where the plugin is
 enabled, during a run or not. It keeps secrets out of the conversation. It denies:
 
-- `Read`, `Grep` and `Glob` on `.env` and `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `*.p12`,
-  `*.pfx`, `.npmrc`, `.netrc`, `credentials*.json`, `service-account*.json`, and the globs of the
-  [`secrets` key](configuration.md#keys-the-plugin-reads-today);
+- `Read`, `Grep` and `Glob` on `.env` and `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `id_ecdsa*`,
+  `id_dsa*` and any `.ssh/id_*`, `*.p12`, `*.pfx`, `.npmrc`, `.netrc`, `.git-credentials`, `.pgpass`,
+  `credentials*.json`, `service-account*.json`, `.aws/credentials`, `.docker/config.json`, kubeconfig
+  (`.kube/config`, `kubeconfig*`), Terraform's `*.tfvars`, `*.tfstate` and `*.tfstate.backup`, `secrets.*`, and the
+  globs of the [`secrets` key](configuration.md#keys-the-plugin-reads-today);
 - Bash commands that print such a file (`cat`, `less`, `more`, `head`, `tail`, `grep`, `rg`, `source`,
   `.` and a few more), and ones that dump the environment: `printenv`, bare `env`, bare `set`,
   `export -p`, `declare -x`, `/proc/<pid>/environ`.
 
-`.env.example`, `.env.sample`, `.env.template` (and `.env.local.example`) and public keys (`*.pub`) are
-allowed. The deny message says why and what to do instead: ask the human for the value you need, or read
-`.env.example` for the variable names.
+`.env.example`, `.env.sample`, `.env.template` (and `.env.local.example`), `*.tfvars.example`, the
+`.example`, `.sample` and `.template` forms of `secrets.*`, source files named `secrets` (`secrets.ts`,
+`secrets.py`...) and public keys (`*.pub`) are allowed. The deny message says why and what to do
+instead: ask the human for the value you need, or read `.env.example` for the variable names.
+
+It also keeps business and production data out (#433): a local database, a dump, a backup or an export.
+Built in: `*.sqlite`, `*.sqlite3`, `*.db`, `*.dump`, `*.bak`, `*.mdb`, `*.accdb`; the
+[`data` key](configuration.md#keys-the-plugin-reads-today) replaces that list (`*.sql` is not built in, for
+the migrations: add your dump folders). `Read`, `Grep` with `output_mode: content`, the Bash readers above,
+`sqlite3` and `duckdb` are denied on them; `Glob`, `Grep` listing files or counting, `ls` and `stat` stay
+allowed, since a name, a size or a date is not content. The message points to the schema, the types or a
+synthetic fixture written by hand.
+
+The session greeting says that a secret seen by accident in a tool output is never repeated in a reply,
+a file, a commit, an issue or a pull request: it is reported so a human rotates it.
 
 It reads commands as written. It is a guardrail for honest mistakes, not a sandbox: `bash -c "..."`,
 a script that reads the file, `cat *` or a variable that already holds a secret are not caught. Keep only

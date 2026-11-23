@@ -197,9 +197,10 @@ check() {
     return 1
   fi
   # The secret scan is not configurable: it runs first, on every preset. The dependency audit follows, and
-  # `audit: false` turns it off (ADR 0015). The new dependencies are looked up on their registries (#302).
-  names=("secret scan" "dependency audit" "new dependencies")
-  cmds=("$(printf '%q' "$SELF") secret-scan" "$(printf '%q' "$SELF") audit" "$(printf '%q' "$SELF") deps")
+  # `audit: false` turns it off (ADR 0015). The new dependencies are looked up on their registries (#302). The
+  # `config` step reads the configuration against its schema (#317).
+  names=("secret scan" "dependency audit" "new dependencies" "config")
+  cmds=("$(printf '%q' "$SELF") secret-scan" "$(printf '%q' "$SELF") audit" "$(printf '%q' "$SELF") deps" "$(printf '%q' "$SELF") config validate")
   for ((i = 0; i < count; i++)); do
     names+=("$(jq -r ".checks[$i].name" "$file")")
     cmds+=("$(jq -r ".checks[$i].run" "$file")")

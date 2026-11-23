@@ -987,6 +987,7 @@ grep -q '^app-402 ' "$CLAUDE_LOG" && fail "V: a session for #402 of the batch: $
 grep -q '#402' "$repo/.git/senior-mode/runs/"*/401.prompt || fail "V: the batch prompt does not name its tickets"
 grep -q 'Closes #402' "$repo/.git/senior-mode/runs/"*/401.prompt || fail "V: the batch prompt does not give each ticket its Closes"
 grep -qi 'one commit per' "$repo/.git/senior-mode/runs/"*/401.prompt || fail "V: the batch prompt does not ask one commit per ticket"
+grep -q 'reviewer agent reviews' "$repo/.git/senior-mode/runs/"*/401.prompt || fail "V: run's batch prompt lost its review step (#305)"
 grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 4 || fail "V: #401, #402, #403 and #405 not all In progress: $(grep -c item-edit "$GH_LOG")"
 grep -qx 'pr merge 501 --rebase --match-head-commit sha401 -R acme/app' "$GH_LOG" || fail "V: the batch pull request not merged: $(grep merge "$GH_LOG")"
 grep -c 'item-edit.*--single-select-option-id o4' "$GH_LOG" | grep -qx 3 || fail "V: #401, #403 and #405 not set Done"

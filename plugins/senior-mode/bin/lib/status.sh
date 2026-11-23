@@ -6,6 +6,7 @@ context() {
   cat <<'ROUTER'
 senior-mode is active: framing, specs and ADRs, test-driven delivery, atomic Conventional Commits, GitHub Project board.
 The user needs /senior-mode:frame, /senior-mode:go and /senior-mode:status; "go" or "enchaîne" runs /senior-mode:go. Disciplines load by themselves; ask the scout agent for codebase facts.
+A secret seen by accident in a tool output is never repeated in a reply, a file, a commit, an issue or a pull request: report it so a human rotates it.
 ROUTER
   # Spec 0001 §10, "Sessions without a human": the one rule, stated where a run session starts.
   [ -z "${SENIOR_MODE_RUN:-}" ] || echo "Unattended run: nobody answers questions. Take the recommended option for reversible choices; never accept an L spec or an ADR, never touch a protected zone: label needs-human and stop with a report."

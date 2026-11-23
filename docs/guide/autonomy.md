@@ -358,6 +358,11 @@ command, not a model, applies these bounds:
   that has to wait lets the next one start, in `pick` order. The check needs the field: a config
   from before it existed (no `Paths` in `project.fields`) runs tickets in parallel as before, until
   `senior-mode setup github` is rerun.
+- **Batches:** `senior-mode pick` groups Ready S tickets whose Paths overlap, at most 3 per batch
+  (and `limits.prLines` / 50, an S being about 50 lines); M and L tickets and tickets without Paths are
+  never batched. The target is one session and one pull request per batch, one commit and one
+  `Closes #n` per ticket; `run` does not start a batch that way yet (#263), it still starts the
+  tickets one by one.
 - **Retry on Opus:** a ticket that fails on Sonnet is tried once more on Opus, from the same worktree
   (`autonomy.escalate`, default true).
 - **Circuit breaker:** after `autonomy.maxConsecutiveFailures` failed tickets in a row (default 2), or

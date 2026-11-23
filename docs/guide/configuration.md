@@ -49,6 +49,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `hygiene.days` | `14` | Age in days (a positive whole number). [`senior-mode clean`](autonomy.md#hygiene) removes the remote branch of a merged or closed pull request and the run files under `.git/senior-mode` older than that (`--days` overrides it). The hygiene report of `senior-mode status` and `retro` ([commands](commands.md)) calls an open pull request with no activity for that long stale (reported, never acted on), and `status --fix` only deletes a branch whose last commit, or moves a ticket whose last activity, is older |
 | `autonomy.maxTickets` | `3` | Tickets per [run](autonomy.md#run) |
 | `autonomy.parallel` | `1` | Tickets a run works on at once; those whose [Paths](autonomy.md#run) overlap never run together, and one with no Paths runs alone |
+| `limits.prLines` | `400` | A positive whole number of lines. `senior-mode pick` batches Ready S tickets whose Paths overlap, at most `prLines` / 50 per batch (3 at most; an S is about 50 lines), see [batches](autonomy.md#run) |
 | `autonomy.maxConsecutiveFailures` | `2` | Failed tickets in a row after which a run starts no new one |
 | `autonomy.merge` | `false` | Whether a run merges the pull requests that pass every bound |
 | `autonomy.escalate` | `true` | Whether a ticket that fails on Sonnet is retried once on Opus |
@@ -65,10 +66,6 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 `senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`). The optional keys
 (`protected`, `secrets`, `envGuard.forbidden`, `review.sections`, `docs.extra`, `github.protection`)
 print `[]` (an empty line for `github.protection`) when absent; a key the plugin does not know is an error.
-
-### Keys with defaults but no effect yet
-
-`limits.prLines` (400) can be read, but nothing uses it yet.
 
 ## Project review sections
 

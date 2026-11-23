@@ -14,6 +14,7 @@ git init -q "$repo"
 mkdir -p "$work/stub" "$repo/t" "$repo/src" "$repo/docs"
 ran="$work/ran"
 # A test file: its name is appended to $ran, then <body> runs.
+# shellcheck disable=SC2016 # the fixture's $0 is for the fixture to expand
 tfile() {
   printf '#!/usr/bin/env bash\necho "$0" >>%q\n%s\n' "$ran" "${2:-}" >"$repo/t/test-$1.sh"
   chmod +x "$repo/t/test-$1.sh"
@@ -22,7 +23,7 @@ commit() {
   git -C "$repo" add -A
   git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: fixture" --allow-empty
 }
-run() { (cd "$repo" && "$script" "$@") >"$work/out" 2>&1; }
+run() { (cd "$repo" && "$script") >"$work/out" 2>&1; }
 
 # Every file runs, at once when the machine has the cores for it.
 printf '#!/bin/sh\necho 4\n' >"$work/stub/nproc"

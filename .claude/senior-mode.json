@@ -28,7 +28,7 @@
     },
     {
       "name": "script tests",
-      "run": "for t in $(git ls-files '*/test-*.sh'); do \"$t\" || exit 1; done"
+      "run": ".github/scripts/script-tests.sh"
     },
     {
       "name": "commit subjects",

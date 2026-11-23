@@ -168,6 +168,54 @@ echo 'not json' >"$repo/.claude/senior-mode.json"
 expect deny Read "$repo/.env"
 expect allow Read "$repo/config/prod.yml"
 
+# More credential files (#434).
+for f in ~/.aws/credentials .aws/credentials ~/.ssh/id_ecdsa ~/.ssh/id_dsa ~/.ssh/id_work id_ecdsa_sk prod.tfvars \
+  infra/terraform.tfstate terraform.tfstate.backup ~/.kube/config kubeconfig kubeconfig-prod secrets.yml \
+  config/secrets.json .git-credentials ~/.pgpass ~/.docker/config.json; do
+  expect deny Read "$f"
+done
+for f in ~/.ssh/id_work.pub ~/.ssh/known_hosts ~/.ssh/config prod.tfvars.example main.tf secrets.example.yml \
+  secrets.yml.example secrets.sample secrets.template src/secrets.ts lib/secrets.py .docker/Dockerfile kube/config.md; do
+  expect allow Read "$f"
+done
+expect deny Glob '**/*.tfstate'
+expect deny Bash 'cat ~/.aws/credentials'
+expect deny Bash 'head -5 infra/prod.tfvars'
+
+# Business data (#433): the built-in names, as no `data` key is set here.
+for f in app.sqlite app.sqlite3 data/prod.db backup.dump nightly.bak legacy.mdb legacy.accdb; do
+  expect deny Read "$f"
+done
+for f in db/migrations/001_init.sql schema.prisma src/db.ts dbconfig.json; do
+  expect allow Read "$f"
+done
+content() { jq -nc --arg v "$1" --arg m "$2" --arg d "$repo" '{tool_name: "Grep", tool_input: {pattern: "x", glob: $v, output_mode: $m}, cwd: $d}'; }
+[ "$(decide "$(content '*.db' content)")" = deny ] || fail "Grep content on *.db allowed"
+[ "$(decide "$(content '*.db' files_with_matches)")" = allow ] || fail "Grep files_with_matches on *.db denied"
+[ "$(decide "$(content '*.db' count)")" = allow ] || fail "Grep count on *.db denied"
+expect allow GrepGlob '*.db'
+expect allow Glob '**/*.db'
+expect allow GlobPath "$repo/data/prod.db"
+expect deny Bash 'sqlite3 data/prod.db "select count(*) from users"'
+expect deny Bash 'duckdb export.db'
+expect deny Bash 'cat backup.dump | wc -l'
+expect allow Bash 'ls -la data/prod.db'
+expect allow Bash 'stat backup.dump'
+expect allow Bash 'sqlite3 :memory: "select 1"'
+reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason' \
+  <<<"$("$hook" <<<"$(jq -nc --arg d "$repo" '{tool_name: "Read", tool_input: {file_path: "app.db"}, cwd: $d}')")")
+grep -q 'synthetic fixture' <<<"$reason" || fail "data reason does not point to a fixture: $reason"
+# A `data` key replaces the built-in names.
+datarepo=$work/datarepo
+mkdir -p "$datarepo/.claude"
+git init -q -b main "$datarepo"
+echo '{"data": ["exports/**", "*.csv"]}' >"$datarepo/.claude/senior-mode.json"
+expect deny Read "$datarepo/exports/2026/customers.json" "$datarepo"
+expect deny Read customers.csv "$datarepo"
+expect allow Read app.db "$datarepo"
+expect allow Read .env.example "$datarepo"
+expect deny Read .env "$datarepo"
+
 # Other tools and empty input are left alone.
 [ "$(decide '{"tool_name": "Edit", "tool_input": {"file_path": ".env"}, "cwd": "/tmp"}')" = allow ] || fail "Edit denied"
 [ "$(decide '{}')" = allow ] || fail "empty input denied"

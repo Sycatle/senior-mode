@@ -45,7 +45,8 @@ tests or hooks. Set `pending`, never `success`: a maintainer decides the merge.
 - **Data exposure:** personal or secret data in responses, logs, errors, analytics or exports; stack
   traces and internal identifiers returned to clients; verbose errors; public buckets or URLs; a
   field serialised that should not be (whole model instead of a chosen set); weak or missing
-  encryption, hashing or randomness for what is stored or signed (`md5`, `Math.random` for tokens).
+  encryption, hashing or randomness for what is stored or signed (`md5`, `Math.random` for tokens); a
+  test fixture copied from real data (an export, a dump, a customer record) instead of written by hand.
 
 ## Severity
 

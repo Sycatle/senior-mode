@@ -18,6 +18,7 @@ cat >"$work/stub/gh" <<'STUB'
 echo "$*" >>"$GH_LOG"
 case "$*" in
   "pr list"*) [ -f "$FIX/prs.ndjson" ] && jq -s . "$FIX/prs.ndjson" || echo '[]' ;;
+  "api repos/acme/app/branches"*) cat "$FIX/protected" 2>/dev/null; true ;;
   "issue view "*)
     n=$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*")
     jq -nc --arg s "$(jq -r --arg n "$n" '.[$n] // "OPEN"' "$FIX/issues.json")" '{state: $s}' ;;
@@ -58,10 +59,10 @@ mk() {
 }
 # A commit of its own, on no branch: its sha.
 orphan() { git -C "$repo" commit-tree -p main -m "$1" 'main^{tree}'; }
-# pr <number> <state> <branch> <days ago> <head sha>
+# pr <number> <state> <branch> <days ago> <head sha> [base branch, main by default]
 pr() {
-  jq -nc --argjson n "$1" --arg s "$2" --arg b "$3" --arg t "$(ago "$4")" --arg o "$5" '{number: $n, state: $s,
-    headRefName: $b, headRefOid: $o, isCrossRepository: false,
+  jq -nc --argjson n "$1" --arg s "$2" --arg b "$3" --arg t "$(ago "$4")" --arg o "$5" --arg base "${6:-main}" '{number: $n, state: $s,
+    headRefName: $b, baseRefName: $base, headRefOid: $o, isCrossRepository: false,
     mergedAt: (if $s == "MERGED" then $t else null end), closedAt: (if $s == "OPEN" then null else $t end)}' >>"$FIX/prs.ndjson"
 }
 
@@ -104,6 +105,30 @@ git -C "$repo" push -q origin "$sha12:refs/heads/chore/12-remote"
 pr 112 MERGED chore/12-remote 20 "$sha12"
 git -C "$repo" push -q origin "$(orphan after-merge):refs/heads/feat/16-after"
 pr 116 MERGED feat/16-after 30 "$sha12"
+# Long-lived branches whose pull request merged long ago (dev into main) are never deleted, locally or on origin,
+# nor a release branch; neither is the base of any pull request, open, closed or merged (a stack), nor a
+# protected branch. Only the branches start and frame make are candidates.
+git -C "$repo" branch dev "$(orphan dev)"
+git -C "$repo" push -q origin dev
+pr 130 MERGED dev 30 "$(tip dev)"
+git -C "$repo" push -q origin "$sha12:refs/heads/release/1.0"
+pr 131 MERGED release/1.0 30 "$sha12"
+git -C "$repo" branch feat/18-base "$(orphan base18)"
+git -C "$repo" push -q origin feat/18-base
+pr 132 MERGED feat/18-base 30 "$(tip feat/18-base)"
+pr 133 OPEN feat/19-stack 0 "$main_tip" feat/18-base
+git -C "$repo" branch feat/22-closedbase "$(orphan base22)"
+git -C "$repo" push -q origin feat/22-closedbase
+pr 134 MERGED feat/22-closedbase 30 "$(tip feat/22-closedbase)"
+pr 135 CLOSED feat/23-old 40 "$main_tip" feat/22-closedbase
+git -C "$repo" branch chore/24-protected "$(orphan prot24)"
+git -C "$repo" push -q origin chore/24-protected
+pr 136 MERGED chore/24-protected 30 "$(tip chore/24-protected)"
+echo chore/24-protected >"$FIX/protected"
+# A branch deleted on origin behind our back: its tracking ref is stale and must not count as pushed.
+mk feat/17-stale "$wt/17"
+git -C "$work/origin.git" branch -q -D feat/17-stale
+pr 117 CLOSED feat/17-stale 3 "$main_tip"
 # Files of the runs.
 common=$repo/.git/senior-mode
 mkdir -p "$common/runs/old" "$common/runs/new" "$common/checks"
@@ -118,7 +143,7 @@ touch -d '30 days ago' "$common/runs/old/token" "$common/runs/old/10-sonnet.log"
 export GH_IN_PROGRESS='[6]'
 snapshot() {
   git -C "$repo" worktree list
-  git -C "$repo" for-each-ref --format='%(refname) %(objectname)'
+  git -C "$repo" for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags
   git -C "$repo" ls-remote origin
   (cd "$common" && find . -type f -o -type d | sort)
   ls -A "$wt/3"
@@ -149,6 +174,15 @@ done
 has "pull request #101 merged" || fail "dry run gives no reason: $(cat "$work/out")"
 has "would run: git worktree prune" || fail "dry run does not mention the prune: $(cat "$work/out")"
 
+for l in "kept branch dev: " "kept remote branch dev: " "kept remote branch release/1.0: " "kept branch feat/18-base: base of pull request #133" \
+  "kept remote branch feat/18-base: base of pull request #133" "kept remote branch feat/22-closedbase: base of pull request #135" \
+  "kept branch chore/24-protected: protected" "kept remote branch chore/24-protected: protected" \
+  "kept worktree $wt/17 (feat/17-stale): 1 commit on no remote branch"; do
+  has "$l" || fail "dry run does not say: $l: $(cat "$work/out")"
+done
+grep -F "would remove" "$work/out" | grep -qE 'branch (dev|release/1.0|feat/18-base|feat/22-closedbase|chore/24-protected)( |$)' &&
+  fail "dry run would remove a long-lived, base or protected branch: $(cat "$work/out")"
+grep -q 'fetch' "$GH_LOG" && fail "fetch is git, not gh"
 # --days and hygiene.days move the line: a 30 day old pull request and old files are not old enough for 40.
 clean --dry-run --days 40 || fail "dry run --days failed: $(cat "$work/err")"
 has "would remove remote branch" && fail "--days 40 still removes a remote branch: $(cat "$work/out")"
@@ -190,6 +224,12 @@ heads | grep -qx feat/1-merged-old && fail "remote branch of a pull request merg
 heads | grep -qx chore/12-remote && fail "remote-only branch of a pull request merged 20 days ago kept"
 for b in main feat/2-merged-new feat/3-dirty feat/5-open feat/6-progress feat/7-issue-closed fix/8-gitdir feat/9-issue-open \
   feat/10-current feat/16-after; do
+  heads | grep -qx "$b" || fail "remote branch $b was removed"
+done
+for b in dev feat/18-base feat/22-closedbase chore/24-protected feat/17-stale; do
+  branches | grep -qx "$b" || fail "branch $b was removed"
+done
+for b in dev release/1.0 feat/18-base feat/22-closedbase chore/24-protected; do
   heads | grep -qx "$b" || fail "remote branch $b was removed"
 done
 [ ! -e "$common/runs/old" ] || fail "old run not removed"

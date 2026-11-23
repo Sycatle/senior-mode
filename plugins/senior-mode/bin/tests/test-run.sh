@@ -120,6 +120,11 @@ echo "$*" >>"$TMUX_LOG"
 case $1 in
   has-session) [ -f "$FIX/tmux-session" ] ;;
   new-session | new-window)
+    # $FIX/tmux-fail holds how many windows start before tmux fails to start one (none when it is 0).
+    if [ -f "$FIX/tmux-fail" ] && [ "$(grep -c 'new-' "$TMUX_LOG")" -gt "$(cat "$FIX/tmux-fail")" ]; then
+      echo "tmux: server exited unexpectedly" >&2
+      exit 1
+    fi
     touch "$FIX/tmux-session"
     setsid bash -c "${*: -1}" >/dev/null 2>&1 &
     ;;
@@ -571,6 +576,70 @@ config '{}'
 run || fail "N: a filing error stopped the run: $(cat "$work/out")"
 grep -q 'No Ready ticket' "$work/out" || fail "N: run stopped after a filing error"
 grep -qi 'not filed' "$work/out" || fail "N: filing error not said: $(cat "$work/out")"
+
+# O: tmux fails to start the window of a session (#201): the ticket fails at once, not after the session
+# timeout: needs-human, a comment, an outcome record, one failure for the breaker. A failed retry window
+# on Opus is the same. sessionTimeout is a second here, so a run that waited would report a timeout.
+export PATH="$work/tmux:$PATH"
+echo '[]' >"$FIX/dependabot.json"; echo '[]' >"$FIX/secret-scanning.json"
+config '{"maxConsecutiveFailures": 1, "sessionTimeout": 1}'
+board 120 '[]' 121 '[]'
+session 120-sonnet delivered pr
+session 121-sonnet delivered pr
+echo 0 >"$FIX/tmux-fail"
+: >"$TMUX_LOG"
+SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "O: run failed: $(cat "$work/out")"
+grep -q 'app-12[01]' "$CLAUDE_LOG" && fail "O: a session ran although its window did not start: $(cat "$CLAUDE_LOG")"
+grep -q 'Failed.*#120.*window did not start.*server exited unexpectedly' "$work/out" || fail "O: report misses why #120 failed: $(cat "$work/out")"
+grep -q 'timed out' "$work/out" && fail "O: the report talks of a timeout: $(cat "$work/out")"
+grep -q 'session started' "$work/out" && fail "O: a session is reported started: $(cat "$work/out")"
+grep -q 'issues/120/labels.*needs-human' "$GH_LOG" || fail "O: #120 not labelled needs-human: $(cat "$GH_LOG")"
+grep -q 'issues/120/comments' "$GH_LOG" || fail "O: no comment on #120"
+grep -q 'item-edit.*--single-select-option-id o0' "$GH_LOG" && fail "O: #120 was set back to Backlog"
+grep -q 'Not started.*#121' "$work/out" || fail "O: the breaker did not count the failed window: $(cat "$work/out")"
+jq -e '.outcome == "failed" and .escalated == false and (.reason | test("window did not start"))' \
+  "$repo/.git/senior-mode/runs/"*"/120.json" >/dev/null || fail "O: #120 not recorded as failed: $(cat "$repo"/.git/senior-mode/runs/*/120.json)"
+# The retry window on Opus: the first window starts, the second does not.
+config '{"maxConsecutiveFailures": 1, "sessionTimeout": 1}'
+board 122 '[]'
+session 122-sonnet "failed: tests do not pass"
+session 122-opus delivered pr
+echo 1 >"$FIX/tmux-fail"
+: >"$TMUX_LOG"
+SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "O: run failed: $(cat "$work/out")"
+grep -q '^app-122 sonnet' "$CLAUDE_LOG" || fail "O: the first window did not run: $(cat "$CLAUDE_LOG")"
+grep -q '^app-122 opus' "$CLAUDE_LOG" && fail "O: an Opus session ran although its window did not start"
+grep -q 'Failed.*#122.*window did not start' "$work/out" || fail "O: report misses the Opus window: $(cat "$work/out")"
+grep -q 'issues/122/labels.*needs-human' "$GH_LOG" || fail "O: #122 not labelled needs-human"
+jq -e '.outcome == "failed" and .escalated == true and (.reason | test("window did not start"))' \
+  "$repo/.git/senior-mode/runs/"*"/122.json" >/dev/null || fail "O: #122 not recorded as failed on Opus: $(cat "$repo"/.git/senior-mode/runs/*/122.json)"
+rm -f "$FIX/tmux-fail"
+export PATH=${PATH#"$work/tmux:"}
+
+# P: without setsid (macOS), a session that outlives the timeout could not be killed (#201). run starts
+# nothing unless it can stop sessions: setsid, else perl's POSIX::setsid, which then does the same job.
+mkdir -p "$work/nosetsid" "$work/noperl"
+for f in /usr/bin/* /bin/*; do
+  [ -x "$f" ] && [ ! -d "$f" ] || continue
+  case ${f##*/} in setsid) continue ;; perl*) ln -sf "$f" "$work/nosetsid/${f##*/}" ;; *) ln -sf "$f" "$work/nosetsid/${f##*/}"; ln -sf "$f" "$work/noperl/${f##*/}" ;; esac
+done
+config '{"sessionTimeout": 1}'
+board 130 '[]'
+session 130-sonnet "" "" hang
+saved=$PATH
+PATH="$work/stub:$work/noperl"
+run && fail "P: run started with neither setsid nor perl"
+grep -q 'setsid' "$work/out" || fail "P: the missing setsid is not named: $(cat "$work/out")"
+grep -q 'app-130' "$CLAUDE_LOG" && fail "P: a session started without a way to stop it"
+grep -q 'item-edit' "$GH_LOG" && fail "P: a ticket was touched although nothing could start"
+PATH="$work/stub:$work/nosetsid"
+SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "P: run failed with perl as the fallback: $(cat "$work/out")"
+grep -q 'Failed.*#130.*timed out after 1 minute' "$work/out" || fail "P: report misses the timeout: $(cat "$work/out")"
+grep -q 'not stopped' "$work/out" && fail "P: a session was not stopped with perl: $(cat "$work/out")"
+read -r -a pids <"$FIX/pids-130"
+for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && fail "P: process $pid of the session is still alive"; done
+for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
+PATH=$saved
 
 # E: nothing Ready, bad arguments.
 config '{}'

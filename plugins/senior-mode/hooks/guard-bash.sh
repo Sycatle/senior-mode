@@ -6,7 +6,8 @@
 # (spec 130).
 # Prints a deny decision, or nothing to allow.
 # A guardrail for honest mistakes, not a sandbox: `bash -c "..."`, `eval` and the like are not parsed, and
-# a variable is not followed (`git push origin $B`, `gh api -X $M ...`).
+# a variable that stands for a whole word is not followed (`git push origin $B`, `gh api -X $M ...`), nor is a
+# `cd` earlier in the command. git takes an unambiguous abbreviation of a long option: so does this guard.
 set -o pipefail
 input=$(cat)
 # Quoted text is data (commit messages, echo), never options: replace it before parsing. A quoted
@@ -44,9 +45,11 @@ abbr() { # word option min
 }
 re_noverify='--no-v(e(r(i(fy?)?)?)?)?([^[:alnum:]-]|$)'
 re_force='--for(c(e[-[:alnum:]]*)?)?([^[:alnum:]]|$)'
+re_pushf='(^|[[:space:]!=])push[[:space:]]([^;&|]*[[:space:]])?-[a-z]*f[a-z]*([[:space:]]|$)'
+re_commitn='(^|[[:space:]!=])commit[[:space:]]([^;&|]*[[:space:]])?-[a-z]*n[a-z]*([[:space:]]|$)'
 alias_bad() {
   [[ $flat == *--no-verify* || $flat == *--force* || $flat == *core.hookspath* ||
-    $flat =~ $re_noverify || $flat =~ $re_force ]]
+    $flat =~ $re_noverify || $flat =~ $re_force || $flat =~ $re_pushf || $flat =~ $re_commitn ]]
 }
 # A git setting handed over as key=value (-c, --config-env): the hooks path, another file pulled in by an
 # include, or an alias that runs what is denied here (its value is quoted text, so read in $flat).
@@ -65,15 +68,20 @@ check_kv() {
 # A variable inside a config key (`core.hooks${x}Path`) hides it: true when the key, with the variables left
 # open, can be core.hooksPath or include.path and a variable shares a dot-separated part with literal text.
 # A part that is only a variable (`core.$k`, `$s.hooksPath`, `"$key"`) is a value the guard does not follow.
+var_glob() { sed -E 's/\$(\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)/*/g' <<<"$1"; }
 split_key() { # word
   local p=${1,,}
   [[ $p == *\$* ]] || return 1
-  p=$(sed -E 's/\$(\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)/*/g' <<<"$p")
+  p=$(var_glob "$p")
   [[ $p =~ (^|\.)[^.]*(\*[^.*]|[^.*]\*)[^.]*(\.|$) ]] || return 1
   [[ core.hookspath == $p || include.path == $p ]]
 }
 # A word split by a variable (`--for${x}ce`, `pu${x}sh`) hides what it says from this guard; a variable
 # alone (`$sub`, `"$sub"`) is a value the guard does not follow, as documented.
+# An endpoint built from a variable and ending in the merge or protection path (`"$BASE/merge"`): where
+# the pull request is, is not read, but what is done to it is.
+re_vmerge='\$[^[:space:]]*/merges?([^[:alnum:]_.-]|$)'
+re_vprot='\$[^[:space:]]*/protection([^[:alnum:]_.-]|$)'
 check_split() { # word [option|command]
   local n=${1%%=*}
   [[ $n == *\$* ]] || return 0
@@ -107,6 +115,9 @@ is_shared() {
 # or the older GIT_CONFIG_PARAMETERS (its quoting is read in the raw command); or that points git to another
 # global or system config file, which can hold any of them.
 check_env() {
+  if [[ ${1,,} =~ ^git_config_nosystem=(.*)$ ]]; then
+    case ${BASH_REMATCH[1]//[\"\']/} in "" | 0 | false | no | off) ;; *) deny_skip "GIT_CONFIG_NOSYSTEM: it drops the system config, where a policy such as core.hooksPath may sit" ;; esac
+  fi
   [[ ${1,,} =~ ^git_config_(global|system)= ]] && deny_skip "${1%%=*}: another config file"
   [[ ${1,,} =~ ^git_config_key_[0-9]+=(.*)$ ]] && split_key "${BASH_REMATCH[1]//[\"\']/}" && deny_skip "GIT_CONFIG_KEY split by a variable"
   [[ ${1,,} =~ ^git_config_key_[0-9]+=[\"\']?core\.hookspath ]] && deny_skip "GIT_CONFIG_KEY core.hooksPath"
@@ -126,6 +137,21 @@ check_env() {
     done
   fi
   return 0
+}
+
+# A pushed ref whose name a variable splits (`ma${x}in`) can be the default branch: the value is not followed,
+# so deny when the name, with the variables left open, can be one. A name that is only a variable is a value
+# the guard does not follow, as documented.
+var_default() { # ref, as written: [+]src:dst
+  [[ $1 == *\$* ]] || return 1
+  local p b head
+  p=$(var_glob "${1#+}")
+  p=${p##*:}
+  p=${p#refs/heads/}
+  [[ -n ${p//\*/} ]] || return 1
+  head=$(git -C "$dir" symbolic-ref --short -q refs/remotes/origin/HEAD)
+  for b in ${head:+${head#origin/}} ${head:-main master}; do [[ $b == $p ]] && return 0; done
+  return 1
 }
 
 check_push() {
@@ -148,6 +174,7 @@ check_push() {
   [ ${#refs[@]} -gt 0 ] || refs=("$(current)")
   for r in "${refs[@]}"; do
     [ "${r#+}" = "$r" ] || deny_force
+    var_default "$r" && deny "pushing to the default branch is denied: a variable splits the name of the ref ($r), so write it out."
     dst=${r##*:}
     [ "$dst" = HEAD ] && dst=$(current)
     dst=${dst#refs/heads/}
@@ -235,10 +262,10 @@ while IFS= read -r segment; do
     if [ "${SENIOR_MODE_RUN:-}" = 1 ]; then
       $merge && deny "a run session never merges: senior-mode run merges after its own checks, or a human does."
       # A GraphQL mutation sits in quoted text, which $command no longer holds: read the raw one.
-      [[ ${gs[0]:-} == api && ($ep =~ pulls/[^/[:space:]]+/merge|/merges || $rawb =~ mergePullRequest|enablePullRequestAutoMerge) ]] &&
+      [[ ${gs[0]:-} == api && ($ep =~ pulls/[^/[:space:]]+/merge|/merges || $ep =~ $re_vmerge || $rawb =~ mergePullRequest|enablePullRequestAutoMerge) ]] &&
         deny "a run session never merges, not through gh api either."
       # The rules that bound the run are the human's (spec 130, #116).
-      [[ ($write == true && $ep =~ /rulesets([^[:alnum:]_.-]|$)|/branches/[^[:space:]]+/protection) ||
+      [[ ($write == true && ($ep =~ /rulesets([^[:alnum:]_.-]|$)|/branches/[^[:space:]]+/protection || $ep =~ $re_vprot)) ||
         (${gs[0]:-} == api && $rawb =~ (create|update|delete)(RepositoryRuleset|BranchProtectionRule)) ]] &&
         deny "a run session never changes rulesets or branch protection: say in the pull request what a human should change."
     fi
@@ -246,7 +273,7 @@ while IFS= read -r segment; do
     $merge && [[ " ${w[*]:i+1} " =~ \ --admin[=\ ] ]] &&
       deny "gh pr merge --admin bypasses the required checks and review: a human must do it."
     # Through the API, an admin's merge bypasses the ruleset without any flag.
-    [[ $method == PUT && $ep =~ pulls/[^/[:space:]]+/merge([^[:alnum:]_.-]|$) ]] &&
+    [[ $method == PUT && ($ep =~ pulls/[^/[:space:]]+/merge([^[:alnum:]_.-]|$) || $ep =~ $re_vmerge) ]] &&
       deny "merging through gh api can bypass the required checks: use gh pr merge without --admin."
     continue
   fi

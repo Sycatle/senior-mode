@@ -591,7 +591,7 @@ expect deny 'git push origin HEAD:ma${x}in'
 expect deny 'git push origin HEAD:refs/heads/ma${x}in'
 expect deny 'git push origin m$xin'
 expect deny 'git push origin ${x}ain'
-expect deny 'git push origin ma${x}er' feat/2-local
+expect deny 'git push origin ma${x}n' feat/2-local
 expect deny 'git push origin +feat/2-local:ma${x}in'
 expect allow 'git push origin feat/$N'
 expect allow 'git push origin "feat/$N-x"'

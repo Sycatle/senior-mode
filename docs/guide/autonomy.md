@@ -292,15 +292,20 @@ command, not a model, applies these bounds:
 - **Guards at the start** (with the `claude` CLI): `run` refuses to start unless the plugin is enabled
   for ticket sessions and its `hooks/hooks.json` is present. Ticket sessions run in fresh worktrees of
   the default branch, so only `enabledPlugins` in the user settings (`~/.claude/settings.json`, or
-  `CLAUDE_CONFIG_DIR`) and in the `.claude/settings.json` committed on the default branch count, not
-  an untracked `settings.local.json`; a plugin loaded with `--plugin-dir` counts. Once a day it also
+  `CLAUDE_CONFIG_DIR`), in the `.claude/settings.json` committed on the default branch and in the
+  managed settings (`/etc/claude-code/managed-settings.json`, or the macOS equivalent, which win) count,
+  not an untracked `settings.local.json`; a plugin loaded with `--plugin-dir` counts. Once a day it also
   runs a short probe session (Haiku), in a throwaway worktree of the default branch, asked to run
   `git -c core.hooksPath=... init` on a temporary directory, a command the Bash guard denies and that
   is harmless if it is not denied. If the deny does not show in the session's output, or the
   directory was created, `run` starts nothing and says so; the output is in
   `.git/senior-mode/probe.log`. The date of the last pass is in `.git/senior-mode/probe`. The probe is
   stopped after 5 minutes (`SENIOR_MODE_PROBE_TIMEOUT`, in seconds), on every platform: a probe that
-  does not answer counts as failed. Under another `agent.command` none of this runs: those hooks do
+  does not answer counts as failed. Where `setsid` exists it runs in a process group of its own, killed
+  with everything it started on a timeout, Ctrl-C or TERM, which also remove its worktree. A failed
+  probe is recorded in `.git/senior-mode/probe-failed`; for the next hour
+  (`SENIOR_MODE_PROBE_RETRY`, in seconds) `run` refuses to start without starting another probe
+  session, then probes again. Under another `agent.command` none of this runs: those hooks do
   not hold there anyway.
 - **Proof:** a session counts as delivered only if a pull request is open for its branch.
 - **Merge** ([ADR 0008](../adr/0008-merge-off-by-default.md)): off by default. With

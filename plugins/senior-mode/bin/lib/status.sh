@@ -616,6 +616,33 @@ retro_runs() {
     escalated: [$l[] | select(.escalated == true or .outcome == "escalated") | {ticket, reason, at}] | sort_by(.ticket)}'
 }
 
+# The tokens of the sessions of the period (#299), from the ledger the session scripts append to
+# (<git common dir>/senior-mode/usage.jsonl, one line per session and model), per ticket and role, with an
+# estimated USD equivalent at the public API prices of lib/prices.json. A model that table does not price
+# keeps its tokens and is listed as unpriced; a date suffix (claude-haiku-4-5-20251001) prices as its model.
+# shellcheck disable=SC2016 # a jq program, not shell
+USAGE_RETRO_JQ='$prices[0] as $p
+  | def price($m): [$p.perMTok | to_entries[]
+      | select(.key as $k | $m == $k or (($m | startswith($k + "-")) and ($m[($k | length) + 1:] | test("^[0-9]{8}$")))) | .value] | first;
+  def r4: if . == null then null else . * 10000 | round / 10000 end;
+  def total: reduce .[] as $l ({input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, usd: null, unpriced: []};
+      .input += $l.input | .output += $l.output | .cacheRead += $l.cacheRead | .cacheWrite5m += $l.cacheWrite5m | .cacheWrite1h += $l.cacheWrite1h
+      | price($l.model) as $q
+      | if $q == null then .unpriced = (.unpriced + [$l.model] | unique)
+        else .usd = (.usd // 0) + ($l.input * $q.input + $l.output * $q.output + $l.cacheRead * $q.cacheRead
+          + $l.cacheWrite5m * $q.cacheWrite5m + $l.cacheWrite1h * $q.cacheWrite1h) / 1000000 end)
+    | .usd |= r4;
+  [.[] | select(.at >= $since and .at < $until)] as $l
+  | {prices: {date: $p.date, source: $p.source},
+     tickets: [$l | group_by(.ticket)[] | {ticket: .[0].ticket} + total + {roles: [group_by(.role)[] | {role: .[0].role} + total]}],
+     total: ($l | total)}'
+
+retro_usage() {
+  local f=$1/senior-mode/usage.jsonl
+  { [ ! -f "$f" ] || jq -cR 'fromjson? | select(type == "object" and (.at | type) == "string")' "$f" 2>/dev/null || true; } |
+    jq -sc --slurpfile prices "$LIB/prices.json" --arg since "$2" --arg until "${3:-9999}" "$USAGE_RETRO_JQ"
+}
+
 # The failed results `check` recorded since the epoch $1 (and before $2, when given), in this repository and its worktrees (ADR 0006).
 retro_checks() {
   local common d f mt
@@ -689,7 +716,14 @@ RETRO_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" el
   sec("Check failures (\(.checkFailures | length))"; [.checkFailures[] | "\(.commit): \(.description)"]),
   sec("Repository hygiene (\(.hygiene | hygiene_lines | length))"; .hygiene | hygiene_lines),
   sec("Estimates against reality"; [.sizes[] | select(.over) | "#\(.number) \(.size): \(.lines) lines, the size allows about \(.limit)"]
-    + (if (.sizes | length) > 0 and all(.sizes[]; .over | not) then ["all within their size"] else [] end))'
+    + (if (.sizes | length) > 0 and all(.sizes[]; .over | not) then ["all within their size"] else [] end)),
+  (def tok: if . >= 1000000 then "\(. / 100000 | round / 10)M" elif . >= 1000 then "\(. / 100 | round / 10)k" else tostring end;
+   def cost: (if .usd == null then "no price" elif .usd > 0 and .usd < 0.01 then "<$0.01" else "$\(.usd * 100 | round / 100)" end)
+     + (if .usd != null and (.unpriced | length) > 0 then " (no price for \(.unpriced | join(", ")))" else "" end);
+   def line: "input \(.input | tok), output \(.output | tok), cache read \(.cacheRead | tok), cache write \(.cacheWrite5m + .cacheWrite1h | tok) · \(cost)";
+   sec("Token use (estimated at the API prices of \(.usage.prices.date))";
+     [.usage.tickets[] | (if .ticket == null then "run" else "#\(.ticket)" end) as $t | .roles[] | "\($t) \(.role): \(line)"]
+     + (if (.usage.tickets | length) > 0 then ["total: \(.usage.total | line)"] else [] end)))'
 
 # senior-mode retro [--since <dur> | --iteration [<name>]] [--json]
 # The facts of the weekly review (default period: 7 days; --iteration: the current iteration, or the one named, of the
@@ -697,7 +731,7 @@ RETRO_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" el
 # publishes (#177); the skill turns the facts into proposals.
 retro() {
   local json=false since="" iteration="" iter="" root now_s now since_s since_iso until_iso="" data board history runs checks slug hygiene
-  local head drift health title first last
+  local head drift health title first last usage
   while [ $# -gt 0 ]; do
     case $1 in
       --json) json=true ;;
@@ -749,7 +783,8 @@ retro() {
   data=$(jq -c --argjson h "$history" --argjson runs "$runs" --argjson checks "$checks" --arg now "$now" --arg since "$since_iso" \
     --arg until "${until_iso:-9999}" --argjson iteration "$(jq -nc --arg t "${title:-}" 'if $t == "" then null else $t end')" \
     --arg repo "$slug" "$RETRO_JQ" <<<"$board") || die "could not build the retro"
-  data=$(jq -c --argjson h "$hygiene" '. + {hygiene: $h}' <<<"$data")
+  usage=$(retro_usage "$root" "$since_iso" "$until_iso") || die "could not read the token ledger"
+  data=$(jq -c --argjson h "$hygiene" --argjson u "$usage" '. + {hygiene: $h, usage: $u}' <<<"$data")
   if [ "$json" = true ]; then
     printf '%s\n' "$data"
   else

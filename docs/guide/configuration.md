@@ -48,7 +48,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `wip` | `1` | Open tickets In progress at once: `senior-mode start` refuses another and names the one to finish first; `status` shows the count when it is over. A [run](autonomy.md#run) is bounded by `autonomy.parallel` instead, and is the only caller that skips `wip`: it proves itself with a token, so setting `SENIOR_MODE_RUN=1` by hand does not |
 | `hygiene.days` | `14` | Age in days (a positive whole number). [`senior-mode clean`](autonomy.md#hygiene) removes the remote branch of a merged or closed pull request and the run files under `.git/senior-mode` older than that (`--days` overrides it). The hygiene report of `senior-mode status` and `retro` ([commands](commands.md)) calls an open pull request with no activity for that long stale (reported, never acted on), and `status --fix` only deletes a branch whose last commit, or moves a ticket whose last activity, is older |
 | `autonomy.maxTickets` | `3` | Tickets per [run](autonomy.md#run) |
-| `autonomy.parallel` | `1` | Tickets a run works on at once; those whose [Paths](autonomy.md#run) overlap never run together, and one with no Paths runs alone |
+| `autonomy.parallel` | `1` | Tickets a run works on at once, and the number of [session slots](autonomy.md#session-slots); those whose [Paths](autonomy.md#run) overlap never run together, and one with no Paths runs alone |
 | `limits.prLines` | `400` | A positive whole number of lines. `senior-mode pick` batches Ready S tickets whose Paths overlap, at most `prLines` / 50 per batch (3 at most; an S is about 50 lines), see [batches](autonomy.md#run) |
 | `autonomy.maxConsecutiveFailures` | `2` | Failed tickets in a row after which a run starts no new one |
 | `autonomy.merge` | `false` | Whether a run merges the pull requests that pass every bound |
@@ -62,10 +62,11 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `serve.breakerCooldown` | `3600` | Seconds `serve` stays paused after `autonomy.maxConsecutiveFailures` failures in a row; `senior-mode serve --resume` ends it sooner |
 | `agent.command` | `claude` | The headless CLI `run` starts for each ticket and for the docs session, on `PATH` or in `~/.local/bin`; the guards of senior-mode do not hold under another CLI until it supports them (see [Run](autonomy.md#run)) |
 | `e2e.slots` | `2` | End-to-end suites that may run at once on the machine (the check named `e2e`) |
+| `slot` | `""` | A shell command that derives the environment of a [session slot](autonomy.md#session-slots) from `SENIOR_MODE_SLOT`: it prints `KEY=VALUE` lines (a `PORT`, a `DATABASE_URL`, a cache directory) that are exported into the session. Empty: the session only gets `SENIOR_MODE_SLOT`. Names starting with `SENIOR_MODE_` are refused |
 
 `senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`). The optional keys
-(`protected`, `secrets`, `envGuard.forbidden`, `review.sections`, `docs.extra`, `github.protection`)
-print `[]` (an empty line for `github.protection`) when absent; a key the plugin does not know is an error.
+(`protected`, `secrets`, `envGuard.forbidden`, `review.sections`, `docs.extra`, `github.protection`, `slot`)
+print `[]` (an empty line for `github.protection` and `slot`) when absent; a key the plugin does not know is an error.
 
 ## Project review sections
 

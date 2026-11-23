@@ -118,6 +118,7 @@ if [[ $PWD == */senior-mode/worktrees/*/run-docs-* ]] && [ "$(cat "$FIX/docs" 2>
 fi
 n=$(sed -nE 's#.*/senior-mode/worktrees/[^/]+/([0-9]+)$#\1#p' <<<"$PWD")
 [ -n "$n" ] || exit 0
+echo "$n ${SENIOR_MODE_SLOT:-none} ${PORT:-none}" >>"$FIX/slot-seen"
 fx=$FIX/claude-$n-$model
 [ -f "$fx" ] || exit 1
 echo "start $n" >>"$FIX/trace"
@@ -226,6 +227,8 @@ run_dir() { sed -nE 's/^run: .*logs in (.*)$/\1/p' "$work/out" | head -n 1; }
 # is not green; #12 fails on Sonnet and on Opus.
 export PATH="$work/tmux:$PATH"
 config '{"maxTickets": 3, "parallel": 2, "merge": true}' '{"protection": "ruleset"}'
+jq '.slot = "echo PORT=$((4000 + SENIOR_MODE_SLOT))"' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+git -C "$repo" -c user.name=t -c user.email=t@t commit -qam "chore: slot command" && git -C "$repo" push -q origin main
 board 10 '["type:bug"]' 11 '[]' 12 '[]' 13 '[]'
 session 10-sonnet delivered pr
 echo "$green" >"$FIX/status-10"
@@ -267,6 +270,8 @@ grep -q 'Failed.*#12.*still cannot build' "$work/out" || fail "A: report misses 
 outcome_is 10
 outcome_is 11
 outcome_is 12
+# #153: every session sees a slot of 1..2 and the port its slot command derives.
+awk '$2 !~ /^[12]$/ || $3 != 4000 + $2 {bad = 1} END {exit bad}' "$FIX/slot-seen" || fail "A: a session without its slot and port: $(cat "$FIX/slot-seen")"
 git -C "$repo" status --porcelain | grep -q . && fail "A: run left the checkout dirty: $(git -C "$repo" status --porcelain)"
 
 # B: no tmux, merging off (default), no escalation, circuit breaker at one failure. #20 says

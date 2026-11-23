@@ -3409,7 +3409,10 @@ run_start() {
     RUN_WT[$m]=${RUN_WT[$n]}
     (item_set "$m" Status "In progress") >/dev/null || echo "#$m: could not set the Status In progress" >&2
   done
+  rm -f "$RUN_DIR/$n.batch"
   if [ -n "${RUN_BATCH[$n]:-}" ]; then
+    # The tickets of the batch, for serve_recover to find them after a restart.
+    echo "${RUN_BATCH[$n]}" >"$RUN_DIR/$n.batch"
     run_prompt_batch "$n" "${RUN_BRANCH[$n]}" "${RUN_BATCH[$n]}" >"$RUN_DIR/$n.prompt"
   else
     run_prompt "$n" "${RUN_TITLE[$n]}" "${RUN_BRANCH[$n]}" >"$RUN_DIR/$n.prompt"
@@ -4189,7 +4192,7 @@ serve_ready() {
 # needs-human instead. Left alone: a session still alive, a ticket whose end serve already read (its <n>.json is
 # newer than its <n>.sh), a ticket with needs-human. The recoveries are counted in <n>.recovered.
 serve_recover() {
-  local f n data count
+  local f n data count m
   local -a cand=()
   for f in "$SERVE_DIR"/*.sh; do
     [ -e "$f" ] || continue
@@ -4214,10 +4217,15 @@ serve_recover() {
     if [ "$count" -ge "$RUN_MAXFAIL" ]; then
       echo "serve: #$n has lost its session $count times; needs-human"
       notify needs-human "$n" "serve found the ticket In progress with no live session $count times (autonomy.maxConsecutiveFailures); the session files are in $SERVE_DIR"
-    elif (item_set "$n" Status Ready) >/dev/null; then
-      echo "serve: #$n was In progress with no live session; back to Ready (recovery $count of $((RUN_MAXFAIL - 1)))"
     else
-      echo "#$n: could not set the Status back to Ready" >&2
+      # A lost batch session puts every ticket of the batch back.
+      for m in $(cat "$SERVE_DIR/$n.batch" 2>/dev/null || echo "$n"); do
+        if (item_set "$m" Status Ready) >/dev/null; then
+          echo "serve: #$m was In progress with no live session; back to Ready (recovery $count of $((RUN_MAXFAIL - 1)))"
+        else
+          echo "#$m: could not set the Status back to Ready" >&2
+        fi
+      done
     fi
   done
 }

@@ -18,6 +18,11 @@ case "$*" in
   "api graphql --input -")
     q=$(cat)
     if grep -q closingIssuesReferences <<<"$q"; then cat "$FIX/assoc" 2>/dev/null || exit 1
+    elif grep -q 'c0: object(oid:' <<<"$q"; then
+      # The spec drift (#331): no commit belongs to a pull request, unless $FIX/spec-pr-body is set (every commit does).
+      jq -r .query <<<"$q" | grep -oE 'c[0-9]+: ' | jq -nRc --arg b "$(cat "$FIX/spec-pr-body" 2>/dev/null)" '[inputs | rtrimstr(": ")]
+        | map({key: ., value: {associatedPullRequests: {nodes: (if $b == "" then [] else [{number: 5, state: "MERGED", body: $b}] end)}}})
+        | from_entries | {data: {repository: .}}'
     else cat "$FIX/item" 2>/dev/null || exit 1; fi ;;
   "api repos/acme/app/commits/"*"/status --jq "*) all=$*; jq -r "${all#*--jq }" "$FIX/status" 2>/dev/null || true ;;
 esac
@@ -267,6 +272,15 @@ echo b >"$repo/src/b.txt"
 commit -m "feat: b" -m "Spec-Unchanged: internal only"
 run check || fail "check fails: $(cat "$work/out")"
 grep -q "^warn  spec drift: docs/specs/0001-alpha.md: 1 commit " "$work/out" || fail "a Spec-Unchanged commit is counted: $(cat "$work/out")"
+# The Spec-Unchanged line of the body of the pull request of a commit clears it, whatever its subject (#331).
+echo c >"$repo/src/c.txt"
+commit -m "feat: c"
+run check || fail "check fails: $(cat "$work/out")"
+grep -q "^warn  spec drift: docs/specs/0001-alpha.md: 2 commits " "$work/out" || fail "the commit without a pull request is not counted: $(cat "$work/out")"
+printf 'Intro\n\nSpec-Unchanged: no behaviour change\n' >"$FIX/spec-pr-body"
+run check || fail "check fails: $(cat "$work/out")"
+grep -q "spec drift" "$work/out" && fail "commits whose pull request has Spec-Unchanged are counted: $(cat "$work/out")"
+rm -f "$FIX/spec-pr-body"
 config '{"audit":false,"checks":[{"name":"bad","run":"false"}]}'
 run check && fail "a failing check passes"
 grep -q "^warn  spec drift" "$work/out" || fail "the warning is lost when a check fails: $(cat "$work/out")"

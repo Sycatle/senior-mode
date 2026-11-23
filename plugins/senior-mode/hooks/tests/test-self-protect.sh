@@ -329,7 +329,6 @@ for c in \
   'git prune --expire=now' \
   'git prune --expire now' \
   'git prune --exp now' \
-  'git prune -n --expire=now' \
   'sudo git gc --prune=now'; do
   bash_ deny "$c"
 done
@@ -354,6 +353,27 @@ for c in \
   'echo "git update-ref -d refs/heads/x"'; do
   bash_ allow "$c"
 done
+# Review of #244: recovery operations in the git dir of a main checkout are not guarded files; a dry run discards nothing.
+for c in \
+  'rm .git/index.lock' \
+  'rm -f .git/index.lock' \
+  'rm -rf .git/rebase-merge' \
+  'rm -rf .git/rebase-apply' \
+  'rm .git/MERGE_HEAD' \
+  'rm .git/CHERRY_PICK_HEAD' \
+  'rm -rf .git/senior-mode/runs/old' \
+  'echo x > .git/senior-mode/probe' \
+  'git reflog expire --dry-run --all' \
+  'git reflog expire --dry --all' \
+  'git reflog expire --all --dry-run' \
+  'git prune -n --expire=now' \
+  'git prune --dry-run --expire now' \
+  'git prune -nv --expire=now'; do
+  bash_ allow "$c"
+done
+bash_ deny 'rm .git/index.lock' "$work/wt"
+bash_ deny 'rm .git/HEAD'
+bash_ deny 'git reflog expire --all'
 # A cd earlier in the command moves where the relative paths that follow point.
 for c in \
   'cd .git && rm -rf hooks' \

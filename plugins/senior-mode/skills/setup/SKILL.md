@@ -23,7 +23,7 @@ Wording, follow-ups, status line, no human to ask: `${CLAUDE_SKILL_DIR}/referenc
 
 Run `senior-mode setup github --ci <local|actions>`. It:
 
-- finds the Project or copies the template board, links it, ensures its fields: see "Board" in the reference;
+- finds the Project or copies the template board, links it, ensures its fields (Iteration, Start, End too): see "Board" in the reference;
 - creates the labels `needs-human`, `needs-info`, `blocked`, `security` (and `type:*` on a personal account);
 - allows rebase merges only, deletes merged branches;
 - creates or updates a ruleset `senior-mode` on the default branch: pull requests only, rebase,

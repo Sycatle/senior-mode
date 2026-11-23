@@ -36,7 +36,13 @@ arg() { local prev=""; for a in "$@"; do [ "$prev" = "$FLAG" ] && echo "$a"; pre
 case "$*" in
   "api graphql --input -")
     q=$(cat)
-    if [[ $q == *projectItems* ]]; then
+    if [[ $q == *archiveProjectV2Item* ]]; then
+      [ -z "${ARCHIVE_FAIL:-}" ] || { echo "HTTP 403: forbidden" >&2; exit 1; }
+      echo "$q" >>"$FIX/archived"
+      echo '{"data": {"archiveProjectV2Item": {"item": {"id": "x"}}}}'
+    elif [[ $q == *ProjectV2IterationField* ]]; then
+      cat "$FIX/iteration.json"
+    elif [[ $q == *projectItems* ]]; then
       n=$(jq -r '.variables.number' <<<"$q")
       s=$(cat "$FIX/itemstatus-$n" 2>/dev/null || echo "In progress")
       jq -nc --arg s "$s" '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"},
@@ -1000,6 +1006,60 @@ for n in 411 412; do
   jq -e '.outcome == "failed" and .escalated == true' "$repo/.git/senior-mode/runs/"*/$n.json >/dev/null || fail "W: #$n not recorded as failed on Opus"
   grep -q "issues/$n/labels" "$GH_LOG" || fail "W: #$n not labelled needs-human"
 done
+
+# X: Done items closed more than board.archiveAfterDays ago (default 14) are archived when a run starts and listed (#179);
+# an open item, an item not Done, one closed recently and one already archived are left alone.
+config '{}'
+board
+jq -c --arg old "$(date -u -d '@'$(($(date +%s) - 20 * 86400)) +%Y-%m-%dT%H:%M:%SZ)" --arg new "$(date -u -d '@'$(($(date +%s) - 3 * 86400)) +%Y-%m-%dT%H:%M:%SZ)" '
+  def it($n; $s; $st; $at; $arch): {id: "PVTI_\($n)", isArchived: $arch, fieldValues: {nodes: [{name: $s, field: {name: "Status"}}]},
+    content: {number: $n, title: "Ticket \($n)", url: "u", state: $st, closedAt: $at, labels: {nodes: []}, milestone: null, blockedBy: {nodes: []}}};
+  .data.node.items.nodes += [it(60; "Done"; "CLOSED"; $old; false), it(61; "Done"; "CLOSED"; $new; false), it(62; "Done"; "OPEN"; null; false),
+    it(63; "In review"; "CLOSED"; $old; false), it(64; "Done"; "CLOSED"; $old; true)]' "$FIX/board.json" >"$FIX/b" && mv "$FIX/b" "$FIX/board.json"
+rm -f "$FIX/archived"
+run || fail "X: run failed: $(cat "$work/out")"
+[ "$(grep -c '^Archived: ' "$work/out")" -eq 1 ] || fail "X: not one item listed: $(cat "$work/out")"
+grep -q '^Archived: #60 Ticket 60 (Done, closed more than 14 days ago)$' "$work/out" ||
+  fail "X: archived items not listed: $(cat "$work/out")"
+[ "$(grep -c archiveProjectV2Item "$FIX/archived")" -eq 1 ] || fail "X: not one item archived: $(cat "$FIX/archived")"
+jq -e '.variables | .project == "PVT_1" and .item == "PVTI_60"' "$FIX/archived" >/dev/null || fail "X: wrong item archived: $(cat "$FIX/archived")"
+grep -q 'No Ready ticket' "$work/out" || fail "X: the run did not go on after archiving: $(cat "$work/out")"
+jq '.board.archiveAfterDays = 2' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+rm -f "$FIX/archived"
+run || fail "X: run with archiveAfterDays 2 failed: $(cat "$work/out")"
+grep -q '^Archived: #61 .*closed more than 2 days ago' "$work/out" || fail "X: board.archiveAfterDays not read: $(cat "$work/out")"
+ARCHIVE_FAIL=1 run || fail "X: a refused archive stops the run: $(cat "$work/out")"
+grep -q 'could not archive #60' "$work/out" || fail "X: a refused archive is not said: $(cat "$work/out")"
+grep -q 'No Ready ticket' "$work/out" || fail "X: the run stopped after a refused archive"
+jq '.board.archiveAfterDays = "soon"' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+run && fail "X: archiveAfterDays soon accepted"
+grep -q 'board.archiveAfterDays must be a positive whole number' "$work/out" || fail "X: bad archiveAfterDays not explained: $(cat "$work/out")"
+git -C "$repo" checkout -q -- .claude/senior-mode.json
+
+# Y: a ticket starts in the current iteration with Start today, and its merge sets End (#180).
+today=$(date -u +%Y-%m-%d)
+fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2", "In review": "o3", "Backlog": "o0", "Done": "o4"}},
+  "Iteration": {"id": "F_I", "iteration": true}, "Start": {"id": "F_St", "date": true}, "End": {"id": "F_E", "date": true}}'
+jq -nc --arg a "$(date -u -d "@$(($(date +%s) - 3 * 86400))" +%Y-%m-%d)" '{data: {node: {field: {id: "F_I", configuration: {duration: 14, completedIterations: [],
+  iterations: [{id: "it7", title: "Iteration 7", startDate: $a, duration: 14}]}}}}}' >"$FIX/iteration.json"
+config '{"merge": true}' '{"protection": "ruleset"}'
+board 70 '[]'
+session 70-sonnet delivered pr
+echo "$green" >"$FIX/status-70"
+run || fail "Y: run failed: $(cat "$work/out")"
+grep -q "item-edit.*--field-id F_I --iteration-id it7" "$GH_LOG" || fail "Y: no iteration at the start: $(grep item-edit "$GH_LOG")"
+grep -q "item-edit.*--field-id F_St --date $today" "$GH_LOG" || fail "Y: no Start at the start"
+grep -q "item-edit.*--field-id F_E --date $today" "$GH_LOG" || fail "Y: no End after the merge: $(grep item-edit "$GH_LOG")"
+[ "$(grep -n -- '--single-select-option-id o4' "$GH_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n -- '--field-id F_E' "$GH_LOG" | head -1 | cut -d: -f1)" ] ||
+  fail "Y: End set before Done"
+grep -c -- '--field-id F_E' "$GH_LOG" | grep -qx 1 || fail "Y: End not set once"
+# Not merged: no End.
+config '{}'
+board 71 '[]'
+session 71-sonnet delivered pr
+run || fail "Y: run without merge failed: $(cat "$work/out")"
+grep -q -- '--field-id F_E' "$GH_LOG" && fail "Y: End set without a merge"
+fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2", "In review": "o3", "Backlog": "o0", "Done": "o4"}}}'
 
 # E: nothing Ready, bad arguments.
 config '{}'

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Status
 
-A cheap read of the board, in the project's language. Nothing here edits anything.
+A cheap read of the board, in the project's language. Nothing here edits anything (`--publish` posts the health as a Project status update; only on request).
 
 ## Run
 

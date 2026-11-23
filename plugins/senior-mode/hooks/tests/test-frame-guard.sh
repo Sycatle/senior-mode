@@ -94,12 +94,12 @@ edit deny s8 "$work/repo-frame-x/docs/../src/app.js" Write "" "path escaping doc
 edit deny s8 "$work/elsewhere/docs/specs/12-login.md" Write "" "docs/ outside every worktree of the repository"
 dir=$work/repo-frame-x edit allow s8 "$work/repo-frame-x/docs/specs/12-login.md" Write "" "spec written with the worktree as cwd"
 dir=$work/repo-frame-x edit deny s8 "$work/repo-frame-x/src/app.js" Write "" "code written with the worktree as cwd"
-# #224: the framing worktree is under the git dir, <git dir>/senior-mode/worktrees/frame-<slug>.
-fw=$repo/.git/senior-mode/worktrees/frame-y
+# #224: the framing worktree is under the data dir, $XDG_DATA_HOME/senior-mode/worktrees/<repo>-<hash>/frame-<slug>.
+fw=$work/xdg/senior-mode/worktrees/repo-0a1b2c3d/frame-y
 git -C "$repo" worktree add -q -b docs/y "$fw"
-edit allow s8 "$fw/docs/specs/12-login.md" Write "" "spec written in a framing worktree under the git dir"
-edit deny s8 "$fw/src/app.js" Write "" "code written in a framing worktree under the git dir"
-dir=$fw edit allow s8 "$fw/docs/specs/12-login.md" Write "" "spec written with a git dir worktree as cwd"
+edit allow s8 "$fw/docs/specs/12-login.md" Write "" "spec written in a framing worktree under the data dir"
+edit deny s8 "$fw/src/app.js" Write "" "code written in a framing worktree under the data dir"
+dir=$fw edit allow s8 "$fw/docs/specs/12-login.md" Write "" "spec written with a data dir worktree as cwd"
 
 dir=$bare typed s6 senior-mode:frame
 dir=$bare edit allow s6 "$bare/src/app.js" "" "" "repository without senior-mode config"

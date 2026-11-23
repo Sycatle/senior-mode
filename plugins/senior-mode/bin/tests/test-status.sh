@@ -245,12 +245,14 @@ run status --json --since 7d || fail "status --json with a local branch failed: 
 git -C "$repo" branch -q -D feat/21-local-only
 # --fix sets the closed ones Done and leaves the rest, saying why.
 cfg_fields='{"project": {"id": "PVT_1", "owner": "acme", "number": 3, "fields": {"Status": {"id": "F_S",
-  "options": {"Backlog": "o0", "In review": "o3", "Done": "o4"}}}}}'
+  "options": {"Backlog": "o0", "Ready": "o1", "In review": "o3", "Done": "o4"}}}}}'
 echo "$cfg_fields" >"$repo/.claude/senior-mode.json"
 run status --fix --since 7d || fail "status --fix failed: $(cat "$work/err")"
 [ "$(grep -c 'item-edit.*--single-select-option-id o4' "$GH_LOG")" -eq 2 ] || fail "--fix edits: $(cat "$GH_LOG")"
 [ "$(grep -cE 'issues/(24|26) ' "$GH_LOG")" -eq 2 ] || fail "--fix did not set #24 and #26: $(cat "$GH_LOG")"
-grep -qE 'issues/2[15]' "$GH_LOG" && fail "--fix touched an open ticket: $(cat "$GH_LOG")"
+# #21 is also In progress with no worktree: the hygiene repair moves it to Ready, the drift repair leaves it.
+grep -qE 'issues/25 ' "$GH_LOG" && fail "--fix touched an open ticket: $(cat "$GH_LOG")"
+[ "$(grep -c 'item-edit.*--single-select-option-id o1' "$GH_LOG")" -eq 1 ] || fail "--fix did not move #21 back to Ready only: $(cat "$GH_LOG")"
 grep -q '^fixed: #24 .*Done' "$work/out" || fail "--fix does not say what it fixed: $(cat "$work/out")"
 grep -q '^left: #25 .*human' "$work/out" || fail "--fix does not say why #25 is left: $(cat "$work/out")"
 grep -q '^left: #21 .*human' "$work/out" || fail "--fix does not say why #21 is left: $(cat "$work/out")"

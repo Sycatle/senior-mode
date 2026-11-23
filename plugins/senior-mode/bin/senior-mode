@@ -11,6 +11,7 @@ DEFAULTS='{
   "e2e": { "slots": 2 },
   "limits": { "prLines": 400 },
   "wip": 1,
+  "hygiene": { "days": 14 },
   "protected": [],
   "secrets": [],
   "audit": true,
@@ -1723,8 +1724,11 @@ BOARD_QUERY='query($project: ID!, $owner: String!, $name: String!, $after: Strin
         milestone { title dueOn } blockedBy(first: 20) { nodes { number state } } } } } } } }
   repository(owner: $owner, name: $name) @include(if: $repo) {
     latestRelease { tagName publishedAt }
-    branches: refs(refPrefix: "refs/heads/", first: 100) { nodes { name } }
-    pullRequests(states: OPEN, first: 50) { nodes { number title url isDraft headRefName labels(first: 10) { nodes { name } }
+    defaultBranchRef { name }
+    branches: refs(refPrefix: "refs/heads/", first: 100) { pageInfo { hasNextPage endCursor }
+      nodes { name associatedPullRequests(first: 1) { totalCount } } }
+    pullRequests(states: OPEN, first: 50) { pageInfo { hasNextPage endCursor }
+      nodes { number title url isDraft headRefName updatedAt body labels(first: 10) { nodes { name } }
       commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 30) { nodes { __typename
         ... on StatusContext { context state } ... on CheckRun { name conclusion } } } } } } } } }
     closed: issues(states: CLOSED, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title closedAt stateReason } }
@@ -1732,12 +1736,57 @@ BOARD_QUERY='query($project: ID!, $owner: String!, $name: String!, $after: Strin
   }
 }'
 
+# The pages of branches and open pull requests the board query leaves out, for the hygiene report: it
+# judges a branch by its pull requests and a ticket by its pull request, so it needs every one.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+HYGIENE_MORE_QUERY='query($owner: String!, $name: String!, $prs: Boolean!, $branches: Boolean!, $prsAfter: String, $branchesAfter: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: OPEN, first: 100, after: $prsAfter) @include(if: $prs) { pageInfo { hasNextPage endCursor }
+      nodes { number title headRefName updatedAt body } }
+    branches: refs(refPrefix: "refs/heads/", first: 100, after: $branchesAfter) @include(if: $branches) { pageInfo { hasNextPage endCursor }
+      nodes { name associatedPullRequests(first: 1) { totalCount } } }
+  }
+}'
+
+# How the hygiene report keeps a pull request and a branch.
+HYGIENE_NODES='def hpr: {number, title, branch: .headRefName, updatedAt, body};
+  def hbr: {name, prs: .associatedPullRequests.totalCount};
+  def more($p): if $p.hasNextPage then $p.endCursor else null end;'
+
+# Reads the pages of open pull requests and branches after the first one (in $1, a board_data result with
+# its `hygiene` cursors) and returns the result with the whole lists.
+# shellcheck disable=SC2016 # a jq program, not shell
+board_more() {
+  local data=$1 slug after_prs after_branches page count=0 err
+  slug=$(repo_slug)
+  while :; do
+    after_prs=$(jq -r '.hygiene.prsMore // empty' <<<"$data")
+    after_branches=$(jq -r '.hygiene.branchesMore // empty' <<<"$data")
+    [ -n "$after_prs$after_branches" ] || break
+    count=$((count + 1))
+    [ "$count" -le 20 ] || die "more than 2000 open pull requests or branches: cannot judge the repository hygiene"
+    page=$(jq -nc --arg q "$HYGIENE_MORE_QUERY" --arg o "${slug%%/*}" --arg n "${slug#*/}" --arg p "$after_prs" --arg b "$after_branches" \
+      '{query: $q, variables: ({owner: $o, name: $n, prs: ($p != ""), branches: ($b != "")}
+      + (if $p == "" then {} else {prsAfter: $p} end) + (if $b == "" then {} else {branchesAfter: $b} end))}' | gh_retry api graphql --input -) ||
+      die "cannot read the pull requests and branches from GitHub"
+    err=$(jq -r '.errors[0].message // empty' <<<"$page" 2>/dev/null) || die "GitHub answered something that is not JSON"
+    [ -z "$err" ] || die "GitHub refused the pull request query: $err"
+    data=$(jq -c --argjson page "$page" "$HYGIENE_NODES"'$page.data.repository as $r | .hygiene as $h
+      | .hygiene.prs += [$r.pullRequests.nodes[]? | hpr] | .hygiene.branches += [$r.branches.nodes[]? | hbr]
+      | .hygiene.prsMore = (if $r.pullRequests then more($r.pullRequests.pageInfo) else null end)
+      | .hygiene.branchesMore = (if $r.branches then more($r.branches.pageInfo) else null end)' <<<"$data") ||
+      die "could not read the pull requests and branches"
+  done
+  printf '%s\n' "$data"
+}
+
 # Prints {items, prs, closed, merged, release}: tickets with their board fields, labels, milestone and
 # open blockers; open pull requests with their failing statuses; recent closed issues and merged pull
 # requests; the latest release. The last four are empty unless $1 is true.
 # shellcheck disable=SC2016 # a jq program, not shell
 board_data() {
-  local with_repo=${1:-false} file project slug after="" page pages="[]" more=true count=0 err
+  local with_repo=${1:-false} repo file project slug after="" page pages="[]" more=true count=0 err data
+  repo=$with_repo
   file=$(config_file)
   project=$(jq -r '.project.id // empty' "$file")
   [ -n "$project" ] || die "no Project in .claude/senior-mode.json; run /senior-mode:setup"
@@ -1756,7 +1805,7 @@ board_data() {
     count=$((count + 1))
     [ "$count" -lt 20 ] || break
   done
-  jq -c 'def single($f): [.fieldValues.nodes[] | select(.field.name == $f) | .name][0];
+  data=$(jq -c "$HYGIENE_NODES"'def single($f): [.fieldValues.nodes[] | select(.field.name == $f) | .name][0];
     def failing: [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
       | select((.state // "") | IN("FAILURE", "ERROR")) // select((.conclusion // "") | IN("FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE"))
       | .context // .name];
@@ -1768,9 +1817,13 @@ board_data() {
            blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number]}],
        prs: [$r.pullRequests.nodes[]? | {number, title, url, branch: .headRefName, labels: [.labels.nodes[].name], failing: failing}],
        branches: [$r.branches.nodes[]?.name],
+       hygiene: {base: $r.defaultBranchRef.name, prs: [$r.pullRequests.nodes[]? | hpr], branches: [$r.branches.nodes[]? | hbr],
+         prsMore: more($r.pullRequests.pageInfo // {}), branchesMore: more($r.branches.pageInfo // {})},
        closed: [$r.closed.nodes[]? | {number, title, closedAt, reason: .stateReason}],
        merged: [$r.merged.nodes[]? | {number, title, mergedAt}],
-       release: ($r.latestRelease | if . then {tag: .tagName, date: .publishedAt} else null end)}' <<<"$pages"
+       release: ($r.latestRelease | if . then {tag: .tagName, date: .publishedAt} else null end)}' <<<"$pages") ||
+    die "could not read the Project"
+  if [ "$repo" = true ]; then board_more "$data"; else printf '%s\n' "$data"; fi
 }
 
 # The tickets `run` and `next` take (spec 0001 §7): Ready, open, not size L, not blocked (open
@@ -1988,6 +2041,49 @@ iso_time() {
   date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ
 }
 
+# The repository hygiene (#226), from a board_data result: open pull requests with no activity for $days
+# days, remote branches with no pull request at all (the default branch is not one), open pull requests
+# that the body of another one says it supersedes ("Supersedes #12"), tickets In progress with no worktree
+# ($trees maps a ticket number to its worktree) and no open pull request. `hygiene_lines` words them.
+# shellcheck disable=SC2016 # a jq program, not shell
+HYGIENE_DEF='def hygiene($days; $trees; $now):
+    . as $d | ($d.hygiene.prs // []) as $prs
+    | {base: $d.hygiene.base,
+       stale: [$prs[] | select(.updatedAt != null)
+         | ((($now | fromdateiso8601) - (.updatedAt | fromdateiso8601)) / 86400 | floor) as $age
+         | select($age >= $days) | {number, title, days: $age}],
+       branches: [$d.hygiene.branches[]? | select(.name != $d.hygiene.base and .prs == 0) | {name}],
+       superseded: ([$prs[] | . as $p | [(.body // "") | match("supersedes\\s+#([0-9]+)"; "gi") | .captures[0].string | tonumber] | unique[]
+           | . as $m | select($m != $p.number) | {number: $m, by: $p.number}]
+         | group_by(.number) | map(.[0]) | map(. as $s | $s + {title: ([$prs[] | select(.number == $s.number) | .title][0])})
+         | map(select(.title != null))),
+       orphans: [$d.items[] | select(.open and .status == "In progress") | . as $i | select($trees[$i.number | tostring] == null)
+         | select([$prs[].branch] | any(test("^[a-z]+/\($i.number)(-|$)")) | not) | {number, title}]};
+  def hygiene_lines:
+    [(.stale[] | "pull request #\(.number) \(.title): no activity for \(.days) days"),
+     (.branches[] | "branch \(.name): no pull request"),
+     (.superseded[] | "pull request #\(.number) \(.title): superseded by #\(.by), still open"),
+     (.orphans[] | "#\(.number) \(.title): In progress with no worktree and no open pull request")];'
+
+# `hygiene.days` as a positive whole number.
+hygiene_days() {
+  local days
+  days=$(config_get hygiene.days)
+  [[ $days =~ ^[1-9][0-9]*$ ]] || die "hygiene.days must be a positive whole number, not $days"
+  printf '%s\n' "$days"
+}
+
+# The hygiene report as JSON. $1 board_data result, $2 the worktrees of the tickets (`ticket_trees`), $3 now.
+hygiene_report() {
+  jq -c --argjson t "$2" --arg now "$3" --argjson days "$(hygiene_days)" "$HYGIENE_DEF"'hygiene($days; $t; $now)' <<<"$1"
+}
+
+# The worktrees of the tickets of the repository at $1 as a JSON object {"<issue>": "<path>"}.
+ticket_trees() {
+  ticket_worktrees "$1" | jq -Rsc 'split("\n") | map(select(length > 0) | capture("^(?<n>[0-9]+) (?<p>.*)$")) | map({(.n): .p}) | add // {}' ||
+    echo '{}'
+}
+
 # The dashboard as JSON, from board_data; $1 is the start of the period, $2 now, $3 the repository, $locals the
 # local branch names.
 # shellcheck disable=SC2016 # a jq program, not shell
@@ -2033,6 +2129,7 @@ STATUS_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" e
   sec("Blocked or missing information (\(.blocked | length))"; [.blocked[] | ticket + ": " + (.reasons | join(", "))]),
   sec("Waiting for a human (\(.waiting | length))"; [.waiting[] | "\(.kind) #\(.number) \(.title): \(.why)"]),
   (if (.drift | length) > 0 then sec("Board drift (\(.drift | length))"; [.drift[] | ticket + ": " + .why]) else empty end),
+  (if (.hygiene | hygiene_lines | length) > 0 then sec("Hygiene (\(.hygiene | hygiene_lines | length))"; .hygiene | hygiene_lines) else empty end),
   (if .audit then empty else "Dependency audit: off (audit: false)" end),
   sec("Next Ready"; [.next[] | "#\(.number) \(.priority // "no priority") · \(.size // "?") · \(.title)"
     + (if .milestone then " (\(.milestone))" else "" end)]),
@@ -2070,6 +2167,55 @@ status_fix() {
   return "$rc"
 }
 
+# The repairs of `status --fix` for the hygiene report ($1 is the status as JSON), one JSON line each:
+# {kind, id, fixed, line}. A pull request that another says it supersedes is closed with a comment; a remote
+# branch with no pull request is deleted when it has no commit outside the default branch (checked here, at
+# the moment of deleting); a ticket In progress with no worktree and no open pull request goes back to
+# Ready with a comment. A stale pull request is only said. Fails when a repair failed.
+status_hygiene_fix() {
+  local slug base entry n by name title ahead rc=0
+  slug=$(repo_slug)
+  base=$(jq -r '.hygiene.base // empty' <<<"$1")
+  hy_line() { jq -nc --arg k "$1" --arg i "$2" --argjson f "$3" --arg l "$4" '{kind: $k, id: $i, fixed: $f, line: $l}'; }
+  while IFS= read -r entry; do
+    n=$(jq -r .number <<<"$entry") by=$(jq -r .by <<<"$entry") title=$(jq -r .title <<<"$entry")
+    if gh pr close "$n" --comment "Superseded by #$by: its description says it supersedes this pull request." >/dev/null; then
+      hy_line superseded "$n" true "fixed: pull request #$n $title: closed, superseded by #$by"
+    else
+      rc=1
+      hy_line superseded "$n" false "not fixed: pull request #$n $title: could not close it"
+    fi
+  done < <(jq -c '.hygiene.superseded[]' <<<"$1")
+  while IFS= read -r name; do
+    if [ -z "$base" ] || ! ahead=$(gh_retry api "repos/$slug/compare/$base...$name" --jq .ahead_by); then
+      rc=1
+      hy_line branch "$name" false "not fixed: branch $name: could not compare it with ${base:-the default branch}"
+    elif [ "$ahead" != 0 ]; then
+      hy_line branch "$name" false "left: branch $name: $ahead commits outside $base; a human decides whether to open a pull request or delete it"
+    elif gh api -X DELETE "repos/$slug/git/refs/heads/$name" >/dev/null; then
+      hy_line branch "$name" true "fixed: branch $name: deleted, no commit outside $base"
+    else
+      rc=1
+      hy_line branch "$name" false "not fixed: branch $name: could not delete it"
+    fi
+  done < <(jq -r '.hygiene.branches[].name' <<<"$1")
+  while IFS= read -r entry; do
+    n=$(jq -r .number <<<"$entry") title=$(jq -r .title <<<"$entry")
+    if (item_set "$n" Status Ready) >/dev/null &&
+      gh issue comment "$n" --body "Moved back to Ready by \`senior-mode status --fix\`: it was In progress with no worktree and no open pull request." >/dev/null; then
+      hy_line orphan "$n" true "fixed: #$n $title: moved back to Ready"
+    else
+      rc=1
+      hy_line orphan "$n" false "not fixed: #$n $title: could not move it back to Ready"
+    fi
+  done < <(jq -c '.hygiene.orphans[]' <<<"$1")
+  while IFS= read -r entry; do
+    n=$(jq -r .number <<<"$entry") title=$(jq -r .title <<<"$entry")
+    hy_line stale "$n" false "left: pull request #$n $title: stale, a human decides whether to resume or close it"
+  done < <(jq -c '(.hygiene.superseded | map(.number)) as $s | .hygiene.stale[] | select(.number | IN($s[]) | not)' <<<"$1")
+  return "$rc"
+}
+
 # One status report. $1 json|text, $2 --since duration or "", $3 true to move the "last time" mark,
 # $4 true to repair the drift (--fix).
 status_once() {
@@ -2098,19 +2244,24 @@ status_once() {
   out=$(jq -c --arg now "$now" --arg since "$since_iso" --arg repo "$(repo_slug)" --argjson wip "$wip" \
     --argjson audit "$audit" --argjson locals "$locals" "$PICK_DEF$STATUS_JQ" <<<"$data") ||
     die "could not build the status"
-  trees=$(ticket_worktrees "$root" | jq -Rsc 'split("\n") | map(select(length > 0) | capture("^(?<n>[0-9]+) (?<p>.*)$")) | map({(.n): .p}) | add // {}') ||
-    trees='{}'
+  trees=$(ticket_trees "$root")
   out=$(jq -c --argjson t "$trees" '.inProgress |= map(. + {worktree: ($t[.number | tostring])})' <<<"$out")
+  out=$(jq -c --argjson h "$(hygiene_report "$data" "$trees" "$now")" '. + {hygiene: $h}' <<<"$out") || return 1
+  # The report is out before --fix touches anything.
+  [ "$json" = true ] || jq -r --arg head "$head" "$HYGIENE_DEF$STATUS_TEXT_JQ" <<<"$out"
   if [ "$fix" = true ]; then
     results=$(status_fix "$out") || rc=1
     fixed=$(jq -sc '[.[] | select(.fixed)]' <<<"$results")
     lines=$(jq -r '.line' <<<"$results")
     out=$(jq -c --argjson f "$fixed" '. + {fixed: ($f | map({number, title}))}' <<<"$out")
+    results=$(status_hygiene_fix "$out") || rc=1
+    fixed=$(jq -sc '[.[] | select(.fixed) | {kind, id}]' <<<"$results")
+    lines=$(printf '%s\n%s' "$lines" "$(jq -r '.line' <<<"$results")" | sed '/^$/d')
+    out=$(jq -c --argjson f "$fixed" '.hygiene.fixed = $f' <<<"$out")
   fi
   if [ "$json" = true ]; then
     printf '%s\n' "$out"
   else
-    jq -r --arg head "$head" "$STATUS_TEXT_JQ" <<<"$out"
     [ -z "$lines" ] || printf '\n%s\n' "$lines"
   fi
   if [ "$save" = true ]; then
@@ -2275,13 +2426,14 @@ RETRO_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" el
    else "Failed or escalated runs", "  no run logs" end),
   sec("Reopened (\(.reopened | length))"; [.reopened[] | ticket]),
   sec("Check failures (\(.checkFailures | length))"; [.checkFailures[] | "\(.commit): \(.description)"]),
+  sec("Repository hygiene (\(.hygiene | hygiene_lines | length))"; .hygiene | hygiene_lines),
   sec("Estimates against reality"; [.sizes[] | select(.over) | "#\(.number) \(.size): \(.lines) lines, the size allows about \(.limit)"]
     + (if (.sizes | length) > 0 and all(.sizes[]; .over | not) then ["all within their size"] else [] end))'
 
 # senior-mode retro [--since <dur>] [--json]
 # The facts of the weekly review (default period: 7 days). Reads only; the skill turns them into proposals.
 retro() {
-  local json=false since="7d" root now_s now since_s since_iso data history runs checks slug
+  local json=false since="7d" root now_s now since_s since_iso data history runs checks slug hygiene
   while [ $# -gt 0 ]; do
     case $1 in
       --json) json=true ;;
@@ -2311,12 +2463,14 @@ retro() {
     die "GitHub refused the history query: $(jq -r '.errors[0].message' <<<"$history")"
   runs=$(retro_runs "$root" "$since_iso")
   checks=$(retro_checks "$since_s")
+  hygiene=$(hygiene_report "$data" "$(ticket_trees "$(git rev-parse --show-toplevel)")" "$now") || die "could not build the hygiene report"
   data=$(jq -c --argjson h "$history" --argjson runs "$runs" --argjson checks "$checks" --arg now "$now" --arg since "$since_iso" \
     --arg repo "$slug" "$RETRO_JQ" <<<"$data") || die "could not build the retro"
+  data=$(jq -c --argjson h "$hygiene" '. + {hygiene: $h}' <<<"$data")
   if [ "$json" = true ]; then
     printf '%s\n' "$data"
   else
-    jq -r --arg head "Done in the last $since" "$RETRO_TEXT_JQ" <<<"$data"
+    jq -r --arg head "Done in the last $since" "$HYGIENE_DEF$RETRO_TEXT_JQ" <<<"$data"
   fi
 }
 

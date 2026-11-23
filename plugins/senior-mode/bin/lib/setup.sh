@@ -348,12 +348,19 @@ json_update() {
   printf '%s\n' "$new" >"$file"
 }
 
-# Copies a template where nothing exists yet; never replaces a file. Prints what it did.
+# Copies a template where nothing exists yet; never replaces a file. Prints what it did. A template that the
+# project overrides (.claude/senior-mode/overrides/templates/..., #307) is written with its override applied.
 place() { # template destination label
+  local rel
   if [ -e "$2" ]; then echo "$3: kept"; return; fi
   mkdir -p "$(dirname "$2")"
-  cp "$1" "$2"
-  echo "$3: created"
+  if rel=$(override_rel "$1") && override_has "$rel"; then
+    override_content "$rel" >"$2"
+    echo "$3: created (with the project's override)"
+  else
+    cp "$1" "$2"
+    echo "$3: created"
+  fi
 }
 
 # Installs or refreshes one of our scripts in .githooks/ (marked "# senior-mode:" on its second

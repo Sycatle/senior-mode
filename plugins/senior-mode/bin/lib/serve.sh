@@ -864,7 +864,9 @@ serve_review() {
 # status: a reviewer session. Review failure: the ticket session resumes. Review success: merged (the integrator
 # pass), at most one per poll.
 serve_prs() {
-  local data=$1 prs=$2 acted=false t pr sha ref title states review ci old
+  local data=$1 prs=$2 acted=false t pr sha ref title states review ci old gate
+  # The independent review is a locked gate; a profile lifts it only with an accepted ADR (process.gates.review).
+  gate=$(config_get process.gates.review) || gate=true
   while IFS=$'\t' read -r t pr sha ref title; do
     [ -n "$t" ] || continue
     [ "$SERVE_TERM" = false ] || break
@@ -882,6 +884,7 @@ serve_prs() {
     states=$(serve_states "$sha") || continue
     review=$(jq -r '.["senior-mode/review"] // empty' <<<"$states")
     ci=$(jq -r '.["senior-mode/ci"] // empty' <<<"$states")
+    [ -n "$review" ] || [ "$gate" != false ] || [ "$ci" != success ] || review=success
     case $review in
       "") [ "$ci" != success ] || serve_review "$t" "$pr" "$sha" "$ref" ;;
       failure | error) serve_changes "$t" "$pr" "$ref" ;;
@@ -1090,7 +1093,11 @@ serve() {
   root=$(dirname "$common")
   file=$dir/$unit
   case ${1:-} in
-    "") serve_loop ;;
+    "")
+      # The daemon reads the customization from the base branch, never from a pull request's head (config.sh).
+      export SENIOR_MODE_CONFIG_SOURCE=base
+      serve_loop
+      ;;
     --resume)
       if [ -f "$common/senior-mode/serve/paused" ] || [ -f "$common/senior-mode/serve/environment" ]; then
         rm -f "$common/senior-mode/serve/paused" "$common/senior-mode/serve/environment" "$common/senior-mode/serve/trips" \

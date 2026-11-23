@@ -15,6 +15,7 @@ ROUTER
     echo "This repository is not set up for senior-mode; /senior-mode:setup adopts it."
     return 0
   fi
+  overrides_context || true
   branch=$(git symbolic-ref --short -q HEAD) || return 0
   issue=$(sed -nE 's#^[a-z]+/([0-9]+)-.*#\1#p' <<<"$branch")
   [ -n "$issue" ] || return 0
@@ -139,6 +140,7 @@ STATUS_JQ='. as $d | $d.items as $items | {
   drift: drift($d; $locals),
   wip: {limit: $wip, count: ([$items[] | select(.open and .status == "In progress")] | length)},
   audit: $audit,
+  process: $process,
   next: ($d | pick | .[:3] | map({number, title, priority, size, milestone})),
   release: {latest: $d.release, pr: ([$d.prs[] | select(.branch | startswith("release-please")) | {number, title}][0])}
 }'
@@ -163,6 +165,9 @@ STATUS_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" e
       (if (.commits | length) > 5 then "  ... and \((.commits | length) - 5) more" else empty end)]) else empty end),
   (if .specDriftNote then "Spec drift: not checked (\(.specDriftNote))" else empty end),
   (if .audit then empty else "Dependency audit: off (audit: false)" end),
+  (if .process.profile != "strict" then "Process profile: \(.process.profile)" else empty end),
+  (.process.lifted[]? | "WARNING locked gate lifted: \(.rule) (profile \(.profile), \(.adr))"),
+  (.process.problems[]? | "WARNING process refused: \(.)"),
   sec("Next Ready"; [.next[] | "#\(.number) \(.priority // "no priority") · \(.size // "?") · \(.title)"
     + (if .milestone then " (\(.milestone))" else "" end)]),
   "Release",
@@ -506,7 +511,7 @@ status_once() {
   # The local branches count too: a ticket worked on and not pushed yet has a branch.
   locals=$(local_branches)
   out=$(jq -c --arg now "$now" --arg since "$since_iso" --arg repo "$(repo_slug)" --argjson wip "$wip" \
-    --argjson audit "$audit" --argjson locals "$locals" "$PICK_DEF$DRIFT_DEF$STATUS_JQ" <<<"$data") ||
+    --argjson audit "$audit" --argjson locals "$locals" --argjson process "$(process_summary)" "$PICK_DEF$DRIFT_DEF$STATUS_JQ" <<<"$data") ||
     die "could not build the status"
   trees=$(ticket_trees "$root")
   out=$(jq -c --argjson t "$trees" '.inProgress |= map(. + {worktree: ($t[.number | tostring])})' <<<"$out")

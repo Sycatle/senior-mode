@@ -35,18 +35,6 @@ config_file() {
   printf '%s\n' "$file"
 }
 
-# Prints a config value (strings raw, anything else as JSON), falling back to DEFAULTS: the optional keys
-# read as empty (`[]` for a list, an empty line for a string) when absent; any other key is an error.
-config_get() {
-  local key=$1 file path value
-  file=$(config_file)
-  path=$(jq -nc --arg k "$key" '$k | split(".")')
-  value=$(jq -c --argjson d "$DEFAULTS" --argjson p "$path" '($d * .) | getpath($p)' "$file" 2>/dev/null) ||
-    die "unknown config key: $key"
-  [ "$value" != null ] || die "unknown config key: $key"
-  jq -r 'if type == "string" then . else tojson end' <<<"$value"
-}
-
 # owner/name of the origin remote, from an https or ssh URL.
 repo_slug() {
   local url

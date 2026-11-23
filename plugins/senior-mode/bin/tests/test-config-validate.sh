@@ -27,6 +27,7 @@ missing=$(jq -nr --argjson d "$defaults" --slurpfile s "$schema" '
 [ -z "$missing" ] || fail "defaults keys missing from the schema: $missing"
 
 # A valid configuration is silent and passes; the own file of this repository too.
+# shellcheck disable=SC2016
 config '{"$schema":"x","language":"fr","preset":"node","checks":[{"name":"lint","run":"true"}],"autonomy":{"maxTickets":5,"merge":true,"sessionTimeout":90,"schedule":"02:30","ticketsPerHour":6,"userSettings":false},"ci":{"mode":"actions"},"protected":["a/**"],"project":{"owner":"a","number":3,"id":"P","fields":{"Status":{"id":"F","options":{"Ready":"O"}},"Paths":{"id":"T"}}}}'
 run config validate || fail "a valid config is refused: $(cat "$work/out")"
 [ ! -s "$work/out" ] || fail "a valid config prints something: $(cat "$work/out")"

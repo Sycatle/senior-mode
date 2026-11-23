@@ -179,6 +179,27 @@
       "additionalProperties": false,
       "properties": { "command": { "type": "string", "minLength": 1 } }
     },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The process: the profile (a file, see profile.schema.json) and the lifts of its locked gates. Read from the repository layer; a profile or a lift in another layer is ignored for the lifts.",
+      "properties": {
+        "profile": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "`strict` (default) or `fast`, or a profile file of the project under .claude/senior-mode/profiles/." },
+        "lifts": {
+          "type": "array",
+          "description": "One entry per locked gate that the profile lifts, with the accepted ADR of this repository that decided it.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["rule", "adr"],
+            "properties": {
+              "rule": { "type": "string", "enum": ["secretScan", "protectedZones", "bashGuard", "noForcePush", "checkGreen", "review", "trustGate"] },
+              "adr": { "type": "string", "pattern": "^[A-Za-z0-9._/-]+\\.md$", "description": "Path of the ADR from the repository root, for instance docs/adr/0016-this-repository-delivery.md." }
+            }
+          }
+        }
+      }
+    },
     "e2e": {
       "type": "object",
       "additionalProperties": false,

@@ -575,8 +575,9 @@ started 22 && fail "J: a session of its own for #22, a ticket of the batch"
 started 23 || fail "J: the batch is one slot, #23 should have started: $(cat "$CLAUDE_LOG")"
 started 24 && fail "J: #24 overlaps #23 and started with it"
 grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 3 || fail "J: #21, #22 and #23 not all In progress"
-grep -q 'Waiting for a human.*#21.*pull request #121' "$work/out" && grep -q 'Waiting for a human.*#22.*pull request #121' "$work/out" ||
-  fail "J: the batch's tickets are not reported with their one pull request: $(cat "$work/out")"
+for n in 21 22; do
+  grep -q "Waiting for a human.*#$n.*pull request #121" "$work/out" || fail "J: #$n is not reported with the one pull request: $(cat "$work/out")"
+done
 grep -c 'item-edit.*--single-select-option-id o3' "$GH_LOG" | grep -qx 3 || fail "J: the delivered tickets are not In review"
 outcome_of 21 delivered J
 outcome_of 22 delivered J

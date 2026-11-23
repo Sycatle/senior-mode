@@ -359,9 +359,22 @@ rule: a reversible choice takes the recommended option, and the report says so; 
 a missing branch protection or a protected zone is never accepted or touched: the document stays
 `draft` or `proposed`, the issue or pull request gets `needs-human`, and that step stops with a
 report. A headless session in a workspace Claude Code does not trust yet ignores the project's
-permissions in `.claude/settings.json`: open the folder once interactively and accept the trust
-prompt, or pass the permissions on the command line. `senior-mode run` passes
-`--permission-mode bypassPermissions` and relies on the guard hooks.
+`permissions.allow` in `.claude/settings.json` (its hooks and `env` still load): open the folder once
+interactively and accept the trust prompt, or pass the permissions on the command line. `senior-mode run`
+passes `--permission-mode bypassPermissions` and relies on the guard hooks.
+
+`run` and `serve` start every session the same way on any machine (#348, #350):
+
+- **Project settings only.** `--setting-sources project,local --strict-mcp-config`, plus `--mcp-config` with
+  the project's `.mcp.json` when it has one. The owner's user `CLAUDE.md`, plugins, MCP servers and settings
+  stay out, so a session does not answer in the owner's language or call the owner's tools. The plugin is
+  loaded with `--plugin-dir`, since user settings no longer enable it, and the daily probe uses the same
+  flags. Login credentials are not settings: they still work. `autonomy.userSettings: true` brings the
+  user's configuration back; then the user or project settings must enable the plugin.
+- **Trusted worktrees.** Before a session starts, its directory is marked trusted in Claude Code's
+  `.claude.json` (`projects[<path>].hasTrustDialogAccepted`, in `CLAUDE_CONFIG_DIR` or the home
+  directory). Trust is per path and not inherited, so each worktree gets its own entry, written once and
+  atomically.
 
 ### Frame guard (`frame-guard.sh`)
 

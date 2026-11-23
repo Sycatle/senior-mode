@@ -568,6 +568,28 @@ run && fail "M: a probe of yesterday was not repeated"
 echo honour >"$FIX/probe"
 run || fail "M: run failed after a new honoured probe: $(cat "$work/out")"
 
+# M2: sessions see the project's settings and the plugin, not the owner's (#348), in a trusted directory (#350).
+board 170 '[]'
+session 170-sonnet delivered pr
+echo '{"projects": {"/elsewhere": {"hasTrustDialogAccepted": true}}, "userID": "u"}' >"$CLAUDE_CONFIG_DIR/.claude.json"
+echo '{"mcpServers": {}}' >"$repo/.mcp.json"
+git -C "$repo" add .mcp.json && git -C "$repo" -c user.name=t -c user.email=t@t commit -qm "chore: mcp" && git -C "$repo" push -q origin main
+run || fail "M2: run failed: $(cat "$work/out")"
+line=$(grep '^app-170 ' "$CLAUDE_LOG")
+[[ $line == *"--setting-sources project,local --strict-mcp-config --mcp-config "*"/170/.mcp.json --plugin-dir "*/plugins/senior-mode* ]] ||
+  fail "M2: the session is not isolated from the user's settings: $line"
+wt170=$(sed -nE 's#^app-170 .*--mcp-config ([^ ]+)/\.mcp\.json.*#\1#p' "$CLAUDE_LOG")
+jq -e --arg p "$wt170" '.projects[$p].hasTrustDialogAccepted == true and .projects["/elsewhere"].hasTrustDialogAccepted == true and .userID == "u"' \
+  "$CLAUDE_CONFIG_DIR/.claude.json" >/dev/null || fail "M2: the worktree is not trusted, or the config lost entries: $(cat "$CLAUDE_CONFIG_DIR/.claude.json")"
+config '{"userSettings": true}'
+board 171 '[]'
+session 171-sonnet delivered pr
+run || fail "M2: run failed with userSettings: $(cat "$work/out")"
+grep '^app-171 ' "$CLAUDE_LOG" | grep -q -- '--setting-sources' && fail "M2: userSettings true still isolates the session: $(grep '^app-171 ' "$CLAUDE_LOG")"
+git -C "$repo" rm -q .mcp.json && git -C "$repo" -c user.name=t -c user.email=t@t commit -qm "chore: no mcp" && git -C "$repo" push -q origin main
+rm -f "$CLAUDE_CONFIG_DIR/.claude.json"
+
+# With autonomy.userSettings, the user settings must enable the plugin.
 echo '{"enabledPlugins": {"senior-mode@senior-mode": false}}' >"$CLAUDE_CONFIG_DIR/settings.json"
 board 102 '[]'
 session 102-sonnet delivered pr
@@ -598,6 +620,7 @@ grep -q 'hooks.json' "$work/out" || fail "M: the missing hooks.json is not named
 echo '{}' >"$work/plugin/hooks/hooks.json"
 SENIOR_MODE_PLUGIN_DIR="$work/plugin" run || fail "M: a plugin dir with hooks.json was refused: $(cat "$work/out")"
 echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DIR/settings.json"
+config '{}'
 # The probe runs in a throwaway worktree of the base branch, as ticket sessions do, and removes it.
 rm -f "$probe"
 board 103 '[]'
@@ -677,7 +700,9 @@ grep -q 'haiku' "$CLAUDE_LOG" || fail "probe-backoff: no new probe after the hou
 [ "$(cat "$probe" 2>/dev/null)" = "$(date +%F)" ] || fail "probe-backoff: probe date not recorded"
 
 # probe-managed (#209): the managed settings (SENIOR_MODE_MANAGED_SETTINGS stands for the platform's
-# managed-settings.json) count, and win over the user's, as they do for Claude Code.
+# managed-settings.json) count, and win over the user's, as they do for Claude Code. With autonomy.userSettings
+# only: otherwise sessions load the plugin with --plugin-dir.
+config '{"userSettings": true}'
 rm -f "$probe" "$probe_failed"
 echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$work/managed-settings.json"
 echo '{}' >"$CLAUDE_CONFIG_DIR/settings.json"
@@ -688,6 +713,7 @@ run && fail "probe-managed: run started with the plugin disabled by the managed 
 grep -q 'enabled' "$work/out" || fail "probe-managed: the disabled plugin is not named: $(cat "$work/out")"
 rm -f "$work/managed-settings.json"
 run || fail "probe-managed: run failed with the user settings alone: $(cat "$work/out")"
+config '{}'
 
 # Open alerts: a high Dependabot alert, a moderate and a low one (nothing to file), and an exposed secret
 # whose value must never reach an issue.

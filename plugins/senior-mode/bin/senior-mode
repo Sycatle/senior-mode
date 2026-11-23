@@ -6,7 +6,8 @@ set -euo pipefail
 DEFAULTS='{
   "language": "en",
   "ci": { "mode": "local" },
-  "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "merge": false, "escalate": true, "sessionTimeout": 90, "schedule": "02:00" },
+  "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "merge": false, "escalate": true, "sessionTimeout": 90, "schedule": "02:00", "sessionsPerHour": 6, "minMemoryMB": 1024 },
+  "serve": { "interval": 60, "grace": 600, "breakerCooldown": 3600 },
   "agent": { "command": "claude" },
   "e2e": { "slots": 2 },
   "limits": { "prLines": 400 },
@@ -28,7 +29,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] [--fix] | clean [--dry-run] [--days N] | statusline | retro [--since <dur>] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] | clean [--dry-run] [--days N] | statusline | retro [--since <dur>] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -2982,6 +2983,8 @@ run_launch() {
     run_detach "$script"
   fi
   echo "#$n: session started on $model"
+  # serve counts its launches for autonomy.sessionsPerHour: one line, the time, per session started.
+  [ -z "${RUN_LAUNCH_LOG:-}" ] || serve_now >>"$RUN_LAUNCH_LOG"
 }
 
 # Opens the ticket with `senior-mode start` (worktree, branch and Status In progress, named and tracked
@@ -3314,30 +3317,13 @@ run_guards() {
   run_probe "$1"
 }
 
-# senior-mode run [--max N] [--parallel P]: delivers up to N Ready tickets, P at a time, each in a
-# headless claude session in its own worktree (spec 0001 §10, ADR 0007), then reports in plain words.
-run() {
-  local max="" parallel="" n title t
-  local -a queue=() running=() still=() RUN_MERGED=() RUN_NOT_DONE=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
-  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=()
-  local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
-  local RUN_FAILS=0 RUN_STOP=""
-  while [ $# -gt 0 ]; do
-    case $1 in
-      --max | --parallel)
-        [[ ${2:-} =~ ^[1-9][0-9]*$ ]] || die "run $1 needs a positive number"
-        if [ "$1" = --max ]; then max=$2; else parallel=$2; fi
-        shift
-        ;;
-      *) usage ;;
-    esac
-    shift
-  done
-  [ "$(id -u)" != 0 ] || die "run cannot work as root: claude refuses to skip permission prompts for root; use a normal user"
-  run_can_detach || die "run needs setsid or perl to stop a session that outlives autonomy.sessionTimeout, and has neither (install util-linux for setsid); nothing was started."
+# What `run` and `serve` ($1) share before their first session: refuses root and a machine that cannot stop
+# a session group, reads the config into the RUN_* variables of its caller, finds the agent, the slug, the
+# main checkout and the base branch, and checks the guards (#117) and the protected zones of the base.
+run_prepare() {
+  [ "$(id -u)" != 0 ] || die "$1 cannot work as root: claude refuses to skip permission prompts for root; use a normal user"
+  run_can_detach || die "$1 needs setsid or perl to stop a session that outlives autonomy.sessionTimeout, and has neither (install util-linux for setsid); nothing was started."
   file=$(config_file)
-  max=${max:-$(config_get autonomy.maxTickets)}
-  parallel=${parallel:-$(config_get autonomy.parallel)}
   RUN_MAXFAIL=$(config_get autonomy.maxConsecutiveFailures)
   RUN_MERGE=$(config_get autonomy.merge)
   RUN_ESCALATE=$(config_get autonomy.escalate)
@@ -3360,6 +3346,57 @@ run() {
   fi
   jq -e 'type == "array" and all(type == "string")' <<<"$RUN_GLOBS" >/dev/null ||
     die "protected in .claude/senior-mode.json of $RUN_BASE must be an array of globs"
+}
+
+# The token `start` checks to skip the wip limit (#145): in memory and in a 0600 file under $RUN_DIR, which
+# the caller removes when it ends.
+run_token_new() {
+  RUN_TOKEN=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
+  [ ${#RUN_TOKEN} -eq 48 ] || die "cannot draw a random token for the run"
+  (umask 077 && printf '%s\n' "$RUN_TOKEN" >"$RUN_DIR/token") || die "cannot write the run token"
+}
+
+# One look at the sessions in `running` (the caller's array): finished ones are read (run_finish), the ones
+# past autonomy.sessionTimeout are killed (run_timeout), the others stay. RUN_ON_EXIT, when set, names a
+# function that gets a finished session first and returns 0 when it took care of it (serve: a usage limit).
+# SENIOR_MODE_TIMEOUT_UNIT: seconds in a minute of autonomy.sessionTimeout (default 60), for the tests.
+run_reap() {
+  local n still=()
+  for n in "${running[@]}"; do
+    if [ -f "$RUN_DIR/$n.exit" ]; then
+      if [ -n "${RUN_ON_EXIT:-}" ] && "$RUN_ON_EXIT" "$n"; then continue; fi
+      run_finish "$n" && continue
+    elif [ $((SECONDS - RUN_STARTED[$n])) -ge $((RUN_TIMEOUT * ${SENIOR_MODE_TIMEOUT_UNIT:-60})) ]; then
+      run_timeout "$n"
+      continue
+    fi
+    still+=("$n")
+  done
+  running=("${still[@]}")
+}
+
+# senior-mode run [--max N] [--parallel P]: delivers up to N Ready tickets, P at a time, each in a
+# headless claude session in its own worktree (spec 0001 §10, ADR 0007), then reports in plain words.
+run() {
+  local max="" parallel="" n title t
+  local -a queue=() running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
+  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=()
+  local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
+  local RUN_FAILS=0 RUN_STOP=""
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --max | --parallel)
+        [[ ${2:-} =~ ^[1-9][0-9]*$ ]] || die "run $1 needs a positive number"
+        if [ "$1" = --max ]; then max=$2; else parallel=$2; fi
+        shift
+        ;;
+      *) usage ;;
+    esac
+    shift
+  done
+  run_prepare run
+  max=${max:-$(config_get autonomy.maxTickets)}
+  parallel=${parallel:-$(config_get autonomy.parallel)}
   RUN_STAMP=$(date +%Y%m%d-%H%M%S)-$$
   RUN_DIR=$(git rev-parse --path-format=absolute --git-common-dir)/senior-mode/runs/$RUN_STAMP
   "$SELF" clean || echo "senior-mode: clean failed; the run goes on" >&2
@@ -3375,14 +3412,11 @@ run() {
     return 0
   fi
   mkdir -p "$RUN_DIR"
-  # The token `start` checks to skip the wip limit (#145): in memory and in a 0600 file, removed when the run ends.
-  RUN_TOKEN=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
-  [ ${#RUN_TOKEN} -eq 48 ] || die "cannot draw a random token for the run"
   # shellcheck disable=SC2064 # expand now: RUN_DIR is local and gone when the trap runs
   trap "rm -f '$RUN_DIR/token'" EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  (umask 077 && printf '%s\n' "$RUN_TOKEN" >"$RUN_DIR/token") || die "cannot write the run token"
+  run_token_new
   echo "run: ${#queue[@]} ticket(s), $parallel at a time; sessions and logs in $RUN_DIR"
 
   while [ ${#queue[@]} -gt 0 ] || [ ${#running[@]} -gt 0 ]; do
@@ -3393,18 +3427,7 @@ run() {
     done
     [ ${#running[@]} -gt 0 ] || break
     sleep "${SENIOR_MODE_POLL:-15}"
-    # SENIOR_MODE_TIMEOUT_UNIT: seconds in a minute of autonomy.sessionTimeout (default 60), for the tests.
-    still=()
-    for n in "${running[@]}"; do
-      if [ -f "$RUN_DIR/$n.exit" ]; then
-        run_finish "$n" && continue
-      elif [ $((SECONDS - RUN_STARTED[$n])) -ge $((RUN_TIMEOUT * ${SENIOR_MODE_TIMEOUT_UNIT:-60})) ]; then
-        run_timeout "$n"
-        continue
-      fi
-      still+=("$n")
-    done
-    running=("${still[@]}")
+    run_reap
   done
   [ ${#RUN_MERGED[@]} -eq 0 ] || run_docs
   "$SELF" clean || echo "senior-mode: clean failed" >&2
@@ -3416,6 +3439,335 @@ run() {
   for t in "${RUN_WAITING[@]}"; do echo "Waiting for a human: $t"; done
   for t in "${RUN_FAILED[@]}"; do echo "Failed: $t"; done
   for n in "${queue[@]}"; do echo "Not started: #$n ${RUN_TITLE[$n]}"; done
+}
+
+# Seconds since the epoch; SENIOR_MODE_NOW stands in for the clock in the tests.
+serve_now() {
+  echo "${SENIOR_MODE_NOW:-$(date +%s)}"
+}
+
+# A whole number from the config, at least $2: serve_int <key> <min>.
+serve_int() {
+  local v
+  v=$(config_get "$1")
+  [[ $v =~ ^[0-9]+$ ]] && [ "$v" -ge "$2" ] || die "$1 must be a whole number of at least $2, not $v"
+  echo "$v"
+}
+
+# The time a usage limit lifts, read from the message of the session ($1) at time $2: "limit reached|<epoch>"
+# or "resets 3pm (Europe/Paris)"; one hour later when the message gives none.
+serve_reset() {
+  local text=$1 now=$2 re t h m zone day
+  re='[Ll]imit reached\|([0-9]{9,11})'
+  if [[ $text =~ $re ]] && [ "${BASH_REMATCH[1]}" -gt "$now" ]; then
+    echo "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  re='resets? (at )?([0-9]{1,2})(:([0-9]{2}))? ?([AaPp])[Mm]( \(([A-Za-z0-9_+/-]+)\))?'
+  if [[ $text =~ $re ]]; then
+    h=$((10#${BASH_REMATCH[2]}))
+    m=${BASH_REMATCH[4]:-00}
+    zone=${BASH_REMATCH[7]}
+    case ${BASH_REMATCH[5]} in
+      [Aa]) [ "$h" -ne 12 ] || h=0 ;;
+      *) [ "$h" -eq 12 ] || h=$((h + 12)) ;;
+    esac
+    # The next such time of day after $now, in the zone the message names.
+    if day=$(env ${zone:+TZ="$zone"} date -d "@$now" +%F 2>/dev/null) &&
+      t=$(env ${zone:+TZ="$zone"} date -d "$day $(printf '%02d:%s' "$h" "$m")" +%s 2>/dev/null); then
+      [ "$t" -gt "$now" ] || t=$((t + 86400))
+      echo "$t"
+      return 0
+    fi
+  fi
+  echo $((now + 3600))
+}
+
+# RUN_ON_EXIT of serve (see run_reap): a session that ended on the subscription usage limit and said nothing
+# of its ticket is not a failure. Nothing is launched until the reset time (limit-until), and the ticket goes
+# back to Ready, its worktree and branch kept, for the first poll after it.
+serve_limit() {
+  local n=$1 text until now prev
+  [ ! -s "$RUN_DIR/$n.outcome" ] || return 1
+  text=$({
+    head -c 20000 "$RUN_DIR/$n-${RUN_MODEL[$n]}.json" 2>/dev/null
+    head -c 20000 "$RUN_DIR/$n-${RUN_MODEL[$n]}.log" 2>/dev/null
+  } || true)
+  grep -qiE 'limit reached|hit your( [a-z-]+)? limit|usage limit' <<<"$text" || return 1
+  now=$(serve_now)
+  until=$(serve_reset "$text" "$now")
+  prev=$(cat "$SERVE_DIR/limit-until" 2>/dev/null) || prev=0
+  [[ $prev =~ ^[0-9]+$ ]] || prev=0
+  [ "$prev" -ge "$until" ] || echo "$until" >"$SERVE_DIR/limit-until"
+  echo "#$n: the session hit the usage limit; nothing is launched until $(date -d "@$until" '+%F %T' 2>/dev/null || echo "$until")" >&2
+  (item_set "$n" Status Ready) >/dev/null || echo "#$n: could not set the Status back to Ready" >&2
+  return 0
+}
+
+# Is serve held back (not an error)? Prints why and returns 0 when it is: the circuit breaker's pause (until its
+# cooldown or `serve --resume`, which removes the file) or a usage limit (until its reset). A hold that is over
+# is lifted here. $1 is the time.
+serve_hold() {
+  local now=$1 until
+  if [ -f "$SERVE_DIR/paused" ]; then
+    until=$(sed -n 1p "$SERVE_DIR/paused")
+    if [[ $until =~ ^[0-9]+$ ]] && [ "$now" -lt "$until" ]; then
+      echo "paused by the circuit breaker, $(sed -n 2p "$SERVE_DIR/paused"); resumes at $until or with senior-mode serve --resume"
+      return 0
+    fi
+    rm -f "$SERVE_DIR/paused"
+    echo "serve: the breaker cooldown is over, launching again" >&2
+  fi
+  until=$(cat "$SERVE_DIR/limit-until" 2>/dev/null) || until=""
+  if [[ $until =~ ^[0-9]+$ ]]; then
+    if [ "$now" -lt "$until" ]; then
+      echo "usage limit reached, resumes at $until"
+      return 0
+    fi
+    rm -f "$SERVE_DIR/limit-until"
+  fi
+  return 1
+}
+
+# After `autonomy.maxConsecutiveFailures` failures in a row the breaker pauses serve for serve.breakerCooldown
+# seconds; it never exits. The count starts again, so a resume gets a fresh chance. The alert (#155) comes later:
+# the line on stderr and the reason in the paused file are what a person has today.
+serve_breaker() {
+  local now
+  [ "$RUN_FAILS" -ge "$RUN_MAXFAIL" ] || return 0
+  RUN_FAILS=0
+  RUN_STOP=""
+  if [ ! -f "$SERVE_DIR/paused" ]; then
+    now=$(serve_now)
+    printf '%s\n%s\n' "$((now + SERVE_COOLDOWN))" "$RUN_MAXFAIL failed tickets in a row (autonomy.maxConsecutiveFailures)" >"$SERVE_DIR/paused"
+    echo "serve: paused, $RUN_MAXFAIL failed tickets in a row; it resumes in $SERVE_COOLDOWN seconds or with: senior-mode serve --resume" >&2
+  fi
+}
+
+# Is a ceiling reached? Prints which and returns 0 when it is: launches in the last hour, the load average over
+# the CPU count, available memory under autonomy.minMemoryMB. The launch waits for the next poll.
+serve_ceiling() {
+  local now count load cpus mem
+  now=$(serve_now)
+  if [ -f "$RUN_LAUNCH_LOG" ]; then
+    awk -v c="$((now - 3600))" '$1 > c' "$RUN_LAUNCH_LOG" >"$RUN_LAUNCH_LOG.tmp" && mv "$RUN_LAUNCH_LOG.tmp" "$RUN_LAUNCH_LOG"
+    count=$(awk 'END { print NR }' "$RUN_LAUNCH_LOG")
+    if [ "$count" -ge "$SERVE_PER_HOUR" ]; then
+      echo "$count sessions launched in the last hour (autonomy.sessionsPerHour $SERVE_PER_HOUR)"
+      return 0
+    fi
+  fi
+  cpus=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+  # SENIOR_MODE_LOADAVG: the 1-minute load average, for the tests.
+  load=${SENIOR_MODE_LOADAVG:-$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || uptime | sed -E 's/.*load averages?: *//; s/,.*//')}
+  if awk -v l="${load:-0}" -v c="$cpus" 'BEGIN { exit !(l + 0 > c + 0) }'; then
+    echo "load average $load is over the $cpus CPU(s)"
+    return 0
+  fi
+  mem=$(awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo 2>/dev/null || true)
+  if [ -n "$mem" ] && [ "$mem" -lt "$SERVE_MIN_MEM" ]; then
+    echo "$mem MB of memory available, under autonomy.minMemoryMB $SERVE_MIN_MEM"
+    return 0
+  fi
+  return 1
+}
+
+# What the sessions that ended since the last poll left to a person, once.
+serve_report() {
+  local t
+  for t in "${RUN_FAILED[@]}"; do echo "Failed: $t"; done
+  for t in "${RUN_WAITING[@]}"; do echo "Waiting for a human: $t"; done
+  RUN_FAILED=() RUN_WAITING=() RUN_MERGED=() RUN_NOT_DONE=() RUN_PRS=()
+}
+
+# One poll: reads the sessions that ended, trips the breaker, then, unless held or at a ceiling, starts the
+# Ready tickets in `pick` order while there is a free slot.
+serve_poll() {
+  local now reason data n title
+  local -a queue=()
+  now=$(serve_now)
+  RUN_STOP=""
+  run_reap
+  serve_report
+  serve_breaker
+  # Hook point (#150, #151): the reviewer sessions of pull requests waiting for review and the integrator
+  # pass go here, behind the same hold and ceilings (serve_hold, serve_ceiling) and the same slots.
+  if reason=$(serve_hold "$now"); then
+    echo "serve: not launching: $reason"
+    return 0
+  fi
+  [ ${#running[@]} -lt "$SERVE_PARALLEL" ] || return 0
+  if ! data=$(board_data false); then
+    echo "serve: cannot read the board; trying again at the next poll" >&2
+    return 0
+  fi
+  while IFS=$'\t' read -r n title; do
+    [ -n "$n" ] || continue
+    [[ " ${running[*]} " != *" $n "* ]] || continue
+    RUN_TITLE[$n]=$title
+    queue+=("$n")
+  done < <(jq -r "$PICK_DEF"'pick[] | [.number, .title] | @tsv' <<<"$data")
+  [ ${#queue[@]} -gt 0 ] || return 0
+  # The guards (#117): the daily probe runs here too, so a serve that lives for days is checked every day.
+  if ! (run_guards "$SERVE_COMMON"); then
+    echo "serve: the guards are not in place; nothing launched, trying again at the next poll" >&2
+    return 0
+  fi
+  for n in "${queue[@]}"; do
+    [ "$SERVE_TERM" = false ] && [ ${#running[@]} -lt "$SERVE_PARALLEL" ] && [ "$RUN_FAILS" -lt "$RUN_MAXFAIL" ] || break
+    if reason=$(serve_ceiling); then
+      echo "serve: waiting for the next poll: $reason"
+      break
+    fi
+    if run_start "$n"; then running+=("$n"); fi
+  done
+  serve_report
+  serve_breaker
+}
+
+# Waits for the running sessions, reading them as they end. Once serve has been told to stop (SERVE_TERM) it
+# retries nothing on Opus, and the sessions that outlive serve.grace seconds are killed and their tickets
+# labelled needs-human.
+serve_drain() {
+  local term_at="" n
+  while [ ${#running[@]} -gt 0 ]; do
+    if [ "$SERVE_TERM" = true ]; then
+      if [ -z "$term_at" ]; then
+        term_at=$SECONDS
+        RUN_ESCALATE=false
+      fi
+      if [ $((SECONDS - term_at)) -ge "$SERVE_GRACE" ]; then
+        for n in "${running[@]}"; do
+          run_kill "$n" "#$n"
+          run_halt "$n" "serve was stopped and the session was still running after serve.grace ($SERVE_GRACE seconds)" \
+            "$RUN_DIR/$n-${RUN_MODEL[$n]}.log" "An autonomous senior-mode serve stopped this ticket's session" "The session log is"
+        done
+        running=()
+        break
+      fi
+    fi
+    sleep "${SENIOR_MODE_POLL:-15}"
+    run_reap
+  done
+  serve_report
+  serve_breaker
+}
+
+# The loop (ADR 0017): the shared part of `run` (run_prepare, run_start, run_reap, run_finish...) with a poll
+# every serve.interval seconds instead of a batch. TERM and INT stop the launching and drain. State is under
+# <git common dir>/senior-mode/serve/. SENIOR_MODE_SERVE_ONCE=1 polls once, waits for its sessions and exits.
+serve_loop() {
+  local interval old sleeper
+  local -a running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
+  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=()
+  local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP="" RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
+  local RUN_FAILS=0 RUN_STOP="" RUN_ON_EXIT=serve_limit RUN_LAUNCH_LOG
+  local SERVE_DIR SERVE_COMMON SERVE_TERM=false SERVE_PARALLEL SERVE_PER_HOUR SERVE_MIN_MEM SERVE_COOLDOWN SERVE_GRACE
+  run_prepare serve
+  interval=$(serve_int serve.interval 1)
+  SERVE_GRACE=$(serve_int serve.grace 0)
+  SERVE_COOLDOWN=$(serve_int serve.breakerCooldown 0)
+  SERVE_PER_HOUR=$(serve_int autonomy.sessionsPerHour 1)
+  SERVE_MIN_MEM=$(serve_int autonomy.minMemoryMB 0)
+  SERVE_PARALLEL=$(serve_int autonomy.parallel 1)
+  SERVE_COMMON=$(git rev-parse --path-format=absolute --git-common-dir)
+  SERVE_DIR=$SERVE_COMMON/senior-mode/serve
+  RUN_DIR=$SERVE_DIR
+  RUN_LAUNCH_LOG=$SERVE_DIR/launches
+  mkdir -p "$SERVE_DIR"
+  old=$(cat "$SERVE_DIR/serve.pid" 2>/dev/null) || old=""
+  if [[ $old =~ ^[0-9]+$ ]] && kill -0 "$old" 2>/dev/null && [[ $(ps -o args= -p "$old" 2>/dev/null) == *senior-mode* ]]; then
+    die "serve already runs in this repository (pid $old)"
+  fi
+  echo $$ >"$SERVE_DIR/serve.pid"
+  # shellcheck disable=SC2064 # expand now: SERVE_DIR is local and gone when the trap runs
+  trap "rm -f '$SERVE_DIR/serve.pid' '$SERVE_DIR/token'" EXIT
+  trap 'SERVE_TERM=true' INT TERM
+  run_token_new
+  "$SELF" clean || echo "senior-mode: clean failed; serve goes on" >&2
+  security_alerts || echo "senior-mode: could not check the security alerts; serve goes on" >&2
+  echo "serve: polling every ${interval}s, $SERVE_PARALLEL session(s) at a time; sessions and state in $SERVE_DIR"
+  while [ "$SERVE_TERM" = false ]; do
+    serve_poll
+    [ -z "${SENIOR_MODE_SERVE_ONCE:-}" ] || break
+    sleep "$interval" &
+    sleeper=$!
+    wait "$sleeper" || true
+    kill "$sleeper" 2>/dev/null || true
+  done
+  serve_drain
+  echo "serve: stopped"
+}
+
+# senior-mode serve [--install | --uninstall | --resume]: without an option, the daemon loop of ADR 0017 in
+# this repository. --install runs it as the systemd user unit senior-mode-serve.service (restarts on failure;
+# TERM, which is what `systemctl --user stop` sends to the main process only, stops the launching and gives the
+# sessions serve.grace seconds before they are killed), --uninstall removes the unit, --resume lifts the
+# circuit breaker's pause.
+serve() {
+  local common dir unit=senior-mode-serve.service root grace file me other
+  [ $# -le 1 ] || usage
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
+  dir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
+  root=$(dirname "$common")
+  file=$dir/$unit
+  case ${1:-} in
+    "") serve_loop ;;
+    --resume)
+      if [ -f "$common/senior-mode/serve/paused" ]; then
+        rm -f "$common/senior-mode/serve/paused"
+        echo "resumed: the circuit breaker's pause is lifted"
+      else
+        echo "serve is not paused."
+      fi
+      ;;
+    --install)
+      [ "$(id -u)" != 0 ] || die "serve cannot work as root: run refuses to skip permission prompts for root; use a normal user"
+      if ! { command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; }; then
+        die "serve --install needs systemd user services (systemctl --user); start senior-mode serve yourself otherwise"
+      fi
+      [[ $root$SELF != *[\'\"\\%\$\`]* ]] || die "serve: a path holds a quote, a backslash, % or \$, which a unit cannot carry"
+      grace=$(serve_int serve.grace 0)
+      other=$(sed -n 's/^WorkingDirectory=//p' "$file" 2>/dev/null) || other=""
+      [ -z "$other" ] || [ "$other" = "$root" ] || die "$unit already serves $other; run senior-mode serve --uninstall there first"
+      mkdir -p "$dir"
+      # KillMode=mixed: stop sends TERM to the main process only, so the sessions it started can finish
+      # within the grace; whatever is left after TimeoutStopSec is killed.
+      cat >"$file" <<UNIT
+[Unit]
+Description=senior-mode serve in $root
+
+[Service]
+WorkingDirectory=$root
+ExecStart=/bin/bash -lc "exec '$SELF' serve"
+Restart=on-failure
+RestartSec=60
+KillMode=mixed
+TimeoutStopSec=$((grace + 60))
+
+[Install]
+WantedBy=default.target
+UNIT
+      systemctl --user daemon-reload
+      systemctl --user enable --now "$unit" || die "systemctl --user could not enable $unit"
+      echo "installed: systemd user service $unit in $root; logs: journalctl --user -u $unit"
+      me=${USER:-$(id -un)}
+      if ! loginctl show-user "$me" -p Linger 2>/dev/null | grep -qx 'Linger=yes'; then
+        echo "warning: linger is off, so the service stops when you log out; run: sudo loginctl enable-linger $me" >&2
+      fi
+      ;;
+    --uninstall)
+      if [ -e "$file" ]; then
+        if command -v systemctl >/dev/null; then systemctl --user disable --now "$unit" >/dev/null 2>&1 || true; fi
+        rm -f "$file"
+        if command -v systemctl >/dev/null; then systemctl --user daemon-reload >/dev/null 2>&1 || true; fi
+        echo "removed: the systemd user service $unit"
+      else
+        echo "Nothing installed: no $unit."
+      fi
+      ;;
+    *) usage ;;
+  esac
 }
 
 # Where `schedule` keeps things for this repository (ADR 0012). The name is the main checkout's folder.
@@ -3591,6 +3943,10 @@ case "${1:-}" in
   schedule)
     shift
     schedule "$@"
+    ;;
+  serve)
+    shift
+    serve "$@"
     ;;
   setup)
     case "${2:-}" in

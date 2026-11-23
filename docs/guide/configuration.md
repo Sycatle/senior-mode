@@ -54,6 +54,11 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `autonomy.escalate` | `true` | Whether a ticket that fails on Sonnet is retried once on Opus |
 | `autonomy.sessionTimeout` | `90` | Minutes a ticket session may run (a whole number from 1 to 1440). Past it, a [run](autonomy.md#run) kills the session (its process group), labels the ticket `needs-human` with the log path, counts a failure for the circuit breaker and does not retry on Opus; the ticket's Status is left as it is. The docs session after merges is bounded by the same limit |
 | `autonomy.schedule` | `"02:00"` | Time of day (`HH:MM`) of the [scheduled run](autonomy.md#scheduled-runs), unless `senior-mode schedule install --at` says otherwise |
+| `autonomy.sessionsPerHour` | `6` | Sessions [`serve`](commands.md#the-senior-mode-script) launches in any 60 minutes (a whole number of at least 1; an Opus retry counts); past it a launch waits for the next poll |
+| `autonomy.minMemoryMB` | `1024` | Available memory (MB, `MemAvailable`) under which `serve` launches nothing until the next poll; `0` turns the check off. `serve` also waits while the load average is over the CPU count |
+| `serve.interval` | `60` | Seconds between two polls of `serve` (a whole number of at least 1) |
+| `serve.grace` | `600` | Seconds `serve` lets running sessions finish after `TERM` before it kills them and labels their tickets `needs-human` (`0`: at once). The unit written by `serve --install` waits this long plus a minute |
+| `serve.breakerCooldown` | `3600` | Seconds `serve` stays paused after `autonomy.maxConsecutiveFailures` failures in a row; `senior-mode serve --resume` ends it sooner |
 | `agent.command` | `claude` | The headless CLI `run` starts for each ticket and for the docs session, on `PATH` or in `~/.local/bin`; the guards of senior-mode do not hold under another CLI until it supports them (see [Run](autonomy.md#run)) |
 | `e2e.slots` | `2` | End-to-end suites that may run at once on the machine (the check named `e2e`) |
 

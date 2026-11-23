@@ -1,0 +1,358 @@
+#!/usr/bin/env bash
+# Tests for `senior-mode serve` (spec 131, ADR 0017, #149 and #156). Offline: gh, claude, tmux and systemctl are
+# stubs on PATH, as in test-run.sh. gh answers the board query and the REST calls from fixtures in $FIX; claude
+# plays a ticket session from $FIX/claude-<n>-<model> (line 1: the outcome to write, empty for none; line 2:
+# "pr" to open a pull request; line 3: "hang" to never end, with a child process recorded in $FIX/pids-<n>,
+# "slow" to end after two seconds, "limit" to end on the subscription usage limit with the message in
+# $FIX/limit-msg). systemctl logs its calls to $SYS_LOG. SENIOR_MODE_SERVE_ONCE=1 makes serve poll once, wait for
+# its sessions and exit; SENIOR_MODE_NOW is its clock; SENIOR_MODE_LOADAVG stands in for the load average.
+# shellcheck disable=SC2016 # jq programs and stub bodies, not expanded here
+set -u
+cli=$(cd "$(dirname "$0")/.." && pwd)/senior-mode
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+failures=0
+
+fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
+
+mkdir -p "$work/stub" "$work/fix" "$work/home"
+cat >"$work/stub/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >>"$GH_LOG"
+jqf="" prev=""
+for a in "$@"; do [ "$prev" = --jq ] && jqf=$a; prev=$a; done
+respond() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
+case "$*" in
+  "api graphql --input -") cat >/dev/null; cat "$FIX/board.json" ;;
+  "api repos/acme/app/dependabot/alerts"* | "api repos/acme/app/secret-scanning/alerts"*) echo '[]' | respond ;;
+  "issue view "*)
+    n=$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*")
+    jq -c --argjson n "$n" '.data.node.items.nodes[] | select(.content.number == $n) | .content
+      | {title, state, labels: .labels.nodes}' "$FIX/board.json" ;;
+  "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
+  "project item-edit"*) ;;
+  "api repos/acme/app/pulls/"*"/files"*) echo src/app.ts ;;
+  "api repos/acme/app/pulls?head="*)
+    n=$(sed -E 's#.*head=acme:[a-z]+/([0-9]+)-.*#\1#' <<<"$*")
+    cat "$FIX/pulls-$n" 2>/dev/null || echo '[]' ;;
+  "api repos/acme/app/issues/"*"/comments"*) echo '{}' ;;
+  "api repos/acme/app/issues/"*"/labels"*) echo '[]' ;;
+  "pr list"*) echo '[]' ;;
+  "api repos/acme/app/branches?protected"*) ;;
+  *) echo "unexpected: $*" >&2; exit 1 ;;
+esac
+STUB
+cat >"$work/stub/claude" <<'STUB'
+#!/usr/bin/env bash
+args=("$@")
+for ((i = 0; i < $#; i++)); do [ "${args[i]}" != --model ] || model=${args[i + 1]}; done
+tag=$(basename "$PWD")
+[[ $PWD == */senior-mode/worktrees/* ]] && tag=app-$tag
+echo "$tag $model run=${SENIOR_MODE_RUN:-}" >>"$CLAUDE_LOG"
+if [[ ${!#} == *"guard probe"* ]]; then
+  echo '{"type": "user", "message": {"content": "senior-mode: skipping checks is denied (core.hooksPath); fix what the check reports instead."}}'
+  exit 0
+fi
+n=$(sed -nE 's#.*/senior-mode/worktrees/[^/]+/([0-9]+)$#\1#p' <<<"$PWD")
+[ -n "$n" ] || exit 0
+fx=$FIX/claude-$n-$model
+[ -f "$fx" ] || exit 1
+case $(sed -n 3p "$fx") in
+  hang)
+    sleep 300 &
+    echo "$$ $!" >"$FIX/pids-$n"
+    wait ;;
+  slow) sleep 2 ;;
+  limit)
+    jq -nc --rawfile m "$FIX/limit-msg" '{type: "result", is_error: true, result: $m}'
+    exit 1 ;;
+esac
+outcome=$(sed -n 1p "$fx")
+[ -z "$outcome" ] || echo "$outcome" >"$SENIOR_MODE_RUN_OUTCOME"
+[ "$(sed -n 2p "$fx")" != pr ] ||
+  echo "[{\"number\": $((n + 100)), \"head\": {\"sha\": \"sha$n\"}, \"labels\": []}]" >"$FIX/pulls-$n"
+echo '{"result": "ok"}'
+STUB
+cat >"$work/stub/tmux" <<'STUB'
+#!/usr/bin/env bash
+case $1 in
+  has-session) [ -f "$FIX/tmux-session" ] ;;
+  new-session | new-window)
+    touch "$FIX/tmux-session"
+    setsid bash -c "${*: -1}" >/dev/null 2>&1 &
+    ;;
+esac
+STUB
+cat >"$work/stub/systemctl" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >>"$SYS_LOG"
+[ "$*" != "--user show-environment" ] || [ ! -f "$FIX/no-systemd" ]
+STUB
+cat >"$work/stub/loginctl" <<'STUB'
+#!/usr/bin/env bash
+echo "Linger=$(cat "$FIX/linger")"
+STUB
+chmod +x "$work/stub/"*
+export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" CLAUDE_LOG="$work/claude.log" SYS_LOG="$work/sys.log" FIX="$work/fix" \
+  SENIOR_MODE_RETRY_DELAY=0 XDG_DATA_HOME="$work/xdg" SENIOR_MODE_POLL=0.1 CLAUDE_CONFIG_DIR="$work/claude-home" \
+  SENIOR_MODE_PROBE_RETRY=0 SENIOR_MODE_MANAGED_SETTINGS="$work/managed-settings.json" XDG_CONFIG_HOME="$work/cfg" USER=tester \
+  SENIOR_MODE_NOW=1800000000 SENIOR_MODE_LOADAVG=0
+mkdir -p "$CLAUDE_CONFIG_DIR"
+echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DIR/settings.json"
+echo no >"$FIX/linger"
+
+git init -q --bare -b main "$work/github.com/acme/app.git"
+repo="$work/app"
+state="$repo/.git/senior-mode/serve"
+git init -q -b main "$repo"
+git -C "$repo" remote add origin "$work/github.com/acme/app.git"
+mkdir -p "$repo/.claude"
+fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2", "In review": "o3", "Backlog": "o0", "Done": "o4"}}}'
+# config <autonomy json> [<serve json>]
+config() {
+  jq -n --argjson f "$fields" --argjson a "$1" --argjson s "${2:-{\}}" '{project: {id: "PVT_1", owner: "acme", number: 3, fields: $f},
+    autonomy: ({minMemoryMB: 0} + $a), serve: $s, github: {protection: "ruleset"}}' >"$repo/.claude/senior-mode.json"
+  git -C "$repo" add -A
+  git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: config" --allow-empty
+  git -C "$repo" push -q origin main
+}
+# board <number>...: Ready tickets, P1, in number order.
+board() {
+  local items="[]" n
+  for n in "$@"; do
+    items=$(jq -c --argjson n "$n" '. + [{fieldValues: {nodes: [{name: "Ready", field: {name: "Status"}},
+      {name: "P1 next", field: {name: "Priority"}}, {name: "S", field: {name: "Size"}}]},
+      content: {number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null,
+        labels: {nodes: []}, milestone: null, blockedBy: {nodes: []}}}]' <<<"$items")
+  done
+  jq -nc --argjson i "$items" '{data: {node: {items: {pageInfo: {hasNextPage: false}, nodes: $i}}}}' >"$FIX/board.json"
+}
+session() { printf '%s\n%s\n%s\n' "$2" "${3:-}" "${4:-}" >"$FIX/claude-$1"; }
+# fresh: an empty state directory; once: one poll of serve in $repo.
+fresh() { rm -rf "$state"; }
+once() { : >"$GH_LOG"; : >"$CLAUDE_LOG"; (cd "$repo" && SENIOR_MODE_SERVE_ONCE=1 "$cli" serve) >"$work/out" 2>&1; }
+started() { grep -q "^app-$1 " "$CLAUDE_LOG"; }
+# outcome_of <n> <outcome>: the record serve left for the ticket under .git/senior-mode/serve/.
+outcome_of() {
+  jq -e --arg o "$2" '.outcome == $o' "$state/$1.json" >/dev/null 2>&1 || fail "$3: #$1 not recorded as $2: $(cat "$state/$1.json" 2>&1)"
+}
+
+# A: Ready tickets, free slots: one session per ticket, in pick order, outcomes recorded under serve/, state tidy.
+config '{"parallel": 2}'
+board 10 11 12
+session 10-sonnet delivered pr
+session 11-sonnet delivered pr
+session 12-sonnet delivered pr
+fresh
+once || fail "A: serve failed: $(cat "$work/out")"
+started 10 || fail "A: no session for #10: $(cat "$CLAUDE_LOG")"
+started 11 || fail "A: no session for #11: $(cat "$CLAUDE_LOG")"
+started 12 && fail "A: more sessions than autonomy.parallel"
+grep -q '^app-10 sonnet run=1' "$CLAUDE_LOG" || fail "A: session not started as run does: $(cat "$CLAUDE_LOG")"
+outcome_of 10 delivered A
+outcome_of 11 delivered A
+[ "$(awk 'END { print NR }' "$state/launches")" -eq 2 ] || fail "A: launches not counted: $(cat "$state/launches" 2>&1)"
+[ ! -e "$state/serve.pid" ] && [ ! -e "$state/token" ] || fail "A: pid or token file left: $(ls "$state")"
+[ ! -e "$repo/.git/senior-mode/runs" ] || fail "A: serve wrote under runs/"
+grep -q 'Waiting for a human.*#10' "$work/out" || fail "A: a delivered pull request is not reported: $(cat "$work/out")"
+grep -q 'issue view 10 ' "$GH_LOG" || fail "A: the worktree was not opened by senior-mode start"
+grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 2 || fail "A: tickets not set In progress"
+board 10 11
+config '{"parallel": 1}'
+fresh
+once || fail "A: serve failed: $(cat "$work/out")"
+started 10 || fail "A: one slot: #10 comes first: $(cat "$CLAUDE_LOG")"
+started 11 && fail "A: one slot: #11 started too"
+
+# B: a failed ticket is retried on Opus as in run; a second poll starts no session when no ticket is Ready.
+config '{"parallel": 1}'
+board 15
+session 15-sonnet "failed: no luck"
+session 15-opus delivered pr
+fresh
+once || fail "B: serve failed: $(cat "$work/out")"
+grep -q '^app-15 opus' "$CLAUDE_LOG" || fail "B: not retried on Opus: $(cat "$CLAUDE_LOG")"
+outcome_of 15 delivered B
+board
+once || fail "B: serve failed on an empty board: $(cat "$work/out")"
+[ ! -s "$CLAUDE_LOG" ] || fail "B: a session started with nothing Ready"
+
+# C: sessions per hour. One launch an hour: the second ticket waits; an hour later it starts.
+config '{"parallel": 2, "sessionsPerHour": 1}'
+board 20 21
+session 20-sonnet delivered pr
+session 21-sonnet delivered pr
+fresh
+once || fail "C: serve failed: $(cat "$work/out")"
+started 20 || fail "C: no launch: $(cat "$CLAUDE_LOG")"
+started 21 && fail "C: two launches in the hour"
+grep -q 'autonomy.sessionsPerHour 1' "$work/out" || fail "C: the wait is not said: $(cat "$work/out")"
+board 21
+SENIOR_MODE_NOW=1800000100 once || fail "C: serve failed: $(cat "$work/out")"
+started 21 && fail "C: launched within the hour"
+SENIOR_MODE_NOW=1800003601 once || fail "C: serve failed: $(cat "$work/out")"
+started 21 || fail "C: not launched an hour later: $(cat "$work/out")"
+
+# D: memory and CPU: a launch waits for the next poll.
+config '{"minMemoryMB": 99999999}'
+board 25
+session 25-sonnet delivered pr
+fresh
+once || fail "D: serve failed: $(cat "$work/out")"
+started 25 && fail "D: launched with too little memory"
+grep -q 'MB of memory available.*minMemoryMB' "$work/out" || fail "D: memory wait not said: $(cat "$work/out")"
+config '{}'
+SENIOR_MODE_LOADAVG=9999 once || fail "D: serve failed: $(cat "$work/out")"
+started 25 && fail "D: launched with the load over the CPU count"
+grep -q 'load average 9999' "$work/out" || fail "D: load wait not said: $(cat "$work/out")"
+SENIOR_MODE_LOADAVG=0 once || fail "D: serve failed: $(cat "$work/out")"
+started 25 || fail "D: not launched with room: $(cat "$work/out")"
+
+# E: the usage limit. The reset time is in the message: nothing launches before it, the ticket goes back to Ready
+# without a failure, and nothing is retried on Opus.
+config '{}'
+board 30 31
+fresh
+printf 'Claude AI usage limit reached|1800005000' >"$FIX/limit-msg"
+session 30-sonnet "" "" limit
+session 30-opus delivered pr
+session 31-sonnet delivered pr
+once || fail "E: serve failed: $(cat "$work/out")"
+[ "$(cat "$state/limit-until" 2>/dev/null)" = 1800005000 ] || fail "E: reset time not kept: $(cat "$state/limit-until" 2>&1)"
+grep -q '^app-30 opus' "$CLAUDE_LOG" && fail "E: retried on Opus after a usage limit"
+grep -c 'item-edit.*--single-select-option-id o1' "$GH_LOG" | grep -qx 1 || fail "E: ticket not set back to Ready: $(grep item-edit "$GH_LOG")"
+grep -q 'issues/30/' "$GH_LOG" && fail "E: a usage limit was treated as a failure"
+[ ! -e "$state/30.json" ] || fail "E: an outcome was recorded for a usage limit"
+SENIOR_MODE_NOW=1800004000 once || fail "E: serve failed: $(cat "$work/out")"
+[ ! -s "$CLAUDE_LOG" ] || fail "E: launched before the reset: $(cat "$CLAUDE_LOG")"
+grep -q 'usage limit' "$work/out" || fail "E: the hold is not said: $(cat "$work/out")"
+session 30-sonnet delivered pr
+SENIOR_MODE_NOW=1800005001 once || fail "E: serve failed: $(cat "$work/out")"
+started 30 || fail "E: not launched after the reset: $(cat "$CLAUDE_LOG")"
+[ ! -e "$state/limit-until" ] || fail "E: the limit is not lifted"
+# A clock time with a zone, and no time at all.
+fresh
+board 32
+printf "You've hit your limit · resets 3pm (UTC)" >"$FIX/limit-msg"
+session 32-sonnet "" "" limit
+SENIOR_MODE_NOW=$(date -u -d '2026-11-23 10:00' +%s) once || fail "E: serve failed: $(cat "$work/out")"
+[ "$(cat "$state/limit-until" 2>/dev/null)" = "$(date -u -d '2026-11-23 15:00' +%s)" ] || fail "E: 3pm UTC not read: $(cat "$state/limit-until" 2>&1)"
+fresh
+printf 'limit reached, try later' >"$FIX/limit-msg"
+SENIOR_MODE_NOW=1800000000 once || fail "E: serve failed: $(cat "$work/out")"
+[ "$(cat "$state/limit-until" 2>/dev/null)" = 1800003600 ] || fail "E: no reset time is not one hour: $(cat "$state/limit-until" 2>&1)"
+
+# F: the circuit breaker pauses and does not exit; the cooldown or --resume lifts it.
+config '{"parallel": 3, "maxConsecutiveFailures": 2, "escalate": false}' '{"breakerCooldown": 100}'
+board 40 41
+session 40-sonnet "failed: broke"
+session 41-sonnet "failed: broke too"
+fresh
+SENIOR_MODE_NOW=1800000000 once || fail "F: serve exited with the breaker: $(cat "$work/out")"
+[ "$(sed -n 1p "$state/paused" 2>/dev/null)" = 1800000100 ] || fail "F: no pause for the cooldown: $(cat "$state/paused" 2>&1)"
+grep -q 'paused' "$work/out" || fail "F: the pause is not said: $(cat "$work/out")"
+board 43
+session 43-sonnet delivered pr
+SENIOR_MODE_NOW=1800000050 once || fail "F: serve failed while paused: $(cat "$work/out")"
+started 43 && fail "F: launched while paused"
+grep -q 'circuit breaker' "$work/out" || fail "F: the hold is not said: $(cat "$work/out")"
+(cd "$repo" && "$cli" serve --resume) >"$work/out" 2>&1 || fail "F: --resume failed: $(cat "$work/out")"
+[ ! -e "$state/paused" ] || fail "F: --resume left the pause"
+once || fail "F: serve failed: $(cat "$work/out")"
+started 43 || fail "F: not launched after --resume: $(cat "$work/out")"
+(cd "$repo" && "$cli" serve --resume) >"$work/out" 2>&1 || fail "F: --resume failed when not paused"
+grep -q 'not paused' "$work/out" || fail "F: --resume when not paused: $(cat "$work/out")"
+printf '%s\npaused by a test\n' 1800000100 >"$state/paused"
+board 44
+session 44-sonnet delivered pr
+SENIOR_MODE_NOW=1800000101 once || fail "F: serve failed after the cooldown: $(cat "$work/out")"
+started 44 || fail "F: not launched after the cooldown: $(cat "$work/out")"
+[ ! -e "$state/paused" ] || fail "F: the pause outlived its cooldown"
+
+# G: TERM stops the launching at once and gives the sessions the grace. A session that ends within it is read;
+# one that does not is killed and its ticket labelled needs-human. A second serve is refused meanwhile.
+config '{"parallel": 1}' '{"interval": 5, "grace": 30}'
+board 50
+session 50-sonnet delivered pr "slow"
+fresh
+: >"$GH_LOG"; : >"$CLAUDE_LOG"
+(cd "$repo" && exec "$cli" serve) >"$work/out" 2>&1 &
+pid=$!
+for _ in $(seq 100); do started 50 && break; sleep 0.1; done
+started 50 || fail "G: no session started: $(cat "$work/out")"
+(cd "$repo" && "$cli" serve) >"$work/out2" 2>&1 && fail "G: a second serve was accepted"
+grep -q 'already runs' "$work/out2" || fail "G: second serve not refused for that: $(cat "$work/out2")"
+board 51
+kill -TERM "$pid"
+rc=0
+wait "$pid" || rc=$?
+[ "$rc" -eq 0 ] || fail "G: serve exited $rc on TERM: $(cat "$work/out")"
+outcome_of 50 delivered G
+started 51 && fail "G: launched after TERM"
+[ ! -e "$state/serve.pid" ] || fail "G: pid file left"
+config '{"parallel": 1}' '{"interval": 1, "grace": 1}'
+board 52
+session 52-sonnet "" "" hang
+: >"$GH_LOG"; : >"$CLAUDE_LOG"
+(cd "$repo" && exec "$cli" serve) >"$work/out" 2>&1 &
+pid=$!
+for _ in $(seq 100); do [ -f "$FIX/pids-52" ] && break; sleep 0.1; done
+[ -f "$FIX/pids-52" ] || fail "G: the hanging session did not start: $(cat "$work/out")"
+kill -TERM "$pid"
+rc=0
+wait "$pid" || rc=$?
+[ "$rc" -eq 0 ] || fail "G: serve exited $rc after the grace: $(cat "$work/out")"
+read -r -a pids <"$FIX/pids-52"
+for p in "${pids[@]}"; do
+  ! kill -0 "$p" 2>/dev/null || fail "G: the session is still running after the grace (pid $p)"
+done
+grep -q 'issues/52/labels' "$GH_LOG" || fail "G: no needs-human on the ticket killed at the end of the grace: $(cat "$GH_LOG")"
+grep -q '^app-52 opus' "$CLAUDE_LOG" && fail "G: retried on Opus while stopping"
+
+# H: install and uninstall of the systemd user unit.
+config '{}' '{"grace": 120}'
+unit=$XDG_CONFIG_HOME/systemd/user/senior-mode-serve.service
+: >"$SYS_LOG"
+(cd "$repo" && "$cli" serve --install) >"$work/out" 2>&1 || fail "H: install failed: $(cat "$work/out")"
+[ -f "$unit" ] || fail "H: no unit file at $unit"
+grep -qx "WorkingDirectory=$repo" "$unit" || fail "H: the unit does not run in the repository: $(cat "$unit" 2>&1)"
+grep -q '^ExecStart=/bin/bash -lc "exec '"'"'.*bin/senior-mode'"'"' serve"$' "$unit" || fail "H: ExecStart wrong: $(cat "$unit" 2>&1)"
+grep -qx 'Restart=on-failure' "$unit" || fail "H: no restart on failure"
+grep -qx 'KillMode=mixed' "$unit" || fail "H: sessions would get the TERM too"
+grep -qx 'TimeoutStopSec=180' "$unit" || fail "H: stop timeout is not the grace plus a minute: $(cat "$unit")"
+grep -qx 'WantedBy=default.target' "$unit" || fail "H: no [Install] target"
+grep -qx -- '--user enable --now senior-mode-serve.service' "$SYS_LOG" || fail "H: not enabled: $(cat "$SYS_LOG")"
+grep -q 'enable-linger tester' "$work/out" || fail "H: no linger warning: $(cat "$work/out")"
+(cd "$repo" && "$cli" serve --install) >"$work/out" 2>&1 || fail "H: second install failed: $(cat "$work/out")"
+other="$work/other"
+git init -q -b main "$other"
+mkdir -p "$other/.claude"
+cp "$repo/.claude/senior-mode.json" "$other/.claude/"
+(cd "$other" && "$cli" serve --install) >"$work/out" 2>&1 && fail "H: a second repository took the unit"
+grep -q "already serves $repo" "$work/out" || fail "H: the conflict is not said: $(cat "$work/out")"
+: >"$SYS_LOG"
+(cd "$repo" && "$cli" serve --uninstall) >"$work/out" 2>&1 || fail "H: uninstall failed: $(cat "$work/out")"
+[ ! -e "$unit" ] || fail "H: unit file still there"
+grep -qx -- '--user disable --now senior-mode-serve.service' "$SYS_LOG" || fail "H: not disabled: $(cat "$SYS_LOG")"
+(cd "$repo" && "$cli" serve --uninstall) >"$work/out" 2>&1 || fail "H: second uninstall failed"
+grep -q 'Nothing installed' "$work/out" || fail "H: second uninstall did not say so: $(cat "$work/out")"
+touch "$FIX/no-systemd"
+(cd "$repo" && "$cli" serve --install) >"$work/out" 2>&1 && fail "H: installed without systemd"
+grep -q 'systemd user services' "$work/out" || fail "H: no systemd not explained: $(cat "$work/out")"
+rm -f "$FIX/no-systemd"
+
+# I: options and config are checked.
+(cd "$repo" && "$cli" serve --bogus) >"$work/out" 2>&1 && fail "I: an unknown option was accepted"
+grep -q 'usage:.*serve' "$work/out" || fail "I: usage does not name serve: $(cat "$work/out")"
+config '{}' '{"interval": 0}'
+once && fail "I: serve.interval 0 accepted"
+grep -q 'serve.interval must be' "$work/out" || fail "I: bad interval not explained: $(cat "$work/out")"
+echo '{}' >"$repo/.claude/senior-mode.json"
+[ "$(cd "$repo" && "$cli" config get serve.interval)" = 60 ] &&
+  [ "$(cd "$repo" && "$cli" config get serve.grace)" = 600 ] &&
+  [ "$(cd "$repo" && "$cli" config get serve.breakerCooldown)" = 3600 ] &&
+  [ "$(cd "$repo" && "$cli" config get autonomy.sessionsPerHour)" = 6 ] &&
+  [ "$(cd "$repo" && "$cli" config get autonomy.minMemoryMB)" = 1024 ] || fail "I: config defaults wrong"
+
+[ "$failures" -eq 0 ] && echo "serve: all cases pass"
+exit "$failures"

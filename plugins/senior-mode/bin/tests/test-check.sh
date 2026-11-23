@@ -63,8 +63,8 @@ grep -q -- "-f state=failure -f context=senior-mode/ci -f description=failed: te
 # reason is shown instead of a bare ok.
 config '{"checks":[{"name":"lint db","run":"echo \"skipped: tool not installed\""},{"name":"tests","run":"true"}]}'
 run check || fail "a skipped check fails the run: $(cat "$work/out")"
-grep -q "^skip  lint db: tool not installed$" "$work/out" || fail "skip reason not shown: $(cat "$work/out")"
-grep -q "^ok    tests$" "$work/out" || fail "the other check lost its ok: $(cat "$work/out")"
+grep -q "^skip  lint db: tool not installed ([0-9.]*s)$" "$work/out" || fail "skip reason not shown: $(cat "$work/out")"
+grep -q "^ok    tests ([0-9.]*s)$" "$work/out" || fail "the other check lost its ok: $(cat "$work/out")"
 grep -q "4/4 checks passed" "$work/out" || fail "a skipped check is not counted as passed: $(cat "$work/out")"
 
 # Git exports GIT_DIR to hooks, absolute in a linked worktree: a check must not inherit it, or a
@@ -190,6 +190,39 @@ echo dirty >"$repo/untracked.txt"
 run check || fail "check fails on a dirty tree although every check passes"
 run publish && fail "a check on a dirty tree was recorded for HEAD"
 rm "$repo/untracked.txt"
+
+# Each check shows how long it took, whatever its outcome.
+config '{"checks":[{"name":"slow","run":"sleep 1"},{"name":"bad","run":"false"},{"name":"idle","run":"echo \"skipped: nothing to do\""}]}'
+run check
+grep -Eq "^ok    slow \(1\.[0-9]s\)$" "$work/out" || fail "time of a passing check not shown: $(cat "$work/out")"
+grep -Eq "^FAIL  bad \([0-9]+\.[0-9]s\)$" "$work/out" || fail "time of a failing check not shown: $(cat "$work/out")"
+grep -Eq "^skip  idle: nothing to do \([0-9]+\.[0-9]s\)$" "$work/out" || fail "time of a skipped check not shown: $(cat "$work/out")"
+
+# `check --pre-push` reads the lines git gives a pre-push hook and tells the checks which paths the push
+# changes (SENIOR_MODE_CHANGED_FILES); a check that cannot narrow itself ignores it. Anything the hook cannot
+# work out means no list, so the checks run in full. A narrowed run is not recorded: publish needs a full one.
+config "$(jq -nc --arg out "$work/scope" '{checks: [{name: "scope", run: ("if [ -n \"${SENIOR_MODE_CHANGED_FILES:-}\" ]; then cat \"$SENIOR_MODE_CHANGED_FILES\"; else echo FULL; fi >" + $out)}]}')"
+old=$(sha)
+mkdir -p "$repo/a" "$repo/b" && echo x >"$repo/a/x.txt" && echo x >"$repo/b/y.txt"
+git -C "$repo" add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "feat: two files"
+zero=0000000000000000000000000000000000000000
+pushed() { (cd "$repo" && printf '%s\n' "$1" | "$cli" check --pre-push) >"$work/out" 2>&1; }
+pushed "refs/heads/feat/11-z $(sha) refs/heads/feat/11-z $old" || fail "pre-push check fails: $(cat "$work/out")"
+[ "$(sort "$work/scope" | paste -sd' ')" = "a/x.txt b/y.txt" ] || fail "changed paths of an update: $(cat "$work/scope")"
+run publish && fail "a narrowed run was recorded for publishing"
+pushed "refs/heads/feat/12-new $(sha) refs/heads/feat/12-new $zero"
+grep -qx "a/x.txt" "$work/scope" && grep -qx "b/y.txt" "$work/scope" || fail "changed paths of a new branch: $(cat "$work/scope")"
+pushed "refs/heads/feat/11-z $(sha) refs/heads/feat/11-z 1111111111111111111111111111111111111111"
+[ "$(cat "$work/scope")" = FULL ] || fail "an unknown remote commit did not mean a full run: $(cat "$work/scope")"
+pushed "(delete) $zero refs/heads/old $old"
+[ "$(cat "$work/scope")" = FULL ] || fail "a deletion did not mean a full run: $(cat "$work/scope")"
+(cd "$repo" && "$cli" check --pre-push </dev/null) >"$work/out" 2>&1
+[ "$(cat "$work/scope")" = FULL ] || fail "no pushed ref did not mean a full run: $(cat "$work/scope")"
+echo a/x.txt >"$work/list"
+(cd "$repo" && SENIOR_MODE_CHANGED_FILES="$work/list" "$cli" check) >"$work/out" 2>&1
+[ "$(cat "$work/scope")" = FULL ] || fail "check without --pre-push honours a list from the environment: $(cat "$work/scope")"
+run publish || fail "a full run is not recorded: $(cat "$work/out")"
 
 # A node project whose dependencies are not installed fails at once, naming the command that installs
 # them, instead of running a typecheck that fails on missing modules (#110).

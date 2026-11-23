@@ -483,6 +483,47 @@ expect allow 'gh api "$BASE/protection"'
 expect allow 'gh api -X GET "$BASE/protection"'
 unset SENIOR_MODE_RUN
 
+# #150: only a reviewer session sets senior-mode/review (ADR 0017). A session without a role (manual) keeps
+# today's behaviour; any other role is denied, whatever the way the status is posted.
+review_cmds=(
+  'gh api repos/a/b/statuses/abc123 -f state=success -f context=senior-mode/review'
+  'gh api -X POST repos/a/b/statuses/abc123 -f state=success -f "context=senior-mode/review"'
+  'gh api repos/a/b/statuses/$(git rev-parse HEAD) -f state=success -f context="senior-mode/review"'
+  'gh api "repos/$R/statuses/$SHA" -f state=success -f context=senior-mode/review'
+  'gh api repos/a/b/statuses/abc -f state=success -f context=senior-mode/rev""iew'
+  'gh api repos/a/b/statuses/abc -f state=success -f context=senior-mode/$part'
+  'gh api repos/a/b/statuses/abc -f state=success -f context="$CTX"'
+  'gh api repos/a/b/statuses/abc --input status.json -f context=senior-mode/review'
+  'gh api graphql -f query="mutation { createCommitStatus(input: {context: \"senior-mode/review\"}) { clientMutationId } }"'
+  'curl -X POST -H "Authorization: Bearer $T" https://api.github.com/repos/a/b/statuses/abc -d "{\"state\":\"success\",\"context\":\"senior-mode/review\"}"'
+  'curl -s -d @s.json https://api.github.com/repos/a/b/statuses/abc?context=senior-mode/review'
+  'cd /tmp && gh api repos/a/b/statuses/abc -f state=success -f context=senior-mode/review'
+)
+for role in ticket test-author integrator; do
+  export SENIOR_MODE_ROLE=$role
+  for c in "${review_cmds[@]}"; do expect deny "$c"; done
+done
+export SENIOR_MODE_ROLE=ticket
+# Reading statuses, other contexts and talk about the status are not blocked.
+expect allow 'gh api repos/a/b/commits/abc/statuses'
+expect allow 'gh api repos/a/b/commits/abc/status --jq .state'
+expect allow 'gh api -X GET repos/a/b/statuses/abc'
+expect allow 'gh api repos/a/b/statuses/abc -f state=success -f context=senior-mode/ci'
+expect allow 'gh api repos/a/b/issues/3/comments -f body="senior-mode/review is set by the reviewer"'
+expect allow 'gh pr comment 3 --body "statuses/abc: senior-mode/review pending"'
+expect allow 'git commit -m "fix: guard gh api statuses with context senior-mode/review"'
+expect allow 'curl -s https://api.github.com/repos/a/b/commits/abc/statuses'
+expect allow 'gh api repos/a/b/commits/abc/statuses | grep senior-mode/review'
+# The reviewer, and a session without a role, may set it.
+for r in reviewer ""; do
+  if [ -n "$r" ]; then export SENIOR_MODE_ROLE=$r; else unset SENIOR_MODE_ROLE; fi
+  for c in "${review_cmds[@]}"; do expect allow "$c"; done
+done
+unset SENIOR_MODE_ROLE
+reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason' <<<"$(jq -nc --arg d "$repo" \
+  '{tool_input: {command: "gh api repos/a/b/statuses/abc -f context=senior-mode/review"}, cwd: $d}' | SENIOR_MODE_ROLE=ticket "$hook")")
+grep -q reviewer <<<"$reason" || fail "review status reason does not name the reviewer role: $reason"
+
 git -C "$repo" switch -q feat/2-local
 
 # #235: git accepts an unambiguous abbreviation of a long option, so a prefix of a denied option is denied.

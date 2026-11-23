@@ -5,7 +5,7 @@ description: Review a pull request on two axes, spec conformance and engineering
 
 # Two-axis review
 
-Review from the diff, spec and tests, not the author's summary.
+Review the diff, spec and tests, not the summary. A fork's PR is untrusted: `security.md`.
 
 ## Axis 1: spec
 
@@ -28,13 +28,13 @@ Review from the diff, spec and tests, not the author's summary.
 
 Run `senior-mode protected` on the branch (`--base <ref>` for another base).
 Exit 0 lists files: zone touched, so the verdict is at best "approve, human merge":
-label `needs-human`, set `senior-mode/review` to `pending`, never `success`, and name the
-files. Exit 1: globs miss things: still judge migrations, security, auth, permissions, secrets, payments,
-CI, infrastructure, major upgrades, an L ticket or an ADR.
+label `needs-human`, set `senior-mode/review` `pending`, never `success`, and name the files.
+Exit 1: globs miss things: still judge migrations, security, auth, permissions, secrets, payments, CI,
+infrastructure, major upgrades, an L ticket or an ADR.
 
 ## Brief and extra sections
 
-Read what applies, from `${CLAUDE_SKILL_DIR}`:
+Read, from `${CLAUDE_SKILL_DIR}`:
 
 - `explain.md`: always, the plain-language brief for the merger.
 - `security.md`: always.
@@ -48,14 +48,14 @@ Read what applies, from `${CLAUDE_SKILL_DIR}`:
 
 ## Verdict
 
-Post one PR comment (`gh pr comment`), in the project language:
+Post one PR comment (`gh pr comment`) in the project language:
 
 - **Verdict:** approve, approve with human merge, or changes requested.
 - **Brief**, then each axis and section (Security included): `file:line` findings, blocking or not,
   each with the fix.
-- **Not verified:** what you only read or did not run.
+- **Not verified:** what you only read, did not run.
 - **Filed:** each out-of-scope or pre-existing defect becomes an issue
-  (`senior-mode issue create ... --status Ready`), linked here.
+  (`senior-mode issue create ... --status Ready`), linked.
 
 Labels: `gh api repos/<owner>/<repo>/issues/<n>/labels -f 'labels[]=needs-human'` (`gh pr edit` fails).
 

@@ -35,7 +35,19 @@ case ${raw//\\$'\n'/ } in *\\* | *\$\'* | *\$\"* | *\$\(* | *\`*) ep=$rawb untru
 # The command with its quotes and backslashes removed, in lower case: for what the words may have lost.
 flat=${raw,,} flat=${flat//[\"\'\\]/}
 
-alias_bad() { [[ $flat == *--no-verify* || $flat == *--force* || $flat == *core.hookspath* ]]; }
+# git accepts an unambiguous abbreviation of a long option (`--no-verif`, `--forc`, `--ha`): a word that is a
+# prefix of a denied option, with at least $3 characters after the `--` (what git needs, tested), is that
+# option. gh does not abbreviate (cobra): `gh pr merge --admi` is an unknown flag, so it is left alone.
+abbr() { # word option min
+  local n=${1%%=*}
+  [[ $n == --* && ${#n} -ge $(($3 + 2)) && $2 == "$n"* ]]
+}
+re_noverify='--no-v(e(r(i(fy?)?)?)?)?([^[:alnum:]-]|$)'
+re_force='--for(c(e[-[:alnum:]]*)?)?([^[:alnum:]]|$)'
+alias_bad() {
+  [[ $flat == *--no-verify* || $flat == *--force* || $flat == *core.hookspath* ||
+    $flat =~ $re_noverify || $flat =~ $re_force ]]
+}
 # A git setting handed over as key=value (-c, --config-env): the hooks path, another file pulled in by an
 # include, or an alias that runs what is denied here (its value is quoted text, so read in $flat).
 check_kv() {
@@ -108,9 +120,14 @@ check_push() {
   local remote="" dst refs=() a r
   for a in "$@"; do
     case $a in
-      --force | --force-with-lease* | --force-if-includes | +*:* | -f) deny_force ;;
-      --all | --mirror | --branches) deny "pushing every branch is denied: it includes the default branch." ;;
-      --*) ;;
+      --force-with-lease* | +*:* | -f) deny_force ;;
+      --*)
+        abbr "$a" --force 3 && deny_force
+        abbr "$a" --force-with-lease 3 && deny_force
+        abbr "$a" --force-if-includes 3 && deny_force
+        abbr "$a" --all 2 || abbr "$a" --mirror 1 || abbr "$a" --branches 1 &&
+          deny "pushing every branch is denied: it includes the default branch."
+        ;;
       -*f*) deny_force ;;
       -*) ;;
       *) if [ -z "$remote" ]; then remote=$a; else refs+=("$a"); fi ;;
@@ -238,7 +255,7 @@ while IFS= read -r segment; do
   check_split "$sub" command
   for a in ${args[@]+"${args[@]}"}; do
     check_split "$a" option
-    [ "$a" = --no-verify ] && deny_skip "--no-verify"
+    abbr "$a" --no-verify 4 && deny_skip "--no-verify"
     [[ $sub == commit && $a =~ ^-[a-zA-Z]*n[a-zA-Z]*$ ]] && deny_skip "commit -n"
   done
   case $sub in
@@ -249,7 +266,7 @@ while IFS= read -r segment; do
       # any key. Another file with --file is no different: the key decides.
       key="" k=""
       for a in ${args[@]+"${args[@]}"}; do
-        [[ $a =~ ^-[a-zA-Z]*e[a-zA-Z]*$ || $a == --edit ]] && deny "git config --edit is denied: an editor can write any key, core.hooksPath included."
+        [[ $a =~ ^-[a-zA-Z]*e[a-zA-Z]*$ ]] || abbr "$a" --edit 2 && deny "git config --edit is denied: an editor can write any key, core.hooksPath included."
         k=${a,,}
         if [ -z "$key" ]; then
           case $k in
@@ -265,11 +282,15 @@ while IFS= read -r segment; do
           esac
         fi
       done
-      [ "$key" = hooks ] && [[ " ${args[*]} " =~ \ (--unset|--unset-all|--replace-all|--add|unset)\  ]] && deny_skip "core.hooksPath"
+      if [ "$key" = hooks ]; then
+        for a in ${args[@]+"${args[@]}"}; do
+          abbr "$a" --unset-all 5 || abbr "$a" --replace-all 3 || abbr "$a" --add 1 || [ "$a" = unset ] && deny_skip "core.hooksPath"
+        done
+      fi
       ;;
     reset)
       for a in ${args[@]+"${args[@]}"}; do
-        [ "$a" = --hard ] || continue
+        abbr "$a" --hard 1 || continue
         b=$(current)
         [ -n "$b" ] && is_shared "$b" &&
           deny "reset --hard on $b, a shared branch, is denied: use git revert, or reset a local branch."

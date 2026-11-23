@@ -56,6 +56,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `autonomy.maxTickets` | `3` | Tickets per [run](autonomy.md#run) |
 | `autonomy.parallel` | `1` | Tickets a run works on at once, and the number of [session slots](autonomy.md#session-slots); those whose [Paths](autonomy.md#run) overlap never run together, and one with no Paths runs alone |
 | `limits.prLines` | `400` | A positive whole number of lines. `senior-mode pick` batches Ready S tickets whose Paths overlap, at most `prLines` / 50 per batch (3 at most; an S is about 50 lines), see [batches](autonomy.md#run) |
+| `limits.diffLines` | `{ "S": 300, "M": 800, "L": 2000 }` | Positive whole numbers of changed lines by Size: the budget of a pull request for the ticket it closes (a batch sums its tickets' budgets). Lockfiles, generated files and fixtures are not counted. `ready --pr`, `run` and `serve` treat a pull request over budget as [not ready](autonomy.md#ready-pull-request); a key you set replaces its default, the others stay |
 | `autonomy.maxConsecutiveFailures` | `2` | Failed tickets in a row after which a run starts no new one |
 | `autonomy.merge` | `false` | Whether a run merges the pull requests that pass every bound. Under [`serve`](commands.md#the-senior-mode-script) it defaults to `true` unless the repository sets it ([ADR 0018](../adr/0018-daemon-merge-policy.md)) |
 | `autonomy.escalate` | `true` | Whether a ticket that fails on Sonnet is retried once on Opus |

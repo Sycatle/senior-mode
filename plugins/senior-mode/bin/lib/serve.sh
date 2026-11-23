@@ -585,7 +585,8 @@ It is labelled needs-human: a person decides what happens next." >/dev/null || e
 }
 
 # Whether a run_blocker reason $1 is one no poll will lift: merging off, an external pull request, no server protection,
-# a protected zone, a pull request that is not ready (a ticket of a batch without its commit, #297).
+# a protected zone, a pull request that is not ready (a ticket without its commit, a diff over its size budget: needs-human
+# with the numbers, #297, #303).
 # A status not green yet, a mergeable state or an unreadable answer is transient: the next poll looks again.
 serve_permanent() {
   case $1 in

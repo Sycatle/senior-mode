@@ -552,14 +552,19 @@ questions, test seams).
 
 `senior-mode ready --pr <n>` on an open pull request that is no framing one (its branch is not `docs/...`)
 says whether it is ready to merge on account of the tickets it closes (`Closes #n`, `Fixes #n`, `Resolves #n`
-in its body), and exits 1 when it is not. `run` and `serve` apply the same rule before they merge.
+in its body), and exits 1 when it is not. `run` and `serve` apply the same two rules before they merge. A pull
+request that closes no ticket is held to neither.
 
 - **One commit per ticket** (#297): a pull request that closes several tickets (a batch) needs each of them
   referenced (`Refs #n`, `Closes #n`) by at least one commit of the branch; the tickets with none are named.
-  A pull request that closes one ticket or none is not held to it.
+  A single-ticket pull request is not held to it.
+- **Size budget** (#303): the lines the pull request changes (additions and deletions; lockfiles, generated
+  files and fixtures are left out) must not exceed the budget of the Size of its ticket,
+  [`limits.diffLines`](configuration.md#keys-the-plugin-reads-today) (S 300, M 800, L 2000); a batch sums the budgets of its tickets.
+  The answer says by how much it is over.
 
-Under `serve` a pull request that is not ready is not merged: it gets `needs-human` with the reason, like any
-blocker that no later poll lifts.
+Under `serve` a pull request that is not ready is not merged: it gets `needs-human` with the numbers, like any
+blocker that no later poll lifts. A ticket whose Size cannot be read is only logged and retried.
 
 ### After a crash
 

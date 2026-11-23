@@ -7,7 +7,7 @@ DEFAULTS='{
   "notify": { "mention": "", "webhook": "", "digest": true },
   "agent": { "command": "claude" },
   "e2e": { "slots": 2 },
-  "limits": { "prLines": 400 },
+  "limits": { "prLines": 400, "diffLines": { "S": 300, "M": 800, "L": 2000 } },
   "wip": 1,
   "slot": "",
   "hygiene": { "days": 14 },

@@ -422,13 +422,28 @@ pr_closed_tickets() {
   grep -oiE '\b(close[sd]?|fix(e[sd])?|resolve[sd]?)[: ]+#[0-9]+' <<<"$1" | grep -oE '[0-9]+$' | sort -nu || true
 }
 
+# Whether a changed file counts towards the size budget of a pull request (#303): not a lockfile, a generated
+# file or a fixture.
+diff_countable() {
+  case $1 in
+    *.lock | package-lock.json | */package-lock.json | npm-shrinkwrap.json | */npm-shrinkwrap.json | pnpm-lock.yaml | */pnpm-lock.yaml | \
+      bun.lockb | */bun.lockb | go.sum | */go.sum | *.min.js | *.min.css | *.map | *.snap | *.pb.go | *_pb2.py | *.generated.* | *_generated.* | \
+      dist/* | */dist/* | generated/* | */generated/* | __generated__/* | */__generated__/* | \
+      fixtures/* | */fixtures/* | fixture/* | */fixture/* | __fixtures__/* | */__fixtures__/* | testdata/* | */testdata/* | \
+      fixture-* | */fixture-* | *.fixture.*) return 1 ;;
+  esac
+}
+
 # What stops the pull request $2 of $1 (owner/name) from being ready to merge on account of the tickets it
-# closes, in one phrase, or nothing. $3 is its REST object. Starts with "not ready: " when the pull request
-# itself is at fault (#297): it closes several tickets and some are named by no commit (`Refs #n` or
-# `Closes #n`), the rule of one commit per ticket. A pull request that closes no ticket, or one, is not held to
-# it. Other phrases say what could not be read.
+# closes, in one phrase, or nothing. $3 is its REST object and $4 its changed files as `<path>\t<changed lines>`
+# lines. Starts with "not ready: " when the pull request itself is at fault (#297, #303):
+# - it closes several tickets and some are named by no commit (`Refs #n` or `Closes #n`): one commit per ticket;
+# - its changed lines, lockfiles, generated and fixture files left out, exceed the sum of the budgets
+#   (limits.diffLines) of the Size of the tickets it closes.
+# A pull request that closes no ticket, or one, with a commit of its own, is only held to the second rule.
+# Other phrases say what could not be read.
 delivery_blocker() {
-  local slug=$1 pr=$2 pull=$3 tickets=() n missing="" msgs
+  local slug=$1 pr=$2 pull=$3 files=$4 tickets=() n missing="" msgs size cfg budget total=0 lines=0 path changed sizes=""
   mapfile -t tickets < <(pr_closed_tickets "$(jq -r '.body // ""' <<<"$pull")")
   [ "${#tickets[@]}" -gt 0 ] || return 0
   if [ "${#tickets[@]}" -gt 1 ]; then
@@ -444,14 +459,42 @@ delivery_blocker() {
       return 0
     }
   fi
+  cfg=$(config_get limits.diffLines 2>/dev/null) || cfg=null
+  jq -e 'type == "object" and all(.[]; type == "number" and . > 0 and . == floor)' <<<"$cfg" >/dev/null 2>&1 ||
+    {
+      echo "limits.diffLines must be positive whole numbers by size (S, M, L)"
+      return 0
+    }
+  for n in "${tickets[@]}"; do
+    size=$( (item_get "$n" Size) 2>/dev/null) || size=""
+    [ -n "$size" ] || {
+      echo "the Size of #$n is unknown"
+      return 0
+    }
+    budget=$(jq -r --arg s "$size" '.[$s] // empty' <<<"$cfg")
+    [ -n "$budget" ] || {
+      echo "limits.diffLines has no budget for the size $size of #$n"
+      return 0
+    }
+    total=$((total + budget))
+    sizes+=${sizes:+, }"#$n $size"
+  done
+  while IFS=$'\t' read -r path changed; do
+    [[ ${changed:-} =~ ^[0-9]+$ ]] || continue
+    ! diff_countable "$path" || lines=$((lines + changed))
+  done <<<"$files"
+  [ "$lines" -le "$total" ] ||
+    echo "not ready: $lines changed lines, $((lines - total)) over the size budget of $total (limits.diffLines: $sizes)"
 }
 
 # senior-mode ready --pr <n> on an open pull request that is no framing one: whether it is ready to merge on
 # account of its tickets (see delivery_blocker). Says so, and fails when it is not.
 ready_delivery() {
-  local slug=$1 pr=$2 pull reason
+  local slug=$1 pr=$2 pull files reason
   pull=$(gh_retry api "repos/$slug/pulls/$pr") || die "cannot read pull request #$pr"
-  reason=$(delivery_blocker "$slug" "$pr" "$pull")
+  files=$(gh_retry api "repos/$slug/pulls/$pr/files" --paginate --jq '.[] | "\(.filename)\t\(.changes // 0)"') ||
+    die "cannot read the files of pull request #$pr"
+  reason=$(delivery_blocker "$slug" "$pr" "$pull" "$files")
   case $reason in
     "") echo "pull request #$pr is ready" ;;
     "not ready: "*)

@@ -23,6 +23,7 @@ case "$*" in
     # The Size of a ticket (item_get) or the board.
     if grep -q projectItems <<<"$q"; then cat "$FIX/item-$(jq -r '.variables.number' <<<"$q").json"; else cat "$FIX/board.json"; fi ;;
   "pr view "*) n=$(sed -E 's#^pr view ([0-9]+) .*#\1#' <<<"$*"); respond <"$FIX/pr-$n.json" ;;
+  "api repos/acme/app/pulls/"*"/files"*) respond <"$FIX/files-$(sed -E 's#.*/pulls/([0-9]+)/files.*#\1#' <<<"$*").json" ;;
   "api repos/acme/app/pulls/"*"/commits"*) respond <"$FIX/commits-$(sed -E 's#.*/pulls/([0-9]+)/commits.*#\1#' <<<"$*").json" ;;
   "api repos/acme/app/pulls/"*) respond <"$FIX/pull-${2##*/}.json" ;;
   "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
@@ -202,23 +203,51 @@ ready --pr 110 || fail "G: ready --pr failed: $(cat "$work/err")"
 said '^#50 Status = Ready' || fail "G: #50 not Ready through a framing pull request: $(cat "$work/out")"
 said '^#5[12] ' && fail "G: a framing pull request made an untrusted ticket Ready: $(cat "$work/out")"
 
-# H: an open pull request that is no framing one is a delivery: one commit per ticket it closes (#297).
-delivery() { # pull-request closes-text commit-messages... : the pull request and its commits
+# H: an open pull request that is no framing one is a delivery: one commit per ticket it closes (#297) and
+# its changed lines within the size budget of its tickets (#303; S 300, M 800, L 2000, a batch sums them).
+size() { # ticket size
+  jq -nc --arg s "$2" '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"},
+    fieldValues: {nodes: ($s | if . == "" then [] else [{name: ., field: {name: "Size"}}] end)}}]}}}}}' >"$FIX/item-$1.json"
+}
+delivery() { # pull-request closes-text commit-messages... : the pull request, its commits, no file yet
   local n=$1 body=$2
   shift 2
   pr "$n" OPEN "feat/$n-x" "$body"
   jq -nc --arg b "$body" '{number: 0, body: $b}' >"$FIX/pull-$n.json"
   printf '%s\n' "$@" | jq -R '{commit: {message: .}}' | jq -sc . >"$FIX/commits-$n.json"
 }
-# One ticket: ready, and its commits are not even read; its one commit may say anything.
+changes() { # pull-request path:lines...
+  local n=$1 f
+  shift
+  for f in "$@"; do jq -nc --arg p "${f%%:*}" --argjson c "${f##*:}" '{filename: $p, changes: $c}'; done | jq -sc . >"$FIX/files-$n.json"
+}
+for n in 301 302 303; do size $n S; done
+size 304 M
+# One ticket, 250 lines of an S budget of 300 (a lockfile, a fixture and generated code are not counted): ready.
 delivery 300 "Closes #301" "feat: a"
-ready --pr 300 || fail "H: a single-ticket pull request is not ready: $(cat "$work/out")"
+changes 300 src/a.sh:250 package-lock.json:9000 tests/fixtures/big.json:5000 src/api.generated.ts:700 pnpm-lock.yaml:40
+ready --pr 300 || fail "H: a pull request within its budget is not ready: $(cat "$work/out")"
 said '^pull request #300 is ready$' || fail "H: no ready line: $(cat "$work/out")"
 logged "pulls/300/commits" && fail "H: the commits of a single-ticket pull request were read"
-delivery 309 "No ticket here" "feat: a"
-ready --pr 309 || fail "H: a pull request that closes nothing is not ready: $(cat "$work/out")"
+# 400 lines of 300: not ready, by how much.
+changes 300 src/a.sh:250 src/b.sh:150
+ready --pr 300 && fail "H: a pull request over its budget is ready"
+said 'pull request #300 is not ready: 400 changed lines, 100 over the size budget of 300' || fail "H: the excess is not said: $(cat "$work/out")"
+# A single-ticket pull request needs no Refs: its one commit may say anything.
+changes 300 src/a.sh:10
+ready --pr 300 || fail "H: a single-ticket pull request needs no reference: $(cat "$work/out")"
+# An M ticket has 800; limits.diffLines overrides one size and keeps the others.
+delivery 305 "Closes #304" "feat: m"
+changes 305 src/a.sh:700
+ready --pr 305 || fail "H: an M pull request of 700 lines is not ready: $(cat "$work/out")"
+jq '.limits = {diffLines: {M: 600}}' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+ready --pr 305 && fail "H: limits.diffLines.M = 600 not applied"
+said '100 over the size budget of 600' || fail "H: the configured budget is not said: $(cat "$work/out")"
+ready --pr 300 || fail "H: the S budget was lost with a partial limits.diffLines: $(cat "$work/out")"
+config '["auth/**"]'
 # A batch closing three tickets: one commit per ticket, named when one is missing.
 delivery 310 $'Closes #301\nCloses #302\nCloses #303' $'feat: a\n\nRefs #301' $'feat: b\n\nCloses #302'
+changes 310 src/a.sh:100
 ready --pr 310 && fail "H: a batch with a ticket without a commit is ready"
 said 'pull request #310 is not ready: it closes 3 tickets and no commit references #303' || fail "H: the missing ticket is not named: $(cat "$work/out")"
 said '#301|#302,' && fail "H: a referenced ticket is named as missing: $(cat "$work/out")"
@@ -226,8 +255,22 @@ delivery 310 $'Closes #301\nCloses #302\nCloses #303' $'feat: a\n\nRefs #301' $'
 ready --pr 310 || fail "H: a batch with one commit per ticket is not ready: $(cat "$work/out")"
 # #3010 is not #301: a reference is the whole number.
 delivery 311 $'Closes #301\nCloses #302' $'feat: a\n\nRefs #3010' $'feat: b\n\nRefs #302'
+changes 311 src/a.sh:1
 ready --pr 311 && fail "H: Refs #3010 counted for #301"
 said "no commit references #301 " || fail "H: #301 not named: $(cat "$work/out" "$work/err")"
+# The budgets of a batch add up: three S tickets hold 900 lines, and 901 is one too many.
+delivery 312 $'Closes #301\nCloses #302\nCloses #303' 'Refs #301' 'Refs #302' 'Refs #303'
+changes 312 src/a.sh:900
+ready --pr 312 || fail "H: a batch at the sum of its budgets is not ready: $(cat "$work/out")"
+changes 312 src/a.sh:901
+ready --pr 312 && fail "H: a batch over the sum of its budgets is ready"
+said '1 over the size budget of 900 \(limits.diffLines: #301 S, #302 S, #303 S\)' || fail "H: the batch budget is not said: $(cat "$work/out")"
+# A ticket whose Size is unknown cannot be checked; it is not called ready.
+size 301 ""
+delivery 313 "Closes #301" "feat: a"
+changes 313 src/a.sh:1
+ready --pr 313 && fail "H: a ticket without a Size is ready"
+said 'cannot be checked: the Size of #301 is unknown' || fail "H: unknown Size not said: $(cat "$work/out")"
 # A framing pull request is still read as before.
 pr 314 OPEN docs/wave "#10"
 ready --pr 314 && fail "H: an open framing pull request accepted"

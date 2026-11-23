@@ -37,6 +37,13 @@ esac
 [ "$*" = "api graphql --input -" ] || { echo "unexpected: $*" >&2; exit 1; }
 body=$(cat)
 printf '%s\n' "$body" >>"$FIX/bodies"
+if grep -q createProjectV2StatusUpdate <<<"$body"; then
+  [ -z "${UPDATE_FAIL:-}" ] || { echo "HTTP 403: forbidden" >&2; exit 1; }
+  printf '%s\n' "$body" >>"$FIX/status-updates"
+  echo '{"data": {"createProjectV2StatusUpdate": {"statusUpdate": {"id": "SU_1"}}}}'
+  exit 0
+fi
+if grep -q LABELED_EVENT <<<"$body"; then cat "$FIX/labeled.json"; exit 0; fi
 [ -z "$(jq -r '.variables.number // empty' <<<"$body")" ] || { cat "$FIX/item-$(jq -r .variables.number <<<"$body").json"; exit 0; }
 after=$(jq -r '.variables.after // "first"' <<<"$body")
 [ "$(jq -r '.variables.branchesAfter // empty' <<<"$body")" != B1 ] || { cat "$FIX/more-branches.json"; exit 0; }
@@ -119,7 +126,7 @@ page() {
 }
 page "" "$items" >"$FIX/page-first.json"
 
-run() { : >"$GH_LOG"; : >"$FIX/bodies"; (cd "$repo" && "$cli" "$@") >"$work/out" 2>"$work/err"; }
+run() { : >"$GH_LOG"; : >"$FIX/bodies"; : >"$FIX/status-updates"; (cd "$repo" && "$cli" "$@") >"$work/out" 2>"$work/err"; }
 calls() { wc -l <"$GH_LOG" | tr -d ' '; }
 json() { jq -c "$1" "$work/out"; }
 
@@ -541,6 +548,54 @@ run status --json || fail "paged status failed: $(cat "$work/err")"
 [ "$(jq -r '.variables | [.repo, .after] | map(tostring) | join("|")' <(sed -n 2p "$FIX/bodies"))" = "false|C1" ] ||
   fail "second page request: $(sed -n 2p "$FIX/bodies")"
 [ "$(json '.inProgress | length')" -eq 2 ] || fail "items of page 2 lost: $(json .inProgress)"
+
+# #177: `status` alone never publishes; --publish posts the health of the Project as a status update.
+run status || fail "status failed: $(cat "$work/err")"
+[ ! -s "$FIX/status-updates" ] || fail "status alone posted a status update: $(cat "$FIX/status-updates")"
+run status --json || fail "status --json failed"
+[ ! -s "$FIX/status-updates" ] || fail "status --json posted a status update"
+jq -nc --arg at "$(ago $((3 * 3600)))" '{data: {repository: {i22: {timelineItems: {nodes: [{createdAt: "2020-01-01T00:00:00Z", label: {name: "needs-human"}},
+  {createdAt: $at, label: {name: "needs-human"}}, {createdAt: "2026-01-01T00:00:00Z", label: {name: "blocked"}}]}}}}}' >"$FIX/labeled.json"
+run status --publish || fail "status --publish failed: $(cat "$work/err")"
+[ "$(grep -c createProjectV2StatusUpdate "$FIX/status-updates")" -eq 1 ] || fail "--publish did not post once: $(cat "$FIX/status-updates")"
+[ "$(jq -r '.variables | [.status, .start, .target] | join("|")' "$FIX/status-updates")" = "OFF_TRACK|$(date -u +%Y-%m-%d)|2026-11-01" ] ||
+  fail "off track fields: $(cat "$FIX/status-updates")"
+jq -e '.variables.body | startswith("Off track: milestone Stage 12 was due 2026-11-01 and has 1 open issue\n")
+  and contains("Board: Backlog ") and contains("Needs a human: #22 Ticket 22") and contains("Failing pull requests: #30 ") and contains("Drift: #")' \
+  "$FIX/status-updates" >/dev/null || fail "off track body: $(cat "$FIX/status-updates")"
+grep -q '^Project status update posted: Off track: milestone Stage 12' "$work/out" || fail "--publish does not say the update: $(cat "$work/out")"
+grep -q '^Done in\|^In progress' "$work/out" || fail "--publish drops the report: $(cat "$work/out")"
+# The 24 hours of needs-human count from the last `labeled` event of the ticket (3 hours ago here): not at risk for it.
+jq -c '(.data.node.items.nodes[] | select(.content.number == 12) | .content.milestone.dueOn) = "2027-02-01T00:00:00Z"' "$FIX/page-first.json" >"$FIX/page-first.late"
+cp "$FIX/page-first.json" "$FIX/page-first.keep"
+cp "$FIX/page-first.late" "$FIX/page-first.json"
+run status --publish --json || fail "status --publish --json failed: $(cat "$work/err")"
+[ "$(json '.health | [.status, .label, .targetDate] | join("|")')" = '"AT_RISK|At risk|2026-12-01"' ] || fail "json health: $(json .health)"
+json '.health | has("body")' | grep -qx false || fail "the body is repeated in the JSON"
+jq -e '.variables.body | startswith("At risk: pull request #30 fails its checks (senior-mode/ci); ") and contains("board drift items (#")' "$FIX/status-updates" >/dev/null ||
+  fail "at risk body: $(cat "$FIX/status-updates")"
+jq -e '.variables.body | contains("needed a human") | not' "$FIX/status-updates" >/dev/null || fail "a fresh needs-human counted: $(cat "$FIX/status-updates")"
+jq -nc '{data: {repository: {i22: {timelineItems: {nodes: [{createdAt: "2020-01-01T00:00:00Z", label: {name: "needs-human"}}]}}}}}' >"$FIX/labeled.json"
+run status --publish || fail "status --publish failed: $(cat "$work/err")"
+jq -e '.variables.body | startswith("At risk: #22 has needed a human for ")' "$FIX/status-updates" >/dev/null || fail "stuck needs-human not first: $(cat "$FIX/status-updates")"
+# Quiet board: On track, with the rule that decided.
+quiet=$(jq -sc '.' < <(item 10 Ready "P1 next" S '"2026-12-01T00:00:00Z"' '[]' '[]'; item 17 "In progress" "P1 next" S null '[]' '[]'; item 5 Done "P1 next" S null '[]' '[]' CLOSED))
+jq -nc --argjson items "$quiet" '{data: {node: {items: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: $items}},
+  repository: {latestRelease: null, pullRequests: {nodes: []}, branches: {nodes: [{name: "feat/17-thing"}]}, closed: {nodes: []}, merged: {nodes: []}}}}' >"$FIX/page-first.json"
+run status --publish || fail "status --publish on a quiet board failed: $(cat "$work/err")"
+[ "$(jq -r '.variables | [.status, .target] | join("|")' "$FIX/status-updates")" = "ON_TRACK|2026-12-01" ] || fail "on track: $(cat "$FIX/status-updates")"
+jq -e '.variables.body | startswith("On track: no milestone past due") and contains("Board: Ready 1 · In progress 1 · Done 1\n") and endswith("Drift: none")' \
+  "$FIX/status-updates" >/dev/null || fail "on track body: $(cat "$FIX/status-updates")"
+grep -q 'LABELED_EVENT' "$FIX/bodies" && fail "the timeline is read with no needs-human ticket"
+# An archived item is not on the board any more: not counted.
+jq -c '(.data.node.items.nodes[] | select(.content.number == 5)) += {isArchived: true}' "$FIX/page-first.json" >"$FIX/p" && mv "$FIX/p" "$FIX/page-first.json"
+run status --publish || fail "status --publish with an archived item failed"
+jq -e '.variables.body | contains("Board: Ready 1 · In progress 1\n")' "$FIX/status-updates" >/dev/null || fail "archived item counted: $(cat "$FIX/status-updates")"
+cp "$FIX/page-first.keep" "$FIX/page-first.json"
+UPDATE_FAIL=1 run status --publish && fail "a failed update exits zero"
+grep -q "could not post the status update" "$work/err" || fail "failed update not said: $(cat "$work/err")"
+grep -q '^In progress' "$work/out" || fail "a failed update loses the report"
+run status --watch --publish && fail "--watch --publish accepted"
 
 # Errors.
 run status --since soon && fail "accepted --since soon"

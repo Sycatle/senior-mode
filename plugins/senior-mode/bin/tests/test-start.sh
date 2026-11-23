@@ -17,7 +17,9 @@ case "$*" in
   "issue view "*) echo "$GH_ISSUE" ;;
   "project item-add"*) echo "ITEM" ;;
   "project item-edit"*) ;;
-  "api graphql --input -") cat >/dev/null; jq -nc --argjson i "${GH_IN_PROGRESS:-[]}" '{data: {node: {items: {
+  "api graphql --input -") body=$(cat)
+    if grep -q ProjectV2IterationField <<<"$body"; then cat "${GH_ITERATION:-/dev/null}"; exit 0; fi
+    jq -nc --argjson i "${GH_IN_PROGRESS:-[]}" '{data: {node: {items: {
     pageInfo: {hasNextPage: false}, nodes: ($i | map({fieldValues: {nodes: [{name: "In progress", field: {name: "Status"}}]},
       content: {number: ., title: "Ticket \(.)", url: "u", state: "OPEN", labels: {nodes: []}, milestone: null,
         blockedBy: {nodes: []}}}))}}}}' ;;
@@ -109,6 +111,36 @@ start 89 || fail "rerun failed: $(cat "$work/err")"
 grep -qx "worktree $wt/89" "$work/out" || fail "rerun worktree line: $(cat "$work/out")"
 [ "$(git -C "$repo" worktree list | grep -c "\[$branch\]")" -eq 1 ] || fail "rerun added a second worktree"
 [ "$(wc -l <"$PM_LOG")" -eq 1 ] || fail "rerun installed again: $(cat "$PM_LOG")"
+
+# #180: with the cycle fields on the board, the ticket gets the current iteration and Start today; without them, nothing more.
+today=$(date -u +%Y-%m-%d)
+day() { date -u -d "@$(($(date +%s) + $1 * 86400))" +%Y-%m-%d; }
+cp "$repo/.claude/senior-mode.json" "$work/config.keep"
+jq '.project.fields += {Iteration: {id: "F_I", iteration: true}, Start: {id: "F_St", date: true}, End: {id: "F_E", date: true}}' "$work/config.keep" >"$repo/.claude/senior-mode.json"
+export GH_ITERATION="$work/iteration.json"
+jq -nc --arg a "$(day -20)" --arg b "$(day -2)" '{data: {node: {field: {id: "F_I", configuration: {duration: 14,
+  completedIterations: [{id: "it1", title: "Iteration 1", startDate: $a, duration: 14}],
+  iterations: [{id: "it2", title: "Iteration 2", startDate: $b, duration: 14}]}}}}}' >"$GH_ITERATION"
+issue "feat: cycle" '{"name": "type:feature"}'
+start 77 || fail "start with cycle fields failed: $(cat "$work/err")"
+logged "project item-edit --project-id PVT_1 --id ITEM --field-id F_I --iteration-id it2" || fail "iteration not set: $(cat "$GH_LOG")"
+logged "project item-edit --project-id PVT_1 --id ITEM --field-id F_St --date $today" || fail "Start not set: $(cat "$GH_LOG")"
+logged "--field-id F_E" && fail "End set at the start of a ticket: $(cat "$GH_LOG")"
+issue "feat: late cycle" '{"name": "type:feature"}'
+jq -nc --arg a "$(day -60)" '{data: {node: {field: {id: "F_I", configuration: {duration: 14, completedIterations: [],
+  iterations: [{id: "it1", title: "Iteration 1", startDate: $a, duration: 14}]}}}}}' >"$GH_ITERATION"
+start 78 || fail "start with no current iteration failed: $(cat "$work/err")"
+logged "--field-id F_St --date $today" || fail "Start not set without an iteration: $(cat "$GH_LOG")"
+logged "--iteration-id" && fail "an iteration that does not hold today was set: $(cat "$GH_LOG")"
+grep -q "no iteration holds today" "$work/err" || fail "missing iteration not said: $(cat "$work/err")"
+echo '{"data": {"node": {"field": null}}}' >"$GH_ITERATION"
+start 78 || fail "start with a missing Iteration field failed: $(cat "$work/err")"
+cp "$work/config.keep" "$repo/.claude/senior-mode.json"
+unset GH_ITERATION
+issue "feat: no cycle" '{"name": "type:feature"}'
+start 79 || fail "start without cycle fields failed: $(cat "$work/err")"
+logged "ProjectV2IterationField" && fail "the iteration is read on a board without the cycle fields"
+logged "--date" && fail "a date was set on a board without the cycle fields"
 # A reworded title does not fork the branch.
 issue "Another title" '{"name": "type:feature"}'
 start 89 || fail "reworded title failed: $(cat "$work/err")"

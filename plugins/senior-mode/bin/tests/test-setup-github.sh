@@ -62,10 +62,17 @@ case "$*" in
   "api graphql"*)
     body=$(cat); echo "$body" >>"$GH_LOG"
     v=$(jq -c .variables <<<"$body")
-    if grep -q createProjectV2Field <<<"$body"; then
-      jq --argjson v "$v" '.data.node.fields.nodes += [{id: ("F_" + $v.name), name: $v.name}
-        + (if $v.options then {options: ($v.options | map(. + {id: ("O_" + .name)}))} else {dataType: "TEXT"} end)]' \
+    if grep -q 'dataType: ITERATION' <<<"$body"; then
+      # An Iteration field is read by its own query, not with the others.
+      jq -nc --argjson v "$v" '{data: {node: {field: {id: "F_Iteration", configuration: {duration: $v.cfg.duration, completedIterations: [],
+        iterations: ($v.cfg.iterations | to_entries | map(.value + {id: "it\(.key)"}))}}}}}' >"$FIX/iteration.json"
+    elif grep -q createProjectV2Field <<<"$body"; then
+      dt=$(grep -o 'dataType: [A-Z_]*' <<<"$body" | head -1 | cut -d' ' -f2)
+      jq --argjson v "$v" --arg dt "${dt:-TEXT}" '.data.node.fields.nodes += [{id: ("F_" + $v.name), name: $v.name}
+        + (if $v.options then {options: ($v.options | map(. + {id: ("O_" + .name)}))} else {dataType: $dt} end)]' \
         "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"
+    elif grep -q ProjectV2IterationField <<<"$body"; then
+      if [ -f "$FIX/iteration.json" ]; then cat "$FIX/iteration.json"; else echo '{"data": {"node": {"field": null}}}'; fi
     elif grep -q updateProjectV2Field <<<"$body"; then
       jq --argjson v "$v" '(.data.node.fields.nodes[] | select(.id == $v.field)
         | .options) = ($v.options | map(.id //= ("O_" + .name)))' "$FIX/fields.json" >"$FIX/f" &&
@@ -144,6 +151,21 @@ for rule in '"include":["~DEFAULT_BRANCH"]' '{"context":"senior-mode/ci"},{"cont
 done
 logged "/protection" && fail "classic branch protection rewritten"
 
+# #180: an Iteration field of two weeks (26 of them from the Monday of this week), Start and End dates, cached by id.
+logged 'dataType: ITERATION' || fail "no Iteration field created: $(cat "$GH_LOG")"
+logged '"duration":14' || fail "iterations are not two weeks"
+[ "$(jq -r '.data.node.field.configuration.iterations | length' "$FIX/iteration.json")" -eq 26 ] || fail "iterations: $(cat "$FIX/iteration.json")"
+monday=$(date -u -d "@$(($(date +%s) - ($(date -u +%u) - 1) * 86400))" +%Y-%m-%d)
+[ "$(jq -r '.data.node.field.configuration.iterations[0].startDate' "$FIX/iteration.json")" = "$monday" ] ||
+  fail "the first iteration is not this week's Monday: $(jq -c '.data.node.field.configuration.iterations[0]' "$FIX/iteration.json")"
+[ "$(jq -r '.data.node.field.configuration.iterations[1].startDate' "$FIX/iteration.json")" = "$(date -u -d "$monday +14 days" +%Y-%m-%d)" ] ||
+  fail "iterations are not two weeks apart"
+logged 'dataType: DATE' || fail "no date field created"
+[ "$(cfg '.project.fields.Iteration | [.id, .iteration] | join("|")')" = "F_Iteration|true" ] || fail "Iteration not cached: $(cfg .project.fields)"
+[ "$(cfg '[.project.fields.Start, .project.fields.End] | map([.id, .date] | join("|")) | join(",")')" = "F_Start|true,F_End|true" ] ||
+  fail "Start and End not cached: $(cfg .project.fields)"
+grep -q 'fields created: Iteration (14-day iterations from .*), Start, End' "$work/out" || fail "output does not say the cycle fields: $(cat "$work/out")"
+
 # Running it again changes nothing that exists.
 before=$(cat "$repo/.claude/senior-mode.json")
 setup
@@ -186,6 +208,29 @@ rm -f "$FIX/workflows-fail"
 grep -q 'built-in workflows: could not read them; check Project → Workflows by hand' "$work/out" ||
   fail "an unreadable workflows query is not said: $(cat "$work/out")"
 grep -q 'built-in workflows off' "$work/out" && fail "workflows reported off when they could not be read: $(cat "$work/out")"
+
+# The cycle fields are never duplicated, and an existing Start of another type is left alone, said, not cached.
+setup
+grep -q 'fields created' "$work/out" && fail "a rerun created cycle fields again: $(cat "$work/out")"
+jq '(.data.node.fields.nodes[] | select(.name == "Start") | .dataType) = "TEXT"' "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"
+setup
+grep -q 'field Start: exists and is not a date field' "$work/out" || fail "a Start of another type is not said: $(cat "$work/out")"
+[ "$(cfg '.project.fields | has("Start")')" = false ] || fail "a Start that is not a date was cached"
+[ "$(cfg '.project.fields | has("End")')" = true ] || fail "End lost with Start"
+logged "createProjectV2Field" && fail "a field named Start created twice"
+jq '(.data.node.fields.nodes[] | select(.name == "Start") | .dataType) = "DATE"' "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"
+# board.iterationDays sets the length of the iterations of a new field.
+rm -f "$FIX/iteration.json"
+cp "$repo/.claude/senior-mode.json" "$work/config.keep"
+jq '.board.iterationDays = 7' "$work/config.keep" >"$repo/.claude/senior-mode.json"
+setup
+[ "$(jq -r '.data.node.field.configuration.duration' "$FIX/iteration.json")" -eq 7 ] || fail "board.iterationDays ignored: $(cat "$FIX/iteration.json")"
+jq '.board.iterationDays = "x"' "$work/config.keep" >"$repo/.claude/senior-mode.json"
+(cd "$repo" && "$cli" setup github) >"$work/out" 2>"$work/err" && fail "iterationDays x accepted"
+grep -q 'board.iterationDays must be a positive whole number' "$work/err" || fail "bad iterationDays not explained: $(cat "$work/err")"
+cp "$work/config.keep" "$repo/.claude/senior-mode.json"
+rm -f "$FIX/iteration.json"
+setup
 
 # A field deleted on the board is created again.
 jq 'del(.data.node.fields.nodes[] | select(.name == "Size"))' "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"

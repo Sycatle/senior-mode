@@ -31,7 +31,7 @@ Argument: $ARGUMENTS (a ticket number; empty means the top of `pick`). Answer in
 9. **Merge.** Report the verdict and the link, then ask whether to merge. Only on a clear yes, and
    when `senior-mode/ci`, `senior-mode/review` and `senior-mode/security` are all green and the pull
    request is not `needs-human`: `ops` agent,
-   `gh pr merge <pr> --rebase --delete-branch`, then `senior-mode item set <n> Status Done`. Then
+   `gh pr merge <pr> --rebase --delete-branch`, then `senior-mode item set <n> Status Done` (and `End "$(date -u +%F)"` if the board has End). Then
    invoke skill `docs`; do not wait for its pull
    request. Offer the next ticket.
 

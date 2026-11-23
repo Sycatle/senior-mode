@@ -15,6 +15,7 @@ DEFAULTS='{
   "wip": 1,
   "slot": "",
   "hygiene": { "days": 14 },
+  "board": { "archiveAfterDays": 14, "iterationDays": 14 },
   "protected": [],
   "secrets": [],
   "audit": true,
@@ -31,7 +32,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] | clean [--dry-run] [--days N] | statusline | retro [--since <dur>] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish] | clean [--dry-run] [--days N] | statusline | retro [--since <dur> | --iteration [<name>]] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -95,7 +96,8 @@ option_id() {
 }
 
 # Sets fields of an issue's Project item (pairs of field and option), using the ids cached in the
-# config. A field cached without options is a text field (Paths, #174): its "option" is the text.
+# config. A field cached without options is a text field (Paths, #174): its "option" is the text. The
+# Iteration field (#180) takes an iteration title or `current`, Start and End a date as YYYY-MM-DD.
 # Every pair is checked before the item is touched. Fails when gh does, even
 # where `set -e` is off (a caller's `||`), so `(item_set ...) || ...` sees it.
 item_set() {
@@ -111,7 +113,15 @@ item_set() {
     die "no Project in .claude/senior-mode.json; run /senior-mode:setup"
   for ((i = 1; i < $#; i += 2)); do
     field=${!i}
-    if jq -e --arg f "$field" '.project.fields[$f] | type == "object" and (has("options") | not)' "$file" >/dev/null 2>&1; then
+    if jq -e --arg f "$field" '.project.fields[$f] | type == "object" and .iteration == true' "$file" >/dev/null 2>&1; then
+      option=$(iteration_find "${@:i+1:1}") || die "no iteration ${*:i+1:1} on the board; rerun senior-mode setup github, or extend the Iteration field in the Project settings"
+      option=${option%%$'\t'*}
+      flags+=(--iteration-id)
+    elif jq -e --arg f "$field" '.project.fields[$f] | type == "object" and .date == true' "$file" >/dev/null 2>&1; then
+      option=${*:i+1:1}
+      [[ $option =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "$field takes a date as YYYY-MM-DD, not $option"
+      flags+=(--date)
+    elif jq -e --arg f "$field" '.project.fields[$f] | type == "object" and (has("options") | not)' "$file" >/dev/null 2>&1; then
       option=${*:i+1:1}
       flags+=(--text)
     else
@@ -1054,6 +1064,48 @@ setup_fields() {
   fi
 }
 
+# The fields of the cycle (#180): an Iteration field of board.iterationDays days (26 iterations from the Monday of this week), and the
+# dates Start and End. A field that exists is reused, never duplicated (a Start or End of another type is left alone and said); their
+# ids are cached in the config, which setup_github has just written. $1 the id of the Project, $2 the config file.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+setup_cycle() {
+  local id=$1 file=$2 days iter fields name dow start made=""
+  days=$(config_get board.iterationDays)
+  [[ $days =~ ^[1-9][0-9]*$ ]] || die "board.iterationDays must be a positive whole number, not $days"
+  iter=$(iteration_field) || die "cannot read the Iteration field of the Project"
+  if [ -z "$iter" ]; then
+    dow=$(date -u +%u)
+    start=$(iso_time $(($(date +%s) - (dow - 1) * 86400)))
+    jq -nc --arg p "$id" --arg s "${start:0:10}" --argjson d "$days" '($s + "T00:00:00Z" | fromdateiso8601) as $t0
+      | {variables: {project: $p, name: "Iteration", cfg: {startDate: $s, duration: $d,
+        iterations: [range(0; 26) | {title: "Iteration \(. + 1)", startDate: ($t0 + . * $d * 86400 | strftime("%Y-%m-%d")), duration: $d}]}},
+      query: "mutation($project: ID!, $name: String!, $cfg: ProjectV2IterationFieldConfigurationInput!) {
+        createProjectV2Field(input: {projectId: $project, dataType: ITERATION, name: $name, iterationConfiguration: $cfg}) { clientMutationId } }"}' |
+      gh_retry api graphql --input - >/dev/null || die "could not create the Iteration field"
+    made="Iteration (${days}-day iterations from ${start:0:10})"
+    iter=$(iteration_field) || die "cannot read the Iteration field of the Project"
+  fi
+  fields=$(board_fields "$id") || die "could not read the fields of the Project"
+  for name in Start End; do
+    if ! jq -e --arg n "$name" '.[] | select(.name == $n)' <<<"$fields" >/dev/null; then
+      jq -nc --arg p "$id" --arg n "$name" '{variables: {project: $p, name: $n}, query: "mutation($project: ID!, $name: String!) {
+        createProjectV2Field(input: {projectId: $project, dataType: DATE, name: $name}) { clientMutationId } }"}' |
+        gh_retry api graphql --input - >/dev/null || die "could not create the $name field"
+      made+="${made:+, }$name"
+    fi
+  done
+  [ -z "$made" ] || echo "fields created: $made"
+  fields=$(board_fields "$id") || die "could not read the fields of the Project"
+  for name in Start End; do
+    jq -e --arg n "$name" '.[] | select(.name == $n and .dataType == "DATE")' <<<"$fields" >/dev/null ||
+      echo "field $name: exists and is not a date field; rename it, then run setup github again, or Start and End are not set"
+  done
+  jq --argjson f "$fields" --arg i "$(jq -r '.id // empty' <<<"$iter")" '.project.fields += (if $i == "" then {} else {Iteration: {id: $i, iteration: true}} end)
+    + ($f | map(select(.name | IN("Start", "End")) | select(.dataType == "DATE") | {key: .name, value: {id, date: true}}) | from_entries)' \
+    "$file" >"$file.tmp" || die "could not write .claude/senior-mode.json"
+  mv "$file.tmp" "$file"
+}
+
 # Names the Project's built-in workflows that keep Status true and are off. GitHub has no API to
 # turn them on, so this only says where.
 setup_board_workflows() {
@@ -1314,6 +1366,7 @@ setup_github() {
     "$file" >"$file.tmp" || die "could not write .claude/senior-mode.json"
   mv "$file.tmp" "$file"
   echo "Project #$number $name: linked, fields Status, Priority, Size, Severity, Paths; ids cached in .claude/senior-mode.json"
+  setup_cycle "$id" "$file"
   setup_board_workflows "$id"
 
   labels='needs-human|d93f0b|Waiting for a human decision or merge
@@ -1990,7 +2043,7 @@ BOARD_QUERY='query($project: ID!, $owner: String!, $name: String!, $after: Strin
   node(id: $project) { ... on ProjectV2 { items(first: 100, after: $after) {
     pageInfo { hasNextPage endCursor }
     nodes {
-      updatedAt
+      id isArchived updatedAt
       fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
         ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } }
       content { ... on Issue { number title url state closedAt updatedAt labels(first: 20) { nodes { name } }
@@ -2056,7 +2109,7 @@ board_more() {
 }
 
 # Prints {items, prs, closed, merged, release}: tickets with their board fields, labels, milestone and
-# open blockers; open pull requests with their failing statuses; recent closed issues and merged pull
+# open blockers (an archived item (#179) is still there, `archived`); open pull requests with their failing statuses; recent closed issues and merged pull
 # requests; the latest release. The last four are empty unless $1 is true.
 # shellcheck disable=SC2016 # a jq program, not shell
 board_data() {
@@ -2086,8 +2139,8 @@ board_data() {
       | select((.state // "") | IN("FAILURE", "ERROR")) // select((.conclusion // "") | IN("FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE"))
       | .context // .name];
     (.[0].data.repository // {}) as $r
-    | {items: [.[].data.node.items.nodes[] | select(.content.number != null) | .updatedAt as $moved | .content as $c
-        | {number: $c.number, title: $c.title, url: $c.url, open: ($c.state == "OPEN"),
+    | {items: [.[].data.node.items.nodes[] | select(.content.number != null) | .updatedAt as $moved | .id as $iid | (.isArchived // false) as $arch | .content as $c
+        | {number: $c.number, title: $c.title, url: $c.url, open: ($c.state == "OPEN"), itemId: $iid, archived: $arch, closedAt: $c.closedAt,
            status: single("Status"), priority: single("Priority"), size: single("Size"), severity: single("Severity"), paths: (text("Paths") // ""),
            labels: [$c.labels.nodes[].name], milestone: $c.milestone.title, due: $c.milestone.dueOn,
            updated: ([$c.updatedAt, $moved] | map(select(. != null)) | max),
@@ -2364,6 +2417,7 @@ start() {
     fi
   fi
   item_set "$issue" Status "In progress"
+  cycle_start "$issue"
 }
 
 # Seconds in a duration such as 90m, 12h, 7d or 2w.
@@ -2453,6 +2507,17 @@ ticket_trees() {
     echo '{}'
 }
 
+# The drift of the board: tickets whose Status says something their issue does not (closed but not Done, open
+# but Done, In progress or In review with no branch and no open pull request). $locals the local branch names.
+# shellcheck disable=SC2016 # a jq program, not shell
+DRIFT_DEF='def drift($d; $locals): $d.items as $items
+  | ([$items[] | select((.open | not) and .status != "Done")
+      | {number, title, kind: "closed", why: "closed but \(.status // "without a Status")"}]
+    + [$items[] | select(.open and .status == "Done") | {number, title, kind: "open-done", why: "open but Done"}]
+    + [$items[] | select(.open and (.status | IN("In progress", "In review"))) | . as $i
+      | select([$d.hygiene.prs[].branch, $d.hygiene.branches[].name, $locals[]] | any(test("^[a-z]+/\($i.number)(-|$)")) | not)
+      | {number, title, kind: "stale", why: "\(.status) with no open pull request and no branch"}]);'
+
 # The dashboard as JSON, from board_data; $1 is the start of the period, $2 now, $3 the repository, $locals the
 # local branch names.
 # shellcheck disable=SC2016 # a jq program, not shell
@@ -2473,12 +2538,7 @@ STATUS_JQ='. as $d | $d.items as $items | {
       + [$d.prs[] | select(.failing | length > 0) | {kind: "pull request", number, title, why: ("failing: " + (.failing | join(", ")))}]
       + [$items[] | select(.open and (.labels | index("needs-human"))) | {kind: "ticket", number, title, why: "needs a human decision"}])
     | group_by([.kind, .number]) | map(.[0] + {why: (map(.why) | join("; "))})),
-  drift: ([$items[] | select((.open | not) and .status != "Done")
-      | {number, title, kind: "closed", why: "closed but \(.status // "without a Status")"}]
-    + [$items[] | select(.open and .status == "Done") | {number, title, kind: "open-done", why: "open but Done"}]
-    + [$items[] | select(.open and (.status | IN("In progress", "In review"))) | . as $i
-      | select([$d.hygiene.prs[].branch, $d.hygiene.branches[].name, $locals[]] | any(test("^[a-z]+/\($i.number)(-|$)")) | not)
-      | {number, title, kind: "stale", why: "\(.status) with no open pull request and no branch"}]),
+  drift: drift($d; $locals),
   wip: {limit: $wip, count: ([$items[] | select(.open and .status == "In progress")] | length)},
   audit: $audit,
   next: ($d | pick | .[:3] | map({number, title, priority, size, milestone})),
@@ -2644,11 +2704,163 @@ status_hygiene_fix() {
   return "$rc"
 }
 
+# The Iteration field of the Project (#180) as JSON {id, duration, iterations: [{id, title, startDate, duration}]}, the
+# completed iterations too, by start date; nothing when the Project has no Iteration field.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+iteration_field() {
+  local project res
+  project=$(jq -r '.project.id // empty' "$(config_file)")
+  [ -n "$project" ] || die "no Project in .claude/senior-mode.json; run /senior-mode:setup"
+  res=$(jq -nc --arg id "$project" '{variables: {id: $id}, query: "query($id: ID!) { node(id: $id) { ... on ProjectV2 {
+    field(name: \"Iteration\") { ... on ProjectV2IterationField { id configuration { duration
+    iterations { id title startDate duration } completedIterations { id title startDate duration } } } } } } }"}' |
+    gh_retry api graphql --input -) || return 1
+  jq -c '.data.node.field // empty | select(.id) | {id, duration: .configuration.duration,
+    iterations: ((.configuration.completedIterations + .configuration.iterations) | sort_by(.startDate))}' <<<"$res"
+}
+
+# The iteration named $1, or `current` (the one that holds today), as a tab-separated line: id, title, first day, the
+# day after its last and its last day. Fails when there is none or the board has no Iteration field.
+iteration_find() {
+  local field
+  field=$(iteration_field) && [ -n "$field" ] || return 1
+  jq -r --arg n "$1" --arg today "$(date -u +%Y-%m-%d)" '.iterations[]
+    | . + {end: ((.startDate + "T00:00:00Z" | fromdateiso8601) + .duration * 86400 | strftime("%Y-%m-%d"))}
+    | select(if $n == "current" then .startDate <= $today and $today < .end else .title == $n end)
+    | [.id, .title, .startDate, .end, ((.end + "T00:00:00Z" | fromdateiso8601) - 86400 | strftime("%Y-%m-%d"))] | @tsv' <<<"$field" | head -n 1 | grep .
+}
+
+# Whether the board has the fields of the cycle (#180): Iteration, Start and End cached in the config.
+cycle_fields() {
+  jq -e '.project.fields | (.Iteration.iteration == true) and (.Start.date == true) and (.End.date == true)' "$(config_file)" >/dev/null 2>&1
+}
+
+# A ticket starts (#180): it gets the current iteration and Start today. Best effort and silent on a board with no
+# cycle fields (a config from before them): the Status is already set.
+cycle_start() {
+  cycle_fields || return 0
+  if ! iteration_find current >/dev/null; then
+    echo "senior-mode: no iteration holds today; extend the Iteration field in the Project settings. Start is set, the iteration is not" >&2
+    (item_set "$1" Start "$(date -u +%Y-%m-%d)") >/dev/null || echo "senior-mode: could not set Start on #$1" >&2
+  else
+    (item_set "$1" Iteration current Start "$(date -u +%Y-%m-%d)") >/dev/null || echo "senior-mode: could not set the iteration and Start on #$1" >&2
+  fi
+}
+
+# A ticket is merged (#180): End is today. Best effort, silent on a board with no cycle fields.
+cycle_end() {
+  cycle_fields || return 0
+  (item_set "$1" End "$(date -u +%Y-%m-%d)") >/dev/null || echo "senior-mode: could not set End on #$1" >&2
+}
+
+# Archives the items that are Done and whose issue closed more than board.archiveAfterDays days ago (#179), and lists
+# them; $1 is a board_data result. An open item, an item that is not Done and an archived one are never touched.
+# One that cannot be archived is said and left for the next time.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+board_archive() {
+  local days project cutoff entry n title id
+  days=$(config_get board.archiveAfterDays)
+  [[ $days =~ ^[1-9][0-9]*$ ]] || die "board.archiveAfterDays must be a positive whole number, not $days"
+  project=$(jq -r '.project.id // empty' "$(config_file)")
+  cutoff=$(iso_time $(($(date +%s) - days * 86400)))
+  while IFS= read -r entry; do
+    n=$(jq -r .number <<<"$entry") title=$(jq -r .title <<<"$entry") id=$(jq -r .itemId <<<"$entry")
+    if jq -nc --arg p "$project" --arg i "$id" '{variables: {project: $p, item: $i}, query: "mutation($project: ID!, $item: ID!) {
+      archiveProjectV2Item(input: {projectId: $project, itemId: $item}) { item { id } } }"}' | gh_retry api graphql --input - >/dev/null; then
+      echo "Archived: #$n $title (Done, closed more than $days days ago)"
+    else
+      echo "senior-mode: could not archive #$n" >&2
+    fi
+  done < <(jq -c --arg c "$cutoff" '.items[] | select(.status == "Done" and (.open | not) and (.archived | not) and .itemId != null
+    and .closedAt != null and .closedAt < $c)' <<<"$1")
+}
+
+# Posts a Project status update (#155, #177): body $1 and, when given, its status $2 (ON_TRACK, AT_RISK or OFF_TRACK), start date
+# $3 and target date $4 (YYYY-MM-DD). Fails unless GitHub answers with the id of the update. Shared by `status --publish`,
+# `retro` and the daily digest of serve.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+project_post_update() {
+  local project res
+  project=$(jq -r '.project.id // empty' "$(config_file)")
+  [ -n "$project" ] || return 1
+  res=$(jq -nc --arg p "$project" --arg b "${1:0:60000}" --arg s "${2:-}" --arg a "${3:-}" --arg t "${4:-}" '{query: "mutation($project: ID!, $body: String!,
+      $status: ProjectV2StatusUpdateStatus, $start: Date, $target: Date) { createProjectV2StatusUpdate(input: {projectId: $project, body: $body,
+      status: $status, startDate: $start, targetDate: $target}) { statusUpdate { id } } }",
+      variables: ({project: $p, body: $b} + (if $s == "" then {} else {status: $s} end)
+        + (if $a == "" then {} else {start: $a} end) + (if $t == "" then {} else {target: $t} end))}' | gh_retry api graphql --input -) &&
+    jq -e '.data.createProjectV2StatusUpdate.statusUpdate.id' <<<"$res" >/dev/null 2>&1
+}
+
+# When each open ticket labelled needs-human got the label (#177): the time of the last `labeled` event of its timeline, as
+# {"<number>": "<time>"}. $1 is a board_data result. Fails when GitHub does not answer.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+health_needs_human() {
+  local nums slug query="" n res
+  nums=$(jq -r '.items[] | select(.open and (.archived | not) and (.labels | index("needs-human"))) | .number' <<<"$1")
+  if [ -z "$nums" ]; then
+    echo '{}'
+    return 0
+  fi
+  slug=$(repo_slug)
+  for n in $nums; do
+    query+="i$n: issue(number: $n) { timelineItems(last: 50, itemTypes: [LABELED_EVENT]) { nodes { ... on LabeledEvent { createdAt label { name } } } } } "
+  done
+  res=$(jq -nc --arg q "query(\$owner: String!, \$name: String!) { repository(owner: \$owner, name: \$name) { $query} }" --arg o "${slug%%/*}" --arg n "${slug#*/}" \
+    '{query: $q, variables: {owner: $o, name: $n}}' | gh_retry api graphql --input -) || return 1
+  jq -ec '(.data.repository // error("no repository")) | with_entries(select(.value != null)
+    | {key: (.key | ltrimstr("i")), value: ([.value.timelineItems.nodes[] | select(.label.name == "needs-human") | .createdAt] | max)}
+    | select(.value != null))' <<<"$res"
+}
+
+# The health of the Project (#177) from a board_data result, $drift (the board drift as JSON), $nh (health_needs_human) and
+# $now. Off track when an open milestone is past due with open issues; at risk when an open issue has carried needs-human
+# for more than 24 hours, an open pull request fails its checks or there is drift; on track otherwise. The target date is
+# the earliest due date of an open milestone, if any; the body names the rule that decided.
+# shellcheck disable=SC2016 # a jq program, not shell
+HEALTH_JQ='def plural($n; $w): "\($n) \($w)\(if $n == 1 then "" else "s" end)";
+  . as $d | ($d.items | map(select(.archived | not))) as $items | ($now | fromdateiso8601) as $t
+  | [$items[] | select(.open and .milestone != null and .due != null)] as $dated
+  | [$dated[] | select(.due < $now)] as $late
+  | ($late | sort_by(.due) | group_by(.milestone) | map({milestone: .[0].milestone, due: .[0].due[:10], open: length}) | sort_by(.due)) as $ms
+  | [$items[] | select(.open and (.labels | index("needs-human")) and $nh[.number | tostring] != null
+      and ($t - ($nh[.number | tostring] | fromdateiso8601)) > 86400)
+    | {number, title, hours: (($t - ($nh[.number | tostring] | fromdateiso8601)) / 3600 | floor)}] as $stuck
+  | [$d.prs[] | select(.failing | length > 0) | {number, title, failing}] as $failing
+  | [$items[] | select(.open and (.labels | index("needs-human"))) | {number, title}] as $human
+  | ($stuck | map("#\(.number) has needed a human for \(.hours) hours")) as $r1
+  | ($failing | map("pull request #\(.number) fails its checks (\(.failing | join(", ")))")) as $r2
+  | (if ($drift | length) > 0 then [plural($drift | length; "board drift item") + " (\($drift | map("#\(.number)") | join(", ")))"] else [] end) as $r3
+  | (if ($ms | length) > 0 then {status: "OFF_TRACK", label: "Off track",
+       rule: ($ms | map("milestone \(.milestone) was due \(.due) and has \(plural(.open; "open issue"))") | join("; "))}
+     elif ($r1 + $r2 + $r3 | length) > 0 then {status: "AT_RISK", label: "At risk", rule: ($r1 + $r2 + $r3 | join("; "))}
+     else {status: "ON_TRACK", label: "On track", rule: "no milestone past due, nothing waiting for a human for more than 24 hours, no pull request failing its checks, no drift"} end) as $h
+  | ([$items[] | .status // "No Status"] | group_by(.) | map({key: .[0], value: length}) | from_entries) as $c
+  | (["Backlog", "Ready", "In progress", "In review", "Done"] as $order
+     | ($order + ([$c | keys[] | select(. as $k | $order | index($k) | not)] | sort)) | map(select($c[.] != null) | "\(.) \($c[.])") | join(" · ")) as $counts
+  | $h + {startDate: $now[:10], targetDate: ([$dated[].due] | min | if . then .[:10] else null end),
+    body: ("\($h.label): \($h.rule)\n\nBoard: \($counts)\n"
+      + "Needs a human: \(if ($human | length) == 0 then "nothing" else ($human | map("#\(.number) \(.title)") | join(", ")) end)\n"
+      + "Failing pull requests: \(if ($failing | length) == 0 then "none" else ($failing | map("#\(.number) \(.title)") | join(", ")) end)\n"
+      + "Drift: \(if ($drift | length) == 0 then "none" else ($drift | map("#\(.number) \(.why)") | join(", ")) end)")}'
+
+# Publishes the health of the Project as a status update (#177): $1 a board_data result, $2 the board drift, $3 now. Prints the
+# update as JSON {status, label, rule, startDate, targetDate, body}; fails, saying why on stderr, when it could not be built or posted.
+health_publish() {
+  local nh health
+  nh=$(health_needs_human "$1") || { echo "senior-mode: could not read when the tickets got needs-human; no status update posted" >&2; return 1; }
+  health=$(jq -c --argjson drift "$2" --argjson nh "$nh" --arg now "$3" "$HEALTH_JQ" <<<"$1") ||
+    { echo "senior-mode: could not work out the health of the Project; no status update posted" >&2; return 1; }
+  project_post_update "$(jq -r .body <<<"$health")" "$(jq -r .status <<<"$health")" "$(jq -r .startDate <<<"$health")" \
+    "$(jq -r '.targetDate // empty' <<<"$health")" ||
+    { echo "senior-mode: could not post the status update to the Project" >&2; return 1; }
+  printf '%s\n' "$health"
+}
+
 # One status report. $1 json|text, $2 --since duration or "", $3 true to move the "last time" mark,
-# $4 true to repair the drift (--fix).
+# $4 true to repair the drift (--fix), $5 true to publish the health of the Project (--publish).
 status_once() {
-  local json=$1 since=$2 save=$3 fix=${4:-false} root cache now_s now since_iso head data out wip audit results fixed trees locals
-  local lines="" rc=0
+  local json=$1 since=$2 save=$3 fix=${4:-false} publish=${5:-false} root cache now_s now since_iso head data out wip audit results fixed trees locals
+  local lines="" rc=0 health="" drift
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   cache=$root/.claude/senior-mode/status-seen
   now_s=$(date +%s)
@@ -2670,7 +2882,7 @@ status_once() {
   # The local branches count too: a ticket worked on and not pushed yet has a branch.
   locals=$(local_branches)
   out=$(jq -c --arg now "$now" --arg since "$since_iso" --arg repo "$(repo_slug)" --argjson wip "$wip" \
-    --argjson audit "$audit" --argjson locals "$locals" "$PICK_DEF$STATUS_JQ" <<<"$data") ||
+    --argjson audit "$audit" --argjson locals "$locals" "$PICK_DEF$DRIFT_DEF$STATUS_JQ" <<<"$data") ||
     die "could not build the status"
   trees=$(ticket_trees "$root")
   out=$(jq -c --argjson t "$trees" '.inProgress |= map(. + {worktree: ($t[.number | tostring])})' <<<"$out")
@@ -2689,10 +2901,20 @@ status_once() {
     lines=$(printf '%s\n%s' "$lines" "$(jq -r '.line' <<<"$results")" | sed '/^$/d')
     out=$(jq -c --argjson f "$fixed" '.hygiene.fixed = $f' <<<"$out")
   fi
+  if [ "$publish" = true ]; then
+    # What --fix repaired is not drift any more.
+    drift=$(jq -c '(.fixed // []) as $f | .drift | map(select(.number as $n | $f | all(.number != $n)))' <<<"$out")
+    if health=$(health_publish "$data" "$drift" "$now"); then
+      out=$(jq -c --argjson h "$health" '. + {health: ($h | del(.body))}' <<<"$out")
+    else
+      rc=1
+    fi
+  fi
   if [ "$json" = true ]; then
     printf '%s\n' "$out"
   else
     [ -z "$lines" ] || printf '\n%s\n' "$lines"
+    [ -z "$health" ] || jq -r '"\nProject status update posted: \(.label): \(.rule)"' <<<"$health"
   fi
   if [ "$save" = true ]; then
     # The directory ignores itself, so the mark never dirties the tree that `check` records.
@@ -2707,15 +2929,18 @@ status_once() {
   return "$rc"
 }
 
-# senior-mode status [--json] [--since <dur>] [--watch [secs]] [--fix]
+# senior-mode status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish]
 # A plain run reports what is new since the previous plain run and moves that mark; --json, --since
 # and --watch only read it. --fix repairs the board drift once, so it does not mix with --watch.
+# --publish also posts the health of the Project (On track, At risk or Off track, #177) as a Project status
+# update; nothing else posts it but `retro`. (`senior-mode publish`, another command, sets commit statuses.)
 status() {
-  local json=false since="" watch=false secs=30 fix=false
+  local json=false since="" watch=false secs=30 fix=false publish=false
   while [ $# -gt 0 ]; do
     case $1 in
       --json) json=true ;;
       --fix) fix=true ;;
+      --publish) publish=true ;;
       --since)
         [ -n "${2:-}" ] || usage
         since=$2
@@ -2736,6 +2961,7 @@ status() {
   if [ "$watch" = true ]; then
     [ "$json" = false ] || die "status --watch cannot print JSON"
     [ "$fix" = false ] || die "status --watch cannot --fix: a repair runs once, on purpose"
+    [ "$publish" = false ] || die "status --watch cannot --publish: an update is posted once, on purpose"
     while :; do
       if [ -t 1 ]; then printf '\033[H\033[2J'; else echo; fi
       status_once false "$since" false || echo "GitHub did not answer; trying again in ${secs}s"
@@ -2743,9 +2969,9 @@ status() {
     done
   fi
   if [ "$json" = false ] && [ -z "$since" ]; then
-    status_once false "" true "$fix" || exit 1
+    status_once false "" true "$fix" "$publish" || exit 1
   else
-    status_once "$json" "$since" false "$fix" || exit 1
+    status_once "$json" "$since" false "$fix" "$publish" || exit 1
   fi
 }
 
@@ -3035,7 +3261,7 @@ file_mtime() {
 
 # The run outcomes of this repository (one object per ticket run, `run` writes it to
 # <git common dir>/senior-mode/runs/<stamp>/<n>.json with `ticket`, `outcome`, `escalated`, `reason`,
-# `model`, `finishedAt`), as {found, failed, escalated} for the period starting at $2. $1 is the git
+# `model`, `finishedAt`), as {found, failed, escalated} for the period starting at $2 (and ending before $3, when given). $1 is the git
 # common directory. Absent or unreadable files are not an error; the session logs next to the
 # outcomes (<n>-<model>.json) are not outcomes. An outgrown ticket counts as failed.
 retro_runs() {
@@ -3050,12 +3276,12 @@ retro_runs() {
       jq -c --arg m "$(iso_time "$(file_mtime "$f")")" 'if type == "object"
         then {ticket, outcome, escalated, reason, at: (.finishedAt // $m)} else empty end' "$f" 2>/dev/null || true
     done
-  } | jq -sc --arg since "$2" '[.[] | select(.at >= $since)] as $l | {found: true,
+  } | jq -sc --arg since "$2" --arg until "${3:-9999}" '[.[] | select(.at >= $since and .at < $until)] as $l | {found: true,
     failed: [$l[] | select(.outcome | IN("failed", "outgrown")) | {ticket, reason, at}] | sort_by(.ticket),
     escalated: [$l[] | select(.escalated == true or .outcome == "escalated") | {ticket, reason, at}] | sort_by(.ticket)}'
 }
 
-# The failed results `check` recorded since the epoch $1, in this repository and its worktrees (ADR 0006).
+# The failed results `check` recorded since the epoch $1 (and before $2, when given), in this repository and its worktrees (ADR 0006).
 retro_checks() {
   local common d f mt
   common=$(git rev-parse --path-format=absolute --git-common-dir)
@@ -3065,7 +3291,7 @@ retro_checks() {
       for f in "$d"/*; do
         [ -f "$f" ] && [ "$(sed -n 1p "$f")" = failure ] || continue
         mt=$(file_mtime "$f")
-        [ "$mt" -ge "$1" ] || continue
+        [ "$mt" -ge "$1" ] && [ "$mt" -lt "${2:-99999999999}" ] || continue
         jq -nc --arg c "$(basename "$f" | cut -c1-7)" --arg d "$(sed -n 2p "$f")" --arg at "$(iso_time "$mt")" \
           '{commit: $c, description: $d, at: $at}'
       done
@@ -3074,6 +3300,7 @@ retro_checks() {
 }
 
 # The facts of a period as JSON. Inputs: $d board_data, $h the history, $runs, $checks; $since, $now, $repo.
+# $until ends the period ("9999" for none) and $iteration names the iteration it is, if any (#180).
 # Cycle time runs from the first move to In progress to the close of the ticket; a ticket with no
 # recorded start is left out of it. A size is over when the pull request holds more than 1.5 times the
 # lines its size allows (S ~50, M ~400, spec §5), since those are approximate.
@@ -3091,18 +3318,18 @@ RETRO_JQ='def branch_ticket: [capture("^[a-z]+/(?<n>[0-9]+)-") | .n | tonumber] 
   def why: (if (.labels | index("needs-human")) then ["needs-human label"] else [] end)
     + ([.reviews[]? | select(.state == "CHANGES_REQUESTED")] | last
       | if . then ["changes requested by \(.author.login // "someone")" + (if (.bodyText | test("\\S")) then ": " + (.bodyText | excerpt) else "" end)] else [] end);
-  [$d.closed[] | select(.closedAt >= $since and .reason != "NOT_PLANNED") | . as $c | ($byn[($c.number | tostring)] // {}) as $i
+  [$d.closed[] | select(.closedAt >= $since and .closedAt < $until and .reason != "NOT_PLANNED") | . as $c | ($byn[($c.number | tostring)] // {}) as $i
     | {number, title, size: $i.size, closedAt, cycleHours: cycle($c), lines: lines($c.number)}] | sort_by(.number) as $done
   | [$done[] | select(.cycleHours != null) | .cycleHours] | sort as $hs
-  | {repository: $repo, generatedAt: $now, since: $since, done: $done,
+  | {repository: $repo, generatedAt: $now, since: $since, until: (if $until == "9999" then null else $until end), iteration: $iteration, done: $done,
      cycle: {measured: ($hs | length),
        medianHours: (if ($hs | length) == 0 then null else (($hs[(($hs | length) - 1) / 2 | floor] + $hs[($hs | length) / 2 | floor]) / 2) | round1 end),
        worst: ([$done[] | select(.cycleHours != null)] | max_by(.cycleHours) | if . then {number, title, hours: .cycleHours} else null end)},
      humanPullRequests: (([$d.prs[] | select(.labels | index("needs-human")) | {number, title, state: "open", why: ["needs-human label"]}]
-       + [$prs[] | select(.mergedAt >= $since) | .labels = [.labels.nodes[].name] | .reviews = .reviews.nodes
+       + [$prs[] | select(.mergedAt >= $since and .mergedAt < $until) | .labels = [.labels.nodes[].name] | .reviews = .reviews.nodes
          | {number, title, state: "merged", why: why} | select(.why | length > 0)]) | sort_by(.number)),
      runs: $runs,
-     reopened: [$iss[] | . as $i | ([.timelineItems.nodes[] | select(.__typename == "ReopenedEvent" and .createdAt >= $since)] | last) as $e
+     reopened: [$iss[] | . as $i | ([.timelineItems.nodes[] | select(.__typename == "ReopenedEvent" and .createdAt >= $since and .createdAt < $until)] | last) as $e
        | select($e != null) | {number: $i.number, title: $i.title, at: $e.createdAt}] | sort_by(.number),
      checkFailures: $checks,
      sizes: [$done[] | select((.size | IN("S", "M")) and .lines != null) | (if .size == "S" then 50 else 400 end) as $l
@@ -3129,10 +3356,13 @@ RETRO_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" el
   sec("Estimates against reality"; [.sizes[] | select(.over) | "#\(.number) \(.size): \(.lines) lines, the size allows about \(.limit)"]
     + (if (.sizes | length) > 0 and all(.sizes[]; .over | not) then ["all within their size"] else [] end))'
 
-# senior-mode retro [--since <dur>] [--json]
-# The facts of the weekly review (default period: 7 days). Reads only; the skill turns them into proposals.
+# senior-mode retro [--since <dur> | --iteration [<name>]] [--json]
+# The facts of the weekly review (default period: 7 days; --iteration: the current iteration, or the one named, of the
+# Project, #180). Reads only, apart from the Project status update with the health of the Project that each pass
+# publishes (#177); the skill turns the facts into proposals.
 retro() {
-  local json=false since="7d" root now_s now since_s since_iso data history runs checks slug hygiene
+  local json=false since="" iteration="" iter="" root now_s now since_s since_iso until_iso="" data board history runs checks slug hygiene
+  local head drift health title first last
   while [ $# -gt 0 ]; do
     case $1 in
       --json) json=true ;;
@@ -3142,34 +3372,63 @@ retro() {
         duration_seconds "$since" >/dev/null
         shift
         ;;
+      --iteration)
+        iteration=current
+        if [ -n "${2:-}" ] && [[ $2 != --* ]]; then
+          iteration=$2
+          shift
+        fi
+        ;;
       *) usage ;;
     esac
     shift
   done
+  [ -z "$iteration" ] || [ -z "$since" ] || die "retro takes --since or --iteration, not both"
   root=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
   now_s=$(date +%s)
   now=$(iso_time "$now_s")
-  since_s=$((now_s - $(duration_seconds "$since")))
-  since_iso=$(iso_time "$since_s")
+  if [ -n "$iteration" ]; then
+    iter=$(iteration_find "$iteration") || die "no iteration $iteration on the board (is there an Iteration field? setup github creates it)"
+    IFS=$'\t' read -r _ title first until_iso last <<<"$iter"
+    since_iso=${first}T00:00:00Z until_iso=${until_iso}T00:00:00Z
+    since_s=$(jq -nr --arg d "$since_iso" '$d | fromdateiso8601')
+    head="Done in iteration $title ($first to $last)"
+  else
+    since=${since:-7d}
+    since_s=$((now_s - $(duration_seconds "$since")))
+    since_iso=$(iso_time "$since_s")
+    head="Done in the last $since"
+  fi
   slug=$(repo_slug)
   # --json keeps stdout pure.
   if [ "$json" = true ]; then security_alerts >&2; else security_alerts; fi
-  data=$(board_data true) || exit 1
+  board=$(board_data true) || exit 1
   history=$(jq -nc --arg q "$HISTORY_QUERY" --arg o "${slug%%/*}" --arg n "${slug#*/}" --arg s "$since_iso" \
     '{query: $q, variables: {owner: $o, name: $n, since: $s}}' | gh_retry api graphql --input -) ||
     die "cannot read the history from GitHub"
   [ -z "$(jq -r '.errors[0].message // empty' <<<"$history" 2>/dev/null)" ] ||
     die "GitHub refused the history query: $(jq -r '.errors[0].message' <<<"$history")"
-  runs=$(retro_runs "$root" "$since_iso")
-  checks=$(retro_checks "$since_s")
-  hygiene=$(hygiene_report "$data" "$(ticket_trees "$(git rev-parse --show-toplevel)")" "$now" "$(local_branches)") || die "could not build the hygiene report"
+  runs=$(retro_runs "$root" "$since_iso" "$until_iso")
+  checks=$(retro_checks "$since_s" "${until_iso:+$(jq -nr --arg d "$until_iso" '$d | fromdateiso8601')}")
+  hygiene=$(hygiene_report "$board" "$(ticket_trees "$(git rev-parse --show-toplevel)")" "$now" "$(local_branches)") || die "could not build the hygiene report"
   data=$(jq -c --argjson h "$history" --argjson runs "$runs" --argjson checks "$checks" --arg now "$now" --arg since "$since_iso" \
-    --arg repo "$slug" "$RETRO_JQ" <<<"$data") || die "could not build the retro"
+    --arg until "${until_iso:-9999}" --argjson iteration "$(jq -nc --arg t "${title:-}" 'if $t == "" then null else $t end')" \
+    --arg repo "$slug" "$RETRO_JQ" <<<"$board") || die "could not build the retro"
   data=$(jq -c --argjson h "$hygiene" '. + {hygiene: $h}' <<<"$data")
   if [ "$json" = true ]; then
     printf '%s\n' "$data"
   else
-    jq -r --arg head "Done in the last $since" "$HYGIENE_DEF$RETRO_TEXT_JQ" <<<"$data"
+    jq -r --arg head "$head" "$HYGIENE_DEF$RETRO_TEXT_JQ" <<<"$data"
+  fi
+  # The pass ends with the health of the Project (#177); a failure is said and does not undo the retro.
+  drift=$(jq -c --argjson l "$(local_branches)" --argjson h "$hygiene" "$DRIFT_DEF"'drift(.; $l)
+    | map(select(.kind != "stale" or (.number as $n | $h.orphans | all(.number != $n))))' <<<"$board") || drift='[]'
+  if health=$(health_publish "$board" "$drift" "$now"); then
+    if [ "$json" = true ]; then
+      jq -r '"Project status update posted: \(.label): \(.rule)"' <<<"$health" >&2
+    else
+      jq -r '"\nProject status update posted: \(.label): \(.rule)"' <<<"$health"
+    fi
   fi
 }
 
@@ -3563,10 +3822,12 @@ run_merge() {
       RUN_PRS+=("#$pr")
       for m in "${all[@]}"; do
         RUN_MERGED+=("#$m ${RUN_TITLE[$m]} (pull request #$pr)")
-        (item_set "$m" Status Done) >/dev/null || {
+        if (item_set "$m" Status Done) >/dev/null; then
+          cycle_end "$m"
+        else
           echo "#$m: merged, but could not set the Status Done" >&2
           RUN_NOT_DONE+=("#$m ${RUN_TITLE[$m]} (pull request #$pr)")
-        }
+        fi
       done
       return 0
     fi
@@ -3992,6 +4253,7 @@ run() {
   "$SELF" clean || echo "senior-mode: clean failed; the run goes on" >&2
   security_alerts
   data=$(board_data false) || exit 1
+  board_archive "$data"
   while IFS=$'\t' read -r n size title batch; do
     [ -n "$n" ] || continue
     RUN_TITLE[$n]=$title
@@ -4534,10 +4796,12 @@ serve_done() {
   # Every ticket of a batch is done with its one pull request (the lead's <n>.batch).
   for m in $(cat "$SERVE_DIR/$t.batch" 2>/dev/null || echo "$t"); do
     RUN_MERGED+=("#$m ${RUN_TITLE[$m]:-} (pull request #$pr)")
-    (item_set "$m" Status Done) >/dev/null || {
+    if (item_set "$m" Status Done) >/dev/null; then
+      cycle_end "$m"
+    else
       echo "#$m: merged, but could not set the Status Done" >&2
       RUN_NOT_DONE+=("#$m ${RUN_TITLE[$m]:-} (pull request #$pr)")
-    }
+    fi
   done
 }
 
@@ -4895,19 +5159,14 @@ serve_drain() {
 # time of the attempt is kept in <serve dir>/digest, so a failure waits for the next day and a restart does not
 # post twice.
 serve_digest() {
-  local now last project body res
+  local now last body
   [ "$(config_get notify.digest)" = true ] || return 0
   now=$(serve_now)
   last=$(cat "$SERVE_DIR/digest" 2>/dev/null) || last=0
   [[ $last =~ ^[0-9]+$ ]] || last=0
   [ $((now - last)) -ge 86400 ] || return 0
   echo "$now" >"$SERVE_DIR/digest"
-  project=$(jq -r '.project.id // empty' "$(config_file)")
-  if [ -n "$project" ] && body=$("$SELF" status --since 24h 2>/dev/null) && [ -n "$body" ] &&
-    res=$(jq -nc --arg p "$project" --arg b "${body:0:60000}" '{query: "mutation($project: ID!, $body: String!) {
-      createProjectV2StatusUpdate(input: {projectId: $project, body: $body}) { statusUpdate { id } } }",
-      variables: {project: $p, body: $b}}' | gh_retry api graphql --input -) &&
-    jq -e '.data.createProjectV2StatusUpdate.statusUpdate.id' <<<"$res" >/dev/null 2>&1; then
+  if body=$("$SELF" status --since 24h 2>/dev/null) && [ -n "$body" ] && project_post_update "$body"; then
     echo "serve: daily digest posted as a Project status update"
   else
     echo "serve: could not post the daily digest; trying again tomorrow" >&2

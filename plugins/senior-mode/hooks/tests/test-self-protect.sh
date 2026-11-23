@@ -143,7 +143,7 @@ for c in \
   'rm .git/hooks/pre-push\ ' \
   'cp x .git\/' \
   'echo "a\\" > .claude/x' \
-  'echo x > \".claude/x' \
+  'echo x > .claude/x\ \"' \
   'rm -rf .git/hoo*' \
   'rm -rf .git/h?oks' \
   'sudo -u nobody rm -rf .git' \
@@ -220,6 +220,8 @@ for c in \
   'git config user.name t' \
   'rm -rf .git-old/*' \
   'echo x\y > out.txt' \
+  'echo x > \".claude/x' \
+  'echo x > \ ' \
   'echo "a\\" > out.txt' \
   'cat my\ file' \
   'echo x > my\ file.txt' \

@@ -72,10 +72,10 @@ fi
 
 # Quoted text is data (commit messages, echo), never a target: replace it before parsing. A quoted
 # single word (a path) is unquoted instead. Outside quotes a backslash is dropped as the shell does
-# (`.g\it`, `.git\/hooks`); an escaped space or quote is dropped with it, so it neither splits a word nor
-# opens a quote. A backslash-newline continues the line, `>|` is one operator.
+# (`.g\it`, `.git\/hooks`); an escaped space or quote becomes `Q`, so it neither splits a word nor opens a
+# quote. A backslash-newline continues the line, `>|` is one operator.
 command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ") | gsub(">\\|"; ">")
-  | gsub("\"(?<w>[^\"\\\\\\s$`]*)\"|'"'"'(?<v>[^'"'"'\\s]*)'"'"'|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')|\\\\(?<c>[^\\n \"'"'"'])|\\\\[ \"'"'"']"; .w // .v // .g // .c // "")
+  | gsub("\"(?<w>[^\"\\\\\\s$`]*)\"|'"'"'(?<v>[^'"'"'\\s]*)'"'"'|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')|\\\\(?<c>[^\\n \"'"'"'])|\\\\(?<e>[ \"'"'"'])"; .w // .v // .g // .c // (if .e then "Q" else "" end))
   | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
 
 redirect='^[^>]*>>?(.*)$'

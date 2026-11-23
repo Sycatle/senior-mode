@@ -8,6 +8,7 @@ DEFAULTS='{
   "ci": { "mode": "local" },
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "merge": false, "escalate": true, "sessionTimeout": 90, "schedule": "02:00", "sessionsPerHour": 6, "minMemoryMB": 1024 },
   "serve": { "interval": 60, "grace": 600, "breakerCooldown": 3600 },
+  "notify": { "mention": "", "webhook": "", "digest": true },
   "agent": { "command": "claude" },
   "e2e": { "slots": 2 },
   "limits": { "prLines": 400 },
@@ -3116,6 +3117,7 @@ $what \`$log\`. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the workt
   RUN_FAILED+=("#$n ${RUN_TITLE[$n]}: $reason (branch ${RUN_BRANCH[$n]} kept, log $log)")
   RUN_FAILS=$((RUN_FAILS + 1))
   [ "$RUN_FAILS" -lt "$RUN_MAXFAIL" ] || RUN_STOP="$RUN_FAILS failed ticket(s) in a row (autonomy.maxConsecutiveFailures)"
+  notify needs-human "$n" "$reason"
 }
 
 # A ticket the run stops working on: back to Backlog with a comment, kept worktree and branch.
@@ -3129,6 +3131,7 @@ It is back in Backlog. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in th
   RUN_FAILED+=("#$n ${RUN_TITLE[$n]}: $reason (branch ${RUN_BRANCH[$n]} kept)")
   RUN_FAILS=$((RUN_FAILS + 1))
   [ "$RUN_FAILS" -lt "$RUN_MAXFAIL" ] || RUN_STOP="$RUN_FAILS failed ticket(s) in a row (autonomy.maxConsecutiveFailures)"
+  notify failed "$n" "$reason"
 }
 
 # Kills the process group of the session script $1 (<name>.sh, its group in <name>.pgid), the ticket
@@ -3274,6 +3277,28 @@ run_finish() {
       run_giveup "$n" "${outcome#failed: }"
       ;;
   esac
+}
+
+# An alert (#155): $1 the event (needs-human, failed or breaker), $2 the issue or pull request number (empty when
+# there is none: the breaker pause), $3 the reason. A number gets the needs-human label and a comment that mentions
+# notify.mention (the repository owner when empty); when notify.webhook is set, it gets a JSON POST
+# {event, repo, number, url, reason}. Never fatal: what cannot be sent is said on stderr.
+notify() {
+  local event=$1 n=$2 reason=$3 mention hook url=""
+  mention=$(config_get notify.mention)
+  mention=${mention:-${RUN_SLUG%%/*}}
+  if [ -n "$n" ]; then
+    url="https://github.com/$RUN_SLUG/issues/$n"
+    gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
+      echo "#$n: could not label it needs-human" >&2
+    gh api "repos/$RUN_SLUG/issues/$n/comments" -f body="@${mention#@} this needs a human ($event): $reason" >/dev/null ||
+      echo "#$n: could not mention $mention" >&2
+  fi
+  hook=$(config_get notify.webhook)
+  [ -z "$hook" ] || curl -fsS -m 10 -X POST -H 'Content-Type: application/json' "$hook" -d "$(jq -nc --arg e "$event" \
+    --arg r "$RUN_SLUG" --arg n "$n" --arg u "$url" --arg why "$reason" '{event: $e, repo: $r,
+    number: (if $n == "" then null else ($n | tonumber) end), url: (if $u == "" then null else $u end), reason: $why}')" >/dev/null ||
+    echo "notify: the webhook did not answer ($event)" >&2
 }
 
 # After merges, one session brings the living docs up to date, on its own branch and pull request. It is
@@ -3666,8 +3691,8 @@ serve_hold() {
 }
 
 # After `autonomy.maxConsecutiveFailures` failures in a row the breaker pauses serve for serve.breakerCooldown
-# seconds; it never exits. The count starts again, so a resume gets a fresh chance. The alert (#155) comes later:
-# the line on stderr and the reason in the paused file are what a person has today.
+# seconds; it never exits. The count starts again, so a resume gets a fresh chance. The pause is alerted once (no
+# ticket to mention: the webhook and the line on stderr).
 serve_breaker() {
   local now
   [ "$RUN_FAILS" -ge "$RUN_MAXFAIL" ] || return 0
@@ -3677,6 +3702,7 @@ serve_breaker() {
     now=$(serve_now)
     printf '%s\n%s\n' "$((now + SERVE_COOLDOWN))" "$RUN_MAXFAIL failed tickets in a row (autonomy.maxConsecutiveFailures)" >"$SERVE_DIR/paused"
     echo "serve: paused, $RUN_MAXFAIL failed tickets in a row; it resumes in $SERVE_COOLDOWN seconds or with: senior-mode serve --resume" >&2
+    notify breaker "" "$RUN_MAXFAIL failed tickets in a row (autonomy.maxConsecutiveFailures)"
   fi
 }
 
@@ -3789,6 +3815,29 @@ serve_drain() {
   serve_breaker
 }
 
+# Once a day (notify.digest, default true) `status --since 24h` is posted as a Project status update (#155). The
+# time of the attempt is kept in <serve dir>/digest, so a failure waits for the next day and a restart does not
+# post twice.
+serve_digest() {
+  local now last project body res
+  [ "$(config_get notify.digest)" = true ] || return 0
+  now=$(serve_now)
+  last=$(cat "$SERVE_DIR/digest" 2>/dev/null) || last=0
+  [[ $last =~ ^[0-9]+$ ]] || last=0
+  [ $((now - last)) -ge 86400 ] || return 0
+  echo "$now" >"$SERVE_DIR/digest"
+  project=$(jq -r '.project.id // empty' "$(config_file)")
+  if [ -n "$project" ] && body=$("$SELF" status --since 24h 2>/dev/null) && [ -n "$body" ] &&
+    res=$(jq -nc --arg p "$project" --arg b "${body:0:60000}" '{query: "mutation($project: ID!, $body: String!) {
+      createProjectV2StatusUpdate(input: {projectId: $project, body: $body}) { statusUpdate { id } } }",
+      variables: {project: $p, body: $b}}' | gh_retry api graphql --input -) &&
+    jq -e '.data.createProjectV2StatusUpdate.statusUpdate.id' <<<"$res" >/dev/null 2>&1; then
+    echo "serve: daily digest posted as a Project status update"
+  else
+    echo "serve: could not post the daily digest; trying again tomorrow" >&2
+  fi
+}
+
 # The loop (ADR 0017): the shared part of `run` (run_prepare, run_start, run_reap, run_finish...) with a poll
 # every serve.interval seconds instead of a batch. TERM and INT stop the launching and drain. State is under
 # <git common dir>/senior-mode/serve/. SENIOR_MODE_SERVE_ONCE=1 polls once, waits for its sessions and exits.
@@ -3825,6 +3874,7 @@ serve_loop() {
   echo "serve: polling every ${interval}s, $SERVE_PARALLEL session(s) at a time; sessions and state in $SERVE_DIR"
   while [ "$SERVE_TERM" = false ]; do
     serve_poll
+    serve_digest
     [ -z "${SENIOR_MODE_SERVE_ONCE:-}" ] || break
     sleep "$interval" &
     sleeper=$!

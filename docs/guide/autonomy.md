@@ -116,6 +116,21 @@ upgrades, an L ticket or an ADR. The verdict is then
 at best "approve, human merge" and `senior-mode/review` stays `pending`. The `ops` agent never merges
 a `needs-human` pull request.
 
+### Alerts
+
+`senior-mode serve` (and `run`) tells the human instead of waiting to be watched. A ticket that is
+labelled `needs-human` (a session that timed out, vanished or was stopped) or that failed gets the
+`needs-human` label and a comment that mentions `notify.mention` (the repository owner when empty).
+When `notify.webhook` is set, each alert is also sent as a JSON `POST`
+`{"event", "repo", "number", "url", "reason"}`, where `event` is `needs-human`, `failed` or `breaker`.
+The circuit breaker's pause has no ticket: it is only sent to the webhook (`number` and `url` are
+`null`) and written on stderr. A webhook that does not answer is reported on stderr and never stops
+`serve`.
+
+Once a day (`notify.digest`, default true) `serve` posts `senior-mode status --since 24h` as a
+Project status update. The time of the last attempt is kept in `.git/senior-mode/serve/digest`: a
+failed post is tried again the next day.
+
 ## Protected zones
 
 `protected` in `.claude/senior-mode.json` is a list of globs. `setup` writes the preset's defaults

@@ -128,7 +128,7 @@ descriptions, and the `language` config key for replies and documents.
   the Ready items of the Project, open, ordered by Priority (P0 first), then milestone due date (none
   last), then number. It leaves out size L, tickets with an open "blocked by" link or the `blocked`
   label, and tickets with `needs-info` (a Ready ticket should not have it; the label wins). It also leaves
-  out any ticket that is not trusted (ADR 0022): one with the `triage` label, or whose author is not a
+  out any ticket that is not trusted (ADR 0024): one with the `triage` label, or whose author is not a
   collaborator (`author_association` other than OWNER, MEMBER, COLLABORATOR) and that carries no `qualified`
   label. `ready` applies the same rule, and the daemon never merges an external pull request.
 - `senior-mode start <issue>` is the other step `next` and `run` share: it creates the worktree in the
@@ -389,7 +389,7 @@ last result.
   reuses an open issue with the same title, replacing its body and saying so, so an interrupted
   `frame` can be rerun. Agents pass the board's exact option values (`P0 now`, not "High").
 - **Labels:** `needs-human`, `needs-info`, `blocked`, `security` (risks filed with `--severity`), `triage` and
-  `qualified` (external issues, ADR 0022), plus
+  `qualified` (external issues, ADR 0024), plus
   type labels when needed. Nothing else by
   default.
 - **Branches:** short-lived, one per ticket, from the default branch.

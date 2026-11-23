@@ -462,6 +462,87 @@ expect allow 'gh pr view $N --json title'
 unset SENIOR_MODE_RUN
 
 git -C "$repo" switch -q feat/2-local
+
+# #235: git accepts an unambiguous abbreviation of a long option, so a prefix of a denied option is denied.
+# (gh does not: `gh pr merge --admi` is "unknown flag", so a prefix of --admin is left alone.)
+for o in --no-v --no-ve --no-ver --no-veri --no-verif; do
+  expect deny "git commit $o -m x"
+  expect deny "git push $o origin feat/2-local"
+  expect deny "git rebase $o main"
+  expect deny "git merge $o feat/1-shared"
+  expect deny "git am $o p.mbox"
+done
+for o in --for --forc --force-w --force-wi --force-with --force-with-lea --force-with-lease=x --force-i --force-if --force-if-incl --force-if-include; do
+  expect deny "git push $o"
+  expect deny "git push origin $o feat/2-local"
+done
+for o in --al --all --mir --mirr --mirror --b --bra --branches; do
+  expect deny "git push $o origin"
+done
+for o in --h --ha --har; do
+  expect deny "git reset $o origin/main" main
+  expect deny "git reset $o HEAD~1" feat/1-shared
+  expect allow "git reset $o HEAD~1" feat/2-local
+done
+expect deny 'git config --ed'
+expect deny 'git config --edi'
+expect deny 'git config --unset-a core.hooksPath'
+expect deny 'git config --unset-al core.hooksPath'
+expect deny 'git config --rep core.hooksPath x'
+expect deny 'git config --replace-a core.hooksPath x'
+expect deny 'git config --a core.hooksPath x'
+expect deny 'git config --ad core.hooksPath x'
+expect deny 'git config alias.ci "commit --no-verif"'
+expect deny 'git config alias.pf "push --forc"'
+expect deny 'git config alias.pf "push --force-w"'
+expect deny 'git -c alias.ci="commit --no-ver" ci -m x'
+expect deny "GIT_CONFIG_PARAMETERS=\"'alias.pf=push --force-with'\" git pf"
+expect deny 'git push --forc=x'
+expect deny 'git push --for""c'
+expect deny 'git push --f""orc'
+expect allow 'git log --no-merges'
+expect allow 'git log --no-merges --oneline -3'
+expect allow 'git commit --no-edit --amend'
+expect allow 'git commit --no-post-rewrite -m x'
+expect allow 'git push --follow-tags'
+expect allow 'git push --follow-tags origin feat/2-local'
+expect allow 'git fetch --no-tags'
+expect allow 'git fetch --no-recurse-submodules --no-tags origin'
+expect allow 'git rebase --no-autosquash main'
+expect allow 'git rebase --no-rebase-merges main'
+expect allow 'git merge --no-verify-signatures feat/1-shared'
+expect allow 'git pull --no-verify-signatures'
+expect allow 'git merge --no-commit --no-ff feat/1-shared'
+expect allow 'git push --no-thin'
+expect allow 'git push --atomic origin feat/2-local'
+expect allow 'git push --tags'
+expect allow 'git push --set-upstream origin feat/2-local'
+expect allow 'git push --delete origin feat/9-x'
+expect allow 'git push --dry-run --verbose origin feat/2-local'
+expect allow 'git push --prune --porcelain origin'
+expect allow 'git branch --force feat/3 HEAD'
+expect allow 'git worktree remove --force ../w'
+expect allow 'git checkout --force feat/2-local'
+expect allow 'git log --format=%s --for-each-ref'
+expect allow 'git diff --formatx'
+expect allow 'git reset --soft HEAD~1'
+expect allow 'git reset --mixed HEAD~1'
+expect allow 'git reset --keep HEAD~1'
+expect allow 'git reset --merge'
+expect allow 'git config --get-all user.name'
+expect allow 'git config --list'
+expect allow 'git config --global --unset user.name'
+expect allow 'git config --add user.x y'
+expect allow 'git config --unset-all user.x'
+expect allow 'git config --replace-all user.x y'
+expect allow 'git config --get-regexp "alias.*"'
+expect allow 'git config alias.nm "log --no-merges"'
+expect allow 'git config alias.ft "fetch --no-tags"'
+expect allow 'git config alias.fmt "log --format=%s"'
+expect allow 'git config alias.ft "push --follow-tags"'
+expect allow 'gh pr merge 3 --squash --delete-branch'
+expect allow 'gh pr merge 3 --admi'
+expect allow 'gh pr create --draf'
 reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason' \
   <<<"$(jq -nc --arg d "$repo" '{tool_input: {command: "git push --force"}, cwd: $d}' | "$hook")")
 grep -qi force <<<"$reason" || fail "deny reason does not name the rule: $reason"

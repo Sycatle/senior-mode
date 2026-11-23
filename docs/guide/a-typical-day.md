@@ -35,7 +35,7 @@ Claude to check the tickets: the [`ready`](skills.md#ready) skill moves each one
 ## 3. Start a ticket
 
 Pick the top `Ready` ticket on the board and ask Claude to start it, for example "start #42", or let
-`/senior-mode:next` do it. `senior-mode start 42` makes a worktree and a branch named `<type>/<issue>-<slug>`, such as
+`/senior-mode:go` do it. `senior-mode start 42` makes a worktree and a branch named `<type>/<issue>-<slug>`, such as
 `feat/42-overdue-warning`, and moves the ticket to In progress. The worktree is
 `~/.local/share/senior-mode/worktrees/<repo>/42` (`$XDG_DATA_HOME` when set; `<repo>` is the name of your
 checkout and a short hash of its path), so it does not clutter the folder that holds your projects;
@@ -120,9 +120,8 @@ senior-mode release
 | Step | Command |
 |---|---|
 | Read where things stand | `status`, a plain-language dashboard |
-| Steps 3 to 7, with you in the loop | `/senior-mode:next` picks the top Ready ticket and delivers it with you |
-| Steps 3 to 7, without you | `/senior-mode:run` delivers up to N Ready tickets, and merges within guardrails when you turn merging on; `senior-mode schedule install` runs it every day |
-| Weekly cleanup | `/senior-mode:retro` gives the facts of the week and up to three process changes to approve |
+| Steps 3 to 7, with you in the loop | `/senior-mode:go` picks the top Ready ticket and delivers it with you |
+| Steps 3 to 7, without you | `/senior-mode:go auto` starts the daemon, which delivers Ready tickets and merges within guardrails; `go` then shows what it does |
+| Weekly cleanup | `status` offers the retro once a week: the facts of the week and up to three process changes to approve |
 
-Note: Claude's session greeting and the end of `frame` mention "go" and `/senior-mode:next`: "go"
-starts `next`.
+Note: Claude's session greeting and the end of `frame` mention "go": it starts `/senior-mode:go`.

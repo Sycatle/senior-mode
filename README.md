@@ -80,12 +80,14 @@ The walk-through, step by step: [A typical day](docs/guide/a-typical-day.md).
 
 | Command | What it does | State |
 |---|---|---|
-| `/senior-mode:setup` | Adopt a repository: board, labels, merge rules, ruleset, checks, hooks, templates, release-please. Safe to rerun. | Available |
 | `/senior-mode:frame` | Turn an idea into decisions, a spec, ADRs and ready tickets. | Available |
-| `/senior-mode:next` | The daily session: board state, pull requests waiting for you, then delivers the top ready ticket with you. Never merges without your yes. | Available |
-| `/senior-mode:status` | Plain-language dashboard: done, in progress, blocked, waiting for you. Also a digest for readers who are not technical. | Available |
-| `/senior-mode:run` | Delivers up to N ready tickets on its own, one session and worktree per ticket, within the guardrails. Stops at reviewed pull requests unless you turn merging on. | Available |
-| `/senior-mode:retro` | Weekly: the facts of the week, then up to three process changes for you to approve. | Available |
+| `/senior-mode:go` | Moves the project forward: delivers the top ready ticket with you (never merges without your yes), or with `auto` starts the daemon that delivers on its own within the guardrails; when the daemon runs, shows what it does. | Available |
+| `/senior-mode:status` | Plain-language dashboard: done, in progress, blocked, waiting for you. Also a digest for readers who are not technical, and the weekly retro when one is due. | Available |
+
+Two more start on their own and stay callable: `/senior-mode:setup` adopts a repository (board,
+labels, merge rules, ruleset, checks, hooks, templates; safe to rerun), and the first `go` runs it;
+`/senior-mode:retro` gives the facts of the week and up to three process changes, and `status`
+offers it once a week.
 
 Behind them, small discipline skills load only when they apply (triage, ready, tdd, commit,
 verify, spec, adr, grill, review, docs), and eight agents each have their own model and effort (scout,

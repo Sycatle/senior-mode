@@ -320,5 +320,12 @@ wait "$p2" || fail "the second of two concurrent checks fails: $(cat "$work/out2
 [ "$(sort -u "$work/tmps" | wc -l)" = 2 ] || fail "the checks share a temp directory: $(cat "$work/tmps")"
 [ ! -e "$(head -n 1 "$work/tmps")" ] || fail "the temp directory of a run is left behind"
 
+# The spec drift is a warning, never a gate (#332, tested above): no document says CI or a check enforces it.
+plugin=$(cd "$(dirname "$0")/../.." && pwd)
+for f in "$plugin/skills/spec/SKILL.md" "$plugin/../../docs/adr/0002-sources-of-truth.md" "$plugin/../../docs/specs/0001-senior-mode.md" "$plugin/../../docs/guide/skills.md"; do
+  [ -f "$f" ] || { fail "$f is missing"; continue; }
+  grep -qiE 'CI (check )?enforces|enforced in CI|check enforces' "$f" && fail "$f claims the spec drift is enforced in CI: $(grep -iE 'CI (check )?enforces|enforced in CI|check enforces' "$f")"
+done
+
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

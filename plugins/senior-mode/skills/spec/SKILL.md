@@ -33,7 +33,8 @@ why"; GitHub holds the state.
 ## Keep it true
 
 - A PR that changes code under a spec's `paths` updates the spec in the same PR, or states
-  `Spec-Unchanged: <reason>` in its body. A CI check enforces this.
+  `Spec-Unchanged: <reason>` in its body. `senior-mode check` and `status` warn about a drift; nothing blocks it,
+  the reviewer judges it.
 - Update acceptance criteria when behaviour changes; never let tests and spec disagree.
 - Do not create other documentation folders, plans or notes files: state goes to GitHub, decisions to
   ADRs (skill `adr`).

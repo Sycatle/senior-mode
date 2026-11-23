@@ -74,7 +74,8 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
   `draft`, `accepted`, `implemented`, `superseded` (never deleted). The `paths` field lists the code
   it governs; a PR touching those paths updates the spec or says `Spec-Unchanged: <reason>`.
 - **When.** When writing a spec, when code under a spec changes, near files in `docs/specs/`.
-- **Note.** A check for spec drift is planned, with no milestone yet; today the reviewer checks it.
+- **Note.** `senior-mode check` and `status` warn about a spec drift (see [commands](commands.md)); it is never a
+  gate, the reviewer judges it.
 
 ## `adr`
 

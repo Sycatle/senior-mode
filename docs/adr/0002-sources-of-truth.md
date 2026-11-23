@@ -20,8 +20,8 @@ auditable trail and a roadmap readable by non-developers.
   `paths` it governs; decisions are ADRs in `docs/adr/`; project principles are a section of
   `CLAUDE.md`, not a separate constitution file.
 - No backlog, plan or journal file is created by the plugin.
-- CI enforces it: a PR that touches a spec's paths updates the spec or justifies why not; the spec
-  index is generated and checked.
+- A PR that touches a spec's paths updates the spec or justifies why not (`Spec-Unchanged: <reason>`).
+  `senior-mode check` and `status` warn about a drift; it is not a gate, the reviewer judges it.
 
 ## Alternatives considered
 

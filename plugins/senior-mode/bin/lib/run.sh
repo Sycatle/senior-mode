@@ -298,7 +298,7 @@ pr_external() {
 # enforces protection, no needs-human, the three statuses green on the head, no protected zone among the files
 # GitHub would merge.
 run_blocker() {
-  local pr=$1 sha=$2 missing files zones
+  local pr=$1 sha=$2 missing="" files zones
   if [ "$RUN_MERGE" != true ]; then
     echo "merging is off (autonomy.merge)"
   elif pr_external "$3"; then
@@ -307,10 +307,11 @@ run_blocker() {
     echo "the server enforces no branch protection (github.protection is ${RUN_PROTECTION:-unset})"
   elif jq -e '[.labels[]?.name] | index("needs-human")' <<<"$3" >/dev/null; then
     echo "labelled needs-human"
-  elif ! missing=$(gh_retry api "repos/$RUN_SLUG/commits/$sha/status" | jq -r '["senior-mode/ci", "senior-mode/review", "senior-mode/security"]
+  # github.requiredChecks false (ADR 0016): the ruleset requires no status, so none is waited for.
+  elif [ "$RUN_REQUIRED" = true ] && ! missing=$(gh_retry api "repos/$RUN_SLUG/commits/$sha/status" | jq -r '["senior-mode/ci", "senior-mode/review", "senior-mode/security"]
       - [.statuses[] | select(.state == "success") | .context] | join(" and ")'); then
     echo "its statuses could not be read"
-  elif [ -n "$missing" ]; then
+  elif [ "$RUN_REQUIRED" = true ] && [ -n "$missing" ]; then
     echo "$missing not green"
   # The command applies the protected zones, not the reviewer: the files GitHub would merge, against
   # the globs of the base branch, so a pull request cannot unprotect itself.
@@ -701,6 +702,7 @@ run_prepare() {
   [[ $RUN_TIMEOUT =~ ^[1-9][0-9]*$ ]] && [ "$RUN_TIMEOUT" -le 1440 ] ||
     die "autonomy.sessionTimeout must be a whole number of minutes from 1 to 1440, not $RUN_TIMEOUT"
   RUN_PROTECTION=$(jq -r '.github.protection // empty' "$file")
+  RUN_REQUIRED=$(jq -r 'if .github.requiredChecks == false then "false" else "true" end' "$file")
   RUN_CLAUDE=$(agent_bin)
   RUN_SLUG=$(repo_slug)
   # The main checkout, even when run from a ticket worktree (they live in its .git, or beside it).
@@ -756,7 +758,7 @@ run() {
   local max="" parallel="" n size title t left batch
   local -a queue=() running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_REVIEWED=() RUN_NOT_REVIEW=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
   local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=() RUN_BATCH=()
-  local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
+  local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_REQUIRED RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP=""
   while [ $# -gt 0 ]; do
     case $1 in

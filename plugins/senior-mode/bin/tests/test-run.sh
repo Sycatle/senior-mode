@@ -389,6 +389,20 @@ grep -q 'pr merge' "$GH_LOG" && fail "K: merged without senior-mode/security suc
 grep -q 'Waiting for a human.*#45.*senior-mode/security not green' "$work/out" || fail "K: report misses #45: $(cat "$work/out")"
 grep -q 'Waiting for a human.*#46.*senior-mode/security not green' "$work/out" || fail "K: report misses #46: $(cat "$work/out")"
 
+# K2 (#296): github.requiredChecks false (ADR 0016): the ruleset requires no status, so none is waited for;
+# the other bounds hold (protection, needs-human, protected zones).
+config '{"merge": true}' '{"protection": "ruleset", "requiredChecks": false}'
+board 49 '[]'
+session 49-sonnet delivered pr
+run || fail "K2: run failed: $(cat "$work/out")"
+grep -q 'pr merge' "$GH_LOG" || fail "K2: not merged although the ruleset requires no status: $(cat "$work/out")"
+grep -q 'not green' "$work/out" && fail "K2: a status waited for: $(cat "$work/out")"
+config '{"merge": true}' '{"protection": "none", "requiredChecks": false}'
+board 49 '[]'
+session 49-sonnet delivered pr
+run || fail "K2: run failed: $(cat "$work/out")"
+grep -q 'pr merge' "$GH_LOG" && fail "K2: merged with no protection on the server"
+
 # F: a ticket already opened with `senior-mode start` (its worktree and branch exist) is reused as it is.
 config '{}'
 board 50 '["type:bug"]'

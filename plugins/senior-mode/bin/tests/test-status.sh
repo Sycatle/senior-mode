@@ -44,10 +44,14 @@ if grep -q createProjectV2StatusUpdate <<<"$body"; then
   exit 0
 fi
 if grep -q LABELED_EVENT <<<"$body"; then cat "$FIX/labeled.json"; exit 0; fi
-if grep -q issueOrPullRequest <<<"$body"; then
+if grep -q 'c0: object(oid:' <<<"$body"; then
   [ -z "${SPEC_FAIL:-}" ] || { echo "HTTP 403: forbidden" >&2; exit 1; }
-  jq -nc --argjson b "$(cat "$FIX/spec-prs")" --arg q "$(jq -r .query <<<"$body")" '[$q | scan("p([0-9]+):") | .[0]]
-    | map({key: ("p" + .), value: {body: $b[.]}}) | from_entries | {data: {repository: .}}'
+  # One alias `cN: object(oid: "<sha>")` per commit; $FIX/spec-prs maps a commit subject to its pull request nodes.
+  while read -r alias sha; do
+    printf '%s\t%s\n' "$alias" "$(git log -1 --format=%s "$sha")"
+  done < <(jq -r .query <<<"$body" | grep -oE 'c[0-9]+: object\(oid: "[0-9a-f]+"' | sed -E 's/: object\(oid: "/ /; s/"$//') |
+    jq -nRc --argjson b "$(cat "$FIX/spec-prs")" '[inputs | split("\t")]
+      | map({key: .[0], value: {associatedPullRequests: {nodes: ($b[.[1]] // [])}}}) | from_entries | {data: {repository: .}}'
   exit 0
 fi
 [ -z "$(jq -r '.variables.number // empty' <<<"$body")" ] || { cat "$FIX/item-$(jq -r .variables.number <<<"$body").json"; exit 0; }
@@ -632,15 +636,23 @@ sc "fix: e (#79)" src/e.ts "Spec-Unchanged: internal"
 sc "fix: f" api/x.ts
 sc "fix: lib only" lib/l.ts
 sc "docs: unrelated" other/o.md
-printf '{"77": "Fixes a thing.", "78": "Spec-Unchanged: refactor only\\n", "79": null}' >"$FIX/spec-prs"
+# A rebased commit carries no number in its subject: its pull request is found through the commit (#331).
+sc "refactor: h" src/h.ts
+printf '%s' '{"fix: c (#77)": [{"number": 77, "state": "MERGED", "body": "Fixes a thing."}],
+  "fix: d (#78)": [{"number": 78, "state": "MERGED", "body": "Spec-Unchanged: refactor only\n"}],
+  "refactor: h": [{"number": 80, "state": "MERGED", "body": "Intro\n\nSpec-Unchanged: rebase merge"}],
+  "fix: f": [{"number": 90, "state": "CLOSED", "body": ""}, {"number": 91, "state": "MERGED", "body": ""}]}' >"$FIX/spec-prs"
 run_spec status --json || fail "status --json with drift failed: $(cat "$work/err")"
 [ "$(json '.specDrift | length')" = 1 ] || fail "one spec drifts: $(json '.specDrift')"
 [ "$(json '.specDrift[0] | [.spec, .id, .title] | join("|")')" = '"docs/specs/0001-alpha.md|1|Alpha"' ] || fail "spec fields: $(json '.specDrift[0]')"
 [ "$(json '[.specDrift[0].commits[] | .subject] | sort | join("|")')" = '"feat: a|fix: c (#77)|fix: f"' ] ||
   fail "the offending commits: $(json '.specDrift[0].commits')"
 [ "$(json '.specDrift[0].commits[] | select(.subject == "fix: c (#77)") | .pr')" = 77 ] || fail "pull request of a commit: $(json '.specDrift[0].commits')"
+[ "$(json '.specDrift[0].commits[] | select(.subject == "fix: f") | .pr')" = 91 ] || fail "the merged pull request is not the one reported: $(json '.specDrift[0].commits')"
+[ "$(json '.specDrift[0].commits[] | select(.subject == "feat: a") | .pr')" = null ] || fail "a commit with no pull request has one: $(json '.specDrift[0].commits')"
 [ "$(json '.specDriftNote')" = null ] || fail "a note without a reason: $(json '.specDriftNote')"
-[ "$(grep -c issueOrPullRequest "$FIX/bodies")" = 1 ] || fail "pull request bodies are not read in one call: $(grep -c issueOrPullRequest "$FIX/bodies")"
+[ "$(grep -c 'c0: object(oid:' "$FIX/bodies")" = 1 ] || fail "pull requests are not read in one call: $(grep -c 'c0: object(oid:' "$FIX/bodies")"
+[ "$(jq -r .query "$FIX/bodies" | grep -o 'object(oid' | wc -l)" = 5 ] || fail "only the commits without Spec-Unchanged in their message are read: $(jq -r .query "$FIX/bodies")"
 run_spec status || fail "status with drift failed: $(cat "$work/err")"
 grep -q '^Spec drift (1)$' "$work/out" || fail "Spec drift section missing: $(cat "$work/out")"
 grep -q '^  docs/specs/0001-alpha.md: 3 commits' "$work/out" || fail "spec line missing: $(cat "$work/out")"
@@ -658,11 +670,16 @@ grep -q '^Spec drift: not checked' "$work/out" || fail "text note missing: $(cat
 sc "docs(spec): alpha follows the code" docs/specs/0001-alpha.md
 run_spec status --json || fail "status --json after the spec changed failed: $(cat "$work/err")"
 [ "$(json '.specDrift | length')" = 0 ] || fail "the spec changed and still drifts: $(json '.specDrift')"
-[ "$(grep -c issueOrPullRequest "$FIX/bodies")" = 0 ] || fail "pull request bodies read with nothing to check"
+[ "$(grep -c 'c0: object(oid:' "$FIX/bodies")" = 0 ] || fail "pull requests read with nothing to check"
 sc "feat: g" src/g.ts
 run_spec status --json || fail "status --json failed: $(cat "$work/err")"
 [ "$(json '.specDrift[0].commits | map(.subject) | join("|")')" = '"feat: g"' ] || fail "drift since the new spec: $(json '.specDrift')"
-[ "$(grep -c issueOrPullRequest "$FIX/bodies")" = 0 ] || fail "a commit without a pull request number reads pull requests"
+[ "$(grep -c 'c0: object(oid:' "$FIX/bodies")" = 1 ] || fail "a commit with no number in its subject is not looked up"
+# 50 commits a query (#331): 120 commits to look up are three calls.
+for i in $(seq 1 119); do sc "feat: n$i" "src/n$i.ts"; done
+run_spec status --json || fail "status --json with 120 commits failed: $(cat "$work/err")"
+[ "$(grep -c 'c0: object(oid:' "$FIX/bodies")" = 3 ] || fail "120 commits are not read in 3 calls: $(grep -c 'c0: object(oid:' "$FIX/bodies")"
+[ "$(json '.specDrift[0].commits | length')" = 120 ] || fail "the 120 commits are not all listed: $(json '.specDrift[0].commits | length')"
 
 # Errors.
 run status --since soon && fail "accepted --since soon"

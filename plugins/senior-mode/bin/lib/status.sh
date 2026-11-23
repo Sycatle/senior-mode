@@ -491,7 +491,7 @@ status_once() {
   # A ticket the hygiene repair takes is not also drift that waits for a human.
   out=$(jq -c --argjson h "$(hygiene_report "$data" "$trees" "$now" "$locals")" '. + {hygiene: $h}
     | .drift |= map(select(.kind != "stale" or (.number as $n | $h.orphans | all(.number != $n))))' <<<"$out") || return 1
-  # The spec drift reads git, and GitHub only for the pull request bodies it needs; it never fails the report.
+  # The spec drift reads git, and GitHub only for the pull requests of the commits it needs; it never fails the report.
   specs=$(spec_drift 2>/dev/null) || specs='{"drift": [], "note": "could not be read"}'
   out=$(jq -c --argjson s "$specs" '. + {specDrift: $s.drift, specDriftNote: $s.note}' <<<"$out") || return 1
   # The report is out before --fix touches anything.

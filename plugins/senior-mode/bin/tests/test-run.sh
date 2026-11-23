@@ -66,6 +66,7 @@ case "$*" in
   "api repos/acme/app/issues/"*"/comments"*) echo '{}' ;;
   "api repos/acme/app/issues/"*"/labels"*) echo '[]' ;;
   "pr merge"*) ;;
+  "pr list"*) echo '[]' ;;
   *) echo "unexpected: $*" >&2; exit 1 ;;
 esac
 STUB
@@ -276,6 +277,12 @@ grep -q 'app-30 opus' "$CLAUDE_LOG" && fail "C: an outgrown ticket was retried"
 grep -q 'app-31' "$CLAUDE_LOG" && fail "C: run went on after an outgrown ticket"
 grep -q 'issues/30/comments' "$GH_LOG" || fail "C: no comment on the outgrown ticket"
 grep -q 'needs a data migration' "$work/out" || fail "C: report misses the reason: $(cat "$work/out")"
+# #225: `clean` runs when a run starts, before any ticket is opened, and when it ends, after the last one.
+[ "$(grep -c '^pr list' "$GH_LOG")" -eq 2 ] || fail "C: clean not called at the start and the end: $(cat "$GH_LOG")"
+[ "$(grep -n '^pr list' "$GH_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n '^issue view 30 ' "$GH_LOG" | head -1 | cut -d: -f1)" ] ||
+  fail "C: clean did not run before the first ticket: $(cat "$GH_LOG")"
+[ "$(grep -n '^pr list' "$GH_LOG" | tail -1 | cut -d: -f1)" -gt "$(grep -n '^issue view 30 ' "$GH_LOG" | tail -1 | cut -d: -f1)" ] ||
+  fail "C: clean did not run after the last ticket: $(cat "$GH_LOG")"
 outcome_is 30
 
 # D: merging on but no protection on the server, and a needs-human label: nothing merges. --max 1.
@@ -784,6 +791,7 @@ config '{}'
 board
 run || fail "E: run with an empty board failed"
 grep -q 'No Ready ticket' "$work/out" || fail "E: empty board not reported: $(cat "$work/out")"
+[ "$(grep -c '^pr list' "$GH_LOG")" -eq 1 ] || fail "E: a run with no ticket cleans once, at its start: $(cat "$GH_LOG")"
 run --max 0 && fail "E: --max 0 accepted"
 run --parallel x && fail "E: --parallel x accepted"
 

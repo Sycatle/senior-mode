@@ -18,7 +18,9 @@ cat >"$work/stub/gh" <<'STUB'
 echo "$*" >>"$GH_LOG"
 case "$*" in
   "pr list"*) [ -f "$FIX/prs.ndjson" ] && jq -s . "$FIX/prs.ndjson" || echo '[]' ;;
-  "api repos/"*"/branches?protected"*) cat "$FIX/protected" 2>/dev/null; true ;;
+  "api repos/"*"/branches?protected"*)
+    [ ! -f "$FIX/protected-fail" ] || { echo "HTTP 403" >&2; exit 1; }
+    cat "$FIX/protected" 2>/dev/null; true ;;
   "issue view "*)
     n=$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*")
     jq -nc --arg s "$(jq -r --arg n "$n" '.[$n] // "OPEN"' "$FIX/issues.json")" '{state: $s}' ;;
@@ -125,6 +127,22 @@ git -C "$repo" branch chore/24-protected "$(orphan prot24)"
 git -C "$repo" push -q origin chore/24-protected
 pr 136 MERGED chore/24-protected 30 "$(tip chore/24-protected)"
 echo chore/24-protected >"$FIX/protected"
+# #243: only the names `frame start` makes (`docs/<slug>`, a slug of lower-case letters, digits and single
+# hyphens, 40 characters at most) and `run` makes (`docs/run-<stamp>`) are candidates; any other docs/ branch is kept.
+git -C "$repo" push -q origin "$sha12:refs/heads/docs/frame-idea"
+pr 140 MERGED docs/frame-idea 30 "$sha12"
+git -C "$repo" push -q origin "$sha12:refs/heads/docs/run-20260101-101010-42"
+pr 141 MERGED docs/run-20260101-101010-42 30 "$sha12"
+git -C "$repo" push -q origin "$sha12:refs/heads/docs/next.v2"
+pr 142 MERGED docs/next.v2 30 "$sha12"
+git -C "$repo" push -q origin "$sha12:refs/heads/docs/Next_notes"
+pr 143 MERGED docs/Next_notes 30 "$sha12"
+git -C "$repo" push -q origin "$sha12:refs/heads/docs/a/b"
+pr 144 MERGED docs/a/b 30 "$sha12"
+git -C "$repo" branch docs/frame-local main
+pr 145 MERGED docs/frame-local 3 "$main_tip"
+git -C "$repo" branch docs/Local_notes main
+pr 146 MERGED docs/Local_notes 3 "$main_tip"
 # A branch deleted on origin behind our back: its tracking ref is stale and must not count as pushed.
 mk feat/17-stale "$wt/17"
 git -C "$work/origin.git" branch -q -D feat/17-stale
@@ -171,6 +189,12 @@ for l in "feat/5-open" "feat/9-issue-open" "$common/runs/new" "$common/probe.log
   ! grep -F "would remove" "$work/out" | grep -qF -- "$l" || fail "dry run would remove: $l"
 done
 ! grep -F "would remove remote branch" "$work/out" | grep -qF feat/2-merged-new || fail "dry run would remove a recent remote branch"
+for l in "would remove remote branch docs/frame-idea " "would remove remote branch docs/run-20260101-101010-42 " \
+  "would remove branch docs/frame-local " "kept remote branch docs/next.v2: not a branch senior-mode makes" \
+  "kept remote branch docs/Next_notes: not a branch senior-mode makes" "kept remote branch docs/a/b: not a branch senior-mode makes" \
+  "kept branch docs/Local_notes: not a branch senior-mode makes"; do
+  has "$l" || fail "dry run does not say: $l: $(cat "$work/out")"
+done
 has "pull request #101 merged" || fail "dry run gives no reason: $(cat "$work/out")"
 has "would run: git worktree prune" || fail "dry run does not mention the prune: $(cat "$work/out")"
 
@@ -278,6 +302,37 @@ STUB
 chmod +x "$work/failstub/gh"
 REAL_STUB=$work/stub/gh PATH="$work/failstub:$PATH" clean && fail "clean succeeded without the board"
 [ "$(snapshot)" = "$before" ] || fail "clean removed something without the board"
+
+# #243: when origin cannot be fetched (no ssh agent in a scheduled run) the remote-tracking refs may be stale, so
+# whether a commit is pushed is unknown: a branch whose commits only a tracking ref vouches for is kept, and it
+# says so. What GitHub vouches for (its commits are in the default branch or in its pull request) still goes.
+mk feat/30-vanished "$wt/30"
+git -C "$work/origin.git" branch -q -D feat/30-vanished
+pr 150 CLOSED feat/30-vanished 3 "$main_tip"
+git -C "$repo" branch feat/31-in-main main
+pr 151 MERGED feat/31-in-main 3 "$main_tip"
+mv "$work/origin.git" "$work/origin.gone"
+clean || fail "clean failed when origin could not be fetched: $(cat "$work/err")"
+mv "$work/origin.gone" "$work/origin.git"
+[ -d "$wt/30" ] || fail "a worktree whose commits are vouched for by a tracking ref only was removed after a failed fetch"
+branches | grep -qx feat/30-vanished || fail "feat/30-vanished was removed after a failed fetch"
+grep -q "kept worktree $wt/30 (feat/30-vanished): .*could not be fetched.*unknown" "$work/out" ||
+  fail "the unknown pushed state is not said: $(cat "$work/out")"
+grep -q 'could not fetch origin' "$work/err" || fail "a failed fetch is not warned about: $(cat "$work/err")"
+branches | grep -qx feat/31-in-main && fail "a branch inside the default branch was kept after a failed fetch"
+
+# #243: an unreadable list of protected branches is said, and a docs/ branch is kept then (it could be one).
+git -C "$repo" branch docs/frame-late main
+pr 152 MERGED docs/frame-late 3 "$main_tip"
+touch "$FIX/protected-fail"
+clean --dry-run || fail "clean --dry-run failed without the protected branches: $(cat "$work/err")"
+grep -q 'protected branches' "$work/err" || fail "an unreadable protected list is not said: $(cat "$work/err")"
+has "kept branch docs/frame-late: protected branches could not be read" || fail "docs branch not kept: $(cat "$work/out")"
+has "would remove branch docs/frame-late" && fail "a docs branch would go with the protected list unreadable"
+rm -f "$FIX/protected-fail"
+clean --dry-run || fail "clean --dry-run failed: $(cat "$work/err")"
+has "would remove branch docs/frame-late " || fail "a docs branch is kept with the protected list readable: $(cat "$work/out")"
+grep -q 'protected branches' "$work/err" && fail "a readable protected list is complained about"
 
 [ "$failures" -eq 0 ] && echo "test-clean: ok"
 exit "$failures"

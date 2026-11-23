@@ -395,8 +395,10 @@ GitHub, never from git ancestry, so squash and rebase merges are handled.
   and not in its pull request (a merged pull request whose branch GitHub deleted still holds them);
   a locked worktree; a branch or remote branch of a ticket In progress on the board.
 - **Never deleted, locally or on origin:** only the branches `start` and `frame start` make are
-  candidates (`feat/<n>-...`, `fix/<n>-...`, `chore/<n>-...`, `docs/...`). A `dev`, a `staging` or a
-  `release/*` whose pull request merged long ago is listed (`not a branch senior-mode makes`) and kept.
+  candidates (`feat/<n>-...`, `fix/<n>-...`, `chore/<n>-...`, and `docs/<slug>` or `docs/run-<stamp>`:
+  lower-case letters, digits and single hyphens, 40 characters at most). A `dev`, a `staging`, a
+  `release/*` or a `docs/next.v2` whose pull request merged long ago is listed
+  (`not a branch senior-mode makes`) and kept.
   So is the base of any pull request, open, closed or merged (deleting it would close the pull
   requests stacked on it), a protected branch (the list GitHub gives for the repository, rulesets
   included) and the default branch.
@@ -406,7 +408,10 @@ GitHub, never from git ancestry, so squash and rebase merges are handled.
   `removed ...`. If GitHub or the board cannot be read, `clean` stops before removing anything.
 - **Before it decides, `clean` runs `git fetch --prune origin`**, also under `--dry-run`: it only moves
   the remote-tracking refs, never a branch or a work tree, and without it a tracking ref of a branch
-  deleted on origin would make its commits look pushed.
+  deleted on origin would make its commits look pushed. If the fetch fails (no ssh agent in a
+  scheduled run), `clean` says so and treats "pushed" as unknown: a branch is then kept unless its
+  commits are in the default branch or in its pull request. If the list of protected branches cannot
+  be read, it says so and keeps every `docs/` branch (a ticket's branch stays a candidate).
 - **What is lost with a removed worktree:** its ignored files (`node_modules`, `.env`, build output)
   go with it; `start` reinstalls the dependencies of a new one. Commits are not lost: a pull request
   closed without merging keeps its commits on GitHub at `refs/pull/<N>/head`, and

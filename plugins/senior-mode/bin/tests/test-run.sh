@@ -4,6 +4,7 @@
 # (line 1: the outcome to write, empty for none; line 2: "pr" to open a pull request; line 3: "hang" to
 # never end, with a child process, recorded in $FIX/pids-<n>, to check that a killed session leaves none;
 # "slow": the session lasts 3 seconds, long enough for the others to start in a loaded machine; $FIX/trace gets "start <n>" and "end <n>" around every session;
+# $FIX/outcome-<n>: the lines of a batch session's outcome file (#263);
 # "die": the session script is killed, so no exit file is ever written;
 # "decoy": the same, but the session's recorded process group is swapped for another group, whose leader is
 # not the session's script, to check that run kills nothing it does not recognise).
@@ -141,6 +142,8 @@ if [ "$(sed -n 3p "$fx")" = decoy ]; then
 fi
 outcome=$(sed -n 1p "$fx")
 [ -z "$outcome" ] || echo "$outcome" >"$SENIOR_MODE_RUN_OUTCOME"
+# A batch session (#263) writes one outcome line per ticket: $FIX/outcome-<lead> holds them.
+[ ! -f "$FIX/outcome-$n" ] || cp "$FIX/outcome-$n" "$SENIOR_MODE_RUN_OUTCOME"
 [ "$(sed -n 2p "$fx")" != pr ] ||
   echo "[{\"number\": $((n + 100)), \"head\": {\"sha\": \"sha$n\"}, \"labels\": $(cat "$FIX/labels-$n" 2>/dev/null || echo '[]')}]" >"$FIX/pulls-$n"
 [ "$(sed -n 3p "$fx")" != slow ] || sleep 3
@@ -891,6 +894,10 @@ paths_of() { # <ticket> <globs>: Paths of a ticket of the board
   jq -c --argjson n "$1" --arg p "$2" '(.data.node.items.nodes[] | select(.content.number == $n) | .fieldValues.nodes)
     += [{text: $p, field: {name: "Paths"}}]' "$FIX/board.json" >"$work/b" && mv "$work/b" "$FIX/board.json"
 }
+size_of() { # <ticket> <size>: Size of a ticket of the board (an S with overlapping Paths is batched, an M never)
+  jq -c --argjson n "$1" --arg s "$2" '(.data.node.items.nodes[] | select(.content.number == $n) | .fieldValues.nodes[]
+    | select(.field.name == "Size") | .name) = $s' "$FIX/board.json" >"$work/b" && mv "$work/b" "$FIX/board.json"
+}
 # serial <a> <b>: the sessions of the tickets did not overlap in the trace.
 serial() {
   local sa sb ea eb
@@ -906,6 +913,7 @@ board 301 '[]' 302 '[]' 303 '[]' 304 '[]'
 paths_of 301 'src/a/**, docs/x.md'
 paths_of 302 'src/a/x.ts'
 paths_of 303 'docs/guide/**'
+for n in 301 302 303 304; do size_of "$n" M; done
 session 301-sonnet delivered pr slow
 session 302-sonnet delivered pr
 session 303-sonnet delivered pr slow
@@ -924,11 +932,69 @@ config '{"maxTickets": 2, "parallel": 2}'
 board 311 '[]' 312 '[]'
 paths_of 311 'src/a/**'
 paths_of 312 'src/a/x.ts'
+size_of 311 M
+size_of 312 M
 session 311-sonnet delivered pr slow
 session 312-sonnet delivered pr
 rm -f "$FIX/trace"
 run || fail "U: run without a Paths field failed: $(cat "$work/out")"
 serial 311 312 && fail "U: a config without the Paths field serialised the tickets: $(tr '\n' ' ' <"$FIX/trace")"
+
+# V: Ready S tickets whose Paths overlap are one session in one worktree, one pull request (#263). #401 and #402
+# are a batch (one slot), #403 is apart, #405 is an M that overlaps the batch. #402 fails inside the batch: it goes
+# back alone, #401 is delivered and merged.
+fields=$(jq '. + {Paths: {id: "F_PA"}}' <<<"$saved_fields")
+config '{"maxTickets": 5, "parallel": 3, "merge": true}' '{"protection": "ruleset"}'
+board 401 '[]' 402 '[]' 403 '[]' 405 '[]'
+paths_of 401 'src/b/**'
+paths_of 402 'src/b/x.ts'
+paths_of 403 'docs/guide/**'
+paths_of 405 'src/b/y.ts'
+size_of 405 M
+session 401-sonnet "" pr slow
+printf '#401 delivered\n#402 failed: tests do not pass\n' >"$FIX/outcome-401"
+echo "$green" >"$FIX/status-401"
+session 403-sonnet delivered pr slow
+echo "$green" >"$FIX/status-403"
+session 405-sonnet delivered pr
+echo "$green" >"$FIX/status-405"
+rm -f "$FIX/trace" "$FIX/pulls-401"
+run || fail "V: run failed: $(cat "$work/out")"
+[ -d "$wt/401" ] && [ ! -e "$wt/402" ] || fail "V: not one worktree for the batch: $(ls "$wt")"
+grep -q '^app-402 ' "$CLAUDE_LOG" && fail "V: a session for #402 of the batch: $(cat "$CLAUDE_LOG")"
+grep -q '#402' "$repo/.git/senior-mode/runs/"*/401.prompt && grep -q 'Closes' "$repo/.git/senior-mode/runs/"*/401.prompt ||
+  fail "V: the batch prompt does not name its tickets and their Closes"
+grep -qi 'one commit per' "$repo/.git/senior-mode/runs/"*/401.prompt || fail "V: the batch prompt does not ask one commit per ticket"
+grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 4 || fail "V: #401, #402, #403 and #405 not all In progress: $(grep -c item-edit "$GH_LOG")"
+grep -qx 'pr merge 501 --rebase --match-head-commit sha401 -R acme/app' "$GH_LOG" || fail "V: the batch pull request not merged: $(grep merge "$GH_LOG")"
+grep -c 'item-edit.*--single-select-option-id o4' "$GH_LOG" | grep -qx 3 || fail "V: #401, #403 and #405 not set Done"
+grep -c 'item-edit.*--single-select-option-id o0' "$GH_LOG" | grep -qx 1 || fail "V: #402 not set back to Backlog"
+grep -q 'issues/402/labels' "$GH_LOG" || fail "V: #402 not labelled needs-human"
+grep -q 'issues/401/labels\|issues/401/comments' "$GH_LOG" && fail "V: the delivered #401 was labelled or commented"
+grep -q '^app-401 opus' "$CLAUDE_LOG" && fail "V: a batch with a delivered ticket was retried on Opus"
+grep -q 'Merged: #401 ' "$work/out" || fail "V: #401 not reported merged: $(cat "$work/out")"
+grep -q 'Failed: #402 ' "$work/out" || fail "V: #402 not reported failed: $(cat "$work/out")"
+outcome_is_delivered 401
+jq -e '.outcome == "failed" and .reason == "tests do not pass" and .model == "sonnet"' "$repo/.git/senior-mode/runs/"*/402.json >/dev/null ||
+  fail "V: #402 not recorded as failed: $(cat "$repo/.git/senior-mode/runs/"*/402.json)"
+serial 401 403 && fail "V: the batch and #403 did not run together (the batch is one slot): $(tr '\n' ' ' <"$FIX/trace")"
+serial 401 405 || fail "V: #405 overlaps the batch and ran with it: $(tr '\n' ' ' <"$FIX/trace")"
+
+# W: a batch whose session fails altogether goes on Opus once, then every ticket goes back alone.
+rm -f "$FIX/outcome-401" "$FIX/trace" "$FIX/pulls-401"
+board 411 '[]' 412 '[]'
+paths_of 411 'src/c/**'
+paths_of 412 'src/c/x.ts'
+session 411-sonnet "failed: cannot build"
+session 411-opus "failed: still cannot build"
+run || fail "W: run failed: $(cat "$work/out")"
+grep -c '^app-411 ' "$CLAUDE_LOG" | grep -qx 2 || fail "W: the batch not tried once on Sonnet and once on Opus: $(cat "$CLAUDE_LOG")"
+grep -q '^app-412 ' "$CLAUDE_LOG" && fail "W: a session for #412"
+grep -c 'item-edit.*--single-select-option-id o0' "$GH_LOG" | grep -qx 2 || fail "W: both tickets not set back to Backlog"
+for n in 411 412; do
+  jq -e '.outcome == "failed" and .escalated == true' "$repo/.git/senior-mode/runs/"*/$n.json >/dev/null || fail "W: #$n not recorded as failed on Opus"
+  grep -q "issues/$n/labels" "$GH_LOG" || fail "W: #$n not labelled needs-human"
+done
 
 # E: nothing Ready, bad arguments.
 config '{}'

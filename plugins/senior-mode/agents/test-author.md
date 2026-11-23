@@ -17,7 +17,9 @@ production code: tests written apart from the code are not bent to fit it.
 - Follow the project's existing test style, framework and folders.
 - Run the tests. Each must fail for the expected reason (missing behaviour), not for a syntax error,
   a missing import you could add, or a broken fixture.
-- Do not commit: the implementer commits tests with the code that makes them pass.
+- Do not commit: the implementer commits tests with the code that makes them pass. Exception: when
+  `SENIOR_MODE_ROLE=test-author` (an M ticket, a session of your own), commit the tests alone in a
+  `test:` commit with the red output in the body; the implementer cannot change them afterwards.
 - If a criterion cannot be tested as written, stop and say why instead of testing something weaker.
 - Return: test files, the criterion each test covers, and the failing output trimmed to the relevant
   lines (the PR quotes it).

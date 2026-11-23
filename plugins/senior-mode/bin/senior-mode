@@ -28,7 +28,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] [--fix] | clean [--dry-run] [--days N] | statusline | retro [--since <dur>] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] [--fix] | clean [--dry-run] [--days N] | statusline | retro [--since <dur>] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -3632,6 +3632,25 @@ UNIT
   esac
 }
 
+# `senior-mode red-tests record <issue>` (#191): the files of the commits the test-author session made on the
+# ticket branch, since the default branch, one path per line from the repository root, in
+# <git common dir>/senior-mode/runs/<issue>/red-tests. hooks/self-protect.sh keeps them read-only for a
+# session with SENIOR_MODE_ROLE=ticket. Written once: later commits are the implementer's, so run it between
+# the two sessions. A deleted file is not a red test.
+red_tests() {
+  [ $# -eq 2 ] && [ "$1" = record ] && [[ $2 =~ ^[0-9]+$ ]] || usage
+  local common base list files
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
+  base=$(default_branch) || die "no default branch to compare with"
+  list=$common/senior-mode/runs/$2/red-tests
+  [ ! -e "$list" ] || die "the red tests of #$2 are already recorded ($list): only the test-author's commits belong in it"
+  files=$(git diff -z --no-renames --name-only --diff-filter=AM "$base...HEAD" | tr '\0' '\n')
+  [ -n "$files" ] || die "no file committed on this branch since $base: the test-author session has not committed its tests"
+  mkdir -p "${list%/*}"
+  printf '%s\n' "$files" >"$list.tmp" && mv "$list.tmp" "$list"
+  echo "red-tests: $(wc -l <"$list" | tr -d ' ') file(s) recorded for #$2 in $list"
+}
+
 # Never inherited: only `run` may hold one (see run_token_ok).
 unset RUN_TOKEN
 
@@ -3722,6 +3741,10 @@ case "${1:-}" in
   protected)
     shift
     protected "$@"
+    ;;
+  red-tests)
+    shift
+    red_tests "$@"
     ;;
   frame)
     # Lifts the docs/-only guard of every frame session in this repository (hooks/frame-guard.sh).

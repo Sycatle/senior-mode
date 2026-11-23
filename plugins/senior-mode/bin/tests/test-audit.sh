@@ -335,7 +335,7 @@ lock package-lock.json
 use npm npm-critical
 run && fail "npm: a critical advisory passes"
 grep -qx "npm audit --json" "$AUDIT_LOG" || fail "npm: wrong command: $(cat "$AUDIT_LOG")"
-grep -q "^FAIL  dependency audit$" "$work/out" || fail "npm: audit not reported as failed: $(cat "$work/out")"
+grep -q "^FAIL  dependency audit ([0-9.]*s)$" "$work/out" || fail "npm: audit not reported as failed: $(cat "$work/out")"
 grep -qE "critical: minimist GHSA-xvch-5gv4-984h, fixed in 1.2.8" "$work/out" || fail "npm: package, advisory and fix not named: $(cat "$work/out")"
 grep -qE "warning: moderate: minimist GHSA-vh95-rmgr-6w4m, fixed in 1.2.8" "$work/out" || fail "npm: moderate advisory not a warning: $(cat "$work/out")"
 grep -q "GHSA-vh95-rmgr-6w4m" <(grep -v warning "$work/out") && fail "npm: the moderate advisory blocks"
@@ -351,23 +351,23 @@ grep -qE "high: mkdirp GHSA-aaaa-bbbb-cccc, fixed in 1.0.4" "$work/out" || fail 
 # Moderate only: it passes, and shows the advisory as a warning; no fix is said so.
 use npm npm-moderate
 run || fail "npm: a moderate advisory fails: $(cat "$work/out")"
-grep -q "^ok    dependency audit$" "$work/out" || fail "npm: moderate: not ok: $(cat "$work/out")"
+grep -q "^ok    dependency audit ([0-9.]*s)$" "$work/out" || fail "npm: moderate: not ok: $(cat "$work/out")"
 grep -qE "warning: moderate: semver GHSA-c2qf-rxjj-qqgw, no fixed version" "$work/out" || fail "npm: moderate not shown: $(cat "$work/out")"
 
 use npm npm-clean
 run || fail "npm: a clean audit fails: $(cat "$work/out")"
-grep -q "^ok    dependency audit$" "$work/out" || fail "npm: clean: not ok: $(cat "$work/out")"
+grep -q "^ok    dependency audit ([0-9.]*s)$" "$work/out" || fail "npm: clean: not ok: $(cat "$work/out")"
 grep -q "warning" "$work/out" && fail "npm: clean audit warns: $(cat "$work/out")"
 
 # A tool that cannot answer (no network) fails the check: nothing was audited.
 use npm npm-error
 echo 1 >"$work/fix/npm.rc"
 run && fail "npm: an error answer passes"
-grep -q "^FAIL  dependency audit$" "$work/out" || fail "npm: error not reported: $(cat "$work/out")"
+grep -q "^FAIL  dependency audit ([0-9.]*s)$" "$work/out" || fail "npm: error not reported: $(cat "$work/out")"
 grep -q "registry.npmjs.org" "$work/out" || fail "npm: the reason is lost: $(cat "$work/out")"
 : >"$work/fix/npm.json"
 run && fail "npm: an empty answer passes"
-grep -q "^FAIL  dependency audit$" "$work/out" || fail "npm: empty answer not reported: $(cat "$work/out")"
+grep -q "^FAIL  dependency audit ([0-9.]*s)$" "$work/out" || fail "npm: empty answer not reported: $(cat "$work/out")"
 grep -q "the tool gave no output" "$work/out" || fail "npm: no reason given for an empty answer: $(cat "$work/out")"
 grep -qE "^ +$" "$work/out" && fail "npm: a blank reason line: $(cat "$work/out" | cat -A | head -20)"
 use npm npm-clean
@@ -405,7 +405,7 @@ if command -v timeout >/dev/null; then
   use npm npm-clean
   echo 5 >"$work/fix/npm.sleep"
   (cd "$repo" && SENIOR_MODE_AUDIT_TIMEOUT=1 "$cli" check) >"$work/out" 2>&1 && fail "timeout: a hanging audit passes"
-  grep -q "^FAIL  dependency audit$" "$work/out" || fail "timeout: not reported: $(cat "$work/out")"
+  grep -q "^FAIL  dependency audit ([0-9.]*s)$" "$work/out" || fail "timeout: not reported: $(cat "$work/out")"
   grep -q "timed out after 1 s" "$work/out" || fail "timeout: not said: $(cat "$work/out")"
 fi
 
@@ -414,7 +414,7 @@ lock requirements.txt
 use pip-audit pip-audit-vulns
 run || fail "pip: advisories without a severity fail: $(cat "$work/out")"
 grep -qx "pip-audit -r requirements.txt -f json" "$AUDIT_LOG" || fail "pip: wrong command: $(cat "$AUDIT_LOG")"
-grep -q "^ok    dependency audit$" "$work/out" || fail "pip: not ok: $(cat "$work/out")"
+grep -q "^ok    dependency audit ([0-9.]*s)$" "$work/out" || fail "pip: not ok: $(cat "$work/out")"
 grep -qE "warning: no severity: flask PYSEC-2019-179, fixed in 1.0$" "$work/out" || fail "pip: warning missing: $(cat "$work/out")"
 grep -qE "warning: no severity: flask PYSEC-2023-62, fixed in 2.2.5, 2.3.2$" "$work/out" || fail "pip: fixed versions: $(cat "$work/out")"
 [ "$(grep -c PYSEC-2019-179 "$work/out")" -eq 1 ] || fail "pip: a repeated advisory is listed twice: $(cat "$work/out")"
@@ -428,7 +428,7 @@ use pip-audit pip-audit-vulns
 # A dependency pip-audit skipped is a warning, not an unusable answer.
 use pip-audit pip-audit-skipped
 run || fail "pip: a skipped dependency fails the audit: $(cat "$work/out")"
-grep -q "^ok    dependency audit$" "$work/out" || fail "pip: skipped: not ok: $(cat "$work/out")"
+grep -q "^ok    dependency audit ([0-9.]*s)$" "$work/out" || fail "pip: skipped: not ok: $(cat "$work/out")"
 grep -qF "warning: not audited: loc (Dependency not found on PyPI and could not be audited: loc (0.1))" "$work/out" ||
   fail "pip: a skipped dependency is not shown: $(cat "$work/out")"
 grep -qF "warning: not audited: mylib (Dependency has no version specified)" "$work/out" || fail "pip: second skipped dependency: $(cat "$work/out")"
@@ -450,7 +450,7 @@ grep -q warning "$work/out" && fail "go: nothing called warns: $(cat "$work/out"
 use govulncheck govulncheck-called
 echo 2 >"$work/fix/govulncheck.rc"
 run && fail "go: a failing govulncheck passes"
-grep -q "^FAIL  dependency audit$" "$work/out" || fail "go: failure not reported: $(cat "$work/out")"
+grep -q "^FAIL  dependency audit ([0-9.]*s)$" "$work/out" || fail "go: failure not reported: $(cat "$work/out")"
 rm -f "$work/fix/govulncheck.rc"
 
 # cargo
@@ -462,13 +462,13 @@ grep -qx "cargo audit --json" "$AUDIT_LOG" || fail "cargo: wrong command: $(cat 
 grep -qE "warning: no severity: time RUSTSEC-2020-0071, fixed in >=0.2.23$" "$work/out" || fail "cargo: warning missing: $(cat "$work/out")"
 use cargo cargo-clean
 run || fail "cargo: a clean audit fails: $(cat "$work/out")"
-grep -q "^ok    dependency audit$" "$work/out" || fail "cargo: clean: not ok: $(cat "$work/out")"
+grep -q "^ok    dependency audit ([0-9.]*s)$" "$work/out" || fail "cargo: clean: not ok: $(cat "$work/out")"
 
 # A missing tool fails the check and says how to install it.
 missing() { # <lockfile> <binary> <text of the install hint>
   lock "$1"
   (cd "$repo" && PATH=$(without "$2") "$cli" check) >"$work/out" 2>&1 && fail "$2 missing: the check passes"
-  grep -q "^FAIL  dependency audit$" "$work/out" || fail "$2 missing: not reported: $(cat "$work/out")"
+  grep -q "^FAIL  dependency audit ([0-9.]*s)$" "$work/out" || fail "$2 missing: not reported: $(cat "$work/out")"
   grep -q "$2 not installed" "$work/out" || fail "$2 missing: not named: $(cat "$work/out")"
   grep -qF -- "$3" "$work/out" || fail "$2 missing: no install hint '$3': $(cat "$work/out")"
 }

@@ -46,7 +46,7 @@ branch() {
 kind() {
   branch src/app.txt "$3"
   run && fail "$1: the scan passes on $1"
-  grep -q "^FAIL  secret scan$" "$work/out" || fail "$1: scan not reported as failed: $(cat "$work/out")"
+  grep -q "^FAIL  secret scan ([0-9.]*s)$" "$work/out" || fail "$1: scan not reported as failed: $(cat "$work/out")"
   grep -q "src/app.txt:4: $1" "$work/out" || fail "$1: file, line and kind not given: $(cat "$work/out")"
   ! grep -qF -- "$2" "$work/out" || fail "$1: the secret is printed: $(cat "$work/out")"
 }
@@ -158,7 +158,7 @@ grep -q "src/app.txt:6: AWS access key" "$work/out" || fail "a '+++' line shifte
 # A clean change passes and the scan shows as ok; names that only look like secrets are not flagged.
 branch src/app.txt 'password = process.env.DB_PASSWORD_1'
 run || fail "an environment lookup is flagged: $(cat "$work/out")"
-grep -q "^ok    secret scan$" "$work/out" || fail "ok not shown: $(cat "$work/out")"
+grep -q "^ok    secret scan ([0-9.]*s)$" "$work/out" || fail "ok not shown: $(cat "$work/out")"
 # shellcheck disable=SC2016 # the lines are literal text, not expansions
 for line in 'password = "changeme"' 'token = "your-token-here"' 'secret = "<generated at deploy>"' 'const token = getToken()' \
   'password: ${DB_PASSWORD_VALUE_1}' 'token = tokens[index1234567890]' 'secret = this.config.secretValue1234' \
@@ -261,7 +261,7 @@ echo "aws = $aws" >"$other/a.txt"
 git -C "$other" add -A
 git -C "$other" -c user.name=t -c user.email=t@t commit -q -m "chore: init"
 (cd "$other" && "$cli" check) >"$work/out" 2>&1 || fail "check fails with no base branch: $(cat "$work/out")"
-grep -q "^skip  secret scan: no base branch$" "$work/out" || fail "skip not reported: $(cat "$work/out")"
+grep -q "^skip  secret scan: no base branch ([0-9.]*s)$" "$work/out" || fail "skip not reported: $(cat "$work/out")"
 
 [ "$failures" -eq 0 ] && echo "secret scan: all cases pass (awk: ${TEST_AWK:-awk})"
 exit "$failures"

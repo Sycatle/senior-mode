@@ -128,6 +128,32 @@ jq '.checks[0].run = "env | grep -E \"^GIT_(DIR|WORK_TREE)=\" && exit 1; true"' 
 jq '.checks[0].run = "echo boom; false"' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
 (cd "$new" && .githooks/pre-push </dev/null) >"$work/out" 2>&1 && fail "pre-push passes a failing check"
 grep -q boom "$work/out" || fail "pre-push hides the failing output"
+grep -Eq '^FAIL  [^ ]+.* \([0-9]+\.[0-9]s\)$' "$work/out" || fail "pre-push does not show the time of a check: $(cat "$work/out")"
+
+# The hook tells the checks which paths the push changes (SENIOR_MODE_CHANGED_FILES) from the lines git gives
+# it; when it cannot work them out, no list, so a check runs in full.
+sc="$work/scoped"
+git init -q -b main "$sc"
+mkdir -p "$sc/.claude" "$sc/.githooks"
+cp "$new/.githooks/pre-push" "$sc/.githooks/pre-push"
+jq -n --arg out "$work/seen" '{checks: [{name: "seen", run: ("if [ -n \"${SENIOR_MODE_CHANGED_FILES:-}\" ]; then cat \"$SENIOR_MODE_CHANGED_FILES\"; else echo FULL; fi >" + $out)}]}' \
+  >"$sc/.claude/senior-mode.json"
+git -C "$sc" add -A
+git -C "$sc" -c user.name=t -c user.email=t@t commit -q -m "chore: start"
+first=$(git -C "$sc" rev-parse HEAD)
+mkdir "$sc/a" && echo x >"$sc/a/one.txt" && echo x >"$sc/two.txt"
+git -C "$sc" add -A
+git -C "$sc" -c user.name=t -c user.email=t@t commit -q -m "feat: two"
+last=$(git -C "$sc" rev-parse HEAD)
+push() { (cd "$sc" && printf '%s\n' "$1" | .githooks/pre-push) >"$work/out" 2>&1 || fail "pre-push fails: $(cat "$work/out")"; }
+push "refs/heads/main $last refs/heads/main $first"
+[ "$(sort "$work/seen" | paste -sd' ')" = "a/one.txt two.txt" ] || fail "pre-push: changed paths of an update: $(cat "$work/seen")"
+push "refs/heads/main $last refs/heads/main 1111111111111111111111111111111111111111"
+[ "$(cat "$work/seen")" = FULL ] || fail "pre-push: an unknown remote commit did not mean a full run: $(cat "$work/seen")"
+push "refs/heads/new $last refs/heads/new 0000000000000000000000000000000000000000"
+[ "$(cat "$work/seen")" = FULL ] || fail "pre-push: a new branch with no base did not mean a full run: $(cat "$work/seen")"
+(cd "$sc" && .githooks/pre-push </dev/null) >"$work/out" 2>&1
+[ "$(cat "$work/seen")" = FULL ] || fail "pre-push: no pushed ref did not mean a full run: $(cat "$work/seen")"
 
 # An existing repository: its own CLAUDE.md, settings, PR template, hooks path and checks are extended.
 old="$work/legacy"

@@ -4,6 +4,25 @@ check_record() {
   printf '%s/%s\n' "$(git rev-parse --git-path senior-mode/checks)" "$1"
 }
 
+# How many full logs of failed checks are kept; the oldest go first.
+CHECK_LOGS_KEEP=20
+
+# Keeps the output file $2 of the failed check $1 as a log of its own, under senior-mode/check-logs of the git
+# directory (#294), removes the oldest logs past CHECK_LOGS_KEEP, and prints the path of the new one. Prints
+# nothing when the log cannot be written: the tail shown is then all there is.
+check_log_keep() {
+  local dir slug log f i=0
+  dir=$(git rev-parse --path-format=absolute --git-path senior-mode/check-logs) || return 0
+  slug=$(slugify "$1")
+  log=$dir/$(date -u +%Y%m%d-%H%M%S)-$$-${slug:-check}.log
+  { mkdir -p "$dir" && cp "$2" "$log"; } 2>/dev/null || return 0
+  while IFS= read -r f; do
+    i=$((i + 1))
+    [ "$i" -le "$CHECK_LOGS_KEEP" ] || rm -f "$dir/$f"
+  done < <(ls -1t "$dir" 2>/dev/null)
+  printf '%s\n' "$log"
+}
+
 # Whether `check` audits the dependencies (`audit`, on by default); anything but a boolean is an error.
 audit_enabled() {
   local value
@@ -133,7 +152,7 @@ spec_drift_warn() {
 # hook's stdin is the pushed refs) the checks get the changed paths in SENIOR_MODE_CHANGED_FILES, so one that
 # can narrow itself to them does; that run is not recorded, because publish needs a full one.
 check() {
-  local file root count i name cmd output passed=0 failed="" state description names cmds started took scope=""
+  local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log
   file=$(config_file)
   unset SENIOR_MODE_CHANGED_FILES
   if [ "${1:-}" = --pre-push ]; then
@@ -190,6 +209,8 @@ check() {
       echo "FAIL  $name ($took)"
       # The audit lists every blocking advisory (it caps them itself); another check shows its last lines.
       tail -n "$([ "$name" = "dependency audit" ] && echo 300 || echo 20)" "$output" | sed 's/^/      /'
+      log=$(check_log_keep "$name" "$output")
+      [ -z "$log" ] || echo "      full log: $log"
     fi
   done
   rm -f "$output" "$scope"

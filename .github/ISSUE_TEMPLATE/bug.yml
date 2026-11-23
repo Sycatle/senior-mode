@@ -1,0 +1,39 @@
+name: Bug report
+description: Something does not work as the docs or the spec say
+labels: ["triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. A maintainer reads it before any work starts: an issue from outside the
+        team stays in the triage inbox until it is qualified. Do not paste secrets or tokens. For a
+        vulnerability, follow [SECURITY.md](https://github.com/Sycatle/senior-mode/blob/main/SECURITY.md) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The commands and the repository setup, as short as you can make them.
+      placeholder: |
+        1. senior-mode ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: senior-mode version
+      description: The plugin version (`claude plugin list`), or the commit of your clone.
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, bash, gh and Claude Code versions.

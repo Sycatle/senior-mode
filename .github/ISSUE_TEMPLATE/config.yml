@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/Sycatle/senior-mode/discussions
+    about: Ask how to use senior-mode, or talk about an idea before filing it.
+  - name: Security report
+    url: https://github.com/Sycatle/senior-mode/blob/main/SECURITY.md
+    about: Report a vulnerability privately, as SECURITY.md describes. Do not open a public issue.

@@ -70,6 +70,7 @@ case "$*" in
   "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
   "project item-edit"*) ;;
   "auth status"*) [ ! -f "$FIX/gh-auth-bad" ] ;;
+  "api repos/acme/app/pulls/"*"/commits"*) cat "$FIX/commits-$(sed -E 's#.*/pulls/([0-9]+)/commits.*#\1#' <<<"$*").json" | respond ;;
   "api repos/acme/app/pulls/"*"/files"*) echo src/app.ts ;;
   "api repos/acme/app/pulls/"[0-9]*) cat "$FIX/pull-$(sed -E 's#^api repos/acme/app/pulls/([0-9]+).*#\1#' <<<"$*").json" | respond ;;
   "api repos/acme/app/pulls?head="*)
@@ -819,7 +820,7 @@ prs_reset() { rm -rf "$FIX/open.d" "$FIX/open-prs.json" "$FIX"/pull-*.json "$FIX
 pr() {
   mkdir -p "$FIX/open.d"
   jq -nc --argjson p "$1" --arg b "$2" --arg s "$3" --arg m "$4" --arg l "${5:-}" '{number: $p, draft: false, author_association: "OWNER", head: {ref: $b, sha: $s},
-    mergeable_state: $m, labels: (if $l == "" then [] else [{name: $l}] end), body: ""}' >"$FIX/open.d/$1.json"
+    mergeable_state: $m, labels: (if $l == "" then [] else [{name: $l}] end), body: ($ENV.PRBODY // "")}' >"$FIX/open.d/$1.json"
   cp "$FIX/open.d/$1.json" "$FIX/pull-$1.json"
   jq -s '.' "$FIX"/open.d/*.json >"$FIX/open-prs.json"
 }
@@ -1037,6 +1038,25 @@ st "$sha66" "senior-mode/ci success" "senior-mode/review success" "senior-mode/s
 once || fail "W: serve failed: $(cat "$work/out")"
 grep -q 'issues/.*/labels\|issues/.*/comments' "$GH_LOG" && fail "W: a transient blocker got needs-human: $(cat "$GH_LOG")"
 grep -q 'Waiting for a human.*senior-mode/security not green' "$work/out" || fail "W: the transient wait is not said: $(cat "$work/out")"
+green "$sha66"
+# A pull request that is not ready for its tickets (#297): needs-human on the pull request and the ticket, with the
+# reason; it is never merged. A batch with a commit per ticket merges.
+printf '%s\n' '[{"commit": {"message": "feat: both\n\nRefs #66"}}]' >"$FIX/commits-166.json"
+PRBODY=$'Closes #66\nCloses #67' pr 166 feat/66-x "$sha66" clean
+fresh
+once || fail "X: serve failed: $(cat "$work/out")"
+grep -q '^pr merge' "$GH_LOG" && fail "X: merged a batch without a commit for #67"
+grep -q 'issues/166/comments.*no commit references #67' "$GH_LOG" || fail "X: the missing ticket is not named: $(grep 'issues/166' "$GH_LOG")"
+grep -q 'issues/166/labels.*needs-human' "$GH_LOG" || fail "X: #166 not needs-human: $(cat "$GH_LOG")"
+grep -q 'issues/66/labels.*needs-human' "$GH_LOG" || fail "X: ticket #66 not needs-human: $(cat "$GH_LOG")"
+printf '%s\n' '[{"commit": {"message": "feat: a\n\nRefs #66"}}, {"commit": {"message": "feat: b\n\nCloses #67"}}]' >"$FIX/commits-166.json"
+PRBODY=$'Closes #66\nCloses #67' pr 166 feat/66-x "$sha66" clean
+fresh
+once || fail "X: serve failed: $(cat "$work/out")"
+grep -q "^pr merge 166 --rebase --match-head-commit $sha66" "$GH_LOG" || fail "X: a ready batch pull request was not merged: $(cat "$work/out")"
+rm -f "$FIX/commits-166.json"
+prs_reset
+pr 166 feat/66-x "$sha66" clean
 green "$sha66"
 # Auto-merge (#173): queued with --auto and the head; Done only when MERGED is read back.
 echo true >"$FIX/allow-auto"

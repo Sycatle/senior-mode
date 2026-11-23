@@ -320,14 +320,14 @@ worktree of the head, removed afterwards); a review of changes requested resumes
 branch, 2 rounds at most, then `needs-human` on the pull request and the ticket; a reviewer that ends without a
 status is `needs-human` too. Then the integrator pass merges one pull request per poll: when `autonomy.merge` is on
 (the default under `serve`), `senior-mode/ci`, `senior-mode/review` and `senior-mode/security` are `success`, no
-protected zone is touched and nothing is `needs-human`, it runs `gh pr merge --rebase --match-head-commit <head>`
+protected zone is touched, nothing is `needs-human` and the pull request is [ready for its tickets](#ready-pull-request), it runs `gh pr merge --rebase --match-head-commit <head>`
 (with `--auto` when the repository allows auto-merge, falling back to a direct merge) and sets Status Done only once
 the pull request reads back as merged. A pull request behind its base is rebased on the server; when `git range-diff`
 shows the same patches, check and publish run again on the new head and the review carries over, otherwise a new
 review is requested. A conflict starts an Opus `integrator` session on `<branch>-r2` (`-r3` once more, then
 `needs-human`), whose pull request supersedes and closes the old one. An M ticket without recorded red tests gets a
 `test-author` session before its ticket session. A pull request that can never merge on its own (`autonomy.merge`
-off, no server protection, a protected zone) gets `needs-human` on itself and its ticket, a comment with the reason
+off, no server protection, a protected zone, a pull request that is not ready) gets `needs-human` on itself and its ticket, a comment with the reason
 and one [alert](#alerts), then is left alone and listed by `status` under "Waiting for a human"; a blocker that a
 later poll may lift (a status not green yet, an unknown merge state) is only logged and retried. The usage limit and
 the breaker hold the launches, not the merges.
@@ -506,6 +506,19 @@ whose body ends with `filed-by: agent` (`issue create` adds it in an unattended 
 
 The check is mechanical: the [`ready` skill](skills.md) still judges what a script cannot (spec, open
 questions, test seams).
+
+#### Ready pull request
+
+`senior-mode ready --pr <n>` on an open pull request that is no framing one (its branch is not `docs/...`)
+says whether it is ready to merge on account of the tickets it closes (`Closes #n`, `Fixes #n`, `Resolves #n`
+in its body), and exits 1 when it is not. `run` and `serve` apply the same rule before they merge.
+
+- **One commit per ticket** (#297): a pull request that closes several tickets (a batch) needs each of them
+  referenced (`Refs #n`, `Closes #n`) by at least one commit of the branch; the tickets with none are named.
+  A pull request that closes one ticket or none is not held to it.
+
+Under `serve` a pull request that is not ready is not merged: it gets `needs-human` with the reason, like any
+blocker that no later poll lifts.
 
 ### After a crash
 

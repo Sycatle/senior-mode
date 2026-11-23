@@ -264,6 +264,9 @@ run_blocker() {
     echo "its changed files could not be read"
   elif zones=$(protected_match "$RUN_GLOBS" <<<"$files") && [ -n "$zones" ]; then
     echo "it touches a protected zone ($(paste -sd, - <<<"$zones" | sed 's/,/, /g'))"
+  else
+    # One commit per ticket of a batch (#297).
+    delivery_blocker "$RUN_SLUG" "$pr" "$3"
   fi
 }
 

@@ -71,7 +71,8 @@ Claude to retry on Opus.
 Judges a pull request it did not write, from an empty context. It reads the diff, the linked issue
 and spec, and the tests, applies the [`review`](skills.md#review) skill, posts one comment and sets
 the status `senior-mode/review`. It cannot edit files. It keeps recurring findings in its project
-memory (in `.claude/agent-memory/`).
+memory (in `.claude/agent-memory/`, git-ignored by `setup repo`: it stays on the machine and `retro`
+reads it there).
 
 ## `security`
 

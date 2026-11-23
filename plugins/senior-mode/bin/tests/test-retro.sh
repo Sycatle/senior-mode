@@ -195,10 +195,12 @@ grep -qF "#5 S" "$work/out" && fail "a ticket within its size is flagged: $(cat 
 # Repository hygiene (#226): reported, never acted on.
 cp "$FIX/board.json" "$FIX/board.keep"
 jq -c --arg old "$(ago $((20 * DAY)))" '.data.repository.defaultBranchRef = {name: "main"}
-  | .data.repository.pullRequests.nodes += [{number: 50, title: "Old work", headRefName: "feat/50-old", labels: {nodes: []},
+  | (.data.repository.pullRequests.nodes[] | select(.number == 31)) += {author: {login: "alice"}}
+  | .data.repository.pullRequests.nodes += [{number: 50, title: "Old work", headRefName: "feat/50-old", baseRefName: "main", isDraft: false,
+    isCrossRepository: false, author: {login: "alice"}, authorAssociation: "MEMBER", labels: {nodes: []},
     commits: {nodes: []}, updatedAt: $old, body: "Supersedes #31"}]
   | .data.repository.branches = {pageInfo: {hasNextPage: false}, nodes: [{name: "main", associatedPullRequests: {totalCount: 0}},
-    {name: "chore/60-lost", associatedPullRequests: {totalCount: 0}}, {name: "feat/50-old", associatedPullRequests: {totalCount: 1}}]}' \
+    {name: "chore/60-lost", associatedPullRequests: {totalCount: 0}, target: {oid: "x", committedDate: $old}}, {name: "feat/50-old", associatedPullRequests: {totalCount: 1}}]}' \
   "$FIX/board.keep" >"$FIX/board.json"
 run retro --json || fail "retro --json with hygiene failed: $(cat "$work/err")"
 [ "$(json '.hygiene.stale | map(.number)')" = "[50]" ] || fail "retro stale: $(json .hygiene)"

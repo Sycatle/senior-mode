@@ -19,13 +19,24 @@ case "$*" in
   "project item-add"*) sed -E 's#.*/issues/([0-9]+).*#ITEM_\1#' <<<"$*"; exit 0 ;;
   "project item-edit"*) exit 0 ;;
   "pr close"* | "issue comment"* | "api -X DELETE"*) exit 0 ;;
-  "api repos/acme/app/compare/main...chore/60-lost "*) echo 0; exit 0 ;;
+  "pr list"*) cat "$FIX/open-heads"; exit 0 ;;
   "api repos/acme/app/compare/main...feat/61-wip "*) echo 3; exit 0 ;;
-  "api repos/acme/app/compare/main...chore/70-late "*) echo 0; exit 0 ;;
+  "api repos/acme/app/compare/"*) echo 0; exit 0 ;;
+  "api repos/acme/app/branches --paginate"*) cat "$FIX/remote-branches"; exit 0 ;;
+  "api repos/acme/app/branches/"*)
+    ref=${2#repos/acme/app/branches/}
+    case $ref in
+      feat/81-moved) printf 'false\tsha:elsewhere\n' ;;
+      chore/90-ruleset) printf 'true\tsha:%s\n' "$ref" ;;
+      *) printf 'false\tsha:%s\n' "$ref" ;;
+    esac
+    exit 0 ;;
+  "api repos/acme/app/issues/"*) cat "$FIX/issue-$(sed -E 's#api repos/acme/app/issues/([0-9]+).*#\1#' <<<"$*")"; exit 0 ;;
 esac
 [ "$*" = "api graphql --input -" ] || { echo "unexpected: $*" >&2; exit 1; }
 body=$(cat)
 printf '%s\n' "$body" >>"$FIX/bodies"
+[ -z "$(jq -r '.variables.number // empty' <<<"$body")" ] || { cat "$FIX/item-$(jq -r .variables.number <<<"$body").json"; exit 0; }
 after=$(jq -r '.variables.after // "first"' <<<"$body")
 [ "$(jq -r '.variables.branchesAfter // empty' <<<"$body")" != B1 ] || { cat "$FIX/more-branches.json"; exit 0; }
 cat "$FIX/page-$after.json"
@@ -250,9 +261,7 @@ echo "$cfg_fields" >"$repo/.claude/senior-mode.json"
 run status --fix --since 7d || fail "status --fix failed: $(cat "$work/err")"
 [ "$(grep -c 'item-edit.*--single-select-option-id o4' "$GH_LOG")" -eq 2 ] || fail "--fix edits: $(cat "$GH_LOG")"
 [ "$(grep -cE 'issues/(24|26) ' "$GH_LOG")" -eq 2 ] || fail "--fix did not set #24 and #26: $(cat "$GH_LOG")"
-# #21 is also In progress with no worktree: the hygiene repair moves it to Ready, the drift repair leaves it.
-grep -qE 'issues/25 ' "$GH_LOG" && fail "--fix touched an open ticket: $(cat "$GH_LOG")"
-[ "$(grep -c 'item-edit.*--single-select-option-id o1' "$GH_LOG")" -eq 1 ] || fail "--fix did not move #21 back to Ready only: $(cat "$GH_LOG")"
+grep -qE 'issues/2[15] ' "$GH_LOG" && fail "--fix touched an open ticket: $(cat "$GH_LOG")"
 grep -q '^fixed: #24 .*Done' "$work/out" || fail "--fix does not say what it fixed: $(cat "$work/out")"
 grep -q '^left: #25 .*human' "$work/out" || fail "--fix does not say why #25 is left: $(cat "$work/out")"
 grep -q '^left: #21 .*human' "$work/out" || fail "--fix does not say why #21 is left: $(cat "$work/out")"
@@ -262,43 +271,80 @@ run status --fix --watch && fail "--fix --watch accepted"
 grep -q 'watch' "$work/err" || fail "--fix --watch refusal not explained: $(cat "$work/err")"
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
 
-# Hygiene (#226): stale pull requests, remote branches with no pull request, a pull request still open
-# that another supersedes, tickets In progress with no worktree and no open pull request. Reported by a
-# plain status; only --fix acts.
+# Hygiene (#226): stale pull requests, remote branches with no pull request, pull requests that another
+# supersedes, tickets In progress that nothing shows alive. Reported by a plain status; only --fix acts.
+enc() { jq -rn --arg n "$1" '$n | split("/") | map(@uri) | join("/")'; }
+old30=$(ago $((30 * DAY)))
 cp "$FIX/page-first.json" "$FIX/page-first.keep"
-jq -c --arg old "$(ago $((20 * DAY)))" --arg older "$(ago $((25 * DAY)))" --arg recent "$(ago DAY)" '
-  .data.repository.defaultBranchRef = {name: "main"}
-  | .data.repository.pullRequests.nodes += [
-    {number: 50, title: "Old work", url: "u50", isDraft: false, headRefName: "feat/50-old", labels: {nodes: []}, commits: {nodes: []}, updatedAt: $old, body: ""},
-    {number: 51, title: "Old work, redone", url: "u51", isDraft: false, headRefName: "feat/51-redo", labels: {nodes: []}, commits: {nodes: []},
-     updatedAt: $recent, body: "Closes #1\nSupersedes #50 and #999"},
-    {number: 53, title: "Forgotten", url: "u53", isDraft: false, headRefName: "feat/53-forgotten", labels: {nodes: []}, commits: {nodes: []}, updatedAt: $older, body: null}]
-  | .data.repository.branches = {pageInfo: {hasNextPage: false, endCursor: null}, nodes: [
-    {name: "main", associatedPullRequests: {totalCount: 0}}, {name: "feat/17-thing", associatedPullRequests: {totalCount: 1}},
-    {name: "feat/50-old", associatedPullRequests: {totalCount: 1}}, {name: "chore/60-lost", associatedPullRequests: {totalCount: 0}},
-    {name: "feat/61-wip", associatedPullRequests: {totalCount: 0}}, {name: "fix/62-merged", associatedPullRequests: {totalCount: 2}}]}' \
-  "$FIX/page-first.keep" >"$FIX/page-first.json"
-hyg='{"stale": [50, 53], "branches": ["chore/60-lost", "feat/61-wip"], "superseded": [[50, 51]], "orphans": [21]}'
-check_hygiene() {
-  [ "$(json '.hygiene.stale | map(.number)')" = "$(jq -c .stale <<<"$hyg")" ] || fail "$1: stale: $(json .hygiene)"
-  [ "$(json '.hygiene.stale[0].days')" = 20 ] || fail "$1: stale days: $(json .hygiene.stale)"
-  [ "$(json '.hygiene.branches | map(.name)')" = "$(jq -c .branches <<<"$hyg")" ] || fail "$1: branches: $(json .hygiene.branches)"
-  [ "$(json '.hygiene.superseded | map([.number, .by])')" = "$(jq -c .superseded <<<"$hyg")" ] || fail "$1: superseded: $(json .hygiene.superseded)"
-  [ "$(json '.hygiene.orphans | map(.number)')" = "$(jq -c .orphans <<<"$hyg")" ] || fail "$1: orphans: $(json .hygiene.orphans)"
+# branch <name> <pull requests> <commit age in days> [protected]
+branch() {
+  jq -nc --arg n "$1" --argjson p "$2" --arg d "$(ago $(($3 * DAY)))" --arg o "sha:$(enc "$1")" --argjson pr "${4:-false}" \
+    '{name: $n, associatedPullRequests: {totalCount: $p}, branchProtectionRule: (if $pr then {id: "R1"} else null end), target: {oid: $o, committedDate: $d}}'
 }
+# pr <number> <head> <base> <author> <association> <draft> <fork> <updated days ago> <body>
+pr() {
+  jq -nc --argjson n "$1" --arg h "$2" --arg b "$3" --arg a "$4" --arg s "$5" --argjson d "$6" --argjson f "$7" --arg u "$(ago $(($8 * DAY)))" --arg body "$9" \
+    '{number: $n, title: "PR \($n)", url: "u\($n)", isDraft: $d, isCrossRepository: $f, headRefName: $h, baseRefName: $b, author: {login: $a},
+      authorAssociation: $s, labels: {nodes: []}, commits: {nodes: []}, updatedAt: $u, body: $body}'
+}
+extra_prs=$(jq -sc '.' < <(
+  pr 50 feat/50-old main alice MEMBER false false 20 ""
+  pr 51 feat/51-redo main alice MEMBER false false 1 $'Closes #1\nSupersedes #50 and #999'
+  pr 53 feat/53-forgotten main alice MEMBER false false 25 ""
+  pr 54 feat/54-a main alice MEMBER false false 1 "Supersedes #55"
+  pr 55 feat/55-b main alice MEMBER false false 1 "Supersedes #54"
+  pr 56 feat/56-fork main mallory NONE false true 1 "Supersedes #57"
+  pr 57 feat/57-victim main alice MEMBER false false 1 ""
+  pr 58 feat/58-stranger main mallory NONE false false 1 "Supersedes #59"
+  pr 59 feat/59-target main alice MEMBER false false 1 ""
+  pr 63 feat/63-into-dev dev alice MEMBER false false 1 "see: Supersedes #65"
+  pr 65 feat/65-quoted main alice MEMBER false false 1 ""))
+extra_branches=$(jq -sc '.' < <(
+  branch main 0 1; branch feat/17-thing 1 1; branch feat/50-old 1 1; branch fix/62-merged 2 30; branch feat/63-into-dev 1 1
+  branch dev 0 30; branch release/1.0 0 30 true; branch staging 0 30
+  branch chore/60-lost 0 30; branch feat/61-wip 0 30; branch "fix/70-a#b" 0 30; branch "fix/71-100%" 0 30
+  branch feat/80-fresh 0 1; branch feat/81-moved 0 30; branch chore/90-ruleset 0 30; branch feat/27-pushed 0 2))
+jq -c --argjson prs "$extra_prs" --argjson br "$extra_branches" --arg old "$old30" --arg recent "$(ago DAY)" \
+  --argjson i27 "$(item 27 "In progress" "P1 next" S null '[]' '[]')" --argjson i28 "$(item 28 "In progress" "P1 next" S null '[]' '[]')" '
+  .data.repository.defaultBranchRef = {name: "main"}
+  | .data.repository.pullRequests.nodes += $prs
+  | .data.repository.branches = {pageInfo: {hasNextPage: false, endCursor: null}, nodes: $br}
+  | .data.node.items.nodes |= (map(if .content.number == 21 then .content.updatedAt = $old else . end)
+    + [$i27 | .content.updatedAt = $old, $i28 | .content.updatedAt = $recent])' "$FIX/page-first.keep" >"$FIX/page-first.json"
 run status --json --since 7d || fail "status --json with hygiene failed: $(cat "$work/err")"
-check_hygiene "default days"
 [ "$(calls)" -eq 1 ] || fail "hygiene makes status take $(calls) gh calls, wanted 1"
+[ "$(json '.hygiene.stale | map(.number)')" = "[50,53]" ] || fail "stale: $(json .hygiene.stale)"
+[ "$(json '.hygiene.stale[0].days')" = 20 ] || fail "stale days: $(json .hygiene.stale)"
+want='["staging","chore/60-lost","feat/61-wip","fix/70-a#b","fix/71-100%","feat/80-fresh","feat/81-moved","chore/90-ruleset","feat/27-pushed"]'
+[ "$(json '.hygiene.branches | map(.name)')" = "$want" ] || fail "branches (not main, a base of an open pull request, a protected one): $(json '.hygiene.branches | map(.name)')"
+[ "$(json '.hygiene.branches | map(select(.ticket) | .name) | length')" = 8 ] || fail "ticket branches: $(json .hygiene.branches)"
+# Only a line starting with "Supersedes #m", from an open non-draft pull request of this repository whose author
+# wrote #m or may write here; a pull request that supersedes another itself is never closed (two that supersede
+# each other: neither). The others are reported, not acted on.
+[ "$(json '.hygiene.superseded | map(select(.act) | [.number, .by])')" = "[[50,51]]" ] || fail "superseded to close: $(json .hygiene.superseded)"
+[ "$(json '.hygiene.superseded | map(select(.act | not) | .number)')" = "[54,55,57,59]" ] || fail "superseded left: $(json .hygiene.superseded)"
+[ "$(json '.hygiene.superseded | map(select(.number == 54 or .number == 57 or .number == 59) | .why)')" = \
+  '["they supersede each other","comes from a fork","is by someone who cannot write here"]' ] || fail "superseded why: $(json .hygiene.superseded)"
+[ "$(json '.hygiene.superseded | map(select(.number == 65))')" = "[]" ] || fail "a Supersedes inside a line counts: $(json .hygiene.superseded)"
+# A ticket is an orphan when it has no worktree, no open pull request, no branch anywhere (local or remote)
+# and has not moved for hygiene.days: #27 has a remote branch, #28 moved yesterday.
+[ "$(json '.hygiene.orphans | map(.number)')" = "[21]" ] || fail "orphans: $(json .hygiene.orphans)"
+[ "$(json '.drift | map(.number)')" = "[24,26,25,28]" ] || fail "an orphan is also drift: $(json .drift)"
 run status --since 7d || fail "status with hygiene failed: $(cat "$work/err")"
-for want in "Hygiene (6)" "pull request #50 Old work: no activity for 20 days" "pull request #53 Forgotten: no activity for 25 days" \
-  "branch chore/60-lost: no pull request" "branch feat/61-wip: no pull request" \
-  "pull request #50 Old work: superseded by #51, still open" "#21 Ticket 21: In progress with no worktree and no open pull request"; do
+n=$(jq -r '.hygiene | (.stale + .branches + .superseded + .orphans) | length' < <(cd "$repo" && "$cli" status --json --since 7d))
+for want in "Hygiene ($n)" "pull request #50 PR 50: no activity for 20 days" "pull request #53 PR 53: no activity for 25 days" \
+  "branch chore/60-lost: no pull request" "branch fix/70-a#b: no pull request" "branch staging: no pull request" \
+  "pull request #50 PR 50: superseded by #51, still open" "pull request #54 PR 54: #55 says it supersedes it, but they supersede each other" \
+  "pull request #57 PR 57: #56 says it supersedes it, but comes from a fork" \
+  "#21 Ticket 21: In progress with no worktree and no open pull request" \
+  "#28 Ticket 28: In progress with no open pull request and no branch"; do
   grep -qF -- "$want" "$work/out" || fail "hygiene section lacks '$want': $(cat "$work/out")"
 done
-grep -qE 'branch (main|feat/17-thing|feat/50-old|fix/62-merged):' "$work/out" && fail "a branch with a pull request is listed: $(cat "$work/out")"
-grep -qF "#999" "$work/out" && fail "a superseded pull request that is not open is listed: $(cat "$work/out")"
+grep -qE 'branch (main|dev|release/1.0|feat/17-thing|feat/50-old|fix/62-merged):' "$work/out" && fail "a branch that is not a leftover is listed: $(cat "$work/out")"
+[ "$(grep -c '^  #21 ' "$work/out")" -le 2 ] && ! grep -q "#21 Ticket 21: In progress with no open pull request and no branch" "$work/out" ||
+  fail "#21 is reported as drift and as hygiene: $(cat "$work/out")"
 grep -qE 'item-edit|pr close|issue comment|DELETE' "$GH_LOG" && fail "plain status changed something on GitHub: $(cat "$GH_LOG")"
-# hygiene.days moves the line: 22 days leaves only #53.
+# hygiene.days moves the line: 22 days leaves only #53, and the 2 day old branch is old enough for 1 day.
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}, "hygiene": {"days": 22}}' >"$repo/.claude/senior-mode.json"
 run status --json --since 7d || fail "status --json with hygiene.days failed: $(cat "$work/err")"
 [ "$(json '.hygiene.stale | map(.number)')" = "[53]" ] || fail "hygiene.days 22: $(json .hygiene.stale)"
@@ -306,27 +352,52 @@ echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}, "hygiene": {"da
 run status --json --since 7d && fail "a bad hygiene.days was accepted"
 grep -q 'hygiene.days' "$work/err" || fail "bad hygiene.days not explained: $(cat "$work/err")"
 
-# --fix prints the report first, then acts: closes the superseded pull request with a comment, deletes the
-# branch with no commit outside main, moves the orphan ticket back to Ready with a comment; the stale pull
-# requests and the branch with commits stay.
+# --fix prints the report first, then acts, and only on what is safe: closes the pull request a trusted one
+# supersedes, deletes ticket branches with no pull request, no commit outside main, and an old last commit
+# (names are percent-encoded per segment), moves the orphan ticket back to Ready after a fresh look at it.
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3, "fields": {"Status": {"id": "F_S",
   "options": {"Backlog": "o0", "Ready": "o1", "In review": "o3", "Done": "o4"}}}}}' >"$repo/.claude/senior-mode.json"
+: >"$FIX/open-heads"
+jq -r '.data.repository.branches.nodes[].name' "$FIX/page-first.json" >"$FIX/remote-branches"
+echo "open $old30" >"$FIX/issue-21"
+jq -nc '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"}, fieldValues: {nodes: [{name: "In progress", field: {name: "Status"}}]}}]}}}}}}' >"$FIX/item-21.json"
 run status --fix --since 7d || fail "status --fix with hygiene failed: $(cat "$work/err")"
 grep -q '^pr close 50 --comment .*#51' "$GH_LOG" || fail "--fix did not close #50 naming #51: $(cat "$GH_LOG")"
 [ "$(grep -c '^pr close' "$GH_LOG")" -eq 1 ] || fail "--fix closed more than the superseded pull request: $(grep '^pr close' "$GH_LOG")"
-grep -q '^api -X DELETE repos/acme/app/git/refs/heads/chore/60-lost$' "$GH_LOG" || fail "--fix did not delete chore/60-lost: $(cat "$GH_LOG")"
-[ "$(grep -c 'DELETE' "$GH_LOG")" -eq 1 ] || fail "--fix deleted another branch: $(grep DELETE "$GH_LOG")"
+for b in chore/60-lost 'fix/70-a%23b' 'fix/71-100%25'; do
+  grep -qxF "api -X DELETE repos/acme/app/git/refs/heads/$b" "$GH_LOG" || fail "--fix did not delete $b: $(grep DELETE "$GH_LOG")"
+done
+[ "$(grep -c 'DELETE' "$GH_LOG")" -eq 3 ] || fail "--fix deleted another branch (a base, a protected or young one, one with commits): $(grep DELETE "$GH_LOG")"
+grep -q 'compare/main...fix/70-a%23b ' "$GH_LOG" || fail "the compare of fix/70-a#b is not encoded: $(grep compare "$GH_LOG")"
 { grep -qE 'issues/21 ' "$GH_LOG" && grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG"; } || fail "--fix did not move #21 to Ready: $(cat "$GH_LOG")"
+[ "$(grep -c 'item-edit.*--single-select-option-id o1' "$GH_LOG")" -eq 1 ] || fail "--fix moved another ticket to Ready: $(cat "$GH_LOG")"
 grep -q '^issue comment 21 --body' "$GH_LOG" || fail "--fix did not comment on #21: $(cat "$GH_LOG")"
 [ "$(grep -n '^Hygiene' "$work/out" | cut -d: -f1)" -lt "$(grep -n '^fixed: pull request #50' "$work/out" | cut -d: -f1)" ] ||
   fail "--fix acted before the report: $(cat "$work/out")"
-for want in "fixed: pull request #50 Old work: closed, superseded by #51" "fixed: branch chore/60-lost: deleted, no commit outside main" \
-  "left: branch feat/61-wip: 3 commits outside main" "fixed: #21 Ticket 21: moved back to Ready" \
-  "left: pull request #53 Forgotten: stale, a human decides"; do
+for want in "fixed: pull request #50 PR 50: closed, superseded by #51" "fixed: branch chore/60-lost: deleted, no commit outside main" \
+  "fixed: branch fix/70-a#b: deleted" "fixed: branch fix/71-100%: deleted" "left: branch feat/61-wip: 3 commits outside main" \
+  "left: branch staging: not a ticket branch" "left: branch feat/80-fresh: last commit 1d ago" "left: branch feat/81-moved: moved since the report" \
+  "left: branch chore/90-ruleset: protected" "left: branch feat/27-pushed: last commit 2d ago" \
+  "fixed: #21 Ticket 21: moved back to Ready" "left: pull request #53 PR 53: stale, a human decides"; do
   grep -qF -- "$want" "$work/out" || fail "--fix output lacks '$want': $(cat "$work/out")"
 done
+grep -q '^left: #21 ' "$work/out" && fail "#21 is moved and also left to a human: $(cat "$work/out")"
+grep -q '^left: #28 .*human' "$work/out" || fail "--fix does not leave the recent #28 to a human: $(cat "$work/out")"
 run status --fix --json --since 7d || fail "status --fix --json with hygiene failed: $(cat "$work/err")"
-[ "$(json '.hygiene.fixed | map(.kind)')" = '["superseded","branch","orphan"]' ] || fail "--fix --json hygiene fixed: $(json .hygiene)"
+[ "$(json '.hygiene.fixed | map(.kind)')" = '["superseded","branch","branch","branch","orphan"]' ] || fail "--fix --json hygiene fixed: $(json .hygiene.fixed)"
+# A fresh look before moving a ticket: it moved since the report, it has a branch now, or it left In progress.
+echo "open $(ago 3600)" >"$FIX/issue-21"
+run status --fix --since 7d || fail "status --fix with an orphan that moved failed: $(cat "$work/err")"
+grep -q 'item-edit' "$GH_LOG" && fail "--fix moved #21 that was updated since the report: $(cat "$GH_LOG")"
+grep -q '^left: #21 .*changed since the report' "$work/out" || fail "an orphan that moved is not said: $(cat "$work/out")"
+echo "open $old30" >"$FIX/issue-21"
+echo "feat/21-late" >>"$FIX/remote-branches"
+run status --fix --since 7d || fail "status --fix with an orphan that got a branch failed: $(cat "$work/err")"
+grep -q 'item-edit' "$GH_LOG" && fail "--fix moved #21 that has a branch now: $(cat "$GH_LOG")"
+jq -nc '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"}, fieldValues: {nodes: [{name: "Ready", field: {name: "Status"}}]}}]}}}}}}' >"$FIX/item-21.json"
+sed -i '$d' "$FIX/remote-branches"
+run status --fix --since 7d || fail "status --fix with an orphan no longer In progress failed: $(cat "$work/err")"
+grep -q 'item-edit' "$GH_LOG" && fail "--fix moved #21 that is not In progress anymore: $(cat "$GH_LOG")"
 # A repair that fails is said and fails the command.
 export GH_FAIL_ON="pr close"
 run status --fix --since 7d && fail "--fix exits zero when a repair failed"
@@ -334,13 +405,20 @@ grep -q '^not fixed: pull request #50' "$work/out" || fail "failed repair not sa
 unset GH_FAIL_ON
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
 
-# More than one page of branches: the next page is read, so a branch past the first 100 is judged too.
-jq -c '.data.repository.branches.pageInfo = {hasNextPage: true, endCursor: "B1"}' "$FIX/page-first.json" >"$FIX/page-first.tmp" && mv "$FIX/page-first.tmp" "$FIX/page-first.json"
+# More than one page of branches: the next page is read, so a branch past the first 100 is judged too, and a
+# ticket whose only branch is on it is not an orphan.
+i29=$(item 29 "In progress" "P1 next" S null '[]' '[]' | jq -c --arg old "$old30" '.content.updatedAt = $old')
+jq -c --argjson i "$i29" '.data.repository.branches.pageInfo = {hasNextPage: true, endCursor: "B1"} | .data.node.items.nodes += [$i]' \
+  "$FIX/page-first.json" >"$FIX/page-first.tmp" && mv "$FIX/page-first.tmp" "$FIX/page-first.json"
 echo '{"data": {"repository": {"branches": {"pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": [
-  {"name": "chore/70-late", "associatedPullRequests": {"totalCount": 0}}, {"name": "feat/17-late", "associatedPullRequests": {"totalCount": 1}}]}}}}' >"$FIX/more-branches.json"
+  {"name": "chore/70-late", "associatedPullRequests": {"totalCount": 0}}, {"name": "feat/17-late", "associatedPullRequests": {"totalCount": 1}},
+  {"name": "feat/29-late", "associatedPullRequests": {"totalCount": 0}}]}}}}' >"$FIX/more-branches.json"
 run status --json --since 7d || fail "status --json with two pages of branches failed: $(cat "$work/err")"
 [ "$(calls)" -eq 2 ] || fail "two pages of branches took $(calls) calls"
-[ "$(json '.hygiene.branches | map(.name)')" = '["chore/60-lost","feat/61-wip","chore/70-late"]' ] || fail "branch past the first page: $(json .hygiene.branches)"
+[ "$(json '.hygiene.branches | map(.name) | index("chore/70-late") != null and index("feat/17-late") == null')" = true ] ||
+  fail "branch past the first page: $(json '.hygiene.branches | map(.name)')"
+[ "$(json '.hygiene.orphans | map(.number)')" = "[21]" ] || fail "a ticket with a branch on page 2 is an orphan: $(json .hygiene.orphans)"
+[ "$(json '.drift | map(.number) | index(29)')" = null ] || fail "a ticket with a branch on page 2 is stale: $(json .drift)"
 cp "$FIX/page-first.keep" "$FIX/page-first.json"
 
 # Quiet board: every section says nothing rather than disappearing.

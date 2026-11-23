@@ -25,8 +25,8 @@ select_tests() {
       docs/* | *.md | LICENSE | .github/workflows/* | .claude/agent-memory/*) continue ;;
     esac
     case $p in
-      # The shared script, the config and this runner reach every test.
-      */bin/senior-mode | .claude/senior-mode.json | .github/scripts/script-tests.sh)
+      # The shared script and its modules, the config and this runner reach every test.
+      */bin/senior-mode | */bin/lib/*.sh | .claude/senior-mode.json | .github/scripts/script-tests.sh)
         printf '%s\n' "${tests[@]}"
         return
         ;;

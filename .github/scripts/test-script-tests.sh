@@ -92,6 +92,9 @@ scoped
 changed plugins/senior-mode/bin/senior-mode
 scoped
 [ "$(ran_files)" = "test-a.sh test-b.sh test-c.sh test-d.sh" ] || fail "the shared script: ran $(ran_files)"
+changed plugins/senior-mode/bin/lib/common.sh
+scoped
+[ "$(ran_files)" = "test-a.sh test-b.sh test-c.sh test-d.sh" ] || fail "a module of the shared script: ran $(ran_files)"
 changed docs/guide.md src/foo.sh
 scoped
 [ "$(ran_files)" = "test-a.sh" ] || fail "a document next to a mapped path: ran $(ran_files)"

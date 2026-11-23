@@ -192,6 +192,26 @@ grep -qF "#4 " "$work/out" && fail "a ticket outside the period is listed: $(cat
 grep -qF "#5 S" "$work/out" && fail "a ticket within its size is flagged: $(cat "$work/out")"
 [ "$(git -C "$repo" status --porcelain | wc -l)" -eq 0 ] || fail "retro left changes in the tree: $(git -C "$repo" status --porcelain)"
 
+# Repository hygiene (#226): reported, never acted on.
+cp "$FIX/board.json" "$FIX/board.keep"
+jq -c --arg old "$(ago $((20 * DAY)))" '.data.repository.defaultBranchRef = {name: "main"}
+  | .data.repository.pullRequests.nodes += [{number: 50, title: "Old work", headRefName: "feat/50-old", labels: {nodes: []},
+    commits: {nodes: []}, updatedAt: $old, body: "Supersedes #31"}]
+  | .data.repository.branches = {pageInfo: {hasNextPage: false}, nodes: [{name: "main", associatedPullRequests: {totalCount: 0}},
+    {name: "chore/60-lost", associatedPullRequests: {totalCount: 0}}, {name: "feat/50-old", associatedPullRequests: {totalCount: 1}}]}' \
+  "$FIX/board.keep" >"$FIX/board.json"
+run retro --json || fail "retro --json with hygiene failed: $(cat "$work/err")"
+[ "$(json '.hygiene.stale | map(.number)')" = "[50]" ] || fail "retro stale: $(json .hygiene)"
+[ "$(json '.hygiene.branches | map(.name)')" = '["chore/60-lost"]' ] || fail "retro branches: $(json .hygiene)"
+[ "$(json '.hygiene.superseded | map([.number, .by])')" = "[[31,50]]" ] || fail "retro superseded: $(json .hygiene)"
+run retro || fail "retro with hygiene failed: $(cat "$work/err")"
+for want in "Repository hygiene" "pull request #50 Old work: no activity for 20 days" "branch chore/60-lost: no pull request" \
+  "pull request #31 Ticket 8 slice: superseded by #50, still open"; do
+  grep -qF -- "$want" "$work/out" || fail "retro hygiene lacks '$want': $(cat "$work/out")"
+done
+grep -qE 'pr close|issue comment|DELETE|item-edit' "$GH_LOG" && fail "retro changed something on GitHub: $(cat "$GH_LOG")"
+cp "$FIX/board.keep" "$FIX/board.json"
+
 # From a linked worktree, retro reads the same outcomes: they live in the git common directory.
 git -C "$repo" worktree add -q -b wt "$work/app-wt"
 (cd "$work/app-wt" && "$cli" retro --json) >"$work/out" 2>"$work/err" || fail "retro from a worktree failed: $(cat "$work/err")"

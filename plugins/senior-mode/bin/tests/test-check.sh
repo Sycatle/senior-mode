@@ -272,5 +272,25 @@ run check && fail "a failing check passes"
 grep -q "^warn  spec drift" "$work/out" || fail "the warning is lost when a check fails: $(cat "$work/out")"
 grep -q "^FAIL  bad" "$work/out" || fail "the failing check is not shown: $(cat "$work/out")"
 
+# The full output of a failed check is kept in a log of its own, its path printed under the shown tail (#294);
+# the logs are bounded, the oldest go first.
+logs=$(git -C "$repo" rev-parse --path-format=absolute --git-path senior-mode/check-logs)
+rm -rf "$logs"
+config '{"audit":false,"checks":[{"name":"noisy test","run":"seq 1 50; exit 3"},{"name":"fine","run":"true"}]}'
+run check && fail "a failing check passes"
+log=$(sed -n 's/^      full log: //p' "$work/out")
+[ -n "$log" ] && [ -f "$log" ] || fail "the log of the failed check is not printed or does not exist: $(cat "$work/out")"
+[ "$(wc -l <"$log")" = 50 ] && [ "$(head -n 1 "$log")" = 1 ] || fail "the log does not hold the full output: $(head -n 3 "$log")"
+case $log in "$logs"/*noisy-test.log) ;; *) fail "log path: $log" ;; esac
+{ grep -q '^      31$' "$work/out" && grep -q '^      50$' "$work/out" && ! grep -q '^      30$' "$work/out"; } ||
+  fail "the tail shown is not the last 20 lines: $(cat "$work/out")"
+[ "$(grep -c 'full log' "$work/out")" = 1 ] || fail "a log for a check that passed: $(cat "$work/out")"
+for i in $(seq 1 30); do : >"$logs/old-$i.log"; touch -d "@$((1000000 + i))" "$logs/old-$i.log"; done
+run check && fail "a failing check passes"
+kept=$(find "$logs" -type f | wc -l)
+[ "$kept" = 20 ] || fail "the logs are not bounded to 20: $kept"
+[ -f "$(sed -n 's/^      full log: //p' "$work/out")" ] || fail "the new log was removed"
+[ -e "$logs/old-30.log" ] && [ ! -e "$logs/old-1.log" ] || fail "the oldest logs were not the ones removed: $(printf "%s " "$logs"/* | head -c 300)"
+
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

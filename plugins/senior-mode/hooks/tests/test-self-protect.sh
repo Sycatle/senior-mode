@@ -90,6 +90,9 @@ bash_ deny "echo x > $repo/.git/config.worktree"
 bash_ deny "git config --worktree core.hooksPath x > $repo/.git/worktrees/wt/config.worktree"
 bash_ deny "echo exit 0 > .git/hooks/pre-push"
 bash_ deny "rm .git/hooks/pre-push"
+edit deny "$repo/.git/refs/heads/main" Write "" "a branch ref"
+edit deny "$repo/.git/objects/pack/x" Write "" "the object store"
+edit deny "$repo/.git/worktrees/wt/HEAD" Write "" "the admin dir of a linked worktree"
 edit allow "$repo/.git-notes.md" Write "" "a name that only starts like .git"
 dir=$work/wt edit deny ".claude/settings.json" Edit
 grep -q "\.claude/settings.json" <<<"$reason" || fail "deny reason does not name the path: $reason"
@@ -141,6 +144,16 @@ for c in \
   'cp -r x .git' \
   'cp /tmp/c .git/config.worktree' \
   'rm -rf .git/*' \
+  'rm -rf .git/refs' \
+  'rm -rf .git/refs/' \
+  'rm -rf .git/refs/heads' \
+  'rm -rf .git/objects' \
+  'rm -rf .git/objects/pack' \
+  'rm -rf .git/worktrees' \
+  'rm -rf .git/worktrees/wt' \
+  'mv .git/refs /tmp/refs' \
+  'rm -rf .g\it/refs' \
+  'sudo rm -rf .git/objects' \
   'rm -rf .g\it' \
   'r\m -rf .git' \
   'rm .git/hoo\ks/pre-push' \
@@ -241,6 +254,12 @@ for c in \
   'echo a\nb' \
   'cp .git/* /tmp/backup' \
   'ls .git/*' \
+  'ls .git/refs .git/objects .git/worktrees' \
+  'cat .git/refs/heads/main' \
+  'cp .git/objects/pack/x /tmp/backup' \
+  'git worktree remove ../wt' \
+  'rm -rf .git-refs' \
+  'rm -rf src/refs src/objects' \
   'sudo -u nobody rm -rf build' \
   'env -i ls .git' \
   'nice -n 5 make' \

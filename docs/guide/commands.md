@@ -101,7 +101,7 @@ already has is kept. If the plugin is loaded with `--plugin-dir`, the line stays
 State: **Available.** Triggers: "run", "lance", "enchaîne en autonomie".
 
 - **Purpose.** Deliver up to N Ready tickets (`autonomy.maxTickets`, default 3) without you, P at a
-  time (`autonomy.parallel`, default 1), and report in plain language: merged, waiting for a human,
+  time (`autonomy.parallel`, default 1), and report in plain language: merged, merged but left off Done, waiting for a human,
   failed and why, not started.
 - **Asks you.** To confirm the tickets, N, P and whether the run merges.
 - **How.** `senior-mode run [--max N] [--parallel P]` starts one headless `claude -p` session per

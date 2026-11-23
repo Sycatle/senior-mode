@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
 # PreToolUse on Bash: denies git commands that skip checks, force-push, push to the default branch or
 # discard commits of a shared branch, switch the hooks off (core.hooksPath), and gh pr merge --admin
-# (spec 0001 §10), the same through the GIT_CONFIG_KEY_<n> environment or a gh alias; in a run, any
-# merge and any change to rulesets or branch protection (spec 130).
+# (spec 0001 §10), the same through the GIT_CONFIG_KEY_<n> environment, another config file, an include,
+# an editor, a git or gh alias; in a run, any merge and any change to rulesets or branch protection
+# (spec 130).
 # Prints a deny decision, or nothing to allow.
-# A guardrail for honest mistakes, not a sandbox: `bash -c "..."` and the like are not parsed.
+# A guardrail for honest mistakes, not a sandbox: `bash -c "..."`, `eval` and the like are not parsed, and
+# a variable is not followed (`git push origin $B`, `gh api -X $M ...`).
 set -o pipefail
 input=$(cat)
 # Quoted text is data (commit messages, echo), never options: replace it before parsing. A quoted
-# single word (a URL, a ref) is unquoted instead. An empty pair touching a word (`--for""ce`) is removed;
+# single word (a URL, a ref) is unquoted instead, and so is a quoted variable (`"$EP"`, `--for"$x"ce`),
+# which the checks below must still see as one. An empty pair touching a word (`--for""ce`) is removed;
 # alone it is an argument (`core.hooksPath ""`) and stays, as `Q`. Outside quotes a backslash is dropped
 # as the shell does (`--for\ce`, `core.hooksPath\=x`); an escaped space or quote becomes `Q`, so it neither
 # splits a word nor opens a quote, and a value made only of them is still an argument. A backslash-newline
 # continues the line.
 command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
-  | gsub("\"(?<w>[^\"\\\\\\s$`]+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'|(?<=\\S)(?:\"\"|'"'"''"'"')|(?:\"\"|'"'"''"'"')(?=\\S)|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')|\\\\(?<c>[^\\n \"'"'"'])|\\\\(?<e>[ \"'"'"'])"; .w // .v // .g // .c // (if .e then "Q" else "" end))
+  | gsub("\"(?<x>(?:\\$(?:\\{[^}\"\\\\\\s]*\\}|[A-Za-z_][A-Za-z0-9_]*))+)\"|\"(?<w>[^\"\\\\\\s$`]+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'|(?<=\\S)(?:\"\"|'"'"''"'"')|(?:\"\"|'"'"''"'"')(?=\\S)|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')|\\\\(?<c>[^\\n \"'"'"'])|\\\\(?<e>[ \"'"'"'])"; .x // .w // .v // .g // .c // (if .e then "Q" else "" end))
   | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
 cwd=$(jq -r '.cwd // empty' <<<"$input")
 raw=$(jq -r '.tool_input.command // ""' <<<"$input")
@@ -31,6 +34,31 @@ ep=$raw_ep untrusted=false
 case ${raw//\\$'\n'/ } in *\\* | *\$\'* | *\$\"* | *\$\(* | *\`*) ep=$rawb untrusted=true ;; esac
 # The command with its quotes and backslashes removed, in lower case: for what the words may have lost.
 flat=${raw,,} flat=${flat//[\"\'\\]/}
+
+alias_bad() { [[ $flat == *--no-verify* || $flat == *--force* || $flat == *core.hookspath* ]]; }
+# A git setting handed over as key=value (-c, --config-env): the hooks path, another file pulled in by an
+# include, or an alias that runs what is denied here (its value is quoted text, so read in $flat).
+check_kv() {
+  [[ $1 == *=* ]] || return 0
+  local k=${1%%=*}
+  k=${k,,}
+  case $k in
+    core.hookspath) deny_skip "core.hooksPath" ;;
+    include.path | includeif.*.path) deny_skip "$k" ;;
+    alias.*) alias_bad && deny_skip "an alias that runs a denied option" ;;
+  esac
+  return 0
+}
+# A word split by a variable (`--for${x}ce`, `pu${x}sh`) hides what it says from this guard; a variable
+# alone (`$sub`, `"$sub"`) is a value the guard does not follow, as documented.
+check_split() { # word [option|command]
+  local n=${1%%=*}
+  [[ $n == *\$* ]] || return 0
+  if [ "$2" = option ]; then [[ $n == --* ]] || return 0
+  else [[ $n =~ ^(\$([A-Za-z_][A-Za-z0-9_]*|\{[^}]*\}))+$ ]] && return 0
+  fi
+  deny "a word split by a variable ($1) hides the option or command from the guard: write it out."
+}
 
 deny() {
   jq -nc --arg r "senior-mode: $1" \
@@ -52,15 +80,25 @@ is_shared() {
     git -C "$dir" rev-parse -q --verify "$1@{upstream}" >/dev/null 2>&1
 }
 
-# An assignment that sets core.hooksPath through the environment: GIT_CONFIG_KEY_<n>, or the older
-# GIT_CONFIG_PARAMETERS (its quoting is read in the raw command).
+# An assignment that sets core.hooksPath, an include or an alias through the environment: GIT_CONFIG_KEY_<n>,
+# or the older GIT_CONFIG_PARAMETERS (its quoting is read in the raw command); or that points git to another
+# global or system config file, which can hold any of them.
 check_env() {
+  [[ ${1,,} =~ ^git_config_(global|system)= ]] && deny_skip "${1%%=*}: another config file"
   [[ ${1,,} =~ ^git_config_key_[0-9]+=[\"\']?core\.hookspath ]] && deny_skip "GIT_CONFIG_KEY core.hooksPath"
+  [[ ${1,,} =~ ^git_config_key_[0-9]+=[\"\']?(include\.path|includeif\.[^=]*\.path) ]] && deny_skip "GIT_CONFIG_KEY include.path"
+  [[ ${1,,} =~ ^git_config_key_[0-9]+=[\"\']?alias\. ]] && alias_bad && deny_skip "GIT_CONFIG_KEY alias that runs a denied option"
   # Its value is a list of quoted pairs, which the parsed command no longer shows: read the flattened one,
-  # and refuse a value that is not a literal ($X, $(..), backticks) since it cannot be read at all.
+  # and refuse a value that is not a literal ($X, $(..), backticks) since it cannot be read at all. The
+  # value is read whole in the raw command, spaces inside its quotes included.
   if [[ $1 == GIT_CONFIG_PARAMETERS=* ]]; then
     [[ ${1,,} == *hookspath* || $flat == *hookspath* ]] && deny_skip "GIT_CONFIG_PARAMETERS core.hooksPath"
-    [[ $flat =~ git_config_parameters=[^[:space:]]*[\$\`] ]] && deny_skip "GIT_CONFIG_PARAMETERS set to a value that is not a literal"
+    [[ $flat =~ (include|includeif\.[^[:space:]]*)\.path ]] && deny_skip "GIT_CONFIG_PARAMETERS include.path"
+    local re='GIT_CONFIG_PARAMETERS=(\"([^\"\\]|\\.)*\"|'"'"'[^'"'"']*'"'"'|[^[:space:]\"'"'"'])+' rest=$raw
+    while [[ $rest =~ $re ]]; do
+      [[ ${BASH_REMATCH[0]} == *[\$\`]* ]] && deny_skip "GIT_CONFIG_PARAMETERS set to a value that is not a literal"
+      rest=${rest#*"${BASH_REMATCH[0]}"}
+    done
   fi
   return 0
 }
@@ -162,15 +200,17 @@ while IFS= read -r segment; do
   while [[ ${w[i]:-} == -* ]]; do
     case ${w[i]} in
       -C) dir=$(cd "$dir" 2>/dev/null && cd "${w[i + 1]}" 2>/dev/null && pwd) || dir=$cwd; i=$((i + 2)) ;;
-      -c) [[ ${w[i + 1],,} == core.hookspath=* ]] && deny_skip "core.hooksPath"; i=$((i + 2)) ;;
-      --config-env=*) [[ ${w[i],,} == --config-env=core.hookspath=* ]] && deny_skip "core.hooksPath"; i=$((i + 1)) ;;
-      --config-env) [[ ${w[i + 1],,} == core.hookspath=* ]] && deny_skip "core.hooksPath"; i=$((i + 2)) ;;
-      *) i=$((i + 1)) ;;
+      -c) check_kv "${w[i + 1]:-}"; i=$((i + 2)) ;;
+      --config-env=*) check_kv "${w[i]#*=}"; i=$((i + 1)) ;;
+      --config-env) check_kv "${w[i + 1]:-}"; i=$((i + 2)) ;;
+      *) check_split "${w[i]}" option; i=$((i + 1)) ;;
     esac
   done
   sub=${w[i]:-}
   args=("${w[@]:i+1}")
+  check_split "$sub" command
   for a in ${args[@]+"${args[@]}"}; do
+    check_split "$a" option
     [ "$a" = --no-verify ] && deny_skip "--no-verify"
     [[ $sub == commit && $a =~ ^-[a-zA-Z]*n[a-zA-Z]*$ ]] && deny_skip "commit -n"
   done
@@ -178,13 +218,27 @@ while IFS= read -r segment; do
     push) check_push ${args[@]+"${args[@]}"} ;;
     config)
       # Setting or unsetting core.hooksPath switches the hooks off as surely as -c does; reading it is fine.
-      key=false
+      # So does an include (another file), an alias that runs a denied option, or an editor, which can write
+      # any key. Another file with --file is no different: the key decides.
+      key="" k=""
       for a in ${args[@]+"${args[@]}"}; do
-        if [ "${a,,}" = core.hookspath ]; then key=true
-        elif $key && [[ $a != -* ]]; then deny_skip "core.hooksPath"
+        [[ $a =~ ^-[a-zA-Z]*e[a-zA-Z]*$ || $a == --edit ]] && deny "git config --edit is denied: an editor can write any key, core.hooksPath included."
+        k=${a,,}
+        if [ -z "$key" ]; then
+          case $k in
+            core.hookspath) key=hooks ;;
+            include.path | includeif.*.path) key=include ;;
+            alias.*) key=alias ;;
+          esac
+        elif [[ $a != -* ]]; then
+          case $key in
+            hooks) deny_skip "core.hooksPath" ;;
+            include) deny_skip "include.path: it pulls in a file this guard cannot read" ;;
+            alias) alias_bad && deny_skip "an alias that runs a denied option" ;;
+          esac
         fi
       done
-      $key && [[ " ${args[*]} " =~ \ (--unset|--unset-all|--replace-all|--add|unset)\  ]] && deny_skip "core.hooksPath"
+      [ "$key" = hooks ] && [[ " ${args[*]} " =~ \ (--unset|--unset-all|--replace-all|--add|unset)\  ]] && deny_skip "core.hooksPath"
       ;;
     reset)
       for a in ${args[@]+"${args[@]}"}; do

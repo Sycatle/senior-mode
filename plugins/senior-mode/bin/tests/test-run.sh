@@ -53,7 +53,8 @@ case "$*" in
     jq -c --argjson n "$n" '.data.node.items.nodes[] | select(.content.number == $n) | .content
       | {title, state, labels: .labels.nodes}' "$FIX/board.json" ;;
   "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
-  "project item-edit"*) ;;
+  "project item-edit"*)
+    [ -z "${EDIT_FAIL:-}" ] || [[ "$*" != $EDIT_FAIL ]] || { echo "edit refused" >&2; exit 1; } ;;
   "api repos/acme/app/pulls/"*"/files"*)
     pr=$(sed -E 's#.*/pulls/([0-9]+)/files.*#\1#' <<<"$*")
     cat "$FIX/files-$pr" 2>/dev/null || echo src/app.ts ;;
@@ -786,6 +787,22 @@ read -r -a pids <"$FIX/pids-130"
 for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && fail "P: process $pid of the session is still alive"; done
 for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
 PATH=$saved
+
+# S: a merge that succeeds but whose Status could not be set Done (#161): the pull request is merged and the
+# ticket is still listed as merged, and the report says the Status is not Done, with the ticket. A ticket
+# whose Status was set is not in that line.
+config '{"merge": true}' '{"protection": "ruleset"}'
+board 47 '[]' 48 '[]'
+session 47-sonnet delivered pr
+session 48-sonnet delivered pr
+echo "$green" >"$FIX/status-47"
+echo "$green" >"$FIX/status-48"
+EDIT_FAIL="*--id ITEM_47 *--single-select-option-id o4" run || fail "S: run failed: $(cat "$work/out")"
+unset EDIT_FAIL
+grep -q 'pr merge 147' "$GH_LOG" || fail "S: #47 not merged: $(cat "$GH_LOG")"
+grep -q 'Merged.*#47' "$work/out" || fail "S: report misses the merge of #47: $(cat "$work/out")"
+grep -q 'Status not set to Done.*#47' "$work/out" || fail "S: report misses #47 left off Done: $(cat "$work/out")"
+grep -q 'Status not set to Done.*#48' "$work/out" && fail "S: #48 was set Done, but is reported: $(cat "$work/out")"
 
 # E: nothing Ready, bad arguments.
 config '{}'

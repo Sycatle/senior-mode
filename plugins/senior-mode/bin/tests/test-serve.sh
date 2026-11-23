@@ -846,6 +846,39 @@ once || fail "W: serve failed: $(cat "$work/out")"
 grep -q 'the merge failed: Pull request is not mergeable' "$work/out" || fail "W: a failed merge is not said: $(cat "$work/out")"
 [ "$(done_count)" = 0 ] || fail "W: Done after a failed merge"
 rm -f "$FIX/merge-fails"
+# A pull request that can never merge on its own (#282): protection none, a protected zone, merge off. The pull
+# request and its ticket get needs-human, a comment with the reason and one alert; a pull request that already
+# has the label is left alone, so the next poll does nothing. A status not green yet is only logged, retried.
+config '{}' '{}' '{"webhook": "https://hooks.example/senior"}'
+jq '.github.protection = "none"' "$repo/.claude/senior-mode.json" >"$work/cfg.json" && mv "$work/cfg.json" "$repo/.claude/senior-mode.json"
+: >"$CURL_LOG"
+once || fail "W: serve failed: $(cat "$work/out")"
+grep -q '^pr merge' "$GH_LOG" && fail "W: merged without server protection"
+grep -q 'issues/166/labels.*needs-human' "$GH_LOG" || fail "W: #166 not labelled needs-human: $(cat "$GH_LOG")"
+grep -q 'issues/66/labels.*needs-human' "$GH_LOG" || fail "W: ticket #66 not labelled needs-human: $(cat "$GH_LOG")"
+grep -q 'issues/166/comments.*@acme.*no branch protection' "$GH_LOG" || fail "W: no comment with the reason: $(cat "$GH_LOG")"
+[ "$(grep -c 'hooks.example' "$CURL_LOG")" = 1 ] || fail "W: the alert did not fire once: $(cat "$CURL_LOG")"
+jq -e '.event == "needs-human" and .number == 166 and (.reason | test("no branch protection"))' <<<"$(sed -n 's/.* -d //p' "$CURL_LOG")" >/dev/null ||
+  fail "W: webhook payload wrong: $(cat "$CURL_LOG")"
+grep -q 'Waiting for a human.*#66.*pull request #166, the server enforces no branch protection' "$work/out" || fail "W: not reported: $(cat "$work/out")"
+pr 166 feat/66-x "$sha66" clean needs-human
+: >"$CURL_LOG"
+once || fail "W: serve failed: $(cat "$work/out")"
+grep -q 'issues/.*/labels\|issues/.*/comments' "$GH_LOG" && fail "W: a needs-human pull request is flagged again: $(cat "$GH_LOG")"
+[ ! -s "$CURL_LOG" ] || fail "W: the alert fired again: $(cat "$CURL_LOG")"
+pr 166 feat/66-x "$sha66" clean
+PROT='src/**' config '{}'
+once || fail "W: serve failed: $(cat "$work/out")"
+grep -q 'issues/166/labels.*needs-human' "$GH_LOG" || fail "W: a protected zone is not needs-human: $(cat "$GH_LOG")"
+config '{"merge": false}'
+once || fail "W: serve failed: $(cat "$work/out")"
+grep -q 'issues/166/comments.*merging is off' "$GH_LOG" || fail "W: merge off is not needs-human: $(cat "$GH_LOG")"
+config '{}'
+st "$sha66" "senior-mode/ci success" "senior-mode/review success" "senior-mode/security pending"
+once || fail "W: serve failed: $(cat "$work/out")"
+grep -q 'issues/.*/labels\|issues/.*/comments' "$GH_LOG" && fail "W: a transient blocker got needs-human: $(cat "$GH_LOG")"
+grep -q 'Waiting for a human.*senior-mode/security not green' "$work/out" || fail "W: the transient wait is not said: $(cat "$work/out")"
+green "$sha66"
 # Auto-merge (#173): queued with --auto and the head; Done only when MERGED is read back.
 echo true >"$FIX/allow-auto"
 touch "$FIX/auto-queues"

@@ -54,12 +54,14 @@ pushed_paths() {
 # The drift between the accepted specs and the code (#169). For each docs/specs/*.md whose front matter says
 # `status: accepted`: the commits (first parent only, so a merge counts once) that touched its `paths` since
 # the spec file last changed and carry no `Spec-Unchanged: <reason>` line, neither in their message nor in the
-# body of their pull request (the number of the subject: "(#12)" or "Merge pull request #12"). The bodies are
-# read in batched GraphQL calls (50 pull requests each), and only for the commits that need one. Prints
-# {"drift": [{spec, id, title, commits: [{sha, pr, subject}]}], "note": null|"<why>"}. When the bodies cannot
-# be read (no gh, offline) the drift is left out and the note says so: a guess would blame commits that are fine.
+# body of a pull request they belong to. The pull requests of a commit are the ones GitHub associates with it
+# (`associatedPullRequests`), whatever the merge method and the subject; they are read in batched GraphQL calls
+# (50 commits each, one alias per commit), only for the commits that need one. Prints
+# {"drift": [{spec, id, title, commits: [{sha, pr, subject}]}], "note": null|"<why>"}, `pr` being the merged
+# pull request of the commit, or null. When the pull requests cannot be read (no gh, offline) the drift is left
+# out and the note says so: a guess would blame commits that are fine.
 spec_drift() {
-  local root spec fm title id globs g since sha msg subject pr slug owner name q resp n i note="" rows="" key
+  local root spec fm title id globs g since sha msg subject slug owner name q resp i j prn ok note="" rows="" key
   local -a specs=() pathspec=() shas=() need=() chunk=() spec_order=()
   local -A spec_shas=() msg_ok=() sha_pr=() sha_subject=() pr_ok=() meta=()
   local unchanged='^[[:space:]]*Spec-Unchanged:[[:space:]]*[^[:space:]]'
@@ -89,33 +91,37 @@ spec_drift() {
       subject=$(head -n 1 <<<"$msg")
       sha_subject[$sha]=$subject
       if grep -qiE "$unchanged" <<<"$msg"; then msg_ok[$sha]=1; fi
-      pr=""
-      if [[ $subject =~ \(#([0-9]+)\)$ ]] || [[ $subject =~ ^Merge\ pull\ request\ \#([0-9]+) ]]; then pr=${BASH_REMATCH[1]}; fi
-      sha_pr[$sha]=$pr
     done
   done
-  for sha in "${!sha_pr[@]}"; do
-    [ -z "${msg_ok[$sha]:-}" ] && [ -n "${sha_pr[$sha]}" ] && need+=("${sha_pr[$sha]}")
+  for sha in "${!sha_subject[@]}"; do
+    [ -n "${msg_ok[$sha]:-}" ] || need+=("$sha")
   done
   if [ "${#need[@]}" -gt 0 ]; then
-    mapfile -t need < <(printf '%s\n' "${need[@]}" | sort -nu)
+    mapfile -t need < <(printf '%s\n' "${need[@]}" | sort)
     slug=$(repo_slug 2>/dev/null) || slug=""
     if [ -z "$slug" ] || ! command -v gh >/dev/null; then
-      note="pull request bodies not read: no GitHub remote or no gh"
+      note="pull requests not read: no GitHub remote or no gh"
     else
       owner=${slug%%/*} name=${slug#*/}
       for ((i = 0; i < ${#need[@]}; i += 50)); do
         chunk=("${need[@]:i:50}")
         # shellcheck disable=SC2016 # GraphQL variables, not shell
         q='query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {'
-        for n in "${chunk[@]}"; do q+=" p$n: issueOrPullRequest(number: $n) { ... on PullRequest { body } }"; done
+        for j in "${!chunk[@]}"; do
+          q+=" c$j: object(oid: \"${chunk[j]}\") { ... on Commit { associatedPullRequests(first: 5) { nodes { number state body } } } }"
+        done
         q+=' } }'
         if resp=$(jq -nc --arg q "$q" --arg o "$owner" --arg n "$name" '{query: $q, variables: {owner: $o, name: $n}}' |
           gh_retry api graphql --input - 2>/dev/null) && jq -e '.data.repository' <<<"$resp" >/dev/null 2>&1; then
-          while IFS= read -r n; do pr_ok[$n]=1; done < <(jq -r '.data.repository | to_entries[]
-            | select((.value.body // "") | test("(^|\\n)[ \\t]*Spec-Unchanged:[ \\t]*[^ \\t\\n]"; "i")) | .key[1:]' <<<"$resp")
+          while IFS=$'\t' read -r j ok prn; do
+            sha=${chunk[j]}
+            sha_pr[$sha]=${prn:-}
+            [ "$ok" != 1 ] || pr_ok[$sha]=1
+          done < <(jq -r '.data.repository | to_entries[] | (.value.associatedPullRequests.nodes // []) as $n
+            | [(.key[1:] | tonumber), ($n | any(.[]; (.body // "") | test("(^|\\n)[ \\t]*Spec-Unchanged:[ \\t]*[^ \\t\\n]"; "i")) | if . then 1 else 0 end),
+              ([$n[] | select(.state == "MERGED")][0] // $n[0] // {} | .number // "")] | @tsv' <<<"$resp")
         else
-          note="pull request bodies not read: GitHub did not answer"
+          note="pull requests not read: GitHub did not answer"
           break
         fi
       done
@@ -124,11 +130,9 @@ spec_drift() {
   if [ -z "$note" ]; then
     for spec in "${spec_order[@]}"; do
       for sha in ${spec_shas[$spec]}; do
-        [ -z "${msg_ok[$sha]:-}" ] || continue
-        pr=${sha_pr[$sha]}
-        [ -z "$pr" ] || [ -z "${pr_ok[$pr]:-}" ] || continue
+        [ -z "${msg_ok[$sha]:-}" ] && [ -z "${pr_ok[$sha]:-}" ] || continue
         key=${meta[$spec]}
-        rows+=$(printf '%s\t%s\t%s\t%s\t%s' "$spec" "$key" "${sha:0:7}" "$pr" "${sha_subject[$sha]}")$'\n'
+        rows+=$(printf '%s\t%s\t%s\t%s\t%s' "$spec" "$key" "${sha:0:7}" "${sha_pr[$sha]:-}" "${sha_subject[$sha]}")$'\n'
       done
     done
   fi

@@ -20,8 +20,8 @@ run_members() {
 run_busy() {
   local n
   for n in "${running[@]}"; do
-    # A reviewer or an integrator writes no ticket code of its own.
-    case ${RUN_ROLE[$n]:-ticket} in reviewer | integrator) ;; *) run_members "$n" ;; esac
+    # A reviewer writes no ticket code of its own; an integrator resolves conflicts in its ticket's files (#426).
+    case ${RUN_ROLE[$n]:-ticket} in reviewer) ;; *) run_members "$n" ;; esac
   done | paste -sd' ' -
 }
 

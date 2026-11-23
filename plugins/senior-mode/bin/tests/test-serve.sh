@@ -4,7 +4,10 @@
 # plays a ticket session from $FIX/claude-<n>-<model> (line 1: the outcome to write, empty for none; line 2:
 # "pr" to open a pull request; line 3: "hang" to never end, with a child process recorded in $FIX/pids-<n>,
 # "slow" to end after two seconds, "limit" to end on the subscription usage limit with the message in
-# $FIX/limit-msg). systemctl logs its calls to $SYS_LOG. SENIOR_MODE_SERVE_ONCE=1 makes serve poll once, wait for
+# $FIX/limit-msg; the file claude-<n>-<model>-<role> wins over claude-<n>-<model> for a session with that
+# SENIOR_MODE_ROLE; line 2 may be "pr:<number>" for another pull request number; line 4: "review:<state>" posts
+# senior-mode/review on the head checked out, "commit" commits a test file). gh serves the open pull requests,
+# their statuses and their merge state from $FIX (see the helpers below). systemctl logs its calls to $SYS_LOG. SENIOR_MODE_SERVE_ONCE=1 makes serve poll once, wait for
 # its sessions and exit; SENIOR_MODE_NOW is its clock; SENIOR_MODE_LOADAVG stands in for the load average.
 # shellcheck disable=SC2016 # jq programs and stub bodies, not expanded here
 set -u
@@ -23,7 +26,41 @@ jqf="" prev=""
 for a in "$@"; do [ "$prev" = --jq ] && jqf=$a; prev=$a; done
 respond() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
 case "$*" in
-  "api graphql --input -") cat >/dev/null; cat "$FIX/board.json" ;;
+  "api graphql --input -")
+    in=$(cat)
+    if grep -q '"sha":' <<<"$in"; then
+      echo '{"data": {"repository": {"object": {"associatedPullRequests": {"nodes": [{"state": "OPEN", "closingIssuesReferences": {"nodes": []}}]}}}}}'
+    else
+      cat "$FIX/board.json"
+    fi ;;
+  "api repos/acme/app --jq "*) echo "{\"allow_auto_merge\": $(cat "$FIX/allow-auto" 2>/dev/null || echo false)}" | respond ;;
+  "api repos/acme/app/commits/"*"/status"*)
+    sha=$(sed -E 's#^api repos/acme/app/commits/([^/ ]+)/status.*#\1#' <<<"$*")
+    { cat "$FIX/status-$sha" 2>/dev/null || true; } | jq -Rn '[inputs | split(" ") | {key: .[0], value: .[1]}] | from_entries
+      | to_entries | {statuses: map({context: .key, state: .value})}' | respond ;;
+  "api repos/acme/app/statuses/"*)
+    sha=$(sed -E 's#^api repos/acme/app/statuses/([^ ]+) .*#\1#' <<<"$*")
+    st="" cx=""
+    for a in "$@"; do case $a in state=*) st=${a#state=} ;; context=*) cx=${a#context=} ;; esac; done
+    echo "$cx $st" >>"$FIX/status-$sha" ;;
+  "api repos/acme/app/pulls?state=open"*) { cat "$FIX/open-prs.json" 2>/dev/null || echo '[]'; } | respond ;;
+  "api repos/acme/app/pulls/"[0-9]*" -X PATCH"*) touch "$FIX/closed-$(sed -E 's#^api repos/acme/app/pulls/([0-9]+).*#\1#' <<<"$*")" ;;
+  "pr view "*) cat "$FIX/state-$3" 2>/dev/null || echo OPEN ;;
+  "pr merge "*)
+    [ ! -f "$FIX/merge-fails" ] || { echo "Pull request is not mergeable" >&2; exit 1; }
+    if [[ $* == *--auto* ]]; then
+      [ ! -f "$FIX/no-auto" ] || { echo "auto merge is not allowed for this repository" >&2; exit 1; }
+      [ -f "$FIX/auto-queues" ] || echo MERGED >"$FIX/state-$3"
+    else
+      echo MERGED >"$FIX/state-$3"
+      jq -c --argjson n "$3" 'map(select(.number != $n))' "$FIX/open-prs.json" >"$FIX/open-prs.tmp" && mv "$FIX/open-prs.tmp" "$FIX/open-prs.json"
+    fi ;;
+  "pr update-branch "*)
+    [ ! -f "$FIX/update-conflict" ] || { echo "merge conflict between base and head" >&2; exit 1; }
+    jq -c --arg s "$(cat "$FIX/rebase-$3")" '.head.sha = $s | .mergeable_state = "clean"' "$FIX/pull-$3.json" >"$FIX/pull-$3.tmp"
+    mv "$FIX/pull-$3.tmp" "$FIX/pull-$3.json"
+    cp "$FIX/pull-$3.json" "$FIX/open.d/$3.json"
+    jq -s '.' "$FIX"/open.d/*.json >"$FIX/open-prs.json" ;;
   "api repos/acme/app/dependabot/alerts"* | "api repos/acme/app/secret-scanning/alerts"*) echo '[]' | respond ;;
   "issue view "*)
     n=$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*")
@@ -32,9 +69,10 @@ case "$*" in
   "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
   "project item-edit"*) ;;
   "api repos/acme/app/pulls/"*"/files"*) echo src/app.ts ;;
+  "api repos/acme/app/pulls/"[0-9]*) cat "$FIX/pull-$(sed -E 's#^api repos/acme/app/pulls/([0-9]+).*#\1#' <<<"$*").json" | respond ;;
   "api repos/acme/app/pulls?head="*)
     n=$(sed -E 's#.*head=acme:[a-z]+/([0-9]+)-.*#\1#' <<<"$*")
-    cat "$FIX/pulls-$n" 2>/dev/null || echo '[]' ;;
+    { cat "$FIX/pulls-$n" 2>/dev/null || echo '[]'; } | respond ;;
   "api repos/acme/app/issues/"*"/comments"*) echo '{}' ;;
   "api repos/acme/app/issues/"*"/labels"*) echo '[]' ;;
   "pr list"*) echo '[]' ;;
@@ -48,14 +86,15 @@ args=("$@")
 for ((i = 0; i < $#; i++)); do [ "${args[i]}" != --model ] || model=${args[i + 1]}; done
 tag=$(basename "$PWD")
 [[ $PWD == */senior-mode/worktrees/* ]] && tag=app-$tag
-echo "$tag $model run=${SENIOR_MODE_RUN:-}" >>"$CLAUDE_LOG"
+echo "$tag $model run=${SENIOR_MODE_RUN:-} role=${SENIOR_MODE_ROLE:-}" >>"$CLAUDE_LOG"
 if [[ ${!#} == *"guard probe"* ]]; then
   echo '{"type": "user", "message": {"content": "senior-mode: skipping checks is denied (core.hooksPath); fix what the check reports instead."}}'
   exit 0
 fi
-n=$(sed -nE 's#.*/senior-mode/worktrees/[^/]+/([0-9]+)$#\1#p' <<<"$PWD")
+n=$(sed -nE 's#.*/senior-mode/worktrees/[^/]+/(review-)?([0-9]+)(-r[0-9]+)?$#\2#p' <<<"$PWD")
 [ -n "$n" ] || exit 0
-fx=$FIX/claude-$n-$model
+fx=$FIX/claude-$n-$model-${SENIOR_MODE_ROLE:-}
+[ -f "$fx" ] || fx=$FIX/claude-$n-$model
 [ -f "$fx" ] || exit 1
 case $(sed -n 3p "$fx") in
   hang)
@@ -69,8 +108,16 @@ case $(sed -n 3p "$fx") in
 esac
 outcome=$(sed -n 1p "$fx")
 [ -z "$outcome" ] || echo "$outcome" >"$SENIOR_MODE_RUN_OUTCOME"
-[ "$(sed -n 2p "$fx")" != pr ] ||
-  echo "[{\"number\": $((n + 100)), \"head\": {\"sha\": \"sha$n\"}, \"labels\": []}]" >"$FIX/pulls-$n"
+case $(sed -n 2p "$fx") in
+  pr) num=$((n + 100)) ;;
+  pr:*) num=$(sed -n 2p "$fx"); num=${num#pr:} ;;
+  *) num="" ;;
+esac
+[ -z "$num" ] || echo "[{\"number\": $num, \"head\": {\"sha\": \"sha$n\"}, \"labels\": []}]" >"$FIX/pulls-$n"
+case $(sed -n 4p "$fx") in
+  review:*) echo "senior-mode/review $(sed -n 4p "$fx" | cut -d: -f2)" >>"$FIX/status-$(git rev-parse HEAD)" ;;
+  commit) echo "red $n" >"tests-$n.txt"; git add "tests-$n.txt"; git -c user.name=t -c user.email=t@t commit -q -m "test: red tests" ;;
+esac
 echo '{"result": "ok"}'
 STUB
 cat >"$work/stub/tmux" <<'STUB'
@@ -111,7 +158,8 @@ fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2",
 # config <autonomy json> [<serve json>]
 config() {
   jq -n --argjson f "$fields" --argjson a "$1" --argjson s "${2:-{\}}" '{project: {id: "PVT_1", owner: "acme", number: 3, fields: $f},
-    autonomy: ({minMemoryMB: 0} + $a), serve: $s, github: {protection: "ruleset"}}' >"$repo/.claude/senior-mode.json"
+    autonomy: ({minMemoryMB: 0} + $a), serve: $s, github: {protection: "ruleset"}, audit: false,
+    checks: [{name: "ok", run: "true"}], protected: ($ENV.PROT // "" | if . == "" then [] else split(",") end)}' >"$repo/.claude/senior-mode.json"
   git -C "$repo" add -A
   git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: config" --allow-empty
   git -C "$repo" push -q origin main
@@ -127,7 +175,7 @@ board() {
   done
   jq -nc --argjson i "$items" '{data: {node: {items: {pageInfo: {hasNextPage: false}, nodes: $i}}}}' >"$FIX/board.json"
 }
-session() { printf '%s\n%s\n%s\n' "$2" "${3:-}" "${4:-}" >"$FIX/claude-$1"; }
+session() { printf '%s\n%s\n%s\n%s\n' "$2" "${3:-}" "${4:-}" "${5:-}" >"$FIX/claude-$1"; }
 # fresh: an empty state directory; once: one poll of serve in $repo.
 fresh() { rm -rf "$state"; }
 once() { : >"$GH_LOG"; : >"$CLAUDE_LOG"; (cd "$repo" && SENIOR_MODE_SERVE_ONCE=1 "$cli" serve) >"$work/out" 2>&1; }
@@ -154,7 +202,8 @@ outcome_of 11 delivered A
 [ "$(awk 'END { print NR }' "$state/launches")" -eq 2 ] || fail "A: launches not counted: $(cat "$state/launches" 2>&1)"
 [ ! -e "$state/serve.pid" ] && [ ! -e "$state/token" ] || fail "A: pid or token file left: $(ls "$state")"
 [ ! -e "$repo/.git/senior-mode/runs" ] || fail "A: serve wrote under runs/"
-grep -q 'Waiting for a human.*#10' "$work/out" || fail "A: a delivered pull request is not reported: $(cat "$work/out")"
+grep -q 'Waiting for a human' "$work/out" && fail "A: a delivered ticket is reported as waiting, the reviewer takes it from here: $(cat "$work/out")"
+grep -q '^pr merge' "$GH_LOG" && fail "A: a ticket session was merged by the reaper, the integrator pass does that"
 grep -q 'issue view 10 ' "$GH_LOG" || fail "A: the worktree was not opened by senior-mode start"
 grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 2 || fail "A: tickets not set In progress"
 board 10 11
@@ -353,6 +402,333 @@ echo '{}' >"$repo/.claude/senior-mode.json"
   [ "$(cd "$repo" && "$cli" config get serve.breakerCooldown)" = 3600 ] &&
   [ "$(cd "$repo" && "$cli" config get autonomy.sessionsPerHour)" = 6 ] &&
   [ "$(cd "$repo" && "$cli" config get autonomy.minMemoryMB)" = 1024 ] || fail "I: config defaults wrong"
+
+
+# Helpers for the pull request cases: the remote has real branches (a scratch clone makes them), gh serves the
+# open pull requests, their merge state and their statuses from $FIX.
+scratch=$work/scratch
+git clone -q "$work/github.com/acme/app.git" "$scratch"
+gitx() { git -C "$scratch" -c user.name=t -c user.email=t@t "$@"; }
+# mkbranch <branch> <file>: a commit adding <file> on a branch of the remote, from its main; prints the sha.
+mkbranch() {
+  gitx fetch -q origin
+  gitx checkout -q -B "$1" origin/main
+  echo "$1" >"$scratch/$2"
+  gitx add "$2"
+  gitx commit -q -m "feat: $2"
+  gitx push -q -f origin "$1"
+  gitx rev-parse HEAD
+}
+# mkrebased <branch> <old sha> [<file>]: the patch of <old> on the main of the remote, as the server's rebase
+# makes it; with <file>, the patch changed. On the branch rebased-<branch>. Prints the sha.
+mkrebased() {
+  gitx fetch -q origin
+  gitx checkout -q -B "rebased-$1" origin/main
+  gitx cherry-pick "$2" >/dev/null
+  if [ -n "${3:-}" ]; then
+    echo changed >"$scratch/$3"
+    gitx add "$3"
+    gitx commit -q --amend --no-edit
+  fi
+  gitx push -q -f origin "rebased-$1"
+  gitx rev-parse HEAD
+}
+# boardx <n>:<Status>:<Size>:<Priority>[:<label>]...: the tickets of the board.
+boardx() {
+  local items="[]" spec n st sz pr lb
+  for spec in "$@"; do
+    IFS=: read -r n st sz pr lb <<<"$spec"
+    items=$(jq -c --argjson n "$n" --arg st "$st" --arg sz "$sz" --arg pr "$pr" --arg lb "$lb" '. + [{fieldValues: {nodes:
+      [{name: $st, field: {name: "Status"}}, {name: $pr, field: {name: "Priority"}}, {name: $sz, field: {name: "Size"}}]},
+      content: {number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null,
+        labels: {nodes: (if $lb == "" then [] else [{name: $lb}] end)}, milestone: null, blockedBy: {nodes: []}}}]' <<<"$items")
+  done
+  jq -nc --argjson i "$items" '{data: {node: {items: {pageInfo: {hasNextPage: false}, nodes: $i}}}}' >"$FIX/board.json"
+}
+prs_reset() { rm -rf "$FIX/open.d" "$FIX/open-prs.json" "$FIX"/pull-*.json "$FIX"/state-* "$FIX"/status-* "$FIX"/closed-* "$FIX/allow-auto" "$FIX/auto-queues" "$FIX/no-auto" "$FIX/merge-fails" "$FIX/update-conflict"; }
+# pr <number> <branch> <sha> <mergeable_state> [<label>]: an open pull request.
+pr() {
+  mkdir -p "$FIX/open.d"
+  jq -nc --argjson p "$1" --arg b "$2" --arg s "$3" --arg m "$4" --arg l "${5:-}" '{number: $p, draft: false, head: {ref: $b, sha: $s},
+    mergeable_state: $m, labels: (if $l == "" then [] else [{name: $l}] end), body: ""}' >"$FIX/open.d/$1.json"
+  cp "$FIX/open.d/$1.json" "$FIX/pull-$1.json"
+  jq -s '.' "$FIX"/open.d/*.json >"$FIX/open-prs.json"
+}
+# st <sha> <context state>...: the statuses of a commit.
+st() { local sha=$1; shift; printf '%s\n' "$@" >"$FIX/status-$sha"; }
+green() { st "$1" "senior-mode/ci success" "senior-mode/review success" "senior-mode/security success"; }
+status_of() { sed -n "s#^$2 ##p" "$FIX/status-$1" | tail -n 1; }
+merged() { echo MERGED >"$FIX/state-$1"; jq -c --argjson n "$1" 'map(select(.number != $n))' "$FIX/open-prs.json" >"$FIX/open-prs.tmp" && mv "$FIX/open-prs.tmp" "$FIX/open-prs.json"; }
+done_count() { grep -c 'item-edit.*--single-select-option-id o4' "$GH_LOG" || true; }
+
+# J: a ticket session has its role and a prompt that leaves the review to the reviewer.
+config '{}'
+board 60
+session 60-sonnet delivered pr
+fresh
+once || fail "J: serve failed: $(cat "$work/out")"
+grep -q '^app-60 sonnet run=1 role=ticket$' "$CLAUDE_LOG" || fail "J: the ticket session has no role: $(cat "$CLAUDE_LOG")"
+grep -q 'SENIOR_MODE_ROLE=ticket' "$state/60.prompt" || fail "J: the prompt does not name the role"
+grep -qi 'at most 2 fix rounds\|reviewer agent reviews the pull request' "$state/60.prompt" && fail "J: the ticket session is still asked to review"
+grep -q 'never set it' "$state/60.prompt" || fail "J: the prompt does not forbid senior-mode/review"
+
+# K: In review with CI success and no review status: a reviewer session on Opus, role reviewer, in a worktree of
+# the head that is gone afterwards. Nothing starts without CI success, with a review status, or with needs-human.
+config '{}'
+sha=$(mkbranch feat/61-x f61.txt)
+boardx "61:In review:S:P1 next"
+prs_reset
+pr 161 feat/61-x "$sha" clean
+st "$sha" "senior-mode/ci success"
+session 61-opus-reviewer "reviewed: success" "" "" review:success
+fresh
+once || fail "K: serve failed: $(cat "$work/out")"
+grep -q '^app-review-61 opus run=1 role=reviewer$' "$CLAUDE_LOG" || fail "K: no reviewer session: $(cat "$CLAUDE_LOG")"
+[ "$(status_of "$sha" senior-mode/review)" = success ] || fail "K: the reviewer's status is missing"
+[ -z "$(find "$XDG_DATA_HOME/senior-mode/worktrees" -name review-61 2>/dev/null)" ] || fail "K: the review worktree is left"
+grep -q 'reviewed: senior-mode/review is success' "$work/out" || fail "K: the review is not said: $(cat "$work/out")"
+st "$sha" "senior-mode/ci pending"
+once || fail "K: serve failed: $(cat "$work/out")"
+[ ! -s "$CLAUDE_LOG" ] || fail "K: reviewed without CI success: $(cat "$CLAUDE_LOG")"
+st "$sha" "senior-mode/ci success" "senior-mode/review pending"
+once || fail "K: serve failed: $(cat "$work/out")"
+[ ! -s "$CLAUDE_LOG" ] || fail "K: reviewed again with a review status: $(cat "$CLAUDE_LOG")"
+st "$sha" "senior-mode/ci success"
+pr 161 feat/61-x "$sha" clean needs-human
+once || fail "K: serve failed: $(cat "$work/out")"
+[ ! -s "$CLAUDE_LOG" ] || fail "K: reviewed a needs-human pull request: $(cat "$CLAUDE_LOG")"
+pr 161 feat/61-x "$sha" clean
+boardx "61:In review:S:P1 next:needs-human"
+once || fail "K: serve failed: $(cat "$work/out")"
+[ ! -s "$CLAUDE_LOG" ] || fail "K: reviewed a needs-human ticket: $(cat "$CLAUDE_LOG")"
+boardx "61:In review:S:P1 next"
+session 61-opus-reviewer "" "" ""
+once || fail "K: serve failed: $(cat "$work/out")"
+grep -q 'issues/161/labels' "$GH_LOG" || fail "K: a reviewer that sets no status leaves the pull request unlabelled: $(cat "$GH_LOG")"
+grep -q 'issues/61/labels' "$GH_LOG" || fail "K: its ticket is not labelled either"
+
+# L: changes requested: the ticket session resumes on the same branch with the findings, twice; then needs-human.
+boardx "62:In review:S:P1 next"
+prs_reset
+sha=$(mkbranch feat/62-x f62.txt)
+pr 162 feat/62-x "$sha" clean
+st "$sha" "senior-mode/ci success" "senior-mode/review failure"
+session 62-sonnet-ticket delivered pr
+fresh
+once || fail "L: serve failed: $(cat "$work/out")"
+grep -q '^app-62 sonnet run=1 role=ticket$' "$CLAUDE_LOG" || fail "L: the ticket session did not resume: $(cat "$CLAUDE_LOG")"
+grep -q 'round 1 of 2' "$state/62.prompt" || fail "L: the prompt does not say the round: $(cat "$state/62.prompt")"
+grep -q 'gh pr view 162 --comments' "$state/62.prompt" || fail "L: the findings are not pointed to"
+[ "$(cat "$state/rounds-62")" = 1 ] || fail "L: round not counted"
+once || fail "L: serve failed: $(cat "$work/out")"
+grep -q 'round 2 of 2' "$state/62.prompt" || fail "L: second round missing"
+once || fail "L: serve failed: $(cat "$work/out")"
+[ ! -s "$CLAUDE_LOG" ] || fail "L: a third round started: $(cat "$CLAUDE_LOG")"
+grep -q 'issues/162/labels' "$GH_LOG" || fail "L: no needs-human after 2 rounds: $(cat "$GH_LOG")"
+grep -q 'issues/62/labels' "$GH_LOG" || fail "L: no needs-human after 2 rounds: $(cat "$GH_LOG")"
+grep -q 'Waiting for a human.*pull request #162.*2 fix rounds' "$work/out" || fail "L: not reported: $(cat "$work/out")"
+
+# M: an M ticket: the test-author session first, then red-tests record, then the ticket session on the same branch.
+boardx "63:Ready:M:P1 next" "64:Ready:M:P1 next"
+prs_reset
+session 63-sonnet-test-author delivered "" "" commit
+session 63-sonnet-ticket delivered pr
+session 64-sonnet-test-author "failed: criterion 2 cannot be tested"
+config '{"parallel": 2}'
+fresh
+once || fail "M: serve failed: $(cat "$work/out")"
+first=$(grep -n '^app-63 sonnet run=1 role=test-author$' "$CLAUDE_LOG" | cut -d: -f1)
+second=$(grep -n '^app-63 sonnet run=1 role=ticket$' "$CLAUDE_LOG" | cut -d: -f1)
+{ [ -n "$first" ] && [ -n "$second" ] && [ "$first" -lt "$second" ]; } || fail "M: test-author then ticket expected: $(cat "$CLAUDE_LOG")"
+grep -qx 'tests-63.txt' "$repo/.git/senior-mode/runs/63/red-tests" || fail "M: the red tests are not recorded: $(cat "$repo/.git/senior-mode/runs/63/red-tests" 2>&1)"
+grep -q 'written and committed already' "$state/63.prompt" || fail "M: the ticket prompt does not tell about the red tests"
+grep -q '^app-64 sonnet run=1 role=ticket$' "$CLAUDE_LOG" && fail "M: a ticket session after a failed test-author"
+outcome_of 64 failed M
+grep -c 'item-edit.*--single-select-option-id o0' "$GH_LOG" | grep -qx 1 || fail "M: #64 is not back in Backlog: $(grep item-edit "$GH_LOG")"
+boardx "63:Ready:M:P1 next"
+rm -f "$FIX/pulls-63"
+fresh
+once || fail "M: serve failed: $(cat "$work/out")"
+grep -q '^app-63 sonnet run=1 role=test-author$' "$CLAUDE_LOG" && fail "M: the red tests are recorded, no test-author again: $(cat "$CLAUDE_LOG")"
+grep -q '^app-63 sonnet run=1 role=ticket$' "$CLAUDE_LOG" || fail "M: no ticket session"
+config '{}'
+
+# N: the usage limit holds the reviewers too, without a failure; the pull request is reviewed after the reset. A
+# merge needs no session: an approved pull request merges during the hold.
+boardx "65:In review:S:P1 next" "75:In review:S:P1 next"
+prs_reset
+sha=$(mkbranch feat/65-x f65.txt)
+sha75=$(mkbranch feat/75-x f75.txt)
+pr 165 feat/65-x "$sha" clean
+pr 175 feat/75-x "$sha75" clean
+st "$sha" "senior-mode/ci success"
+green "$sha75"
+printf 'Claude AI usage limit reached|1800005000' >"$FIX/limit-msg"
+session 65-opus-reviewer "" "" limit
+fresh
+once || fail "N: serve failed: $(cat "$work/out")"
+[ "$(cat "$state/limit-until" 2>/dev/null)" = 1800005000 ] || fail "N: reset time not kept: $(cat "$state/limit-until" 2>&1)"
+grep -q 'issues/65/' "$GH_LOG" && fail "N: a usage limit labelled the ticket: $(grep issues/65/ "$GH_LOG")"
+grep -q 'item-edit' "$GH_LOG" && ! grep -q -- '--single-select-option-id o4' "$GH_LOG" && fail "N: a status was changed for a reviewer that hit the limit"
+[ -z "$(status_of "$sha" senior-mode/review)" ] || fail "N: a review status was set"
+session 65-opus-reviewer "reviewed: success" "" "" review:success
+pr 175 feat/75-x "$sha75" clean
+SENIOR_MODE_NOW=1800004000 once || fail "N: serve failed: $(cat "$work/out")"
+[ ! -s "$CLAUDE_LOG" ] || fail "N: a reviewer started before the reset: $(cat "$CLAUDE_LOG")"
+grep -q 'usage limit' "$work/out" || fail "N: the hold is not said"
+grep -q "^pr merge 175 --rebase --match-head-commit $sha75 -R acme/app" "$GH_LOG" || fail "N: no merge during the hold: $(grep '^pr ' "$GH_LOG")"
+SENIOR_MODE_NOW=1800005001 once || fail "N: serve failed: $(cat "$work/out")"
+grep -q '^app-review-65 opus run=1 role=reviewer$' "$CLAUDE_LOG" || fail "N: not reviewed after the reset: $(cat "$CLAUDE_LOG")"
+
+# O: the integrator pass: at most one merge per poll, by priority, --match-head-commit, merged read back then Done.
+boardx "66:In review:S:P1 next" "67:In review:S:P0 now"
+prs_reset
+sha66=$(mkbranch feat/66-x f66.txt)
+sha67=$(mkbranch feat/67-x f67.txt)
+pr 166 feat/66-x "$sha66" clean
+pr 167 feat/67-x "$sha67" clean
+green "$sha66"
+green "$sha67"
+fresh
+once || fail "O: serve failed: $(cat "$work/out")"
+grep -q "^pr merge 167 --rebase --match-head-commit $sha67 -R acme/app$" "$GH_LOG" || fail "O: #67 (P0) not merged first: $(grep '^pr ' "$GH_LOG")"
+grep -q '^pr merge 166' "$GH_LOG" && fail "O: two merges in one poll"
+grep -q 'Merged: #67' "$work/out" || fail "O: the merge is not reported: $(cat "$work/out")"
+[ "$(done_count)" = 1 ] || fail "O: #67 not Done: $(grep item-edit "$GH_LOG")"
+once || fail "O: serve failed: $(cat "$work/out")"
+grep -q "^pr merge 166 --rebase --match-head-commit $sha66" "$GH_LOG" || fail "O: #66 not merged at the next poll"
+# What waits: needs-human, a missing success, a protected zone, merge off, a merge that fails.
+boardx "66:In review:S:P1 next"
+prs_reset
+pr 166 feat/66-x "$sha66" clean
+st "$sha66" "senior-mode/ci success" "senior-mode/review success" "senior-mode/security pending"
+once || fail "O: serve failed: $(cat "$work/out")"
+grep -q '^pr merge' "$GH_LOG" && fail "O: merged with the security pass pending"
+grep -q 'Waiting for a human.*#66.*pull request #166, senior-mode/security not green' "$work/out" || fail "O: the wait is not said: $(cat "$work/out")"
+green "$sha66"
+PROT='src/**' config '{}'
+once || fail "O: serve failed: $(cat "$work/out")"
+grep -q '^pr merge' "$GH_LOG" && fail "O: merged a protected zone"
+grep -q 'protected zone (src/app.ts)' "$work/out" || fail "O: protected zone not said: $(cat "$work/out")"
+config '{"merge": false}'
+once || fail "O: serve failed: $(cat "$work/out")"
+grep -q '^pr merge' "$GH_LOG" && fail "O: merged with autonomy.merge false"
+grep -q 'merging is off' "$work/out" || fail "O: merge off not said: $(cat "$work/out")"
+config '{}'
+pr 166 feat/66-x "$sha66" clean needs-human
+once || fail "O: serve failed: $(cat "$work/out")"
+grep -q '^pr merge' "$GH_LOG" && fail "O: merged a needs-human pull request"
+pr 166 feat/66-x "$sha66" clean
+touch "$FIX/merge-fails"
+once || fail "O: serve failed: $(cat "$work/out")"
+grep -q 'the merge failed: Pull request is not mergeable' "$work/out" || fail "O: a failed merge is not said: $(cat "$work/out")"
+[ "$(done_count)" = 0 ] || fail "O: Done after a failed merge"
+rm -f "$FIX/merge-fails"
+# Auto-merge (#173): queued with --auto and the head; Done only when MERGED is read back.
+echo true >"$FIX/allow-auto"
+touch "$FIX/auto-queues"
+fresh
+once || fail "O: serve failed: $(cat "$work/out")"
+grep -q "^pr merge 166 --auto --rebase --match-head-commit $sha66 -R acme/app$" "$GH_LOG" || fail "O: not queued for auto-merge: $(grep '^pr ' "$GH_LOG")"
+grep -q '^pr merge 166 --rebase' "$GH_LOG" && fail "O: merged by hand after queuing"
+[ -f "$state/queued-166" ] || fail "O: the queue is not remembered"
+[ "$(done_count)" = 0 ] || fail "O: Done before the merge"
+once || fail "O: serve failed: $(cat "$work/out")"
+grep -q '^pr merge' "$GH_LOG" && fail "O: a queued pull request was queued again"
+merged 166
+once || fail "O: serve failed: $(cat "$work/out")"
+[ "$(done_count)" = 1 ] || fail "O: not Done once merged: $(grep item-edit "$GH_LOG")"
+[ ! -e "$state/queued-166" ] || fail "O: the queue entry is left"
+# GitHub refuses auto-merge: the integrator merges.
+rm -f "$FIX/auto-queues" "$FIX/state-166"
+touch "$FIX/no-auto"
+pr 166 feat/66-x "$sha66" clean
+fresh
+once || fail "O: serve failed: $(cat "$work/out")"
+grep -q '^pr merge 166 --auto' "$GH_LOG" || fail "O: no fallback to a direct merge: $(grep '^pr ' "$GH_LOG")"
+grep -q "^pr merge 166 --rebase --match-head-commit $sha66" "$GH_LOG" || fail "O: no fallback to a direct merge: $(grep '^pr ' "$GH_LOG")"
+[ "$(done_count)" = 1 ] || fail "O: not Done after the direct merge"
+
+# P: a pull request behind its base is rebased by the server. Same patches (git range-diff): check and publish
+# run again on the new head, the review is carried over and the merge follows. Changed patches: a new review.
+config '{}'
+boardx "70:In review:S:P1 next" "71:In review:S:P1 next"
+prs_reset
+old70=$(mkbranch feat/70-x f70.txt)
+old71=$(mkbranch feat/71-x f71.txt)
+config '{}'
+new70=$(mkrebased feat/70-x "$old70")
+new71=$(mkrebased feat/71-x "$old71" extra71.txt)
+pr 170 feat/70-x "$old70" behind
+green "$old70"
+echo "$new70" >"$FIX/rebase-170"
+fresh
+once || fail "P: serve failed: $(cat "$work/out")"
+grep -q '^pr update-branch 170 --rebase -R acme/app$' "$GH_LOG" || fail "P: not rebased on the server: $(grep '^pr ' "$GH_LOG")"
+grep -q "statuses/$new70 .*context=senior-mode/ci" "$GH_LOG" || fail "P: check and publish did not run on the new head: $(grep statuses "$GH_LOG")"
+[ "$(status_of "$new70" senior-mode/review)" = success ] || fail "P: the review is not carried over: $(cat "$FIX/status-$new70" 2>&1)"
+grep -q "^pr merge 170 --rebase --match-head-commit $new70 " "$GH_LOG" || fail "P: not merged on the new head: $(grep '^pr ' "$GH_LOG")"
+[ ! -e "$state/rebased-170" ] || fail "P: the rebase marker is left"
+[ -z "$(find "$XDG_DATA_HOME/senior-mode/worktrees" -name 'integrate-*' 2>/dev/null)" ] || fail "P: the check worktree is left"
+prs_reset
+pr 171 feat/71-x "$old71" behind
+green "$old71"
+echo "$new71" >"$FIX/rebase-171"
+fresh
+once || fail "P: serve failed: $(cat "$work/out")"
+grep -q '^pr update-branch 171' "$GH_LOG" || fail "P: #71 not rebased"
+[ -z "$(status_of "$new71" senior-mode/review)" ] || fail "P: a changed patch kept its review"
+[ "$(status_of "$new71" senior-mode/ci)" = success ] || fail "P: no check on the changed head"
+grep -q '^pr merge' "$GH_LOG" && fail "P: merged a rebase that changed the patches"
+grep -q 'issues/171/comments' "$GH_LOG" || fail "P: no word on the pull request about the new review"
+session 71-opus-reviewer "reviewed: success" "" "" review:success
+once || fail "P: serve failed: $(cat "$work/out")"
+grep -q '^app-review-71 opus run=1 role=reviewer$' "$CLAUDE_LOG" || fail "P: a new review is not requested: $(cat "$CLAUDE_LOG")"
+
+# Q: a conflict starts an Opus integrator session on the -r2 branch; its pull request supersedes the old one,
+# which is closed; unresolved, the pull request is needs-human. A resolution tried twice is a person's.
+boardx "80:In review:S:P1 next" "81:In review:S:P1 next" "82:In review:S:P1 next"
+prs_reset
+sha80=$(mkbranch feat/80-x f80.txt)
+sha81=$(mkbranch feat/81-x f81.txt)
+sha82=$(mkbranch feat/82-x-r3 f82.txt)
+pr 180 feat/80-x "$sha80" dirty
+green "$sha80"
+session 80-opus-integrator delivered pr:300
+fresh
+once || fail "Q: serve failed: $(cat "$work/out")"
+grep -q '^app-80-r2 opus run=1 role=integrator$' "$CLAUDE_LOG" || fail "Q: no integrator session: $(cat "$CLAUDE_LOG")"
+git -C "$repo" rev-parse --verify -q feat/80-x-r2 >/dev/null || fail "Q: no -r2 branch"
+grep -q 'Supersedes #180' "$state/80.prompt" || fail "Q: the prompt does not say what it supersedes"
+[ -f "$FIX/closed-180" ] || fail "Q: the old pull request is not closed: $(grep PATCH "$GH_LOG")"
+grep -q 'pull request #300 supersedes #180' "$work/out" || fail "Q: not said: $(cat "$work/out")"
+prs_reset
+pr 180 feat/80-x "$sha80" dirty
+green "$sha80"
+session 80-opus-integrator "failed: the two sides disagree"
+fresh
+once || fail "Q: serve failed: $(cat "$work/out")"
+[ ! -f "$FIX/closed-180" ] || fail "Q: closed a pull request the integrator did not resolve"
+grep -q 'issues/180/labels' "$GH_LOG" || fail "Q: unresolved but not needs-human: $(grep issues "$GH_LOG")"
+grep -q 'issues/80/labels' "$GH_LOG" || fail "Q: unresolved but not needs-human: $(grep issues "$GH_LOG")"
+grep -q 'Waiting for a human.*#180' "$work/out" || fail "Q: not reported: $(cat "$work/out")"
+# A conflict found by the server's rebase is the same.
+prs_reset
+pr 181 feat/81-x "$sha81" behind
+green "$sha81"
+touch "$FIX/update-conflict"
+session 81-opus-integrator delivered pr:301
+fresh
+once || fail "Q: serve failed: $(cat "$work/out")"
+grep -q '^app-81-r2 opus run=1 role=integrator$' "$CLAUDE_LOG" || fail "Q: a conflict at the rebase starts no integrator: $(cat "$CLAUDE_LOG")"
+# Already resolved twice.
+prs_reset
+pr 182 feat/82-x-r3 "$sha82" dirty
+green "$sha82"
+fresh
+once || fail "Q: serve failed: $(cat "$work/out")"
+[ ! -s "$CLAUDE_LOG" ] || fail "Q: a third resolution started: $(cat "$CLAUDE_LOG")"
+grep -q 'issues/182/labels' "$GH_LOG" || fail "Q: a third conflict is not needs-human"
 
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

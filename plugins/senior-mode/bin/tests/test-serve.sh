@@ -42,6 +42,8 @@ case "$*" in
     cat "$FIX/pulls-$n" 2>/dev/null || echo '[]' ;;
   "api repos/acme/app/issues/"*"/comments"*) echo '{}' ;;
   "api repos/acme/app/issues/"*"/labels"*) echo '[]' ;;
+  "pr list"*"--state merged"*) cat "$FIX/merged-prs" 2>/dev/null || echo '[]' ;;
+  "pr view "*) n=$(sed -E 's#^pr view ([0-9]+) .*#\1#' <<<"$*"); cat "$FIX/pr-$n.json" ;;
   "pr list"*) echo '[]' ;;
   "api repos/acme/app/branches?protected"*) ;;
   *) echo "unexpected: $*" >&2; exit 1 ;;
@@ -382,6 +384,91 @@ config '{}' '{}' '{"digest": false}'
 rm -f "$state/digest"
 SENIOR_MODE_NOW=1800200000 once || fail "K: serve failed: $(cat "$work/out")"
 [ "$(grep -c 'createProjectV2StatusUpdate' "$FIX/status-updates")" = 2 ] || fail "K: digest posted with notify.digest false"
+
+# L: ready by rule (#272). A framing pull request (docs/...) merged since the last poll gets `ready --pr <n>`;
+# once a poll `ready` looks at the tickets agents filed. Pull requests merged before the last poll, or from another
+# branch, are not read. The first poll only sets the mark.
+criteria=$'## Acceptance criteria\n\n- Given a, when b, then c.\n'
+# fitem <number> <status> <labels json> <body>: appends to $items a ticket with a Size, a Priority and Paths.
+fitem() {
+  items=$(jq -c --argjson n "$1" --arg s "$2" --argjson l "$3" --arg b "$4" '. + [{fieldValues: {nodes: [{name: $s, field: {name: "Status"}},
+    {name: "P1 next", field: {name: "Priority"}}, {name: "S", field: {name: "Size"}}, {text: "docs/**", field: {name: "Paths"}}]},
+    content: {number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null, body: $b,
+      labels: {nodes: ($l | map({name: .}))}, milestone: null, blockedBy: {nodes: []}}}]' <<<"$items")
+}
+fboard() { jq -nc --argjson i "$items" '{data: {node: {items: {pageInfo: {hasNextPage: false}, nodes: $i}}}}' >"$FIX/board.json"; }
+items="[]"
+fitem 80 Backlog '[]' "$criteria"
+fitem 81 Backlog '[]' "$criteria"$'\nfiled-by: agent\n'
+fitem 82 Backlog '[]' "$criteria"
+fitem 83 Backlog '[]' "no criteria here"
+fboard
+cat >"$FIX/merged-prs" <<'JSON'
+[{"number": 300, "headRefName": "docs/wave", "mergedAt": "2027-01-15T07:59:00Z"},
+ {"number": 301, "headRefName": "feat/x", "mergedAt": "2027-01-15T07:59:30Z"},
+ {"number": 302, "headRefName": "docs/old", "mergedAt": "2027-01-15T07:00:00Z"}]
+JSON
+echo '{"state": "MERGED", "headRefName": "docs/wave", "body": "Framing: #80 #83"}' >"$FIX/pr-300.json"
+config '{}'
+fresh
+once || fail "L: serve failed on the first poll: $(cat "$work/out")"
+grep -q '^pr view' "$GH_LOG" && fail "L: a pull request was read on the first poll: $(cat "$GH_LOG")"
+[ -f "$state/ready-last" ] || fail "L: no mark kept: $(ls "$state")"
+grep -q 'issues/81' "$GH_LOG" || fail "L: ready was not run for the agent-filed tickets on the first poll: $(cat "$GH_LOG")"
+fresh
+echo 1799999900 >"$state/ready-last" 2>/dev/null || { mkdir -p "$state"; echo 1799999900 >"$state/ready-last"; }
+once || fail "L: serve failed: $(cat "$work/out")"
+grep -q '^pr view 300 ' "$GH_LOG" || fail "L: ready --pr 300 not run: $(cat "$GH_LOG")"
+grep -q '^pr view 301 \|^pr view 302 ' "$GH_LOG" && fail "L: a pull request that is not a new framing one was read: $(cat "$GH_LOG")"
+grep -q 'issues/80' "$GH_LOG" || fail "L: #80 not set Ready: $(cat "$GH_LOG")"
+grep -q 'issues/81' "$GH_LOG" || fail "L: #81 (agent-filed) not set Ready: $(cat "$GH_LOG")"
+grep -q 'issues/83/labels.*needs-human' "$GH_LOG" || fail "L: #83 not labelled needs-human: $(cat "$GH_LOG")"
+grep -q 'issues/82' "$GH_LOG" && fail "L: #82 was touched"
+[ "$(cat "$state/ready-last")" = 1800000000 ] || fail "L: mark not moved to now: $(cat "$state/ready-last")"
+once || fail "L: serve failed: $(cat "$work/out")"
+grep -q '^pr view' "$GH_LOG" && fail "L: a pull request was read twice: $(cat "$GH_LOG")"
+# A ready that fails keeps the mark, so the pull request is read again at the next poll.
+echo 1799999900 >"$state/ready-last"
+rm -f "$FIX/pr-300.json"
+once || fail "L: serve stopped on a failing ready: $(cat "$work/out")"
+[ "$(cat "$state/ready-last")" = 1799999900 ] || fail "L: mark moved although ready failed: $(cat "$state/ready-last")"
+echo '{"state": "MERGED", "headRefName": "docs/wave", "body": "Framing: #80 #83"}' >"$FIX/pr-300.json"
+rm -f "$FIX/merged-prs"
+
+# M: recovery (#272). After a crash, a ticket serve launched that is still In progress with no live session goes
+# back to Ready (a second poll then picks it again), or gets needs-human once autonomy.maxConsecutiveFailures
+# recoveries are used up. A live session, a ticket serve already read the end of (its record is newer than its
+# script), a ticket that waits for a human and one serve never launched are left alone.
+config '{"maxConsecutiveFailures": 3}'
+items="[]"
+for n in 90 91 92 93 94 95 96; do fitem "$n" "In progress" '[]' "x"; done
+items=$(jq -c 'map(if .content.number == 93 then .content.labels.nodes = [{name: "needs-human"}] else . end)' <<<"$items")
+fboard
+fresh
+mkdir -p "$state"
+for n in 90 91 92 93 94 96; do echo '#!/usr/bin/env bash' >"$state/$n.sh"; done
+echo 4999999 >"$state/90.pgid"
+setsid sleep 60 &
+live=$!
+echo "$live" >"$state/91.pgid"
+echo 4999998 >"$state/92.pgid"
+echo '{}' >"$state/92.json"
+touch -d '2 minutes ago' "$state/92.sh"
+echo 4999997 >"$state/93.pgid"
+echo 0 >"$state/94.exit"
+echo 4999996 >"$state/96.pgid"
+echo 2 >"$state/96.recovered"
+once || fail "M: serve failed: $(cat "$work/out")"
+kill "$live" 2>/dev/null
+grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" || fail "M: nothing set back to Ready: $(cat "$GH_LOG")"
+[ "$(grep -c 'item-edit.*--single-select-option-id o1' "$GH_LOG")" = 2 ] || fail "M: not exactly #90 and #94 set Ready: $(grep item-edit "$GH_LOG")"
+grep -q 'issues/90' "$GH_LOG" || fail "M: #90 (session gone) not recovered: $(cat "$GH_LOG")"
+grep -q 'issues/94' "$GH_LOG" || fail "M: #94 (session ended unread) not recovered: $(cat "$GH_LOG")"
+for n in 91 92 93 95; do grep -q "issues/$n/" "$GH_LOG" && fail "M: #$n was touched: $(cat "$GH_LOG")"; done
+[ "$(cat "$state/90.recovered")" = 1 ] || fail "M: recovery not counted: $(cat "$state/90.recovered" 2>&1)"
+grep -q 'issues/96/labels.*needs-human' "$GH_LOG" || fail "M: #96 not needs-human at the breaker count: $(cat "$GH_LOG")"
+grep -q 'issues/96/comments' "$GH_LOG" || fail "M: #96 not commented: $(cat "$GH_LOG")"
+grep -q 'recover' "$work/out" || fail "M: recovery not said: $(cat "$work/out")"
 
 # H: install and uninstall of the systemd user unit.
 config '{}' '{"grace": 120}'

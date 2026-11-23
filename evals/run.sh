@@ -18,7 +18,8 @@ for name in "$@"; do
   dir=$work/$name
   cp -r "$here/fixtures/$name" "$dir"
   git init -q -b main "$dir"
-  [ ! -f "$dir/package.json" ] || (cd "$dir" && npm install --no-audit --no-fund --loglevel=error)
+  # The lockfile keeps the install reproducible; npm 10 cannot resolve vitest's peer set without it (#292).
+  [ ! -f "$dir/package.json" ] || (cd "$dir" && npm ci --no-audit --no-fund --loglevel=error)
   git_t -C "$dir" add -A
   git_t -C "$dir" commit -q -m "feat: start the fixture"
   (cd "$dir" && "$cli" setup repo) >"$work/$name.setup"

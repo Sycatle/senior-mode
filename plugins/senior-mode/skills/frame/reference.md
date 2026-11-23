@@ -26,10 +26,14 @@ One `ops` call per ticket, body in `<<'SENIOR_MODE_BODY'`:
 
 ```
 senior-mode issue create --title <t> --body-file - --size <S|M|L> --priority "<option>" \
-  --milestone "<title>" --type <feature|bug|task|chore> [--blocked-by <n>]... [--parent <n>]
+  --milestone "<title>" --type <feature|bug|task|chore> --paths "<globs>" [--blocked-by <n>]... [--parent <n>]
 ```
 
 `--priority` is one of `P0 now`, `P1 next`, `P2 later`, `P3 someday`; size is `S`, `M` or `L`.
+`--paths` copies the `paths` of the spec, joined by commas; a slice that touches less narrows it to its
+own files. Tickets whose paths overlap never run at the same time, and one with no paths runs alone, so
+never leave it out when the spec has `paths`. Without a Paths field on the board (`senior-mode setup
+github` creates it), `--paths` is refused.
 
 The body holds what it gives (plain words), a link to the spec, the acceptance criteria as
 Given / When / Then and the test seams. A size L has an epic (size L, the spec's summary), which is

@@ -16,15 +16,15 @@ Wording, follow-ups, status line, no human to ask: `${CLAUDE_SKILL_DIR}/referenc
 2. `gh auth status` succeeds. If the token lacks the `project` scope, ask the user to run
    `gh auth refresh -s project`.
 3. Ask once: checks before each push only (`local`, free) or also on GitHub Actions (`actions`,
-   spends the budget). Then tell the user what will change: a Project
+   spends the budget). Say what will change: a Project
    board, labels, rebase-only merges, a default-branch ruleset, in `local` the workflows disabled, and the Repository files below. Go on their yes.
 
 ## GitHub
 
 Run `senior-mode setup github --ci <local|actions>`. It:
 
-- finds or creates the Project, links it, ensures the fields Status, Priority, Size and Severity, keeping
-  existing options;
+- finds or creates the Project, links it, ensures the fields Status, Priority, Size, Severity and Paths (text),
+  keeping existing options;
 - creates the labels `needs-human`, `needs-info`, `blocked`, `security` (and `type:*` on a personal account);
 - allows rebase merges only, deletes merged branches;
 - creates or updates a ruleset `senior-mode` on the default branch: pull requests only, rebase,

@@ -63,9 +63,9 @@ case "$*" in
     body=$(cat); echo "$body" >>"$GH_LOG"
     v=$(jq -c .variables <<<"$body")
     if grep -q createProjectV2Field <<<"$body"; then
-      jq --argjson v "$v" '.data.node.fields.nodes += [{id: ("F_" + $v.name), name: $v.name,
-        options: ($v.options | map(. + {id: ("O_" + .name)}))}]' "$FIX/fields.json" >"$FIX/f" &&
-        mv "$FIX/f" "$FIX/fields.json"
+      jq --argjson v "$v" '.data.node.fields.nodes += [{id: ("F_" + $v.name), name: $v.name}
+        + (if $v.options then {options: ($v.options | map(. + {id: ("O_" + .name)}))} else {dataType: "TEXT"} end)]' \
+        "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"
     elif grep -q updateProjectV2Field <<<"$body"; then
       jq --argjson v "$v" '(.data.node.fields.nodes[] | select(.id == $v.field)
         | .options) = ($v.options | map(.id //= ("O_" + .name)))' "$FIX/fields.json" >"$FIX/f" &&
@@ -125,6 +125,11 @@ logged "project link 7 --owner acme --repo acme/app" || fail "Project not linked
 [ "$(cfg '.project.fields.Severity.options | keys_unsorted | join(",")')" = "critical,high,moderate,low" ] ||
   fail "Severity: $(cfg .project.fields.Severity)"
 logged '"name":"critical","color":"RED"' || fail "Severity created without its colours"
+# #174: a text field Paths, cached by id only.
+[ "$(cfg '.project.fields.Paths.id')" = F_Paths ] || fail "Paths not cached: $(cfg .project.fields)"
+[ "$(cfg '.project.fields.Paths | has("options")')" = false ] || fail "Paths cached with options: $(cfg .project.fields.Paths)"
+logged 'dataType: TEXT' || fail "Paths not created as a text field: $(cat "$GH_LOG")"
+grep -q 'Severity, Paths; ids cached' "$work/out" || fail "output does not mention Paths: $(cat "$work/out")"
 logged '"name":"P0 now","color":"RED"' || fail "created fields without their colours"
 for label in needs-human needs-info blocked security type:feature type:bug type:task type:chore; do
   logged "label create $label" || fail "label $label not created"

@@ -91,13 +91,14 @@ option_id() {
   printf '%s\n' "$id"
 }
 
-# Sets single-select fields of an issue's Project item (pairs of field and option), using the ids
-# cached in the config. Every pair is checked before the item is touched. Fails when gh does, even
+# Sets fields of an issue's Project item (pairs of field and option), using the ids cached in the
+# config. A field cached without options is a text field (Paths, #174): its "option" is the text.
+# Every pair is checked before the item is touched. Fails when gh does, even
 # where `set -e` is off (a caller's `||`), so `(item_set ...) || ...` sees it.
 item_set() {
   [ $# -ge 3 ] && [ $(($# % 2)) -eq 1 ] || usage
   local issue=$1 file project owner number item field option i
-  local ids=()
+  local ids=() flags=()
   shift
   file=$(config_file)
   project=$(jq -r '.project.id // empty' "$file")
@@ -107,14 +108,20 @@ item_set() {
     die "no Project in .claude/senior-mode.json; run /senior-mode:setup"
   for ((i = 1; i < $#; i += 2)); do
     field=${!i}
-    option=$(option_id "$file" "$field" "${@:i+1:1}")
+    if jq -e --arg f "$field" '.project.fields[$f] | type == "object" and (has("options") | not)' "$file" >/dev/null 2>&1; then
+      option=${*:i+1:1}
+      flags+=(--text)
+    else
+      option=$(option_id "$file" "$field" "${@:i+1:1}")
+      flags+=(--single-select-option-id)
+    fi
     ids+=("$(jq -r --arg f "$field" '.project.fields[$f].id' "$file")" "$option")
   done
   item=$(gh_retry project item-add "$number" --owner "$owner" \
     --url "https://github.com/$(repo_slug)/issues/$issue" --format json --jq .id) || return 1
   for ((i = 0; i < ${#ids[@]}; i += 2)); do
     gh_retry project item-edit --project-id "$project" --id "$item" \
-      --field-id "${ids[i]}" --single-select-option-id "${ids[i + 1]}" >/dev/null || return 1
+      --field-id "${ids[i]}" "${flags[i / 2]}" "${ids[i + 1]}" >/dev/null || return 1
     echo "#$issue ${*:i+1:1} = ${*:i+2:1}"
   done
 }
@@ -125,7 +132,8 @@ item_set() {
 ITEM_QUERY='query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { issue(number: $number) { projectItems(first: 20) { nodes {
     project { id }
-    fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } } } } } } }
+    fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
+      ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } } } } } }
 }'
 item_get() {
   [ $# -ge 1 ] && [ $# -le 2 ] && [[ $1 =~ ^[0-9]+$ ]] || usage
@@ -142,7 +150,7 @@ item_get() {
   jq -e --arg p "$project" '[.data.repository.issue.projectItems.nodes[]? | select(.project.id == $p)] | length > 0' \
     <<<"$answer" >/dev/null || die "#$issue is not on the board"
   jq -r --arg p "$project" --arg f "$field" --arg i "$issue" '
-    [.data.repository.issue.projectItems.nodes[] | select(.project.id == $p) | .fieldValues.nodes[] | select(.field.name)]
+    [.data.repository.issue.projectItems.nodes[] | select(.project.id == $p) | .fieldValues.nodes[] | select(.field.name)] | map(.name = (.name // .text))
     | if $f == "" then .[] | "#\($i) \(.field.name) = \(.name)" else (map(select(.field.name == $f) | .name)[0] // "") end' <<<"$answer"
 }
 
@@ -192,12 +200,13 @@ advisory() {
 # An open issue with the same title is reused, so a run cut short can be repeated (spec 0001 §7):
 # its body, fields, milestone, label and links converge to the arguments, its Status only with --status.
 issue_create() {
-  local title="" body="" size="" priority="" severity="" status="" milestone="" type="" parent=""
+  local title="" body="" size="" priority="" severity="" status="" milestone="" type="" parent="" paths=""
   local kind="" path="" rule="" details="" sid="" text private no_advisory=""
   local blockers=() edits=() file slug found number url b fields implied have
   while [ $# -gt 0 ]; do
     case $1 in -h | --help)
-      echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> [--priority <option>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <file|-> | --no-advisory]] [--status <option>] [--milestone <title>] [--type feature|bug|task|chore] [--blocked-by <n>]... [--parent <n>]"
+      echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> [--priority <option>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <file|-> | --no-advisory]] [--status <option>] [--milestone <title>] [--type feature|bug|task|chore] [--paths <globs>] [--blocked-by <n>]... [--parent <n>]"
+      echo "--paths is a comma-separated list of the globs the ticket touches (the board field Paths: tickets whose paths overlap never run at the same time)."
       echo "--priority is required unless --severity is critical (P0) or high (P1). --kind, --path and --rule go together and need --severity."
       return 0 ;;
     esac
@@ -220,6 +229,7 @@ issue_create() {
       --status) status=$2 ;;
       --milestone) milestone=$2 ;;
       --type) type=$2 ;;
+      --paths) paths=$2 ;;
       --blocked-by) blockers+=("$2") ;;
       --parent) parent=$2 ;;
       *) usage ;;
@@ -245,6 +255,11 @@ issue_create() {
   fi
   [ -z "$no_advisory" ] || [ -z "$details" ] || die "--no-advisory and --details-file exclude each other"
   case $type in "" | feature | bug | task | chore) ;; *) die "unknown type $type (feature, bug, task, chore)" ;; esac
+  if [ -n "$paths" ]; then
+    case $paths in *$'\n'*) die "--paths cannot hold a newline" ;; esac
+    paths=$(printf '%s' "$paths" | sed -E 's/[[:space:]]*,[[:space:]]*/,/g; s/^[[:space:],]+//; s/[[:space:],]+$//; s/,+/,/g')
+    [ -n "$paths" ] || die "--paths holds no glob"
+  fi
   # ${a[@]+...}: an empty array is unbound under set -u before bash 4.4.
   for b in ${blockers[@]+"${blockers[@]}"}; do
     [[ $b =~ ^[1-9][0-9]*$ ]] || die "not an issue number: $b"
@@ -259,6 +274,11 @@ issue_create() {
   fi
   fields=(Priority "$priority" Size "$size")
   [ -z "$severity" ] || fields+=(Severity "$severity")
+  if [ -n "$paths" ]; then
+    jq -e '.project.fields.Paths.id' "$file" >/dev/null ||
+      die "no Paths field in .claude/senior-mode.json; a config created before it existed lacks it: rerun senior-mode setup github"
+    fields+=(Paths "$paths")
+  fi
   option_id "$file" Size "$size" >/dev/null
   [ -z "$severity" ] || option_id "$file" Severity "$severity" >/dev/null
   option_id "$file" Priority "$priority" >/dev/null
@@ -883,8 +903,9 @@ RULESET='{"name": "senior-mode", "target": "branch", "enforcement": "active",
 # Single-select fields of a Project, with their options.
 board_fields() {
   jq -nc --arg id "$1" '{variables: {id: $id}, query: "query($id: ID!) { node(id: $id) { ... on ProjectV2 {
-    fields(first: 50) { nodes { ... on ProjectV2SingleSelectField { id name options { id name color description } } } } } } }"}' |
-    gh_retry api graphql --input - --jq '[.data.node.fields.nodes[] | select(.options)]'
+    fields(first: 50) { nodes { ... on ProjectV2SingleSelectField { id name options { id name color description } }
+    ... on ProjectV2Field { id name dataType } } } } } }"}' |
+    gh_retry api graphql --input - --jq '[.data.node.fields.nodes[] | select(.name)]'
 }
 
 # Finds the Project of the repository (cached number, else same title) or creates it; prints
@@ -939,6 +960,13 @@ setup_fields() {
       gh_retry api graphql --input - >/dev/null
     echo "field $field: options repaired, existing values kept"
   done
+  # The text field Paths (#174): the globs a ticket touches, read by `pick` and `run`.
+  if ! jq -e '.[] | select(.name == "Paths")' <<<"$fields" >/dev/null; then
+    jq -nc --arg p "$id" '{variables: {project: $p, name: "Paths"}, query: "mutation($project: ID!, $name: String!) {
+      createProjectV2Field(input: {projectId: $project, dataType: TEXT, name: $name}) { clientMutationId } }"}' |
+      gh_retry api graphql --input - >/dev/null
+    echo "field Paths: created"
+  fi
 }
 
 # Names the Project's built-in workflows that keep Status true and are off. GitHub has no API to
@@ -1196,11 +1224,11 @@ setup_github() {
   setup_fields "$id"
   fields=$(board_fields "$id") || die "could not read the fields of Project #$number"
   jq --arg o "$owner" --argjson n "$number" --arg id "$id" --argjson f "$fields" \
-    '.project = {owner: $o, number: $n, id: $id, fields: ($f | map(select(.name | IN("Status", "Priority", "Size", "Severity"))
-      | {key: .name, value: {id, options: (.options | map({key: .name, value: .id}) | from_entries)}}) | from_entries)}' \
+    '.project = {owner: $o, number: $n, id: $id, fields: ($f | map(select(.name | IN("Status", "Priority", "Size", "Severity", "Paths")))
+      | map({key: .name, value: (if .options then {id, options: (.options | map({key: .name, value: .id}) | from_entries)} else {id} end)}) | from_entries)}' \
     "$file" >"$file.tmp" || die "could not write .claude/senior-mode.json"
   mv "$file.tmp" "$file"
-  echo "Project #$number $name: linked, fields Status, Priority, Size, Severity; ids cached in .claude/senior-mode.json"
+  echo "Project #$number $name: linked, fields Status, Priority, Size, Severity, Paths; ids cached in .claude/senior-mode.json"
   setup_board_workflows "$id"
 
   labels='needs-human|d93f0b|Waiting for a human decision or merge
@@ -1736,7 +1764,8 @@ BOARD_QUERY='query($project: ID!, $owner: String!, $name: String!, $after: Strin
     pageInfo { hasNextPage endCursor }
     nodes {
       updatedAt
-      fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } } }
+      fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
+        ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } }
       content { ... on Issue { number title url state closedAt updatedAt labels(first: 20) { nodes { name } }
         milestone { title dueOn } blockedBy(first: 20) { nodes { number state } } } } } } } }
   repository(owner: $owner, name: $name) @include(if: $repo) {
@@ -1825,13 +1854,14 @@ board_data() {
     [ "$count" -lt 20 ] || break
   done
   data=$(jq -c "$HYGIENE_NODES"'def single($f): [.fieldValues.nodes[] | select(.field.name == $f) | .name][0];
+    def text($f): [.fieldValues.nodes[] | select(.field.name == $f) | .text][0];
     def failing: [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
       | select((.state // "") | IN("FAILURE", "ERROR")) // select((.conclusion // "") | IN("FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE"))
       | .context // .name];
     (.[0].data.repository // {}) as $r
     | {items: [.[].data.node.items.nodes[] | select(.content.number != null) | .updatedAt as $moved | .content as $c
         | {number: $c.number, title: $c.title, url: $c.url, open: ($c.state == "OPEN"),
-           status: single("Status"), priority: single("Priority"), size: single("Size"), severity: single("Severity"),
+           status: single("Status"), priority: single("Priority"), size: single("Size"), severity: single("Severity"), paths: (text("Paths") // ""),
            labels: [$c.labels.nodes[].name], milestone: $c.milestone.title, due: $c.milestone.dueOn,
            updated: ([$c.updatedAt, $moved] | map(select(. != null)) | max),
            blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number]}],

@@ -95,6 +95,20 @@ expect 1 - item set 12 Status Nope
 expect 1 - item set 12 Colour Ready
 [ -s "$GH_LOG" ] && fail "gh called despite an unknown field or option"
 
+# A field cached without options is a text field (Paths, #174): its value is passed as text, mixed with a
+# single select in one call, and every pair is checked before gh is called.
+config '{"project":{"owner":"acme","number":1,"id":"PVT_1","fields":{"Status":{"id":"F_STATUS","options":{"Ready":"O_READY"}},"Paths":{"id":"F_PATHS"}}}}'
+: >"$GH_LOG"
+expect 0 $'#12 Paths = a/**,b.sh\n#12 Status = Ready' item set 12 Paths "a/**,b.sh" Status Ready
+grep -q -- "--field-id F_PATHS --text a/\*\*,b.sh" "$GH_LOG" || fail "text field not set with --text: $(cat "$GH_LOG")"
+grep -q -- "--field-id F_STATUS --single-select-option-id O_READY" "$GH_LOG" || fail "single select next to a text field: $(cat "$GH_LOG")"
+: >"$GH_LOG"
+expect 1 - item set 12 Paths "a/**" Status Nope
+[ -s "$GH_LOG" ] && fail "gh called although an option is unknown next to a text field"
+config "{$PROJECT}"
+expect 1 - item set 12 Paths "a/**"
+grep -q 'setup github' "$work/err" || fail "item set Paths without the field does not point to setup github: $(cat "$work/err")"
+
 git -C "$repo" remote set-url origin git@github.com:acme/app.git
 : >"$GH_LOG"
 expect 0 - item set 7 Status Ready
@@ -115,6 +129,14 @@ expect 0 $'#12 Status = Ready\n#12 Size = S' item get 12
 jq -e '.variables | .owner == "acme" and .name == "app" and .number == 12' "$GH_QUERY" >/dev/null ||
   fail "item get: wrong query variables: $(cat "$GH_QUERY")"
 expect 0 "" item get 12 Priority
+# A text field (Paths) is read like the others.
+cat >"$work/answer.json" <<'JSON'
+{"data": {"repository": {"issue": {"projectItems": {"nodes": [
+  {"project": {"id": "PVT_1"}, "fieldValues": {"nodes": [{"name": "Ready", "field": {"name": "Status"}},
+    {"text": "a/**,b.sh", "field": {"name": "Paths"}}]}}]}}}}}
+JSON
+expect 0 "a/**,b.sh" item get 12 Paths
+expect 0 $'#12 Status = Ready\n#12 Paths = a/**,b.sh' item get 12
 echo '{"data": {"repository": {"issue": {"projectItems": {"nodes": []}}}}}' >"$work/answer.json"
 expect 1 - item get 12 Status
 grep -q "not on the board" "$work/err" || fail "item get: no message for an issue off the board: $(cat "$work/err")"

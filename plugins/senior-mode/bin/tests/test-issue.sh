@@ -64,7 +64,8 @@ cat >"$repo/.claude/senior-mode.json" <<'EOF'
   "Status": {"id": "F_S", "options": {"Backlog": "o1", "Ready": "o2"}},
   "Priority": {"id": "F_P", "options": {"P0 now": "o3", "P1 next": "o4"}},
   "Size": {"id": "F_Z", "options": {"S": "o5", "M": "o6", "L": "o7"}},
-  "Severity": {"id": "F_V", "options": {"critical": "s1", "high": "s2", "moderate": "s3", "low": "s4"}}}}}
+  "Severity": {"id": "F_V", "options": {"critical": "s1", "high": "s2", "moderate": "s3", "low": "s4"}},
+  "Paths": {"id": "F_Pa"}}}}
 EOF
 echo '[{"number": 7, "title": "Epic"}, {"number": 8, "title": "Earlier slice"}]' >"$FIX/issues.json"
 printf '## Acceptance criteria\n- Given a, when b, then c.\n' >"$work/body.md"
@@ -141,6 +142,26 @@ grep -q -- '\[--priority' "$work/out" || fail "--help shows --priority as requir
 for flag in --severity --kind --path --rule --details-file --no-advisory; do
   grep -q -- "$flag" "$work/out" || fail "--help does not list $flag: $(cat "$work/out")"
 done
+
+# --paths fills the text field Paths (#174): globs separated by commas, spaces around them dropped.
+create --title "Pathful" --body-file "$work/body.md" --size S --priority "P0 now" --paths "plugins/a/**,  docs/guide/*.md ,x.sh" ||
+  fail "--paths refused: $(cat "$work/err")"
+logged "--field-id F_Pa --text plugins/a/**,docs/guide/*.md,x.sh" || fail "Paths not set as text: $(cat "$GH_LOG")"
+logged "--field-id F_Pa --single-select-option-id" && fail "Paths set as a single select: $(cat "$GH_LOG")"
+grep -q '^#[0-9]* Paths = plugins/a/\*\*,docs/guide/\*.md,x.sh$' "$work/out" || fail "Paths not reported: $(cat "$work/out")"
+create --title "Pathless" --body-file "$work/body.md" --size S --priority "P0 now" || fail "create without --paths failed"
+logged "F_Pa" && fail "Paths touched without --paths: $(cat "$GH_LOG")"
+create --title "Empty paths" --body-file "$work/body.md" --size S --priority "P0 now" --paths " , " && fail "--paths with no glob accepted"
+create --title "Newline paths" --body-file "$work/body.md" --size S --priority "P0 now" --paths $'a\nb' && fail "--paths with a newline accepted"
+logged "issue create" && fail "an invalid --paths still filed the issue"
+cp "$repo/.claude/senior-mode.json" "$work/config.keep"
+jq 'del(.project.fields.Paths)' "$work/config.keep" >"$repo/.claude/senior-mode.json"
+create --title "No field" --body-file "$work/body.md" --size S --priority "P0 now" --paths "a/**" && fail "--paths accepted without the Paths field"
+grep -q 'setup github' "$work/err" || fail "missing Paths field does not point to setup github: $(cat "$work/err")"
+logged "issue create" && fail "the issue was filed although the Paths field is missing"
+cp "$work/config.keep" "$repo/.claude/senior-mode.json"
+create --help
+grep -q -- '--paths' "$work/out" || fail "--help does not list --paths: $(cat "$work/out")"
 
 # Defaults: Status Backlog, no milestone, label or links.
 create --title "Small" --body-file "$work/body.md" --size S --priority "P0 now" ||

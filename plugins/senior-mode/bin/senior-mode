@@ -2637,10 +2637,11 @@ run_finish() {
 # bounded like a ticket session (autonomy.sessionTimeout, killed with its process group) and its outcome
 # is written to $RUN_DIR/docs-outcome.json ({session, outcome (done or failed), reason, finishedAt}; not a
 # ticket, so `retro` does not read it). No ticket to label: a failure is on stderr and in the report. The
-# worktree and branch are kept as they were.
+# worktree and branch are kept as they were. The poll never sleeps past the timeout, and a script that is gone
+# without its exit file is reported as that, not as a timeout.
 # shellcheck disable=SC2016 # lines of the script, expanded when it runs
 run_docs() {
-  local wt branch=docs/run-$RUN_STAMP script=$RUN_DIR/docs.sh reason="" rc started=$SECONDS
+  local wt branch=docs/run-$RUN_STAMP script=$RUN_DIR/docs.sh reason="" rc started=$SECONDS pid limit left stat poll
   wt=$(worktree_path "$RUN_ROOT" "run-docs-$RUN_STAMP")
   git fetch -q origin 2>/dev/null || true
   git worktree add -q -b "$branch" "$wt" "$RUN_BASE" 2>/dev/null || {
@@ -2659,13 +2660,25 @@ run_docs() {
     printf 'echo $? >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/docs.exit" "$RUN_DIR/docs.exit" "$RUN_DIR/docs.exit"
   } >"$script"
   run_detach "$script"
+  pid=$!
+  limit=$((RUN_TIMEOUT * ${SENIOR_MODE_TIMEOUT_UNIT:-60}))
   until [ -f "$RUN_DIR/docs.exit" ]; do
-    if [ $((SECONDS - started)) -ge $((RUN_TIMEOUT * ${SENIOR_MODE_TIMEOUT_UNIT:-60})) ]; then
+    left=$((limit - (SECONDS - started)))
+    if [ "$left" -le 0 ]; then
       reason="docs session timed out after $RUN_TIMEOUT minute$([ "$RUN_TIMEOUT" -eq 1 ] || echo s)"
       run_kill docs docs
       break
     fi
-    sleep "${SENIOR_MODE_POLL:-15}"
+    # The script is gone (killed, not a zombie) and left no exit file: the cause, not the timeout.
+    stat=$(ps -o stat= -p "$pid" 2>/dev/null || true)
+    if { [ -z "$stat" ] || [[ $stat == Z* ]]; } && [ ! -f "$RUN_DIR/docs.exit" ]; then
+      reason="docs session ended without leaving its exit code (log in $RUN_DIR/docs.log)"
+      break
+    fi
+    # Never sleeps past the timeout.
+    poll=${SENIOR_MODE_POLL:-15}
+    [ "$left" -ge $((${poll%%.*})) ] || poll=$left
+    sleep "$poll"
   done
   if [ -z "$reason" ]; then
     rc=$(cat "$RUN_DIR/docs.exit")

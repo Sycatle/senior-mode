@@ -18,8 +18,13 @@ jqf="" prev=""
 for a in "$@"; do [ "$prev" = --jq ] && jqf=$a; prev=$a; done
 respond() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
 case "$*" in
-  "api graphql --input -") cat >/dev/null; cat "$FIX/board.json" ;;
+  "api graphql --input -")
+    q=$(cat)
+    # The Size of a ticket (item_get) or the board.
+    if grep -q projectItems <<<"$q"; then cat "$FIX/item-$(jq -r '.variables.number' <<<"$q").json"; else cat "$FIX/board.json"; fi ;;
   "pr view "*) n=$(sed -E 's#^pr view ([0-9]+) .*#\1#' <<<"$*"); respond <"$FIX/pr-$n.json" ;;
+  "api repos/acme/app/pulls/"*"/commits"*) respond <"$FIX/commits-$(sed -E 's#.*/pulls/([0-9]+)/commits.*#\1#' <<<"$*").json" ;;
+  "api repos/acme/app/pulls/"*) respond <"$FIX/pull-${2##*/}.json" ;;
   "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
   "project item-edit"*) ;;
   "api repos/acme/app/issues/"*"/labels"*) echo '[]' ;;
@@ -196,6 +201,37 @@ pr 110 MERGED docs/wave "#51 #52 #50"
 ready --pr 110 || fail "G: ready --pr failed: $(cat "$work/err")"
 said '^#50 Status = Ready' || fail "G: #50 not Ready through a framing pull request: $(cat "$work/out")"
 said '^#5[12] ' && fail "G: a framing pull request made an untrusted ticket Ready: $(cat "$work/out")"
+
+# H: an open pull request that is no framing one is a delivery: one commit per ticket it closes (#297).
+delivery() { # pull-request closes-text commit-messages... : the pull request and its commits
+  local n=$1 body=$2
+  shift 2
+  pr "$n" OPEN "feat/$n-x" "$body"
+  jq -nc --arg b "$body" '{number: 0, body: $b}' >"$FIX/pull-$n.json"
+  printf '%s\n' "$@" | jq -R '{commit: {message: .}}' | jq -sc . >"$FIX/commits-$n.json"
+}
+# One ticket: ready, and its commits are not even read; its one commit may say anything.
+delivery 300 "Closes #301" "feat: a"
+ready --pr 300 || fail "H: a single-ticket pull request is not ready: $(cat "$work/out")"
+said '^pull request #300 is ready$' || fail "H: no ready line: $(cat "$work/out")"
+logged "pulls/300/commits" && fail "H: the commits of a single-ticket pull request were read"
+delivery 309 "No ticket here" "feat: a"
+ready --pr 309 || fail "H: a pull request that closes nothing is not ready: $(cat "$work/out")"
+# A batch closing three tickets: one commit per ticket, named when one is missing.
+delivery 310 $'Closes #301\nCloses #302\nCloses #303' $'feat: a\n\nRefs #301' $'feat: b\n\nCloses #302'
+ready --pr 310 && fail "H: a batch with a ticket without a commit is ready"
+said 'pull request #310 is not ready: it closes 3 tickets and no commit references #303' || fail "H: the missing ticket is not named: $(cat "$work/out")"
+said '#301|#302,' && fail "H: a referenced ticket is named as missing: $(cat "$work/out")"
+delivery 310 $'Closes #301\nCloses #302\nCloses #303' $'feat: a\n\nRefs #301' $'feat: b\n\nCloses #302' $'feat: c\n\nRefs #303'
+ready --pr 310 || fail "H: a batch with one commit per ticket is not ready: $(cat "$work/out")"
+# #3010 is not #301: a reference is the whole number.
+delivery 311 $'Closes #301\nCloses #302' $'feat: a\n\nRefs #3010' $'feat: b\n\nRefs #302'
+ready --pr 311 && fail "H: Refs #3010 counted for #301"
+said "no commit references #301 " || fail "H: #301 not named: $(cat "$work/out" "$work/err")"
+# A framing pull request is still read as before.
+pr 314 OPEN docs/wave "#10"
+ready --pr 314 && fail "H: an open framing pull request accepted"
+grep -q 'not merged' "$work/err" || fail "H: open framing pull request not explained: $(cat "$work/err")"
 
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

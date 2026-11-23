@@ -585,11 +585,11 @@ It is labelled needs-human: a person decides what happens next." >/dev/null || e
 }
 
 # Whether a run_blocker reason $1 is one no poll will lift: merging off, an external pull request, no server protection,
-# a protected zone.
+# a protected zone, a pull request that is not ready (a ticket of a batch without its commit, #297).
 # A status not green yet, a mergeable state or an unreadable answer is transient: the next poll looks again.
 serve_permanent() {
   case $1 in
-    "merging is off"* | "it is external"* | "the server enforces no branch protection"* | "it touches a protected zone"* | "the protected zones could not be read"*) ;;
+    "merging is off"* | "it is external"* | "the server enforces no branch protection"* | "it touches a protected zone"* | "the protected zones could not be read"* | "not ready: "*) ;;
     *) return 1 ;;
   esac
 }

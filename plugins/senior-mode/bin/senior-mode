@@ -984,22 +984,27 @@ setup_codeowners() { # root owner globs-json slug
   echo "CODEOWNERS: code owner review enforces nothing until .github/CODEOWNERS is on the default branch ($there): commit it and merge it"
 }
 
-# True when the senior-mode ruleset of the repository already requires code owner review.
+# Whether the senior-mode ruleset of the repository already requires code owner review: status 0 when
+# it does, 1 when it is absent, does not, or the plan refuses rulesets (there is none), 2 when it could
+# not be read (an error that says nothing of its content).
 ruleset_review_on() { # slug
-  local id
+  local id cur
   id=$(gh_retry api "repos/$1/rulesets" \
-    --jq '[.[] | select(.name == "senior-mode" and .source_type == "Repository")][0].id // empty' 2>/dev/null) || return 1
+    --jq '[.[] | select(.name == "senior-mode" and .source_type == "Repository")][0].id // empty' 2>&1) ||
+    { ruleset_refused <<<"$id" && return 1 || return 2; }
   [ -n "$id" ] || return 1
-  [ "$(gh_retry api "repos/$1/rulesets/$id" \
-    --jq '[.rules[]? | select(.type == "pull_request") | .parameters.require_code_owner_review] | any' 2>/dev/null)" = true ]
+  cur=$(gh_retry api "repos/$1/rulesets/$id" \
+    --jq '[.rules[]? | select(.type == "pull_request") | .parameters.require_code_owner_review] | any' 2>&1) ||
+    return 2
+  [ "$cur" = true ]
 }
 
 # Why the ruleset requires code owner review, said in words, or nothing and status 1 when no reason holds.
 # Setup never lowers a protection: the review stays required when the block owns a zone, when the
 # CODEOWNERS file GitHub reads (.github/, then the root, then docs/; a shadow refusal and broken markers
-# included) has an owner entry, or when the ruleset already requires it.
+# included) has an owner entry, or when the ruleset already requires it or cannot be read.
 review_reason() { # root block-owns slug
-  local f
+  local f rc
   [ "$2" != true ] || { echo "the block owns the protected zones"; return 0; }
   for f in .github/CODEOWNERS CODEOWNERS docs/CODEOWNERS; do
     [ -e "$1/$f" ] || continue
@@ -1007,7 +1012,11 @@ review_reason() { # root block-owns slug
       { echo "$f, the CODEOWNERS file GitHub reads, has an owner entry"; return 0; }
     break
   done
-  ! ruleset_review_on "$3" || { echo "the ruleset already requires it"; return 0; }
+  ruleset_review_on "$3" && rc=0 || rc=$?
+  case $rc in
+    0) echo "the ruleset already requires it"; return 0 ;;
+    2) echo "the current ruleset could not be read, so it may require it"; return 0 ;;
+  esac
   return 1
 }
 

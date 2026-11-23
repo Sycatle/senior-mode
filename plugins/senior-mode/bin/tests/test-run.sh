@@ -834,8 +834,9 @@ grep -q 'item-edit.*--single-select-option-id o0' "$GH_LOG" && fail "O: #120 was
 grep -q 'Not started.*#121' "$work/out" || fail "O: the breaker did not count the failed window: $(cat "$work/out")"
 jq -e '.outcome == "failed" and .escalated == false and (.reason | test("window did not start"))' \
   "$repo/.git/senior-mode/runs/"*"/120.json" >/dev/null || fail "O: #120 not recorded as failed: $(cat "$repo"/.git/senior-mode/runs/*/120.json)"
-# The retry window on Opus: the first window starts, the second does not.
-config '{"maxConsecutiveFailures": 1, "sessionTimeout": 1}'
+# The retry window on Opus: the first window starts, the second does not. The first session has 5 seconds to
+# fail: on a loaded machine (checks running side by side) one second was too short to even start it (#295).
+config '{"maxConsecutiveFailures": 1, "sessionTimeout": 5}'
 board 122 '[]'
 session 122-sonnet "failed: tests do not pass"
 session 122-opus delivered pr

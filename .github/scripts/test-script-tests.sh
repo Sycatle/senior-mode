@@ -102,5 +102,29 @@ scoped
 run || fail "full run fails: $(cat "$work/out")"
 [ "$(ran_files)" = "test-a.sh test-b.sh test-c.sh test-d.sh" ] || fail "without a list: ran $(ran_files)"
 
+# Two runs started together in two repositories both pass (#295): each has a temp directory and a lock
+# directory of its own, so the same fixed name in both (a directory made with mkdir, a lock file) never collides.
+pids=()
+for r in one two; do
+  git init -q "$work/$r"
+  mkdir "$work/$r/t"
+  # shellcheck disable=SC2016 # the fixture expands these when it runs
+  printf '#!/usr/bin/env bash\nmkdir "$TMPDIR/fixed-name" || exit 1\nexec 9>"$XDG_RUNTIME_DIR/fixed.lock"\nflock -n 9 || exit 1\nsleep 1\necho "$TMPDIR" >%q\n' "$work/$r.tmp" >"$work/$r/t/test-fixed.sh"
+  chmod +x "$work/$r/t/test-fixed.sh"
+  git -C "$work/$r" add -A
+  git -C "$work/$r" -c user.name=t -c user.email=t@t commit -q -m "chore: fixture"
+done
+for r in one two; do
+  (cd "$work/$r" && "$script") >"$work/out-$r" 2>&1 &
+  pids[${#pids[@]}]=$!
+done
+rcs=0
+for p in "${pids[@]}"; do wait "$p" || rcs=$((rcs + 1)); done
+[ "$rcs" -eq 0 ] || fail "two runs at once: $rcs failed: $(cat "$work/out-one" "$work/out-two")"
+for r in one two; do grep -q '^ok    t/test-fixed\.sh' "$work/out-$r" || fail "run $r not green: $(cat "$work/out-$r")"; done
+[ -s "$work/one.tmp" ] && [ -s "$work/two.tmp" ] && [ "$(cat "$work/one.tmp")" != "$(cat "$work/two.tmp")" ] ||
+  fail "the runs share a temp directory: $(cat "$work/one.tmp" "$work/two.tmp" 2>&1)"
+[ ! -e "$(cat "$work/one.tmp")" ] || fail "the temp directory of a run is left behind"
+
 [ "$failures" -eq 0 ] && echo "script-tests: all cases pass"
 exit "$failures"

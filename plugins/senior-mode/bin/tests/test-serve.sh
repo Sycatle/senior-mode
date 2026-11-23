@@ -118,6 +118,8 @@ case $(sed -n 2p "$fx") in
   pr:*) num=$(sed -n 2p "$fx"); num=${num#pr:} ;;
   *) num="" ;;
 esac
+# $FIX/board-after-<n>: the board the session leaves behind it (the ticket moved by something it ran).
+[ ! -f "$FIX/board-after-$n" ] || cp "$FIX/board-after-$n" "$FIX/board.json"
 [ -z "$num" ] || echo "[{\"number\": $num, \"head\": {\"sha\": \"sha$n\"}, \"labels\": []}]" >"$FIX/pulls-$n"
 case $(sed -n 4p "$fx") in
   review:*) echo "senior-mode/review $(sed -n 4p "$fx" | cut -d: -f2)" >>"$FIX/status-$(git rev-parse HEAD)" ;;
@@ -950,13 +952,25 @@ sha82=$(mkbranch feat/82-x-r3 f82.txt)
 pr 180 feat/80-x "$sha80" dirty
 green "$sha80"
 session 80-opus-integrator delivered pr:300
+# The integrator session leaves #80 In progress (#285).
+boardx "80:In progress:S:P1 next" "81:In review:S:P1 next" "82:In review:S:P1 next"
+cp "$FIX/board.json" "$FIX/board-after-80"
+boardx "80:In review:S:P1 next" "81:In review:S:P1 next" "82:In review:S:P1 next"
 fresh
 once || fail "Y: serve failed: $(cat "$work/out")"
+rm -f "$FIX/board-after-80"
 grep -q '^app-80-r2 opus run=1 role=integrator$' "$CLAUDE_LOG" || fail "Y: no integrator session: $(cat "$CLAUDE_LOG")"
 git -C "$repo" rev-parse --verify -q feat/80-x-r2 >/dev/null || fail "Y: no -r2 branch"
 grep -q 'Supersedes #180' "$state/80.prompt" || fail "Y: the prompt does not say what it supersedes"
 [ -f "$FIX/closed-180" ] || fail "Y: the old pull request is not closed: $(grep PATCH "$GH_LOG")"
 grep -q 'pull request #300 supersedes #180' "$work/out" || fail "Y: not said: $(cat "$work/out")"
+# The ticket is In review again, on the new pull request, and serve does not recover it as a lost session (#285).
+grep -q 'item-edit.*--single-select-option-id o3' "$GH_LOG" || fail "Y: #80 not left In review after its integrator: $(grep item-edit "$GH_LOG")"
+outcome_of 80 delivered Y
+once || fail "Y: serve failed: $(cat "$work/out")"
+grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" && fail "Y: #80 sent back to Ready after its integrator: $(cat "$work/out")"
+grep -q '#80 was In progress' "$work/out" && fail "Y: #80 recovered after its integrator: $(cat "$work/out")"
+boardx "80:In review:S:P1 next" "81:In review:S:P1 next" "82:In review:S:P1 next"
 prs_reset
 pr 180 feat/80-x "$sha80" dirty
 green "$sha80"

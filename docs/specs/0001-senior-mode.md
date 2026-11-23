@@ -4,7 +4,7 @@ title: senior-mode, a Claude Code plugin for senior-grade delivery
 status: accepted
 size: L
 paths: ["plugins/**", ".claude-plugin/**", "evals/**"]
-adrs: [0001, 0002, 0003, 0004, 0005, 0006, 0007, 0008, 0009, 0010, 0011, 0012, 0013, 0014]
+adrs: [0001, 0002, 0003, 0004, 0005, 0006, 0007, 0008, 0009, 0010, 0011, 0012, 0013, 0014, 0015, 0016]
 ---
 
 # senior-mode

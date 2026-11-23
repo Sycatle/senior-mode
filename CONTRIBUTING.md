@@ -43,8 +43,7 @@ are disabled. The same check list runs locally instead.
   subjects.
 - After pushing, `plugins/senior-mode/bin/senior-mode publish` sets the `senior-mode/ci` status on
   the pushed commit. It needs a clean tree and a check recorded on that tree.
-- Pull requests to `main` need `senior-mode/ci` and `senior-mode/review` on an up-to-date branch,
-  linear history, and are merged by rebase.
+- Pull requests to `main` need an up-to-date branch and linear history, and are merged by rebase.
 - From a fork, `publish` can only write to your fork, so it does not reach your pull request. Run
   the check and paste its summary in the pull request; a maintainer reads the diff first (the check
   runs your code with their GitHub token), then reruns it on your head commit and publishes the
@@ -59,30 +58,23 @@ are disabled. The same check list runs locally instead.
 
 ## Pull requests
 
-The body gives:
+This repository delivers its own backlog with a lighter process than the one the plugin sets up for
+the projects that adopt it (ADR 0016, which amends ADR 0011; those defaults do not change).
 
-- the issue it closes (`Closes #n`);
-- what it gives, in plain words;
-- the red run: the output of the new tests failing before the fix;
-- what you verified, and what you could not;
-- for a command, skill or hook: the dogfooding evidence (ADR 0011), that is the real `claude -p`
-  session you ran on the sandbox repository (`Sycatle/senior-mode-sandbox`), what you ran and what
-  you saw. `check` alone does not prove behaviour, and a PR without this is not merged. The sandbox
-  is private, so an external contributor cannot run it: a maintainer reads the diff, runs the session
-  on your head commit and records it in the PR (see below);
-- either the spec change, or a `Spec-Unchanged: <reason>` line.
-
-A fresh-context `reviewer` agent reviews each pull request and sets `senior-mode/review`. Changes to
-protected zones (CI, security, permissions, secrets, data migrations, major dependency upgrades, any
-size L ticket or ADR) get the `needs-human` label and wait for a maintainer's explicit approval.
-
-### Dogfooding external pull requests
-
-The sandbox is private, so, like `publish` for forks, the maintainer does this step. They read the
-diff first (the session runs your code with their credentials), then run the `claude -p` session on
-the sandbox against your head commit and record it in the PR: what they ran, what they saw, and the
-commit it ran on. A push after that makes the record stale and the session runs again. Until then,
-write in the PR what the session should exercise.
+- **Minimal ceremony.** The body has `Closes #n` and a short summary. `senior-mode check` is green.
+  Tests when behaviour changes. No red run and no `Spec-Unchanged` line are required here.
+- **No independent review.** A pull request merges once `check` is green; the ruleset requires no
+  status check (a pull request, linear history, no force-push and no deletion remain). Changes to
+  protected zones (CI, security, permissions, secrets, data migrations, major dependency upgrades, any
+  size L ticket or ADR) still get the `needs-human` label and wait for a maintainer's approval.
+- **Several tickets per pull request.** One pull request may close several tickets of one theme: one
+  commit and one `Closes #n` each.
+- **Dogfooding per batch.** The real `claude -p` session on the sandbox repository
+  (`Sycatle/senior-mode-sandbox`) runs once per batch, before each milestone release, together with a
+  review of the batch. The sandbox is private, so the maintainer runs it.
+- **Bash guard.** It is best-effort: open a ticket only for a trivial bypass or a false positive that
+  hurts the flow; the other cases belong to the known limits in
+  [`docs/guide/autonomy.md`](docs/guide/autonomy.md).
 
 ## Reporting a vulnerability
 

@@ -56,7 +56,9 @@ Before changing anything, setup:
   Done), `Priority` (P0 now, P1 next, P2 later, P3 someday), `Size` (S, M, L) and `Severity` (critical, high,
   moderate, low) exist. Options and values already there are kept. Severity is a tie-break within a
   Priority, not a priority: a critical ticket moved by hand to P1 still comes after a P0. A project
-  created before Severity gets the field by rerunning `senior-mode setup github`.
+  created before Severity gets the field by rerunning `senior-mode setup github`. It also creates the
+  text field `Paths` (the globs a ticket touches, comma-separated; `issue create --paths` and
+  `item set <n> Paths "<globs>"` fill it), and caches its id like the others.
 - **Labels.** `needs-human`, `needs-info`, `blocked`, `security` (on risks filed with `--severity`). On a personal account, also `type:feature`,
   `type:bug`, `type:task` and `type:chore` (organizations use issue types).
 - **Merges.** Rebase merges only; branches are deleted after merge.

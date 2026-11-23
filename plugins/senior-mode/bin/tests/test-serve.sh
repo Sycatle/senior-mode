@@ -467,7 +467,7 @@ grep -q 'issues/94' "$GH_LOG" || fail "M: #94 (session ended unread) not recover
 for n in 91 92 93 95; do grep -q "issues/$n/" "$GH_LOG" && fail "M: #$n was touched: $(cat "$GH_LOG")"; done
 [ "$(cat "$state/90.recovered")" = 1 ] || fail "M: recovery not counted: $(cat "$state/90.recovered" 2>&1)"
 grep -q 'issues/96/labels.*needs-human' "$GH_LOG" || fail "M: #96 not needs-human at the breaker count: $(cat "$GH_LOG")"
-grep -q 'issues/96/comments' "$GH_LOG" || fail "M: #96 not commented: $(cat "$GH_LOG")"
+grep -q 'issues/96/comments.*needs a human' "$GH_LOG" || fail "M: #96 not commented: $(cat "$GH_LOG")"
 grep -q 'recover' "$work/out" || fail "M: recovery not said: $(cat "$work/out")"
 
 # H: install and uninstall of the systemd user unit.

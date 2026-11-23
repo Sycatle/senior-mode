@@ -597,6 +597,12 @@ done
 grep -c 'item-edit.*--single-select-option-id o3' "$GH_LOG" | grep -qx 3 || fail "J: the delivered tickets are not In review"
 outcome_of 21 delivered J
 outcome_of 22 delivered J
+# #305: the batch session is told what a ticket session of serve is told: no review step, one delivered line per ticket.
+grep -q 'SENIOR_MODE_ROLE=ticket' "$state/21.prompt" || fail "J: the batch prompt does not name the role: $(cat "$state/21.prompt")"
+grep -qi 'at most 2 fix rounds\|reviewer agent reviews the pull request' "$state/21.prompt" && fail "J: the batch session is asked to review"
+grep -q 'you never set it' "$state/21.prompt" || fail "J: the batch prompt does not forbid senior-mode/review"
+grep -q 'delivered.*senior-mode/ci and senior-mode/security' "$state/21.prompt" || fail "J: the batch prompt does not end at ci and security"
+grep -q '#22 ("Ticket 22")' "$state/21.prompt" || fail "J: the batch prompt does not list #22"
 fields=$saved_fields
 
 # Z: a ticket launched in a poll reserves its Paths for the rest of that poll (#344), also when the config of the

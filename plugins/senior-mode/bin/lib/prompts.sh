@@ -102,6 +102,44 @@ Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 PROMPT
 }
 
+# The prompt of a batch session under serve (#305): run_prompt_batch up to the pull request, as serve_prompt is
+# run_prompt. The session has the role ticket and cannot set senior-mode/review (ADR 0017): a reviewer session does.
+# Lead $1, branch $2 and the tickets $3 on.
+serve_prompt_batch() {
+  local branch=$2 m list="" closes=""
+  for m in $3; do
+    list+="- #$m (\"${RUN_TITLE[$m]}\")"$'\n'
+    closes+="\`Closes #$m\`, "
+  done
+  cat <<PROMPT
+You are one batch session (SENIOR_MODE_ROLE=ticket) of senior-mode serve on $RUN_SLUG. Nobody will answer
+questions: decide within the tickets, their specs and the project's rules, or give up as described below.
+
+Deliver these small tickets, which touch the same paths, in this worktree, on branch $branch, as the
+senior-mode team, in ONE pull request:
+$list
+1. Read each ticket (\`gh issue view <n>\`), its spec and its acceptance criteria.
+2. One ticket after the other: the test-author agent writes failing tests from its acceptance criteria and
+   records the red run; the implementer agent makes them pass (skills tdd, verify, commit). One commit per
+   ticket, tests in the same commit as the code they cover, its message ending with \`Refs #<n>\`.
+3. \`senior-mode check\` passes on a clean tree; push the branch; open ONE pull request from the template
+   with one \`Closes #<n>\` line per ticket delivered (${closes%, }) and the red runs; \`senior-mode publish\`;
+   \`senior-mode item set <n> Status "In review"\` for each ticket delivered.
+4. Stop there. A reviewer session reviews the pull request once, from a fresh context, and sets
+   senior-mode/review: you never set it, never merge, never touch another ticket. You may be resumed on this
+   branch with the reviewer's findings. A risk you meet outside these tickets is filed, never fixed here:
+   \`senior-mode issue create --severity ... --kind ... --path ... --rule ...\` (no exploit detail in the body).
+5. A ticket you cannot deliver does not stop the others: remove its commits from the branch (rebase them
+   out) and leave its \`Closes\` out of the pull request. It goes back alone.
+
+Last, write one line per ticket to the file \$SENIOR_MODE_RUN_OUTCOME, each starting with the ticket number:
+- \`#<n> delivered\` once its commit is in the pull request, open with senior-mode/ci and senior-mode/security
+  published;
+- \`#<n> outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
+- \`#<n> failed: <reason>\` otherwise, in one plain sentence.
+PROMPT
+}
+
 # The task of the test-author session of an M ticket (#191): the red tests, committed alone, before any code.
 serve_tests_prompt() {
   cat <<PROMPT

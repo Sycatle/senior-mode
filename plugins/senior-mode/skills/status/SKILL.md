@@ -39,7 +39,10 @@ Keep ticket numbers, drop tool vocabulary. For a digest, write for a reader who 
 board: what users can now do, what is coming, what is stuck and why. No pull request numbers, no
 statuses, no jargon. Never invent a date or a figure the output does not give.
 
-End with one suggested next step when there is an obvious one (`/senior-mode:next`, a review to do).
+When the output says "Daemon: serve is running", say the daemon is delivering. When it says "Retro
+due", offer the weekly retro; on a yes, invoke skill `retro`.
+
+End with one suggested next step when there is an obvious one (`/senior-mode:go`, a review to do).
 
 ## Watching
 

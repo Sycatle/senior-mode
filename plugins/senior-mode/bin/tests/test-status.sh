@@ -242,6 +242,27 @@ run status --json || fail "status --json with a docs worktree failed: $(cat "$wo
 git -C "$repo" worktree remove "$work/notes"
 git -C "$repo" branch -q -D docs/21-notes
 run status --json || fail "status --json failed again: $(cat "$work/err")"
+# The local facts (#319): no serve here, and the first status starts the retro clock instead of calling a retro due.
+common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)
+[ "$(json '[.serve, .retro]')" = '[{"running":false,"pid":null},{"lastDays":0,"due":false}]' ] ||
+  fail "local facts: $(json '[.serve, .retro]')"
+[ -s "$common/senior-mode/retro-last" ] || fail "status did not start the retro clock"
+echo $(($(date +%s) - 8 * 86400)) >"$common/senior-mode/retro-last"
+mkdir -p "$common/senior-mode/serve"
+bash -c 'exec -a senior-mode-serve sleep 30' &
+servepid=$!
+echo "$servepid" >"$common/senior-mode/serve/serve.pid"
+run status --json || fail "status --json with serve failed: $(cat "$work/err")"
+[ "$(json '[.serve, .retro]')" = "[{\"running\":true,\"pid\":$servepid},{\"lastDays\":8,\"due\":true}]" ] ||
+  fail "local facts with serve and an old retro: $(json '[.serve, .retro]')"
+run status --since 7d || fail "status with serve failed: $(cat "$work/err")"
+grep -qF "Daemon: serve is running (pid $servepid)" "$work/out" || fail "no daemon line: $(cat "$work/out")"
+grep -qF "Retro due: the last one was 8 days ago" "$work/out" || fail "no retro line: $(cat "$work/out")"
+kill "$servepid" 2>/dev/null
+wait "$servepid" 2>/dev/null
+run status --json || fail "status --json after serve failed: $(cat "$work/err")"
+[ "$(json '.serve.running')" = false ] || fail "a dead pid counts as serve running"
+echo $(($(date +%s) - 86400)) >"$common/senior-mode/retro-last"
 [ "$(json '.inReview | map([.number, .pr])')" = "[[18,30],[22,31]]" ] || fail "in review: $(json .inReview)"
 [ "$(json '.blocked | map(.number)')" = "[14,15,19,21,23]" ] || fail "blocked: $(json .blocked)"
 [ "$(json '.blocked[] | select(.number == 21) | .reasons')" = '["waits for #99"]' ] || fail "blocked reasons: $(json .blocked)"

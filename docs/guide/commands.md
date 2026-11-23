@@ -3,17 +3,18 @@
 Every `/senior-mode:` command, what it asks you and what it produces, plus the `senior-mode` script.
 
 Commands run only when you type them. The design is in [spec §7](../specs/0001-senior-mode.md#7-commands).
+You need three of them: `frame`, `go` and `status` ([ADR 0031](../adr/0031-three-verbs.md)). `setup`
+and `retro` start on their own and stay callable.
 
 ## Overview
 
 | Command | Purpose | State |
 |---|---|---|
-| `/senior-mode:setup` | Adopt a repository, or repair it | Available |
 | `/senior-mode:frame` | Turn an idea into a spec, ADRs and tickets | Available |
-| `/senior-mode:next` | Daily session: deliver the top Ready ticket with you | Available |
+| `/senior-mode:go` | Deliver the next ticket with you, or start or follow the daemon | Available |
 | `/senior-mode:status` | Plain-language dashboard | Available |
-| `/senior-mode:run` | Deliver up to N Ready tickets on its own | Available |
-| `/senior-mode:retro` | Weekly review of the board and the process | Available |
+| `/senior-mode:setup` | Adopt a repository, or repair it; the first `go` runs it | Available |
+| `/senior-mode:retro` | Weekly review of the board and the process; `status` offers it | Available |
 
 ## `setup`
 
@@ -56,21 +57,33 @@ State: **Available.**
   denied, subagents included. Re-running is safe: an open issue with the same title is reused.
   Tickets stay in Backlog until the documents pull request is merged and the spec accepted.
 
-## `next`
+## `go`
 
 State: **Available.**
 
-- **Purpose.** The daily session: a short state of the board, open pull requests needing a human,
+```
+/senior-mode:go [#issue | auto]
+```
+
+- **Purpose.** Move the project forward, whatever its state. In a repository not adopted yet it runs
+  `setup` first. When `serve` runs in this repository (`status` says "Daemon: serve is running"), the
+  daemon delivers: `go` says what needs you and where to watch, and stops. `go auto` starts the
+  daemon (`senior-mode serve --install`) after you confirm `autonomy.parallel` and `autonomy.merge`.
+  Otherwise, the daily session: a short state of the board, open pull requests needing a human,
   then the top Ready ticket delivered with you in the loop (tests first, commits, pull request).
 - **Runs.** `senior-mode status`; the pull requests that need you, each offered for review or merge;
-  `senior-mode pick --max 1`, which you confirm (or `/senior-mode:next #42` for a Ready ticket of your
+  `senior-mode pick --max 1`, which you confirm (or `/senior-mode:go #42` for a Ready ticket of your
   choice); `senior-mode start`, which makes the worktree and branch and moves the ticket to In
   progress; then the `test-author`, the `implementer`, `senior-mode check`, the pull request with
   `Closes #n`, and a fresh-context review, as in [A typical day](a-typical-day.md) steps 3 to 7.
 - **Asks.** To take the ticket it picked, and whether to merge once the review is done. It never
   merges without your explicit yes, and a `needs-human` pull request is yours to merge. After a
   merge it runs the `docs` skill and offers the next ticket.
-- Ask "suivant", "on enchaîne" or "prochain ticket", or type `/senior-mode:next`.
+- Ask "go", "suivant", "on enchaîne" or "prochain ticket", or type `/senior-mode:go`.
+
+## `next` (former name of `go`)
+
+Kept for one release, then removed: it says it is now `go` and runs it.
 
 ## `status`
 
@@ -83,6 +96,10 @@ State: **Available.**
 - **Asks.** Nothing. Ask "where are we?" or "état", or type `/senior-mode:status`.
 - **Produces.** A summary in the `language` of your config, with what needs you first. Ask for "the
   week for the client" and it runs `senior-mode status --since 7d`, a digest without jargon.
+- **Daemon and retro.** When `serve` runs in this repository, a line says so with its pid (`serve` in
+  `--json`). The first status starts a weekly clock; a week after the last `retro` (or that first
+  status), "Retro due" asks for one and the skill offers it (`retro` in `--json`, with `lastDays`
+  and `due`). Both are read from `.git/senior-mode/`, on this machine.
 - **Live view.** `senior-mode status --watch` in a terminal or tmux pane redraws every 30 seconds.
 - **Spec drift.** A "Spec drift" section (and `specDrift` in `--json`) lists, for each spec of `docs/specs/` with `status: accepted`, the commits that touched its `paths` since the spec file last changed and carry no `Spec-Unchanged: <reason>` line, in their message or in the body of their pull request (the `(#12)` of a squash subject, or `Merge pull request #12`). Only the first-parent history counts, so a merge is one entry. The bodies are read in one batched GitHub call, and only for commits that need it. Offline, or without `gh`, the section is skipped and `Spec drift: not checked` says why (`specDriftNote` in `--json`). Nothing is listed when there is no accepted spec or no drift.
 - **Health.** `senior-mode status --publish` posts the board's health (on track, at risk, off track, with the counts, the tickets that need a human, failing pull requests and drift) as a Project status update; it cannot be combined with `--watch`. `senior-mode retro` posts it on each pass.
@@ -99,9 +116,10 @@ It is offline and instant. To add it yourself, run `senior-mode setup statusline
 do not break it. The status line is set for this project only: it replaces your personal one in that project; one the project
 already has is kept. If the plugin is loaded with `--plugin-dir`, the line stays empty.
 
-## `run`
+## `run` (former skill; the batch command stays)
 
-State: **Available.** Triggers: "run", "lance", "enchaîne en autonomie".
+The `/senior-mode:run` skill is kept for one release: it says it is now `/senior-mode:go auto` (the
+daemon) and runs that. The `senior-mode run` command below stays, for a bounded batch without the daemon.
 
 - **Purpose.** Deliver up to N Ready tickets (`autonomy.maxTickets`, default 3) without you, P at a
   time (`autonomy.parallel`, default 1), and report in plain language: merged, merged but left off Done, waiting for a human,
@@ -160,7 +178,7 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode issue create --title ... --body-file ... --size ... --priority ...` | Creates a ticket with board fields, and optionally `--status`, `--milestone`, `--type`, `--paths <globs>` (comma-separated globs the ticket touches, written to the board field Paths; refused when the config has no Paths field), `--blocked-by`, `--parent`, `--severity critical\|high\|moderate\|low` (sets the Severity field and the `security` label; critical implies P0 and high P1, the stricter of that and `--priority` wins, and `--priority` may then be left out); `--kind`, `--path` and `--rule` (a risk outside the ticket, with `--severity`) add the line `security-id: <sha256 of the three>` to the body and, when an open `security` issue already carries it, print that issue instead of filing another (a title match alone no longer reuses an issue then; a newline in the three is refused); a critical one in a public repository also opens a draft security advisory holding `--details-file <file\|->` (required there, never put in the issue), a private repository gets a message instead; `--no-advisory` (not with `--details-file`) skips the advisory and needs no details, for a risk that is no flaw in the project's own code, as the alerts GitHub raises that `run` and `retro` file; reuses an open issue with the same title and replaces its body; an issue created in an unattended session (`SENIOR_MODE_RUN`) ends with the line `filed-by: agent`, which `ready` reads |
 | `senior-mode pick [--json] [--max N]` | The Ready tickets in delivery order: Priority, a critical Severity first within a Priority (a tie-break only: a critical ticket moved by hand to P1 still sorts after a P0), then milestone due date; leaves out size L, blocked tickets and `needs-info`. `--json` adds each ticket's `paths` (the board field, as a list) and `batch`: the numbers of the Ready S tickets delivered together with it, or `null`. Ready S tickets whose Paths overlap are batched, at most 3 and at most `limits.prLines` / 50 (an S is about 50 lines); an M or a ticket without Paths never is; the text output ends such lines with `[batch #a #b]`. `--max` cuts the list before the batches are formed. `run` and `serve` start a batch as one session and one pull request (see [Run](autonomy.md#run)) |
 | `senior-mode start <issue>` | Creates the worktree (`${XDG_DATA_HOME:-~/.local/share}/senior-mode/worktrees/<repo>/<issue>`, `<repo>` being the checkout's name and a short hash of its path; never beside the repository; a ticket started earlier beside it or under `.git/senior-mode/worktrees` keeps its worktree, and `start` says where it is) and the branch `<type>/<issue>-<slug>` for a ticket, from the default branch, installs the dependencies with the `install` command of the config (`npm ci`, `pnpm install --frozen-lockfile`...), and sets Status `In progress`; safe to rerun |
-| `senior-mode run [--max N] [--parallel P]` | The autonomous run of `/senior-mode:run`: one headless session per ticket, then a plain report |
+| `senior-mode run [--max N] [--parallel P]` | A bounded autonomous batch without the daemon: one headless session per ticket, then a plain report |
 | `senior-mode schedule install [--at HH:MM] [--max N]` | Runs `senior-mode run` every day on this machine, as a systemd user timer or a tagged crontab line ([scheduled runs](autonomy.md#scheduled-runs)) |
 | `senior-mode schedule remove` | Disables and deletes the timer, or the tagged crontab line |
 | `senior-mode schedule status` | The next trigger and the result of the last scheduled run |

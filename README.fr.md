@@ -83,12 +83,14 @@ Le déroulé pas à pas : [A typical day](docs/guide/a-typical-day.md) (en angla
 
 | Commande | Ce qu'elle fait | État |
 |---|---|---|
-| `/senior-mode:setup` | Adopte un dépôt : board, labels, règles de fusion, ruleset, contrôles, hooks, modèles, release-please. Se relance sans risque. | Disponible |
 | `/senior-mode:frame` | Transforme une idée en décisions, spec, ADR et tickets prêts. | Disponible |
-| `/senior-mode:next` | La session du jour : état du board, pull requests qui vous attendent, puis livre avec vous le premier ticket prêt. Ne fusionne jamais sans votre accord. | Disponible |
-| `/senior-mode:status` | Tableau de bord en clair : fait, en cours, bloqué, en attente de vous. Peut produire un résumé de la semaine pour un lecteur non technique. | Disponible |
-| `/senior-mode:run` | Livre seule jusqu'à N tickets prêts, une session et un worktree par ticket, dans les garde-fous. S'arrête aux pull requests relues, sauf si vous activez la fusion. | Disponible |
-| `/senior-mode:retro` | Chaque semaine : les faits de la semaine, puis jusqu'à trois changements de méthode à valider. | Disponible |
+| `/senior-mode:go` | Fait avancer le projet : livre avec vous le premier ticket prêt (ne fusionne jamais sans votre accord), ou avec `auto` démarre le daemon qui livre seul dans les garde-fous ; quand le daemon tourne, montre ce qu'il fait. | Disponible |
+| `/senior-mode:status` | Tableau de bord en clair : fait, en cours, bloqué, en attente de vous. Peut produire un résumé de la semaine pour un lecteur non technique, et propose la rétro hebdomadaire quand elle est due. | Disponible |
+
+Deux autres se lancent d'elles-mêmes et restent appelables : `/senior-mode:setup` adopte un dépôt
+(board, labels, règles de fusion, ruleset, contrôles, hooks, modèles ; se relance sans risque), et le
+premier `go` le lance ; `/senior-mode:retro` donne les faits de la semaine et jusqu'à trois
+changements de méthode, et `status` la propose une fois par semaine.
 
 Derrière elles, de petits skills de discipline ne se chargent que quand ils s'appliquent (triage,
 ready, tdd, commit, verify, spec, adr, grill, review, docs), et huit agents ont chacun leur modèle et leur

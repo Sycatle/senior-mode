@@ -5,7 +5,7 @@ context() {
   local root branch issue json spec status criteria
   cat <<'ROUTER'
 senior-mode is active: framing, specs and ADRs, test-driven delivery, atomic Conventional Commits, GitHub Project board.
-Commands are /senior-mode:<name>; "go" or "enchaîne" takes the next Ready ticket. Disciplines load by themselves; ask the scout agent for codebase facts.
+The user needs /senior-mode:frame, /senior-mode:go and /senior-mode:status; "go" or "enchaîne" runs /senior-mode:go. Disciplines load by themselves; ask the scout agent for codebase facts.
 ROUTER
   # Spec 0001 §10, "Sessions without a human": the one rule, stated where a run session starts.
   [ -z "${SENIOR_MODE_RUN:-}" ] || echo "Unattended run: nobody answers questions. Take the recommended option for reversible choices; never accept an L spec or an ADR, never touch a protected zone: label needs-human and stop with a report."
@@ -166,7 +166,9 @@ STATUS_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" e
     + (if .milestone then " (\(.milestone))" else "" end)]),
   "Release",
   (if .release.latest then "  Last release \(.release.latest.tag), \(.release.latest.date[:10])." else "  No release yet." end)
-    + (if .release.pr then " Release pull request #\(.release.pr.number) is open." else " No release pull request open." end)'
+    + (if .release.pr then " Release pull request #\(.release.pr.number) is open." else " No release pull request open." end),
+  (if .serve.running then "Daemon: serve is running (pid \(.serve.pid))" else empty end),
+  (if .retro.due then "Retro due: the last one was \(.retro.lastDays) days ago" else empty end)'
 
 # The repairs of `status --fix`, one JSON line per drift entry: {number, title, fixed, line}. Only a
 # closed ticket is set Done; what else drifted needs a human's judgement and is left, saying why.
@@ -458,6 +460,25 @@ health_publish() {
   printf '%s\n' "$health"
 }
 
+# What only this machine knows (#319): whether `serve` runs here, and when the last retro ran. $1 the git common dir,
+# $2 now in seconds. The retro mark starts at the first status, so a new repository is not told a retro is due.
+# Prints {serve: {running, pid}, retro: {lastDays, due}}.
+local_facts() {
+  local common=$1 now_s=$2 pid="" mark last
+  pid=$(cat "$common/senior-mode/serve/serve.pid" 2>/dev/null) || pid=""
+  if ! [[ $pid =~ ^[0-9]+$ ]] || ! kill -0 "$pid" 2>/dev/null || [[ $(ps -o args= -p "$pid" 2>/dev/null) != *senior-mode* ]]; then
+    pid=""
+  fi
+  mark=$common/senior-mode/retro-last
+  if ! last=$(cat "$mark" 2>/dev/null) || ! [[ $last =~ ^[0-9]+$ ]]; then
+    mkdir -p "$common/senior-mode" && printf '%s\n' "$now_s" >"$mark" 2>/dev/null
+    last=$now_s
+  fi
+  jq -nc --arg pid "$pid" --argjson days $(((now_s - last) / 86400)) \
+    '{serve: {running: ($pid != ""), pid: (if $pid == "" then null else ($pid | tonumber) end)},
+      retro: {lastDays: $days, due: ($days >= 7)}}'
+}
+
 # One status report. $1 json|text, $2 --since duration or "", $3 true to move the "last time" mark,
 # $4 true to repair the drift (--fix), $5 true to publish the health of the Project (--publish).
 status_once() {
@@ -494,6 +515,7 @@ status_once() {
   # The spec drift reads git, and GitHub only for the pull request bodies it needs; it never fails the report.
   specs=$(spec_drift 2>/dev/null) || specs='{"drift": [], "note": "could not be read"}'
   out=$(jq -c --argjson s "$specs" '. + {specDrift: $s.drift, specDriftNote: $s.note}' <<<"$out") || return 1
+  out=$(jq -c --argjson l "$(local_facts "$(git rev-parse --path-format=absolute --git-common-dir)" "$now_s")" '. + $l' <<<"$out") || return 1
   # The report is out before --fix touches anything.
   [ "$json" = true ] || jq -r --arg head "$head" "$HYGIENE_DEF$STATUS_TEXT_JQ" <<<"$out"
   if [ "$fix" = true ]; then
@@ -790,6 +812,8 @@ retro() {
   else
     jq -r --arg head "$head" "$HYGIENE_DEF$RETRO_TEXT_JQ" <<<"$data"
   fi
+  # `status` proposes the next retro a week after this one (#319).
+  mkdir -p "$root/senior-mode" && printf '%s\n' "$now_s" >"$root/senior-mode/retro-last"
   # The pass ends with the health of the Project (#177); a failure is said and does not undo the retro.
   drift=$(jq -c --argjson l "$(local_branches)" --argjson h "$hygiene" "$DRIFT_DEF"'drift(.; $l)
     | map(select(.kind != "stale" or (.number as $n | $h.orphans | all(.number != $n))))' <<<"$board") || drift='[]'

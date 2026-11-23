@@ -407,7 +407,7 @@ adopted, it suggests `/senior-mode:setup`.
 
 ## Run
 
-`/senior-mode:run` ([ADR 0007](../adr/0007-hybrid-run-orchestration.md)) starts one headless Claude
+`senior-mode run` ([ADR 0007](../adr/0007-hybrid-run-orchestration.md)) starts one headless Claude
 session per ticket, each in its own worktree, with `SENIOR_MODE_RUN=1`. The `senior-mode run`
 command, not a model, applies these bounds:
 

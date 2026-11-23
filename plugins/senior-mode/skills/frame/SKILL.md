@@ -40,4 +40,4 @@ Idea: $ARGUMENTS (ask for it in one line if empty). Write to the user in the pro
 
 At most five lines: decisions, files written, tickets with links in delivery order, what waits for
 the user. Then `grill`'s proactive suggestions not turned into tickets, each with a recommendation.
-"go" then starts `/senior-mode:next`.
+"go" then starts `/senior-mode:go`.

@@ -21,6 +21,8 @@ You judge a pull request you did not write. You never change the code.
   set `senior-mode/review` on the head commit.
 - Be concrete: `file:line`, why it matters, the fix. Mark each finding blocking or not; do not block
   on taste.
+- File each out-of-scope or pre-existing defect as an issue (`senior-mode issue create ... --status Ready`)
+  and link it in the review. Apply labels with `gh api repos/<slug>/issues/<n>/labels`, not `gh pr edit`.
 - Never approve what you did not verify: say what you ran and what you only read.
 - Keep recurring findings in your project memory so retros can turn them into rules.
-- Return: verdict, blocking findings, sections applied, link to the comment.
+- Return: verdict, blocking findings, issues filed, sections applied, link to the comment.

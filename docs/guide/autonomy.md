@@ -446,6 +446,21 @@ command, not a model, applies these bounds:
   a private `senior-mode-e2e-<uid>` directory of `$TMPDIR` (or `/tmp`); a directory that is a link, not yours or not
   mode 0700 is refused.
 
+### Session slots
+
+Parallel sessions must not collide on a port, a database or a cache. `run` starts every ticket session
+through `senior-mode slot -- <command>`, which gives it the lowest free slot of `1..autonomy.parallel`
+(`SENIOR_MODE_SLOT=N`) and, when `.claude/senior-mode.json` has a [`slot`](configuration.md) command, runs
+it in the session's worktree with `SENIOR_MODE_SLOT` set and exports its `KEY=VALUE` lines. For example
+`"slot": "echo PORT=$((3000 + SENIOR_MODE_SLOT)); echo DATABASE_URL=postgres://localhost/app_$SENIOR_MODE_SLOT"`.
+Two sessions of a repository never share a slot: each holds an `flock` on a file for as long as the session
+or anything it started lives, so a crashed session frees its slot at once. When all slots are taken (a second
+run, a session of your own) the next one waits. The lock files live next to those of `e2e-lock`, in
+`$XDG_RUNTIME_DIR/senior-mode-slots` or a private `senior-mode-slots-<uid>` directory, with the same rules
+(not a link, yours, mode 0700). A `slot` command that fails, or prints anything but `KEY=VALUE`, stops the
+session before it starts, so it fails like any ticket. `run` needs `flock` (util-linux). A session you start
+by hand gets a slot the same way: `senior-mode slot -- claude`.
+
 ### Hygiene
 
 `senior-mode clean [--dry-run] [--days N]` removes what is finished, so worktrees and branches do not

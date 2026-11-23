@@ -119,6 +119,8 @@ and, in `actions` mode, the workflow all run it, from the repository root.
 - Checks you add by hand are kept on re-run. `senior-mode setup repo --command test="npm test"`
   replaces the command of the check with the same name.
 - `senior-mode check` prints `ok`, `skip` or `FAIL` per check with the time it took, with the last 20 lines of a failure (the dependency audit shows every blocking advisory, up to 100).
+  The full output of a failed check is kept in `senior-mode/check-logs/<time>-<pid>-<check>.log` of the git
+  directory (the 20 latest are kept) and its path is printed as `full log: <path>` under those lines.
   A check whose first output line is `skipped: <reason>` passes and prints `skip <name>: <reason>`,
   so a check that had nothing to do is visible instead of a silent `ok`.
 - On a push the `pre-push` hook gives the checks the paths the push changes, in a file named by

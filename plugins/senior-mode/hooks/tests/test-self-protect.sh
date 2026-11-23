@@ -277,6 +277,115 @@ done
 bash_ allow 'echo x > ../.claude/x' "$repo"
 bash_ allow 'echo x > .claude/x' "$bare"
 
+# --- #235: HEAD, packed-refs, info/ and modules/ of the git dir; refs and objects discarded by command ---
+for f in HEAD packed-refs info info/exclude info/attributes modules modules/sub modules/sub/config; do
+  edit deny "$repo/.git/$f" Write "" ".git/$f"
+  bash_ deny "echo x > .git/$f"
+  bash_ deny "rm -rf .git/$f"
+  dir=$work/wt edit deny "$repo/.git/$f" Edit "" ".git/$f from a linked worktree"
+done
+bash_ deny 'mv .git/packed-refs /tmp/p'
+bash_ deny 'cp /tmp/h .git/HEAD'
+bash_ deny 'sed -i s/a/b/ .git/info/exclude'
+bash_ deny 'rm .git/HEAD' "$work/wt"
+bash_ deny 'rm -rf .git/hooks' "$work/wt"
+bash_ deny 'echo x > .git/info/exclude' "$work/wt"
+bash_ deny "rm $repo/.git/HEAD" "$work/wt"
+edit allow "$repo/.git-info/x" Write "" "a name that only starts like info"
+for c in \
+  'cat .git/HEAD' \
+  'cat .git/packed-refs' \
+  'cat .git/info/exclude' \
+  'ls .git/modules' \
+  'cp .git/HEAD /tmp/head' \
+  'git rev-parse HEAD' \
+  'git submodule update --init' \
+  'echo x > src/info/y' \
+  'rm -rf src/modules docs/info' \
+  'rm -rf node_modules/info' \
+  'echo x > HEAD.txt' \
+  'rm packed-refs.bak' \
+  'rm -rf .git-modules'; do
+  bash_ allow "$c"
+done
+for c in \
+  'git update-ref -d refs/heads/main' \
+  'git update-ref -d refs/heads/feat/1-x' \
+  'git update-ref -d refs/heads/feat/1-x abc123' \
+  'git update-ref --no-deref -d refs/heads/x' \
+  'git update-ref -m gone -d refs/heads/x' \
+  'git update-ref -dm gone refs/heads/x' \
+  'git update-ref -d HEAD' \
+  'git -C . update-ref -d refs/heads/x' \
+  'git -c core.x=1 update-ref -d refs/heads/x' \
+  'git reflog expire --expire=now --all' \
+  'git reflog expire --all && git gc --prune=now' \
+  'git reflog delete HEAD@{1}' \
+  'git gc --prune=now' \
+  'git gc --aggressive --prune=now' \
+  'git gc --prune=all' \
+  'git gc --pr=now' \
+  'git gc --p=now' \
+  'git prune --expire=now' \
+  'git prune --expire now' \
+  'git prune --exp now' \
+  'git prune -n --expire=now' \
+  'sudo git gc --prune=now'; do
+  bash_ deny "$c"
+done
+bash_ deny 'git update-ref -d refs/heads/x' "$work/wt"
+for c in \
+  'git update-ref refs/heads/x HEAD' \
+  'git update-ref -m x refs/heads/x HEAD' \
+  'git update-ref -d refs/remotes/origin/x' \
+  'git update-ref -d refs/tags/v0' \
+  'git update-ref -d refs/stash' \
+  'git reflog' \
+  'git reflog show HEAD' \
+  'git reflog -5' \
+  'git gc' \
+  'git gc --auto' \
+  'git gc --prune=2.weeks.ago' \
+  'git prune' \
+  'git prune -n' \
+  'git worktree prune' \
+  'git branch -D feat/9-x' \
+  'echo "git gc --prune=now"' \
+  'echo "git update-ref -d refs/heads/x"'; do
+  bash_ allow "$c"
+done
+# A cd earlier in the command moves where the relative paths that follow point.
+for c in \
+  'cd .git && rm -rf hooks' \
+  'cd .git; rm hooks/pre-push' \
+  'cd .git/hooks && rm pre-push' \
+  'cd .git && echo x > HEAD' \
+  'cd .git && echo x > info/exclude' \
+  'cd .github && rm -rf workflows' \
+  'cd .claude && echo x > settings.json' \
+  'cd .githooks && chmod -x pre-push' \
+  'cd ./.git && rm config' \
+  'cd web && rm -rf ../.claude' \
+  'cd web && cd .. && rm -rf .claude' \
+  "cd $repo/.git && rm -rf hooks" \
+  'pushd .git && rm -rf hooks'; do
+  bash_ deny "$c"
+done
+bash_ deny 'cd .git && rm -rf hooks' "$work/wt"
+for c in \
+  'cd web && rm -rf node_modules' \
+  'cd web && echo x > out.txt' \
+  'cd .git && ls' \
+  'cd .git && cat config' \
+  'cd /tmp && rm -rf x' \
+  'cd $dir && rm -rf x' \
+  'cd && rm -rf x' \
+  'cd - && ls' \
+  'cd src; rm -rf build' \
+  'cd web && git status'; do
+  bash_ allow "$c"
+done
+
 # --- Outside a run, nothing is denied ---
 unset run
 edit allow "$repo/.github/workflows/ci.yml" Edit "" "no SENIOR_MODE_RUN"

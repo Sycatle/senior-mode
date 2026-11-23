@@ -346,6 +346,21 @@ expect allow "GIT_CONFIG_PARAMETERS=\"'alias.co=checkout'\" git co main"
 expect allow "GIT_CONFIG_PARAMETERS=\"'alias.st=status -sb'\" git st"
 
 expect allow 'git status' feat/2-local
+
+# A `cd` before the push moves it to that checkout: the worktree's branch counts, not the session cwd's.
+g worktree add -b feat/3-wt "$work/wt"
+expect allow "cd $work/wt && git push -u origin HEAD" main
+expect allow "cd $work/wt && git push" main
+expect allow "cd $work/wt; git push origin HEAD" main
+expect allow "cd $work && cd wt && git push -u origin HEAD" main
+expect allow "cd $work/wt && git -C . push origin HEAD" main
+expect deny "cd $work/wt && git push origin HEAD:main" main
+expect deny "cd $work/wt && git push origin main" main
+expect deny "cd $work/wt && cd $repo && git push origin HEAD" main
+expect deny "cd $repo && git push origin HEAD" main "$work"
+expect deny "cd $work/nowhere && git push origin HEAD" main
+expect deny "cd \$WT && git push origin HEAD" main
+expect deny 'cd && git push origin HEAD' main
 expect allow 'git push -u origin feat/2-local'
 expect allow 'git push' feat/1-shared
 expect allow 'git commit -m "docs: explain why --no-verify and -n are denied"'

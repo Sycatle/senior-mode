@@ -1885,6 +1885,34 @@ PICK_DEF='def pick: [.items[] | select(.open and .status == "Ready" and .size !=
   | sort_by([([(.priority // "") | scan("^P([0-9]+)") | .[0] | tonumber] | first // 99),
     (if .severity == "critical" then 0 else 1 end), (.due // "9999"), .number]);'
 
+# The Paths of a ticket (#174, #152): globs separated by commas. Two globs overlap when their static
+# parts do: the text before the first wildcard, cut back to a whole directory when there is one, so a
+# glob of one ticket matches a path prefix of the other, or is the same glob. A ticket with no Paths
+# overlaps every other (it runs alone).
+# shellcheck disable=SC2016 # a jq program, not shell
+PATHS_DEF='def globs: (.paths // "") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""));
+  def gstatic: sub("^\\./"; "") | . as $g | (capture("^(?<s>[^*?\\[{]*)").s) as $s
+    | (if $s == $g then $s else ($s | sub("[^/]*$"; "")) end) | sub("/+$"; "");
+  def pclash($p; $q): $p == $q or $p == "" or $q == "" or ($q | startswith($p + "/")) or ($p | startswith($q + "/"));
+  def overlap($a; $b): ($a | map(gstatic)) as $sa | ($b | map(gstatic)) as $sb | any($sa[]; . as $p | any($sb[]; pclash($p; .)));
+  def collide($a; $b): ($a | length) == 0 or ($b | length) == 0 or overlap($a; $b);'
+
+# The index in the queue of the first ticket that can start next to the running ones (#152), nothing when
+# none can: `pick_free <board data> "<running numbers>" "<queued numbers>"`. Tickets whose Paths overlap never
+# run at the same time and a ticket with no Paths runs alone. A board without the Paths field (a config
+# from before it existed) has no paths to compare: the first queued ticket is free, as before.
+pick_free() {
+  if ! jq -e '.project.fields.Paths.id' "$(config_file)" >/dev/null; then
+    [ -z "$3" ] || echo 0
+    return 0
+  fi
+  jq -r --arg r "$2" --arg q "$3" "$PATHS_DEF"'
+    ($r | split(" ") | map(select(. != "") | tonumber)) as $run
+    | ($q | split(" ") | map(select(. != "") | tonumber)) as $queue
+    | ([.items[] | {key: (.number | tostring), value: globs}] | from_entries) as $g
+    | [range(0; $queue | length) | select(. as $i | $run | all(.[]; (collide($g[($queue[$i] | tostring)]; $g[tostring]) | not)))] | first // empty' <<<"$1"
+}
+
 # senior-mode pick [--json] [--max N]
 pick() {
   local json=false max="" data
@@ -3463,8 +3491,11 @@ run() {
 
   while [ ${#queue[@]} -gt 0 ] || [ ${#running[@]} -gt 0 ]; do
     while [ -z "$RUN_STOP" ] && [ ${#running[@]} -lt "$parallel" ] && [ ${#queue[@]} -gt 0 ]; do
-      n=${queue[0]}
-      queue=("${queue[@]:1}")
+      # The first queued ticket whose Paths do not overlap a running one (#152): the index in t.
+      t=$(pick_free "$data" "${running[*]-}" "${queue[*]}")
+      [ -n "$t" ] || break
+      n=${queue[t]}
+      queue=("${queue[@]:0:t}" "${queue[@]:t+1}")
       if run_start "$n"; then running+=("$n"); fi
     done
     [ ${#running[@]} -gt 0 ] || break

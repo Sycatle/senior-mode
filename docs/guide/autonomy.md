@@ -310,6 +310,12 @@ command, not a model, applies these bounds:
   GitHub's scanners as issues (see [GitHub's scanners](#githubs-scanners)).
 - **Batch:** at most `autonomy.maxTickets` tickets (default 3), `autonomy.parallel` at a time
   (default 1), taken in the order of `senior-mode pick`.
+- **Collisions:** tickets whose board field Paths overlap never run at the same time, and a ticket
+  with no Paths runs alone: nothing else starts while it runs. Two Paths overlap when a glob of one
+  matches a path prefix of the other (`src/a/**` and `src/a/x.ts`), or is the same glob; a ticket
+  that has to wait lets the next one start, in `pick` order. The check needs the field: a config
+  from before it existed (no `Paths` in `project.fields`) runs tickets in parallel as before, until
+  `senior-mode setup github` is rerun.
 - **Retry on Opus:** a ticket that fails on Sonnet is tried once more on Opus, from the same worktree
   (`autonomy.escalate`, default true).
 - **Circuit breaker:** after `autonomy.maxConsecutiveFailures` failed tickets in a row (default 2), or

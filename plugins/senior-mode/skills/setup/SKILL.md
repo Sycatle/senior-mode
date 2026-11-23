@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Setup
 
-Safe to rerun: it repairs. Wording, follow-ups, status line, no human to ask: `${CLAUDE_SKILL_DIR}/reference.md`.
+Wording, follow-ups, status line, no human to ask: `${CLAUDE_SKILL_DIR}/reference.md`.
 
 ## Before
 
@@ -16,9 +16,8 @@ Safe to rerun: it repairs. Wording, follow-ups, status line, no human to ask: `$
 2. `gh auth status` succeeds. If the token lacks the `project` scope, ask the user to run
    `gh auth refresh -s project`.
 3. Ask once: checks before each push only (`local`, free) or also on GitHub Actions (`actions`,
-   spends the budget). Then tell the user, in a short table, what will change: a Project
-   board, labels, rebase-only merges, a default-branch ruleset, in `local` the workflows disabled
-   (files kept), and the Repository files below. Go on their yes.
+   spends the budget). Then tell the user what will change: a Project
+   board, labels, rebase-only merges, a default-branch ruleset, in `local` the workflows disabled, and the Repository files below. Go on their yes.
 
 ## GitHub
 
@@ -37,7 +36,8 @@ Run `senior-mode setup github --ci <local|actions>`. It:
 - turns on the scanners: see "Scanners";
 - `local`: disables the repository's workflows (files kept); `actions`: `setup repo` then adds
   `.github/workflows/senior-mode.yml`. If it prints `releases:`, relay it (the release PR needs
-  a `RELEASE_PLEASE_TOKEN` secret to get CI).
+  a `RELEASE_PLEASE_TOKEN` secret to get CI). On `built-in workflows off:`, tell the user to turn them on in
+  the Project's Workflows tab.
 
 ## Repository
 

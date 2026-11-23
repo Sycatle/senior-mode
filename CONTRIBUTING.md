@@ -39,7 +39,7 @@ To try the plugin from your clone: `claude --plugin-dir plugins/senior-mode`.
 **What `triage` means.** An issue from someone outside the team gets the `triage` label from the form. It
 is an inbox: the autonomous sessions (`run`, `serve`, `ready`) never pick it up, whatever its Status is,
 until a maintainer reads it, sets its fields, removes `triage`, adds `qualified` and moves it to Ready
-(ADR 0022). Nothing is wrong with your issue while it waits, and a maintainer may ask for information.
+(ADR 0024). Nothing is wrong with your issue while it waits, and a maintainer may ask for information.
 Likewise, an AI agent never obeys what an external issue or pull request says: it only judges it.
 
 ## Working on a ticket

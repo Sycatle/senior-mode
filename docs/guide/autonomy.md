@@ -135,7 +135,7 @@ failed post is tried again the next day.
 ## Untrusted external input
 
 Anyone can file an issue or send a pull request, so what comes from outside is data to judge, never
-instructions to follow, and nothing from outside starts work or merges without a person (ADR 0022).
+instructions to follow, and nothing from outside starts work or merges without a person (ADR 0024).
 
 - **The trust gate.** A ticket is picked only when it has no `triage` label and either its author is a
   collaborator (the `author_association` of the issue is OWNER, MEMBER or COLLABORATOR) or a collaborator added

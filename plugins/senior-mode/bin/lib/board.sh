@@ -588,7 +588,7 @@ board_data() {
   if [ "$repo" = true ]; then board_more "$data"; else printf '%s\n' "$data"; fi
 }
 
-# The trust gate (ADR 0022, #427), the one rule every selection of a ticket to work on applies (`pick`, hence
+# The trust gate (ADR 0024, #427), the one rule every selection of a ticket to work on applies (`pick`, hence
 # `next`, `run` and `serve`, and `ready`): an issue is trusted when it does not carry `triage` and either its
 # author is a collaborator (author_association OWNER, MEMBER or COLLABORATOR) or a collaborator qualified it
 # with the label `qualified`. A missing association is not a collaborator. Its input is an item of

@@ -599,6 +599,29 @@ outcome_of 21 delivered J
 outcome_of 22 delivered J
 fields=$saved_fields
 
+# Z: a ticket launched in a poll reserves its Paths for the rest of that poll (#344), also when the config of the
+# repository does not list the Paths field (a board carries Paths its config does not know): of two overlapping
+# tickets that are not batched (#62 is not an S), only the first starts, next to the disjoint one.
+size_of() { # <ticket> <size>: Size of a ticket of the board
+  jq -c --argjson n "$1" --arg s "$2" '(.data.node.items.nodes[] | select(.content.number == $n) | .fieldValues.nodes[]
+    | select(.field.name == "Size") | .name) = $s' "$FIX/board.json" >"$work/b" && mv "$work/b" "$FIX/board.json"
+}
+config '{"parallel": 3}'
+board 61 62 63
+paths_of 61 'src/lib/math.ts,src/lib/math.test.ts'
+paths_of 62 'src/lib/math.ts,src/lib/math.test.ts'
+paths_of 63 'docs/guide/**'
+size_of 62 XS
+session 61-sonnet delivered pr
+session 62-sonnet delivered pr
+session 63-sonnet delivered pr
+fresh
+once || fail "Z: serve failed: $(cat "$work/out")"
+started 61 || fail "Z: no session for #61: $(cat "$CLAUDE_LOG")"
+started 62 && fail "Z: #62 started in the poll of #61, with the same Paths"
+started 63 || fail "Z: the disjoint #63 did not start: $(cat "$CLAUDE_LOG")"
+[ "$(grep -c '^app-' "$CLAUDE_LOG")" -eq 2 ] || fail "Z: not exactly two sessions: $(cat "$CLAUDE_LOG")"
+
 # I: options and config are checked.
 (cd "$repo" && "$cli" serve --bogus) >"$work/out" 2>&1 && fail "I: an unknown option was accepted"
 grep -q 'usage:.*serve' "$work/out" || fail "I: usage does not name serve: $(cat "$work/out")"

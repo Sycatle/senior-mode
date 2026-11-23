@@ -949,12 +949,11 @@ serial 301 303 && fail "U: #301 and #303 do not overlap and did not run together
 for n in 301 302 303; do serial "$n" 304 || fail "U: #304 has no Paths and ran with #$n: $(tr '\n' ' ' <"$FIX/trace")"; done
 grep -q 'Not started' "$work/out" && fail "U: a ticket was left in the queue: $(cat "$work/out")"
 
-# The same board and a config without the Paths field (created before it existed): no collision handling.
+# A board without the Paths field (created before it existed) has no Paths on its tickets: no collision handling.
+# (A board that carries Paths is compared whatever the config lists, #344.)
 fields=$saved_fields
 config '{"maxTickets": 2, "parallel": 2}'
 board 311 '[]' 312 '[]'
-paths_of 311 'src/a/**'
-paths_of 312 'src/a/x.ts'
 size_of 311 M
 size_of 312 M
 session 311-sonnet delivered pr slow

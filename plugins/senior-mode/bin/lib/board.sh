@@ -612,10 +612,12 @@ PATHS_DEF='def globs: (.paths // "") | split(",") | map(gsub("^\\s+|\\s+$"; ""))
 # The index in the queue of the first ticket that can start next to the running ones (#152), nothing when
 # none can: `pick_free <board data> "<running numbers>" "<queued entries>"`; an entry is a ticket number or, for a
 # batch (#263), its numbers joined by `+`, and the running numbers are those of every ticket of the sessions
-# running. Tickets whose Paths overlap never run at the same time and a ticket with no Paths runs alone. A board without the Paths field (a config
-# from before it existed) has no paths to compare: the first queued ticket is free, as before.
+# running. Tickets whose Paths overlap never run at the same time and a ticket with no Paths runs alone. A board
+# whose tickets have no Paths at all (no Paths field) has no paths to compare: the first queued ticket is free, as
+# before. What the board carries decides, not the config: a config from before the field existed still has its
+# tickets compared (#344).
 pick_free() {
-  if ! jq -e '.project.fields.Paths.id' "$(config_file)" >/dev/null; then
+  if ! jq -e 'any(.items[]; (.paths // "") != "")' <<<"$1" >/dev/null; then
     [ -z "$3" ] || echo 0
     return 0
   fi

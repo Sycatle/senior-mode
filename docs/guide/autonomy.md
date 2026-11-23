@@ -389,9 +389,14 @@ command, not a model, applies these bounds:
   `senior-mode setup github` is rerun.
 - **Batches:** `senior-mode pick` groups Ready S tickets whose Paths overlap, at most 3 per batch
   (and `limits.prLines` / 50, an S being about 50 lines); M and L tickets and tickets without Paths are
-  never batched. The target is one session and one pull request per batch, one commit and one
-  `Closes #n` per ticket; `run` does not start a batch that way yet (#263), it still starts the
-  tickets one by one.
+  never batched. `run` and `serve` start a batch as one session: one worktree (on the branch of its
+  first ticket), every ticket In progress, a prompt that asks one commit and one `Closes #n` per
+  ticket and one pull request, which one review covers. The session writes one outcome line per
+  ticket (`#n delivered`, `#n outgrown: ...`, `#n failed: ...`). A ticket that fails goes back alone
+  (Backlog, `needs-human`, a comment) while the delivered ones are merged or left for a human with
+  the pull request; when none is delivered, the session is tried again on Opus, then every ticket goes
+  back. A batch counts as one slot of `autonomy.parallel`, and the Paths of all its tickets are
+  compared with what runs next to it.
 - **Retry on Opus:** a ticket that fails on Sonnet is tried once more on Opus, from the same worktree
   (`autonomy.escalate`, default true).
 - **Circuit breaker:** after `autonomy.maxConsecutiveFailures` failed tickets in a row (default 2), or

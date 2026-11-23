@@ -2125,8 +2125,9 @@ PATHS_DEF='def globs: (.paths // "") | split(",") | map(gsub("^\\s+|\\s+$"; ""))
   def collide($a; $b): ($a | length) == 0 or ($b | length) == 0 or overlap($a; $b);'
 
 # The index in the queue of the first ticket that can start next to the running ones (#152), nothing when
-# none can: `pick_free <board data> "<running numbers>" "<queued numbers>"`. Tickets whose Paths overlap never
-# run at the same time and a ticket with no Paths runs alone. A board without the Paths field (a config
+# none can: `pick_free <board data> "<running numbers>" "<queued entries>"`; an entry is a ticket number or, for a
+# batch (#263), its numbers joined by `+`, and the running numbers are those of every ticket of the sessions
+# running. Tickets whose Paths overlap never run at the same time and a ticket with no Paths runs alone. A board without the Paths field (a config
 # from before it existed) has no paths to compare: the first queued ticket is free, as before.
 pick_free() {
   if ! jq -e '.project.fields.Paths.id' "$(config_file)" >/dev/null; then
@@ -2135,9 +2136,9 @@ pick_free() {
   fi
   jq -r --arg r "$2" --arg q "$3" "$PATHS_DEF"'
     ($r | split(" ") | map(select(. != "") | tonumber)) as $run
-    | ($q | split(" ") | map(select(. != "") | tonumber)) as $queue
+    | ($q | split(" ") | map(select(. != "") | split("+") | map(tonumber))) as $queue
     | ([.items[] | {key: (.number | tostring), value: globs}] | from_entries) as $g
-    | [range(0; $queue | length) | select(. as $i | $run | all(.[]; (collide($g[($queue[$i] | tostring)]; $g[tostring]) | not)))] | first // empty' <<<"$1"
+    | [range(0; $queue | length) | select(. as $i | $run | all(.[]; . as $r | $queue[$i] | all(.[]; collide($g[tostring]; $g[$r | tostring]) | not)))] | first // empty' <<<"$1"
 }
 
 # Batches (#189): the picked tickets in order, each with `batch`, the numbers of the tickets delivered
@@ -2151,6 +2152,26 @@ BATCH_DEF='def batchable: .size == "S" and (globs | length) > 0;
     | if $at == null then . + [[$t]] else .[$at] += [$t] end);
   def batched($cap): . as $all | (grouped($cap) | map(map(.number))) as $g
     | $all | map(.number as $n | . + {batch: ([$g[] | select(length > 1 and any(.[]; . == $n))] | first // null)});'
+
+# How many tickets a batch holds: an S is about 50 lines (skill triage), so limits.prLines / 50, 3 at most.
+batch_cap() {
+  local cap
+  cap=$(config_get limits.prLines)
+  [[ $cap =~ ^[1-9][0-9]*$ ]] || die "limits.prLines must be a positive whole number, not $cap"
+  cap=$((cap / 50))
+  [ "$cap" -le 3 ] || cap=3
+  echo "$cap"
+}
+
+# The picked tickets of a board_data result as `number<TAB>size<TAB>title<TAB>batch` lines, in pick order: batch is the
+# numbers delivered together with the ticket, space-separated and empty for a ticket alone (#263). $2 keeps the
+# first N tickets when given, before the batches are formed, as `pick --max`. The first line of a batch is its lead.
+queue_lines() {
+  local cap
+  cap=$(batch_cap) || exit 1
+  jq -r --argjson max "${2:-0}" --argjson cap "$cap" "$PICK_DEF$PATHS_DEF$BATCH_DEF"'pick | if $max > 0 then .[:$max] else . end
+    | batched($cap)[] | [.number, (.size // "-"), .title, (.batch // [] | map(tostring) | join(" "))] | @tsv' <<<"$1"
+}
 
 # senior-mode pick [--json] [--max N]
 pick() {
@@ -2168,11 +2189,7 @@ pick() {
     shift
   done
   data=$(board_data false) || exit 1
-  # An S is about 50 lines (skill triage): a batch holds at most limits.prLines / 50 tickets, 3 at most.
-  cap=$(config_get limits.prLines)
-  [[ $cap =~ ^[1-9][0-9]*$ ]] || die "limits.prLines must be a positive whole number, not $cap"
-  cap=$((cap / 50))
-  [ "$cap" -le 3 ] || cap=3
+  cap=$(batch_cap) || exit 1
   if [ "$json" = true ]; then
     jq -c --argjson max "${max:-0}" --argjson cap "$cap" "$PICK_DEF$PATHS_DEF$BATCH_DEF"'pick | if $max > 0 then .[:$max] else . end
       | batched($cap) | map({number, title, url, priority, size, milestone, due, paths: globs, batch})' <<<"$data"
@@ -3254,6 +3271,68 @@ Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 EOF
 }
 
+# A session is a ticket or, for a batch (#263), the tickets delivered together in one worktree, by one session and one
+# pull request. Its key (the number the RUN_* arrays and the session files use) is the lead, the first of
+# RUN_BATCH[lead], the space-separated numbers of the batch. The tickets of a session, lead first.
+run_members() {
+  echo "${RUN_BATCH[$1]:-$1}"
+}
+
+# The tickets of the sessions running, for pick_free.
+run_busy() {
+  local n
+  for n in "${running[@]}"; do
+    # A reviewer or an integrator writes no ticket code of its own.
+    case ${RUN_ROLE[$n]:-ticket} in reviewer | integrator) ;; *) run_members "$n" ;; esac
+  done | paste -sd' ' -
+}
+
+# A queue entry for pick_free: the tickets of the session $1 joined by `+`.
+run_entry() {
+  local m
+  m=$(run_members "$1")
+  echo "${m// /+}"
+}
+
+# The task of the headless session of a batch: lead $1, branch $2 and the tickets $3 on, one commit and one `Closes`
+# each, one pull request, an outcome line per ticket.
+run_prompt_batch() {
+  local branch=$2 m list="" closes=""
+  for m in $3; do
+    list+="- #$m (\"${RUN_TITLE[$m]}\")"$'\n'
+    closes+="\`Closes #$m\`, "
+  done
+  cat <<EOF
+You are one batch session of an autonomous senior-mode run on $RUN_SLUG. Nobody will answer
+questions: decide within the tickets, their specs and the project's rules, or give up as described below.
+
+Deliver these small tickets, which touch the same paths, in this worktree, on branch $branch, as the
+senior-mode team, in ONE pull request:
+$list
+1. Read each ticket (\`gh issue view <n>\`), its spec and its acceptance criteria.
+2. One ticket after the other: the test-author agent writes failing tests from its acceptance criteria and
+   records the red run; the implementer agent makes them pass (skills tdd, verify, commit). One commit per
+   ticket, tests in the same commit as the code they cover, its message ending with \`Refs #<n>\`.
+3. \`senior-mode check\` passes on a clean tree; push the branch; open ONE pull request from the template
+   with one \`Closes #<n>\` line per ticket delivered (${closes%, }) and the red runs; \`senior-mode publish\`;
+   \`senior-mode item set <n> Status "In review"\` for each ticket delivered.
+4. The reviewer agent reviews the pull request once, in a fresh context (skill review), and sets
+   senior-mode/review; when publish left senior-mode/security pending, the security agent reviews it
+   too; at most 2 fix rounds, with check and publish after each push.
+5. Never merge, never touch another ticket: \`senior-mode run\` decides what happens next. A risk
+   you meet outside these tickets is filed, never fixed here: \`senior-mode issue create --severity ...
+   --kind ... --path ... --rule ...\` (no exploit detail in the body).
+6. A ticket you cannot deliver does not stop the others: remove its commits from the branch (rebase them
+   out) and leave its \`Closes\` out of the pull request. It goes back alone.
+
+Last, write one line per ticket to the file \$SENIOR_MODE_RUN_OUTCOME, each starting with the ticket number:
+- \`#<n> delivered\` once its commit is in the pull request, open with senior-mode/ci, senior-mode/review and
+  senior-mode/security set;
+- \`#<n> outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
+- \`#<n> failed: <reason>\` otherwise, in one plain sentence.
+EOF
+}
+
 # Can run give a background session a process group of its own? setsid (util-linux), else perl's
 # POSIX::setsid (always on macOS). Without either, a session that outlives the timeout cannot be stopped.
 run_can_detach() {
@@ -3308,7 +3387,7 @@ run_launch() {
   else
     run_detach "$script"
   fi
-  echo "#$n: session started on $model"
+  echo "#$n: session started on $model${RUN_BATCH[$n]:+ (batch: $(run_members "$n"))}"
   # serve counts its launches for autonomy.sessionsPerHour: one line, the time, per session started.
   [ -z "${RUN_LAUNCH_LOG:-}" ] || serve_now >>"$RUN_LAUNCH_LOG"
 }
@@ -3316,22 +3395,38 @@ run_launch() {
 # Opens the ticket with `senior-mode start` (worktree, branch and Status In progress, named and tracked
 # as everywhere else). A ticket that cannot be opened is given up.
 run_open() {
-  local n=$1 out rc=0
+  local n=$1 out rc=0 m
   out=$(SENIOR_MODE_RUN=1 SENIOR_MODE_RUN_TOKEN_FILE="$RUN_DIR/token" start "$n" 2>"$RUN_DIR/$n.err") || rc=$?
   RUN_BRANCH[$n]=$(sed -n 's/^branch //p' <<<"$out")
   RUN_WT[$n]=$(sed -n 's/^worktree //p' <<<"$out")
   if [ -z "${RUN_WT[$n]}" ]; then
     run_giveup "$n" "no worktree: $(head -n 1 "$RUN_DIR/$n.err")"
+    # The other tickets of its batch were not touched: they stay Ready for the next pick.
+    for m in $(run_members "$n"); do [ "$m" = "$n" ] || echo "#$m: not started, #$n, the lead of its batch, has no worktree"; done
     return 1
   fi
   [ "$rc" -eq 0 ] || echo "#$n: could not set the Status In progress: $(head -n 1 "$RUN_DIR/$n.err")" >&2
+  # A batch is one worktree, on the branch of its lead: its other tickets are In progress there too.
+  for m in $(run_members "$n"); do
+    [ "$m" != "$n" ] || continue
+    RUN_BRANCH[$m]=${RUN_BRANCH[$n]}
+    RUN_WT[$m]=${RUN_WT[$n]}
+    (item_set "$m" Status "In progress") >/dev/null || echo "#$m: could not set the Status In progress" >&2
+  done
 }
 
 # Opens the ticket (run_open), then launches its session on Sonnet with the prompt of RUN_PROMPT (run's own
-# by default).
+# by default); a batch gets the prompt of a batch.
 run_start() {
   run_open "$1" || return 1
-  "${RUN_PROMPT:-run_prompt}" "$1" "${RUN_TITLE[$1]}" "${RUN_BRANCH[$1]}" >"$RUN_DIR/$1.prompt"
+  rm -f "$RUN_DIR/$1.batch"
+  if [ -n "${RUN_BATCH[$1]:-}" ]; then
+    # The tickets of the batch, for serve_recover to find them after a restart.
+    echo "${RUN_BATCH[$1]}" >"$RUN_DIR/$1.batch"
+    run_prompt_batch "$1" "${RUN_BRANCH[$1]}" "${RUN_BATCH[$1]}" >"$RUN_DIR/$1.prompt"
+  else
+    "${RUN_PROMPT:-run_prompt}" "$1" "${RUN_TITLE[$1]}" "${RUN_BRANCH[$1]}" >"$RUN_DIR/$1.prompt"
+  fi
   run_launch "$1" sonnet
 }
 
@@ -3339,18 +3434,21 @@ run_start() {
 # ($4 opens it, $5 says what $3, the file to look at, holds), recorded as failed with reason $2 and counted for the
 # circuit breaker. Its Status stays In progress, needs-human is the signal.
 run_halt() {
-  local n=$1 reason=$2 log=$3 intro=$4 what=$5
-  gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
-    echo "#$n: could not label the ticket needs-human" >&2
-  gh api "repos/$RUN_SLUG/issues/$n/comments" -f body="$intro: $reason
+  local s=$1 reason=$2 log=$3 intro=$4 what=$5 n
+  # Every ticket of a batch is stuck with its one session.
+  for n in $(run_members "$s"); do
+    gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
+      echo "#$n: could not label the ticket needs-human" >&2
+    gh api "repos/$RUN_SLUG/issues/$n/comments" -f body="$intro: $reason
 
 $what \`$log\`. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the worktree \`${RUN_WT[$n]}\`; the Status is unchanged. A person decides what happens next." \
-    >/dev/null || echo "#$n: could not comment on the ticket" >&2
-  run_record "$n" failed "$reason"
-  RUN_FAILED+=("#$n ${RUN_TITLE[$n]}: $reason (branch ${RUN_BRANCH[$n]} kept, log $log)")
+      >/dev/null || echo "#$n: could not comment on the ticket" >&2
+    run_record "$n" failed "$reason" "$s"
+    RUN_FAILED+=("#$n ${RUN_TITLE[$n]}: $reason (branch ${RUN_BRANCH[$n]} kept, log $log)")
+  done
   RUN_FAILS=$((RUN_FAILS + 1))
   [ "$RUN_FAILS" -lt "$RUN_MAXFAIL" ] || RUN_STOP="$RUN_FAILS failed ticket(s) in a row (autonomy.maxConsecutiveFailures)"
-  notify needs-human "$n" "$reason"
+  for n in $(run_members "$s"); do notify needs-human "$n" "$reason"; done
 }
 
 # A ticket the run stops working on: back to Backlog with a comment, kept worktree and branch.
@@ -3453,34 +3551,38 @@ run_blocker() {
 }
 
 # A delivered ticket: merged when merging is on and every bound holds (run_blocker), else listed for a human
-# with the reason. $2 is the open pull request as the REST list gives it. --match-head-commit refuses a head
-# pushed after the checks.
+# with the reason. $2 is the open pull request as the REST list gives it; the tickets after it are the others
+# delivered by the same pull request (a batch). --match-head-commit refuses a head pushed after the checks.
 run_merge() {
-  local n=$1 pr sha reason
+  local n=$1 pr sha reason m all=("$1" "${@:3}")
   pr=$(jq -r '.[0].number' <<<"$2")
   sha=$(jq -r '.[0].head.sha' <<<"$2")
   reason=$(run_blocker "$pr" "$sha" "$(jq -c '.[0]' <<<"$2")")
   if [ -z "$reason" ]; then
     if gh pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
-      RUN_MERGED+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
       RUN_PRS+=("#$pr")
-      (item_set "$n" Status Done) >/dev/null || {
-        echo "#$n: merged, but could not set the Status Done" >&2
-        RUN_NOT_DONE+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
-      }
+      for m in "${all[@]}"; do
+        RUN_MERGED+=("#$m ${RUN_TITLE[$m]} (pull request #$pr)")
+        (item_set "$m" Status Done) >/dev/null || {
+          echo "#$m: merged, but could not set the Status Done" >&2
+          RUN_NOT_DONE+=("#$m ${RUN_TITLE[$m]} (pull request #$pr)")
+        }
+      done
       return 0
     fi
     reason="the merge failed: $(head -n 1 "$RUN_DIR/$n.merge")"
   fi
-  RUN_WAITING+=("#$n ${RUN_TITLE[$n]}: pull request #$pr, $reason")
+  for m in "${all[@]}"; do RUN_WAITING+=("#$m ${RUN_TITLE[$m]}: pull request #$pr, $reason"); done
 }
 
 # Writes the outcome of a ticket, the file `retro` reads: $RUN_DIR/<n>.json holds {ticket, outcome
 # (delivered, outgrown or failed), escalated (the ticket went to Opus), reason (the last failure the
 # session reported, null for a clean delivery), model (of the last session), finishedAt}. $2 is the
-# outcome and $3 the reason, possibly empty. Spec 0001 section 10.
+# outcome and $3 the reason, possibly empty; $4 the session of the ticket when it is not its own (a batch).
+# Spec 0001 section 10.
 run_record() {
-  jq -nc --argjson n "$1" --arg o "$2" --arg r "$3" --arg m "${RUN_MODEL[$1]}" --arg e "${RUN_ESCALATED[$1]:-false}" \
+  local s=${4:-$1}
+  jq -nc --argjson n "$1" --arg o "$2" --arg r "$3" --arg m "${RUN_MODEL[$s]}" --arg e "${RUN_ESCALATED[$s]:-false}" \
     --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{ticket: $n, outcome: $o, escalated: ($e == "true"),
     reason: (if $r == "" then null else $r end), model: $m, finishedAt: $t}' >"$RUN_DIR/$1.json"
 }
@@ -3499,9 +3601,79 @@ run_review() {
   fi
 }
 
+# Reads how a finished batch session went (#263): one outcome line per ticket in its outcome file, `#<n> delivered`,
+# `#<n> outgrown: <reason>` or `#<n> failed: <reason>`; a file without such lines gives its first line to every
+# ticket. The delivered ones are merged or left for a human with their one pull request; each of the others goes
+# back alone as a ticket would (run_giveup: Backlog, needs-human, a comment), the delivered ones are not held back.
+# When none is delivered the session goes on Opus as a ticket would. Returns 1 when the session goes on.
+run_finish_batch() {
+  local n=$1 m file=$RUN_DIR/$1.outcome first line pulls='[]' waiting why
+  local -a done_=() bad=()
+  local -A out=()
+  first=$(head -n 1 "$file" 2>/dev/null) || first=""
+  [ -n "$first" ] || first="failed: the session ended without saying how it went (exit code $(cat "$RUN_DIR/$n.exit"), log in $RUN_DIR)"
+  for m in $(run_members "$n"); do
+    if grep -q '^#[0-9]' "$file" 2>/dev/null; then
+      line=$(sed -n "s/^#$m //p" "$file" | head -n 1)
+      out[$m]=${line:-failed: the session did not say how this ticket went}
+    else
+      out[$m]=$first
+    fi
+    if [ "${out[$m]}" = delivered ]; then done_+=("$m"); else bad+=("$m"); fi
+  done
+  if [ ${#done_[@]} -gt 0 ]; then
+    pulls=$(gh_retry api "repos/$RUN_SLUG/pulls?head=${RUN_SLUG%%/*}:${RUN_BRANCH[$n]}&state=open") || pulls='[]'
+    if ! jq -e 'length > 0' <<<"$pulls" >/dev/null; then
+      for m in "${done_[@]}"; do out[$m]="failed: the session said delivered but there is no open pull request for its branch"; done
+      bad=("${done_[@]}" "${bad[@]}")
+      done_=()
+    fi
+  fi
+  if [ ${#done_[@]} -eq 0 ] && [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ] && [[ ${out[*]} != *outgrown:* ]]; then
+    why=${out[$n]#failed: }
+    printf '\nA first attempt on Sonnet gave up: %s\nIts work is in this worktree; build on it or reset it.\n' "$why" >>"$RUN_DIR/$n.prompt"
+    RUN_ESCALATED[$n]=true
+    RUN_REASON[$n]=$why
+    run_launch "$n" opus || return 0
+    return 1
+  fi
+  if [ ${#done_[@]} -gt 0 ]; then
+    RUN_FAILS=0
+    for m in "${done_[@]}"; do run_record "$m" delivered "${RUN_REASON[$n]:-}" "$n"; done
+    if [ -n "${RUN_ROLE[$n]:-}" ]; then
+      # serve leaves the merge to its integrator pass and the review to its reviewer; the tickets are In review.
+      for m in "${done_[@]}"; do run_review "$m"; done
+    else
+      waiting=${#RUN_WAITING[@]}
+      run_merge "${done_[0]}" "$pulls" "${done_[@]:1}"
+      if [ ${#RUN_WAITING[@]} -gt "$waiting" ]; then
+        for m in "${done_[@]}"; do run_review "$m"; done
+      fi
+    fi
+  fi
+  for m in "${bad[@]}"; do
+    case ${out[$m]} in
+      outgrown:*)
+        RUN_STOP="#$m outgrew its size"
+        run_record "$m" outgrown "${out[$m]#outgrown: }" "$n"
+        run_giveup "$m" "it outgrew its size: ${out[$m]#outgrown: }"
+        ;;
+      *)
+        run_record "$m" failed "${out[$m]#failed: }" "$n"
+        run_giveup "$m" "${out[$m]#failed: }"
+        ;;
+    esac
+  done
+  return 0
+}
+
 # Reads how a finished session went. Returns 1 when the ticket goes on (a retry on Opus).
 run_finish() {
   local n=$1 outcome pulls='[]' waiting
+  if [ -n "${RUN_BATCH[$n]:-}" ]; then
+    run_finish_batch "$n"
+    return
+  fi
   outcome=$(head -n 1 "$RUN_DIR/$n.outcome" 2>/dev/null) || outcome=""
   [ -n "$outcome" ] || outcome="failed: the session ended without saying how it went (exit code $(cat "$RUN_DIR/$n.exit"), log in $RUN_DIR)"
   if [ "$outcome" = delivered ]; then
@@ -3796,9 +3968,9 @@ run_reap() {
 # senior-mode run [--max N] [--parallel P]: delivers up to N Ready tickets, P at a time, each in a
 # headless claude session in its own worktree (spec 0001 §10, ADR 0007), then reports in plain words.
 run() {
-  local max="" parallel="" n title t left
+  local max="" parallel="" n size title t left batch
   local -a queue=() running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_REVIEWED=() RUN_NOT_REVIEW=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
-  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=()
+  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=() RUN_BATCH=()
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP=""
   while [ $# -gt 0 ]; do
@@ -3820,11 +3992,16 @@ run() {
   "$SELF" clean || echo "senior-mode: clean failed; the run goes on" >&2
   security_alerts
   data=$(board_data false) || exit 1
-  while IFS=$'\t' read -r n title; do
+  while IFS=$'\t' read -r n size title batch; do
     [ -n "$n" ] || continue
     RUN_TITLE[$n]=$title
+    # A batch is one queue entry, under its lead; its other tickets come after it in the pick order.
+    if [ -n "$batch" ]; then
+      [ "${batch%% *}" = "$n" ] || continue
+      RUN_BATCH[$n]=$batch
+    fi
     queue+=("$n")
-  done < <(jq -r --argjson max "$max" "$PICK_DEF"'pick | .[:$max][] | [.number, .title] | @tsv' <<<"$data")
+  done < <(queue_lines "$data" "$max")
   if [ ${#queue[@]} -eq 0 ]; then
     echo "No Ready ticket to run."
     return 0
@@ -3840,7 +4017,7 @@ run() {
   while [ ${#queue[@]} -gt 0 ] || [ ${#running[@]} -gt 0 ]; do
     while [ -z "$RUN_STOP" ] && [ ${#running[@]} -lt "$parallel" ] && [ ${#queue[@]} -gt 0 ]; do
       # The first queued ticket whose Paths do not overlap a running one (#152): the index in t.
-      t=$(pick_free "$data" "${running[*]-}" "${queue[*]}")
+      t=$(pick_free "$data" "$(run_busy)" "$(for n in "${queue[@]}"; do run_entry "$n"; done | paste -sd' ' -)")
       [ -n "$t" ] || break
       n=${queue[t]}
       queue=("${queue[@]:0:t}" "${queue[@]:t+1}")
@@ -3868,7 +4045,9 @@ run() {
   for t in "${RUN_NOT_REVIEW[@]}"; do echo "Status not set to In review: $t"; done
   for t in "${RUN_WAITING[@]}"; do echo "Waiting for a human: $t"; done
   for t in "${RUN_FAILED[@]}"; do echo "Failed: $t"; done
-  for n in "${queue[@]}"; do echo "Not started: #$n ${RUN_TITLE[$n]}"; done
+  for n in "${queue[@]}"; do
+    for t in $(run_members "$n"); do echo "Not started: #$t ${RUN_TITLE[$t]}"; done
+  done
 }
 
 # Seconds since the epoch; SENIOR_MODE_NOW stands in for the clock in the tests.
@@ -3917,7 +4096,7 @@ serve_reset() {
 # of its ticket is not a failure. Nothing is launched until the reset time (limit-until), and the ticket of a
 # ticket or test-author session goes back to Ready, its worktree and branch kept, for the first poll after it.
 serve_limit() {
-  local n=$1 text until now prev
+  local n=$1 text until now prev m
   [ ! -s "$RUN_DIR/$n.outcome" ] || return 1
   text=$({
     head -c 20000 "$RUN_DIR/$n-${RUN_MODEL[$n]}.json" 2>/dev/null
@@ -3933,7 +4112,11 @@ serve_limit() {
   case ${RUN_ROLE[$n]:-ticket} in
     # A reviewer or an integrator leaves no status: the pull request is looked at again after the reset (ADR 0019).
     reviewer | integrator) [ -z "${RUN_CWD[$n]:-}" ] || git worktree remove --force "${RUN_CWD[$n]}" 2>/dev/null || true ;;
-    *) (item_set "$n" Status Ready) >/dev/null || echo "#$n: could not set the Status back to Ready" >&2 ;;
+    *)
+      for m in $(run_members "$n"); do
+        (item_set "$m" Status Ready) >/dev/null || echo "#$m: could not set the Status back to Ready" >&2
+      done
+      ;;
   esac
   return 0
 }
@@ -4324,13 +4507,16 @@ serve_candidates() {
 
 # A merged pull request: counted, its ticket Done.
 serve_done() {
-  local t=$1 pr=$2
+  local t=$1 pr=$2 m
   rm -f "$SERVE_DIR/queued-$pr" "$SERVE_DIR/rounds-$t"
-  RUN_MERGED+=("#$t ${RUN_TITLE[$t]:-} (pull request #$pr)")
-  (item_set "$t" Status Done) >/dev/null || {
-    echo "#$t: merged, but could not set the Status Done" >&2
-    RUN_NOT_DONE+=("#$t ${RUN_TITLE[$t]:-} (pull request #$pr)")
-  }
+  # Every ticket of a batch is done with its one pull request (the lead's <n>.batch).
+  for m in $(cat "$SERVE_DIR/$t.batch" 2>/dev/null || echo "$t"); do
+    RUN_MERGED+=("#$m ${RUN_TITLE[$m]:-} (pull request #$pr)")
+    (item_set "$m" Status Done) >/dev/null || {
+      echo "#$m: merged, but could not set the Status Done" >&2
+      RUN_NOT_DONE+=("#$m ${RUN_TITLE[$m]:-} (pull request #$pr)")
+    }
+  done
 }
 
 # The pull requests queued for auto-merge (queued-<pr>: the head and the ticket): merged is read back, then
@@ -4595,7 +4781,7 @@ serve_prs() {
 # ceiling, starts the Ready tickets in `pick` order while there is a free slot. A hold (breaker, usage limit)
 # stops every launch, reviewers and integrator sessions included; a merge needs no session and goes on.
 serve_poll() {
-  local now reason data prs n size title
+  local now reason data prs n size title batch
   local -a queue=()
   now=$(serve_now)
   RUN_STOP=""
@@ -4618,15 +4804,24 @@ serve_poll() {
   else
     echo "serve: cannot read the open pull requests; trying again at the next poll" >&2
   fi
-  while IFS=$'\t' read -r n size title; do
+  while IFS=$'\t' read -r n size title batch; do
     [ -n "$n" ] || continue
     [[ " ${running[*]} " != *" $n "* ]] || continue
     RUN_TITLE[$n]=$title
     SERVE_SIZE[$n]=$size
+    # A batch is one queue entry, under its lead: one slot, one session.
+    if [ -n "$batch" ]; then
+      [ "${batch%% *}" = "$n" ] || continue
+      RUN_BATCH[$n]=$batch
+    else
+      unset "RUN_BATCH[$n]"
+    fi
     queue+=("$n")
-  done < <(jq -r "$PICK_DEF"'pick[] | [.number, (.size // "-"), .title] | @tsv' <<<"$data")
+  done < <(queue_lines "$data")
   for n in "${queue[@]}"; do
     serve_can_launch || break
+    # Its Paths overlap nothing running, and a ticket with no Paths runs alone (#152).
+    [ -n "$(pick_free "$data" "$(run_busy)" "$(run_entry "$n")")" ] || continue
     if [ "${SERVE_SIZE[$n]}" = M ] && [ ! -f "$SERVE_COMMON/senior-mode/runs/$n/red-tests" ]; then
       # An M ticket: its red tests come first, from a session of their own (#191).
       RUN_ROLE[$n]="test-author"
@@ -4702,7 +4897,7 @@ serve_digest() {
 serve_loop() {
   local interval old sleeper
   local -a running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_REVIEWED=() RUN_NOT_REVIEW=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
-  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=()
+  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=() RUN_BATCH=()
   local -A SERVE_PR=() SERVE_SHA=() SERVE_SIZE=() SERVE_NOTED=()
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP="" RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP="" RUN_ON_EXIT=serve_limit RUN_FINISH=serve_finish RUN_PROMPT=serve_prompt RUN_LAUNCH_LOG

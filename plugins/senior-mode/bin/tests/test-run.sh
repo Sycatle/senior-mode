@@ -32,7 +32,14 @@ for a in "$@"; do [ "$prev" = --jq ] && jqf=$a; prev=$a; done
 respond() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
 arg() { local prev=""; for a in "$@"; do [ "$prev" = "$FLAG" ] && echo "$a"; prev=$a; done; }
 case "$*" in
-  "api graphql --input -") cat >/dev/null; cat "$FIX/board.json" ;;
+  "api graphql --input -")
+    q=$(cat)
+    if [[ $q == *projectItems* ]]; then
+      n=$(jq -r '.variables.number' <<<"$q")
+      s=$(cat "$FIX/itemstatus-$n" 2>/dev/null || echo "In progress")
+      jq -nc --arg s "$s" '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"},
+        fieldValues: {nodes: [{name: $s, field: {name: "Status"}}]}}]}}}}}'
+    else cat "$FIX/board.json"; fi ;;
   "api repos/acme/app/dependabot/alerts"* | "api repos/acme/app/secret-scanning/alerts"*)
     [ -z "${ALERTS_ERR:-}" ] || { echo "$ALERTS_ERR" >&2; exit 1; }
     f=${2#repos/acme/app/}; f=$FIX/${f%%/*}.json
@@ -805,6 +812,44 @@ grep -q 'pr merge 147' "$GH_LOG" || fail "S: #47 not merged: $(cat "$GH_LOG")"
 grep -q 'Merged.*#47' "$work/out" || fail "S: report misses the merge of #47: $(cat "$work/out")"
 grep -q 'Status not set to Done.*#47' "$work/out" || fail "S: report misses #47 left off Done: $(cat "$work/out")"
 grep -q 'Status not set to Done.*#48' "$work/out" && fail "S: #48 was set Done, but is reported: $(cat "$work/out")"
+
+# U: a delivered ticket whose pull request is left for a human (merging off) is set In review by the run itself
+# (#261), and the report says so when it had to; a ticket already In review is not written again. When the
+# write fails, the report lists the ticket under "Status not set to In review".
+config '{"merge": false}'
+board 60 '[]' 61 '[]' 62 '[]'
+session 60-sonnet delivered pr
+session 61-sonnet delivered pr
+session 62-sonnet delivered pr
+echo "In review" >"$FIX/itemstatus-61"
+EDIT_FAIL="*--id ITEM_62 *--single-select-option-id o3" run || fail "U: run failed: $(cat "$work/out")"
+unset EDIT_FAIL
+rm -f "$FIX/itemstatus-61"
+grep -q 'item-edit.*--id ITEM_60 .*--single-select-option-id o3' "$GH_LOG" || fail "U: #60 not set In review: $(cat "$GH_LOG")"
+grep -q 'item-edit.*--id ITEM_61 .*--single-select-option-id o3' "$GH_LOG" && fail "U: #61 was already In review but written again"
+grep -q 'Status set to In review.*#60' "$work/out" || fail "U: report misses #60 set In review: $(cat "$work/out")"
+grep -q 'Status set to In review.*#61' "$work/out" && fail "U: #61 was already In review, but is reported: $(cat "$work/out")"
+grep -q 'Status not set to In review.*#62' "$work/out" || fail "U: report misses #62 left off In review: $(cat "$work/out")"
+grep -q 'Waiting for a human.*#60' "$work/out" || fail "U: #60 not waiting for a human: $(cat "$work/out")"
+
+# U: a delivered ticket whose pull request is left for a human (merging off) is set In review by the run itself
+# (#261), and the report says so when it had to; a ticket already In review is not written again. When the
+# write fails, the report lists the ticket under "Status not set to In review".
+config '{"merge": false}'
+board 60 '[]' 61 '[]' 62 '[]'
+session 60-sonnet delivered pr
+session 61-sonnet delivered pr
+session 62-sonnet delivered pr
+echo "In review" >"$FIX/itemstatus-61"
+EDIT_FAIL="*--id ITEM_62 *--single-select-option-id o3" run || fail "U: run failed: $(cat "$work/out")"
+unset EDIT_FAIL
+rm -f "$FIX/itemstatus-61"
+grep -q 'item-edit.*--id ITEM_60 .*--single-select-option-id o3' "$GH_LOG" || fail "U: #60 not set In review: $(cat "$GH_LOG")"
+grep -q 'item-edit.*--id ITEM_61 .*--single-select-option-id o3' "$GH_LOG" && fail "U: #61 was already In review but written again"
+grep -q 'Status set to In review.*#60' "$work/out" || fail "U: report misses #60 set In review: $(cat "$work/out")"
+grep -q 'Status set to In review.*#61' "$work/out" && fail "U: #61 was already In review, but is reported: $(cat "$work/out")"
+grep -q 'Status not set to In review.*#62' "$work/out" || fail "U: report misses #62 left off In review: $(cat "$work/out")"
+grep -q 'Waiting for a human.*#60' "$work/out" || fail "U: #60 not waiting for a human: $(cat "$work/out")"
 
 # T: a ticket session script that dies without leaving its exit file (#242) is noticed at once, not after the
 # timeout: needs-human, a comment with the log, a failed record, one failure for the breaker, not retried on

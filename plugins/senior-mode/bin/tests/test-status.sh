@@ -76,7 +76,7 @@ item() {
     fieldValues: {nodes: ([{}, {name: $s, field: {name: "Status"}}]
       + (if $p == "" then [] else [{name: $p, field: {name: "Priority"}}] end)
       + (if $z == "" then [] else [{name: $z, field: {name: "Size"}}] end))},
-    content: {number: $n, title: "Ticket \($n)", url: "https://github.com/acme/app/issues/\($n)", state: $st,
+    content: {authorAssociation: "OWNER", number: $n, title: "Ticket \($n)", url: "https://github.com/acme/app/issues/\($n)", state: $st,
       closedAt: null, labels: {nodes: ($l | map({name: .}))},
       milestone: (if $due == null then null else {title: "Stage \($n)", dueOn: $due} end),
       blockedBy: {nodes: $b}}}'

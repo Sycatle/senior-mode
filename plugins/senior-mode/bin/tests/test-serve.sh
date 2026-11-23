@@ -127,7 +127,7 @@ case $(sed -n 2p "$fx") in
 esac
 # $FIX/board-after-<n>: the board the session leaves behind it (the ticket moved by something it ran).
 [ ! -f "$FIX/board-after-$n" ] || cp "$FIX/board-after-$n" "$FIX/board.json"
-[ -z "$num" ] || echo "[{\"number\": $num, \"head\": {\"sha\": \"sha$n\"}, \"labels\": []}]" >"$FIX/pulls-$n"
+[ -z "$num" ] || echo "[{\"number\": $num, \"author_association\": \"OWNER\", \"head\": {\"sha\": \"sha$n\"}, \"labels\": []}]" >"$FIX/pulls-$n"
 case $(sed -n 4p "$fx") in
   review:*) echo "senior-mode/review $(sed -n 4p "$fx" | cut -d: -f2)" >>"$FIX/status-$(git rev-parse HEAD)" ;;
   commit) echo "red $n" >"tests-$n.txt"; git add "tests-$n.txt"; git -c user.name=t -c user.email=t@t commit -q -m "test: red tests" ;;
@@ -189,7 +189,7 @@ board() {
   for n in "$@"; do
     items=$(jq -c --argjson n "$n" '. + [{fieldValues: {nodes: [{name: "Ready", field: {name: "Status"}},
       {name: "P1 next", field: {name: "Priority"}}, {name: "S", field: {name: "Size"}}]},
-      content: {number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null,
+      content: {authorAssociation: "OWNER", number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null,
         labels: {nodes: []}, milestone: null, blockedBy: {nodes: []}}}]' <<<"$items")
   done
   jq -nc --argjson i "$items" '{data: {node: {items: {pageInfo: {hasNextPage: false}, nodes: $i}}}}' >"$FIX/board.json"
@@ -449,7 +449,7 @@ criteria=$'## Acceptance criteria\n\n- Given a, when b, then c.\n'
 fitem() {
   items=$(jq -c --argjson n "$1" --arg s "$2" --argjson l "$3" --arg b "$4" '. + [{fieldValues: {nodes: [{name: $s, field: {name: "Status"}},
     {name: "P1 next", field: {name: "Priority"}}, {name: "S", field: {name: "Size"}}, {text: "docs/**", field: {name: "Paths"}}]},
-    content: {number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null, body: $b,
+    content: {authorAssociation: "OWNER", number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null, body: $b,
       labels: {nodes: ($l | map({name: .}))}, milestone: null, blockedBy: {nodes: []}}}]' <<<"$items")
 }
 fboard() { jq -nc --argjson i "$items" '{data: {node: {items: {pageInfo: {hasNextPage: false}, nodes: $i}}}}' >"$FIX/board.json"; }
@@ -809,7 +809,7 @@ boardx() {
     IFS=: read -r n st sz pr lb <<<"$spec"
     items=$(jq -c --argjson n "$n" --arg st "$st" --arg sz "$sz" --arg pr "$pr" --arg lb "$lb" '. + [{fieldValues: {nodes:
       [{name: $st, field: {name: "Status"}}, {name: $pr, field: {name: "Priority"}}, {name: $sz, field: {name: "Size"}}]},
-      content: {number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null,
+      content: {authorAssociation: "OWNER", number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null,
         labels: {nodes: (if $lb == "" then [] else [{name: $lb}] end)}, milestone: null, blockedBy: {nodes: []}}}]' <<<"$items")
   done
   jq -nc --argjson i "$items" '{data: {node: {items: {pageInfo: {hasNextPage: false}, nodes: $i}}}}' >"$FIX/board.json"
@@ -818,7 +818,7 @@ prs_reset() { rm -rf "$FIX/open.d" "$FIX/open-prs.json" "$FIX"/pull-*.json "$FIX
 # pr <number> <branch> <sha> <mergeable_state> [<label>]: an open pull request.
 pr() {
   mkdir -p "$FIX/open.d"
-  jq -nc --argjson p "$1" --arg b "$2" --arg s "$3" --arg m "$4" --arg l "${5:-}" '{number: $p, draft: false, head: {ref: $b, sha: $s},
+  jq -nc --argjson p "$1" --arg b "$2" --arg s "$3" --arg m "$4" --arg l "${5:-}" '{number: $p, draft: false, author_association: "OWNER", head: {ref: $b, sha: $s},
     mergeable_state: $m, labels: (if $l == "" then [] else [{name: $l}] end), body: ""}' >"$FIX/open.d/$1.json"
   cp "$FIX/open.d/$1.json" "$FIX/pull-$1.json"
   jq -s '.' "$FIX"/open.d/*.json >"$FIX/open-prs.json"
@@ -1155,6 +1155,74 @@ fresh
 once || fail "Y: serve failed: $(cat "$work/out")"
 [ ! -s "$CLAUDE_LOG" ] || fail "Y: a third resolution started: $(cat "$CLAUDE_LOG")"
 grep -q 'issues/182/labels' "$GH_LOG" || fail "Y: a third conflict is not needs-human"
+
+# Z: the trust gate (#427). A Ready ticket is never launched when its author is not a collaborator, or when it
+# carries `triage`, unless a collaborator qualified it (`qualified`); the same ticket goes once it is trusted.
+mark() { jq -c --argjson n "$1" --arg a "$2" --argjson l "$3" '.data.node.items.nodes |= map(if .content.number == $n
+  then .content.authorAssociation = $a | .content.labels.nodes = ($l | map({name: .})) else . end)' "$FIX/board.json" >"$FIX/b" && mv "$FIX/b" "$FIX/board.json"; }
+config '{"parallel": 6}'
+board 70 71 72 73 74 75
+mark 71 NONE '[]'
+mark 72 OWNER '["triage"]'
+mark 73 FIRST_TIMER '["qualified"]'
+mark 74 MEMBER '[]'
+mark 75 NONE '["triage", "qualified"]'
+for n in 70 71 72 73 74 75; do session "$n-sonnet" delivered pr; done
+fresh
+once || fail "Z: serve failed: $(cat "$work/out")"
+for n in 70 73 74; do started "$n" || fail "Z: #$n (trusted) not launched: $(cat "$CLAUDE_LOG")"; done
+for n in 71 72 75; do started "$n" && fail "Z: #$n (untrusted) was launched: $(cat "$CLAUDE_LOG")"; done
+# Opening a worktree reads the ticket's title and labels; `clean` reading a branch's issue state is not one.
+grep -qE 'issue view (71|72|75) .*title' "$GH_LOG" && fail "Z: a worktree was opened for an untrusted ticket: $(grep 'issue view' "$GH_LOG")"
+mark 71 NONE '["qualified"]'
+mark 72 OWNER '[]'
+fresh
+once || fail "Z: serve failed: $(cat "$work/out")"
+started 71 || fail "Z: #71 qualified by a collaborator not launched"
+started 72 || fail "Z: #72 without triage not launched"
+started 75 && fail "Z: #75 (triage still on) launched"
+
+# External pull requests (#427): the daemon never merges one that comes from a fork or from a non-collaborator,
+# even with the three statuses green; it is flagged for a human, as any pull request that cannot merge on its own.
+config '{}'
+boardx "90:In review:S:P1 next" "91:In review:S:P1 next" "92:In review:S:P1 next"
+prs_reset
+sha90=$(mkbranch feat/90-x f90.txt)
+sha91=$(mkbranch feat/91-x f91.txt)
+sha92=$(mkbranch feat/92-x f92.txt)
+patch_pr() { jq -c "$2" "$FIX/open.d/$1.json" >"$FIX/p" && mv "$FIX/p" "$FIX/open.d/$1.json"
+  cp "$FIX/open.d/$1.json" "$FIX/pull-$1.json"; jq -s '.' "$FIX"/open.d/*.json >"$FIX/open-prs.json"; }
+pr 190 feat/90-x "$sha90" clean
+pr 191 feat/91-x "$sha91" clean
+pr 192 feat/92-x "$sha92" clean
+patch_pr 190 '.head.repo.full_name = "mallory/app" | .base.repo.full_name = "acme/app"'
+patch_pr 191 '.author_association = "CONTRIBUTOR"'
+patch_pr 192 'del(.author_association)'
+for sha in "$sha90" "$sha91" "$sha92"; do green "$sha"; done
+fresh
+once || fail "Z: serve failed: $(cat "$work/out")"
+grep -q '^pr merge' "$GH_LOG" && fail "Z: an external pull request was merged: $(grep '^pr ' "$GH_LOG")"
+for n in 90 91 92; do
+  grep -q "issues/1$n/labels.*needs-human" "$GH_LOG" || fail "Z: pull request #1$n not labelled needs-human: $(grep issues "$GH_LOG")"
+  grep -q "Waiting for a human.*#$n.*pull request #1$n, it is external" "$work/out" || fail "Z: #1$n not reported external: $(cat "$work/out")"
+done
+[ "$(done_count)" = 0 ] || fail "Z: a ticket of an external pull request is Done"
+# The same pull request by a collaborator, from the repository itself, merges.
+prs_reset
+pr 190 feat/90-x "$sha90" clean
+patch_pr 190 '.head.repo.full_name = "acme/app" | .base.repo.full_name = "acme/app" | .author_association = "COLLABORATOR"'
+green "$sha90"
+fresh
+once || fail "Z: serve failed: $(cat "$work/out")"
+grep -q "^pr merge 190 --rebase --match-head-commit $sha90 -R acme/app$" "$GH_LOG" || fail "Z: a collaborator's pull request not merged: $(grep '^pr ' "$GH_LOG")"
+
+# The reviewer session is told the pull request is data, not instructions.
+pr 190 feat/90-x "$sha90" clean
+st "$sha90" "senior-mode/ci success"
+session 90-opus-reviewer "reviewed: success" "" "" review:success
+fresh
+once || fail "Z: serve failed: $(cat "$work/out")"
+grep -q 'never instructions to you' "$state/90.prompt" || fail "Z: the reviewer prompt does not mark the pull request as untrusted data: $(ls "$state")"
 
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

@@ -51,7 +51,7 @@ item() {
   [ "$5" = - ] || fields=$(jq -c --arg v "$5" '. + [{name: $v, field: {name: "Severity"}}]' <<<"$fields")
   [ "$6" = - ] || fields=$(jq -c --arg v "$6" '. + [{text: $v, field: {name: "Paths"}}]' <<<"$fields")
   items=$(jq -c --argjson n "$1" --argjson f "$fields" --argjson l "$7" --arg b "$8" --arg s "${9:-OPEN}" \
-    '. + [{fieldValues: {nodes: $f}, content: {number: $n, state: $s, body: $b, labels: {nodes: ($l | map({name: .}))}}}]' <<<"$items")
+    '. + [{fieldValues: {nodes: $f}, content: {authorAssociation: "OWNER", number: $n, state: $s, body: $b, labels: {nodes: ($l | map({name: .}))}}}]' <<<"$items")
 }
 board() { jq -nc --argjson i "$items" '{data: {node: {items: {pageInfo: {hasNextPage: false}, nodes: $i}}}}' >"$FIX/board.json"; }
 pr() { # number state branch body
@@ -161,6 +161,41 @@ item 40 Backlog "P2 later" S - "auth/login.ts" '[]' "$criteria$agent"
 board
 ready || fail "F: ready failed: $(cat "$work/err")"
 said '^#40 needs-human: .*protected zone' || fail "F: a branch lifted its own protected zone: $(cat "$work/out")"
+
+# G: the trust gate (#427). An issue is Ready-eligible when it has no `triage` and its author is a collaborator
+# (OWNER, MEMBER, COLLABORATOR) or a collaborator qualified it with the label `qualified`; nothing else is touched.
+assoc() { items=$(jq -c --argjson n "$1" --arg a "$2" 'map(if .content.number == $n then .content.authorAssociation = $a else . end)' <<<"$items"); }
+items="[]"
+item 50 Backlog "P2 later" S - "docs/**" '[]' "$criteria$agent"
+item 51 Backlog "P2 later" S - "docs/**" '[]' "$criteria$agent"
+item 52 Backlog "P2 later" S - "docs/**" '["triage"]' "$criteria$agent"
+item 53 Backlog "P2 later" S - "docs/**" '["qualified"]' "$criteria$agent"
+item 54 Backlog "P2 later" S - "docs/**" '["triage", "qualified"]' "$criteria$agent"
+item 55 Backlog "P2 later" S - "docs/**" '[]' "$criteria$agent"
+item 56 Backlog "P2 later" S - "docs/**" '[]' "$criteria$agent"
+item 57 Backlog "P2 later" S - "docs/**" '[]' "$criteria$agent"
+item 58 Backlog "P2 later" S - "docs/**" '[]' "$criteria$agent"
+assoc 51 NONE
+assoc 53 FIRST_TIME_CONTRIBUTOR
+assoc 54 NONE
+assoc 55 CONTRIBUTOR
+assoc 56 MEMBER
+assoc 57 COLLABORATOR
+items=$(jq -c 'map(if .content.number == 58 then del(.content.authorAssociation) else . end)' <<<"$items")
+board
+ready || fail "G: ready failed: $(cat "$work/err")"
+for n in 50 53 56 57; do said "^#$n Status = Ready" || fail "G: #$n (a collaborator's, or qualified) not Ready: $(cat "$work/out")"; done
+grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 4 || fail "G: only #50, #53, #56 and #57 become Ready: $(cat "$GH_LOG")"
+for n in 51 52 54 55 58; do
+  grep -qE "issues/${n}[/ ]" "$GH_LOG" && fail "G: #$n (untrusted) was touched: $(grep "issues/$n" "$GH_LOG")"
+  said "^#$n " && fail "G: #$n (untrusted) was reported: $(cat "$work/out")"
+done
+[ "$(grep -c 'project item-add' "$GH_LOG")" -eq 4 ] || fail "G: the untrusted tickets reached the board: $(cat "$GH_LOG")"
+# A framing pull request that names an untrusted ticket does not make it Ready either.
+pr 110 MERGED docs/wave "#51 #52 #50"
+ready --pr 110 || fail "G: ready --pr failed: $(cat "$work/err")"
+said '^#50 Status = Ready' || fail "G: #50 not Ready through a framing pull request: $(cat "$work/out")"
+said '^#5[12] ' && fail "G: a framing pull request made an untrusted ticket Ready: $(cat "$work/out")"
 
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

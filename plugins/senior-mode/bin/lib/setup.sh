@@ -269,7 +269,9 @@ setup_github() {
   labels='needs-human|d93f0b|Waiting for a human decision or merge
 needs-info|fbca04|Missing information before work can start
 blocked|b60205|Blocked by something outside this ticket
-security|ee0701|A security risk, with its Severity on the board'
+security|ee0701|A security risk, with its Severity on the board
+triage|fbca04|External report, not qualified yet: serve never picks it
+qualified|0e8a16|Qualified by a collaborator: serve may pick it though its author is external'
   [ "$owner_type" = Organization ] || labels+='
 type:feature|a2eeef|New capability for users
 type:bug|d73a4a|Something does not work as specified

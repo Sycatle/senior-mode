@@ -164,7 +164,9 @@ outcome=$(sed -n 1p "$fx")
 # A batch session (#263) writes one outcome line per ticket: $FIX/outcome-<lead> holds them.
 [ ! -f "$FIX/outcome-$n" ] || cp "$FIX/outcome-$n" "$SENIOR_MODE_RUN_OUTCOME"
 [ "$(sed -n 2p "$fx")" != pr ] ||
-  echo "[{\"number\": $((n + 100)), \"head\": {\"sha\": \"sha$n\"}, \"labels\": $(cat "$FIX/labels-$n" 2>/dev/null || echo '[]')}]" >"$FIX/pulls-$n"
+  echo "[{\"number\": $((n + 100)), \"author_association\": \"OWNER\", \"head\": {\"sha\": \"sha$n\"}, \"labels\": $(cat "$FIX/labels-$n" 2>/dev/null || echo '[]')}]" >"$FIX/pulls-$n"
+# $FIX/external-<n>: a jq filter that makes the pull request of the ticket external (#427).
+[ ! -f "$FIX/external-$n" ] || { jq -c "$(cat "$FIX/external-$n")" "$FIX/pulls-$n" >"$FIX/pulls-$n.x" && mv "$FIX/pulls-$n.x" "$FIX/pulls-$n"; }
 [ "$(sed -n 3p "$fx")" != slow ] || sleep 3
 echo "end $n" >>"$FIX/trace"
 echo '{"result": "ok"}'
@@ -216,7 +218,7 @@ board() {
     n=$1
     items=$(jq -c --argjson n "$n" --argjson l "$2" '. + [{fieldValues: {nodes: [{name: "Ready", field: {name: "Status"}},
       {name: "P1 next", field: {name: "Priority"}}, {name: "S", field: {name: "Size"}}]},
-      content: {number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null,
+      content: {authorAssociation: "OWNER", number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null,
         labels: {nodes: ($l | map({name: .}))}, milestone: null, blockedBy: {nodes: []}}}]' <<<"$items")
     shift 2
   done
@@ -407,7 +409,7 @@ grep -q 'no-such-agent' "$work/out" || fail "G: missing agent not named: $(cat "
 config '{"parallel": 2}'
 board 71 '[]' 72 '[]'
 jq '.data.node.items.nodes += [{fieldValues: {nodes: [{name: "In progress", field: {name: "Status"}}]},
-  content: {number: 70, title: "Ticket 70", url: "u", state: "OPEN", closedAt: null, labels: {nodes: []},
+  content: {authorAssociation: "OWNER", number: 70, title: "Ticket 70", url: "u", state: "OPEN", closedAt: null, labels: {nodes: []},
     milestone: null, blockedBy: {nodes: []}}}]' "$FIX/board.json" >"$work/b" && mv "$work/b" "$FIX/board.json"
 session 71-sonnet delivered pr
 session 72-sonnet delivered pr
@@ -1025,7 +1027,7 @@ config '{}'
 board
 jq -c --arg old "$(date -u -d '@'$(($(date +%s) - 20 * 86400)) +%Y-%m-%dT%H:%M:%SZ)" --arg new "$(date -u -d '@'$(($(date +%s) - 3 * 86400)) +%Y-%m-%dT%H:%M:%SZ)" '
   def it($n; $s; $st; $at; $arch): {id: "PVTI_\($n)", isArchived: $arch, fieldValues: {nodes: [{name: $s, field: {name: "Status"}}]},
-    content: {number: $n, title: "Ticket \($n)", url: "u", state: $st, closedAt: $at, labels: {nodes: []}, milestone: null, blockedBy: {nodes: []}}};
+    content: {authorAssociation: "OWNER", number: $n, title: "Ticket \($n)", url: "u", state: $st, closedAt: $at, labels: {nodes: []}, milestone: null, blockedBy: {nodes: []}}};
   .data.node.items.nodes += [it(60; "Done"; "CLOSED"; $old; false), it(61; "Done"; "CLOSED"; $new; false), it(62; "Done"; "OPEN"; null; false),
     it(63; "In review"; "CLOSED"; $old; false), it(64; "Done"; "CLOSED"; $old; true)]' "$FIX/board.json" >"$FIX/b" && mv "$FIX/b" "$FIX/board.json"
 rm -f "$FIX/archived"
@@ -1081,6 +1083,22 @@ grep -q 'No Ready ticket' "$work/out" || fail "E: empty board not reported: $(ca
 [ "$(grep -c '^pr list' "$GH_LOG")" -eq 1 ] || fail "E: a run with no ticket cleans once, at its start: $(cat "$GH_LOG")"
 run --max 0 && fail "E: --max 0 accepted"
 run --parallel x && fail "E: --parallel x accepted"
+
+# X2: an external pull request (#427) is never merged, whatever its statuses say: one from a fork, one by a
+# non-collaborator, one whose association is unknown; a collaborator's own pull request still merges.
+config '{"maxTickets": 4, "parallel": 4, "merge": true}' '{"protection": "ruleset"}'
+for n in 481 482 483 484; do echo "$green" >"$FIX/status-$n"; done
+echo '.[0].head.repo.full_name = "mallory/app" | .[0].base.repo.full_name = "acme/app"' >"$FIX/external-481"
+echo '.[0].author_association = "CONTRIBUTOR"' >"$FIX/external-482"
+echo '.[0] |= del(.author_association)' >"$FIX/external-483"
+echo '.[0].author_association = "COLLABORATOR"' >"$FIX/external-484"
+board 481 '[]' 482 '[]' 483 '[]' 484 '[]'
+for n in 481 482 483 484; do session "$n-sonnet" delivered pr; done
+run || fail "X2: run failed: $(cat "$work/out")"
+for n in 581 582 583; do grep -q "pr merge $n" "$GH_LOG" && fail "X2: merged the external pull request #$n"; done
+grep -qx 'pr merge 584 --rebase --match-head-commit sha484 -R acme/app' "$GH_LOG" || fail "X2: a collaborator's pull request not merged: $(grep merge "$GH_LOG")"
+for n in 481 482 483; do grep -q "Waiting for a human.*#$n.*external" "$work/out" || fail "X2: #$n not reported as external: $(cat "$work/out")"; done
+rm -f "$FIX"/external-48*
 
 [ "$failures" -eq 0 ] && echo "run: all cases pass"
 exit "$((failures > 0))"

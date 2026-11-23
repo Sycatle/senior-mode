@@ -109,7 +109,7 @@ run_usage_line() {
 # leave <n>.exit, and run would wait for the whole timeout.
 # shellcheck disable=SC2016 # lines of the script, expanded when it runs
 run_launch() {
-  local n=$1 model=$2 script=$RUN_DIR/$1.sh cmd rc=0 dir
+  local n=$1 model=$2 script=$RUN_DIR/$1.sh cmd rc=0 line dir
   local -a SESSION_FLAGS
   rm -f "$RUN_DIR/$n.outcome" "$RUN_DIR/$n.exit" "$RUN_DIR/$n.pgid"
   RUN_MODEL[$n]=$model
@@ -120,7 +120,7 @@ run_launch() {
   {
     echo '#!/usr/bin/env bash'
     # Its process group, for run_timeout to kill the session with everything it started.
-    printf 'ps -o pgid= -p $$ | tr -d " " >%q\n' "$RUN_DIR/$n.pgid"
+    printf 'ps -o pgid= -p $$ | tr -d " " >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/$n.pgid" "$RUN_DIR/$n.pgid" "$RUN_DIR/$n.pgid"
     printf 'cd %q || exit 1\n' "$dir"
     # Through `slot` (#153): a slot of its own, among the ${parallel:-autonomy.parallel} of the run.
     printf 'SENIOR_MODE_RUN=1 %sSENIOR_MODE_RUN_OUTCOME=%q SENIOR_MODE_SLOTS=%q %q slot -- %q -p --model %q --permission-mode bypassPermissions --output-format json' \
@@ -130,7 +130,7 @@ run_launch() {
     echo 'rc=$?'
     run_usage_line "$n" "${RUN_ROLE[$n]:-ticket}" "$RUN_DIR/$n-$model.json"
     printf 'echo $rc >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit"
-  } >"$script"
+  } | state_write "$script"
   cmd="bash $(printf '%q' "$script")"
   if command -v tmux >/dev/null; then
     if tmux has-session -t senior-mode-run 2>/dev/null; then
@@ -147,8 +147,13 @@ run_launch() {
     run_detach "$script"
   fi
   echo "#$n: session started on $model${RUN_BATCH[$n]:+ (batch: $(run_members "$n"))}"
-  # serve counts its launches for autonomy.sessionsPerHour, the safety cap: one line, the time, per session started.
-  [ -z "${RUN_LAUNCH_LOG:-}" ] || serve_now >>"$RUN_LAUNCH_LOG"
+  # serve counts its launches for autonomy.sessionsPerHour, the safety cap: one line, `<time> <kind>` (ticket, or the role), per session
+  # started; <n>.launched keeps the line for a session that dies at once to take it back.
+  if [ -n "${RUN_LAUNCH_LOG:-}" ]; then
+    line="$(serve_now) ${RUN_ROLE[$n]:-ticket}"
+    state_put "$RUN_DIR/$n.launched" "$line"
+    printf '%s\n' "$line" | state_append "$RUN_LAUNCH_LOG"
+  fi
 }
 
 # Opens the ticket with `senior-mode start` (worktree, branch and Status In progress, named and tracked
@@ -183,7 +188,7 @@ run_timebox() {
   jq -e '[.labels[]?.name] | index("type:spike")' <<<"$t" >/dev/null 2>&1 || return 0
   v=$(jq -r '.body // ""' <<<"$t" | sed -nE 's/^Timebox: ([1-9][0-9]*)([mh])$/\1 \2/p' | head -n 1)
   [ -n "$v" ] || return 0
-  if [ "${v#* }" = h ]; then echo $((${v% *} * 60)); else echo "${v% *}"; fi >"$RUN_DIR/$n.timebox"
+  { if [ "${v#* }" = h ]; then echo $((${v% *} * 60)); else echo "${v% *}"; fi; } | state_write "$RUN_DIR/$n.timebox"
 }
 
 # Opens the ticket (run_open), then launches its session on Sonnet with the prompt of RUN_PROMPT (run's own
@@ -197,13 +202,13 @@ run_start() {
   # A session that a transient error interrupted (serve_transient) resumes on its model, with its prompt as it was.
   if [ -s "$RUN_DIR/$1.model" ] && [ -s "$RUN_DIR/$1.prompt" ]; then
     model=$(cat "$RUN_DIR/$1.model")
-    [ -z "${RUN_BATCH[$1]:-}" ] || echo "${RUN_BATCH[$1]}" >"$RUN_DIR/$1.batch"
+    [ -z "${RUN_BATCH[$1]:-}" ] || state_put "$RUN_DIR/$1.batch" "${RUN_BATCH[$1]}"
   elif [ -n "${RUN_BATCH[$1]:-}" ]; then
     # The tickets of the batch, for serve_recover to find them after a restart.
-    echo "${RUN_BATCH[$1]}" >"$RUN_DIR/$1.batch"
-    "${RUN_PROMPT_BATCH:-run_prompt_batch}" "$1" "${RUN_BRANCH[$1]}" "${RUN_BATCH[$1]}" >"$RUN_DIR/$1.prompt"
+    state_put "$RUN_DIR/$1.batch" "${RUN_BATCH[$1]}"
+    "${RUN_PROMPT_BATCH:-run_prompt_batch}" "$1" "${RUN_BRANCH[$1]}" "${RUN_BATCH[$1]}" | state_write "$RUN_DIR/$1.prompt"
   else
-    "${RUN_PROMPT:-run_prompt}" "$1" "${RUN_TITLE[$1]}" "${RUN_BRANCH[$1]}" >"$RUN_DIR/$1.prompt"
+    "${RUN_PROMPT:-run_prompt}" "$1" "${RUN_TITLE[$1]}" "${RUN_BRANCH[$1]}" | state_write "$RUN_DIR/$1.prompt"
   fi
   run_launch "$1" "$model"
 }
@@ -436,7 +441,7 @@ run_record() {
   local s=${4:-$1}
   jq -nc --argjson n "$1" --arg o "$2" --arg r "$3" --arg m "${RUN_MODEL[$s]}" --arg e "${RUN_ESCALATED[$s]:-false}" \
     --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{ticket: $n, outcome: $o, escalated: ($e == "true"),
-    reason: (if $r == "" then null else $r end), model: $m, finishedAt: $t}' >"$RUN_DIR/$1.json"
+    reason: (if $r == "" then null else $r end), model: $m, finishedAt: $t}' | state_write "$RUN_DIR/$1.json"
 }
 
 # Sets a ticket In review when its Status is anything else, and says so in the report; a write that
@@ -483,7 +488,7 @@ run_finish_batch() {
   fi
   if [ ${#done_[@]} -eq 0 ] && [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ] && [[ ${out[*]} != *outgrown:* ]]; then
     why=${out[$n]#failed: }
-    printf '\nA first attempt on Sonnet gave up: %s\nIts work is in this worktree; build on it or reset it.\n' "$why" >>"$RUN_DIR/$n.prompt"
+    printf '\nA first attempt on Sonnet gave up: %s\nIts work is in this worktree; build on it or reset it.\n' "$why" | state_append "$RUN_DIR/$n.prompt"
     RUN_ESCALATED[$n]=true
     RUN_REASON[$n]=$why
     run_launch "$n" opus || return 0
@@ -555,7 +560,7 @@ run_finish() {
     *)
       if [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ]; then
         printf '\nA first attempt on Sonnet gave up: %s\nIts work is in this worktree; build on it or reset it.\n' \
-          "${outcome#failed: }" >>"$RUN_DIR/$n.prompt"
+          "${outcome#failed: }" | state_append "$RUN_DIR/$n.prompt"
         RUN_ESCALATED[$n]=true
         RUN_REASON[$n]=${outcome#failed: }
         # A window that did not start has failed the ticket: it is finished, not going on.
@@ -586,8 +591,8 @@ notify() {
       echo "#$n: could not mention $mention" >&2
   fi
   if [ "$event" = needs-human ] && [ -n "$n" ] && [ -n "${SERVE_DIR:-}" ]; then
-    jq -nc --argjson at "$(serve_now)" --arg n "$n" --arg u "$url" --arg why "$reason" '{at: $at, number: ($n | tonumber), url: $u, reason: $why}' \
-      >>"$SERVE_DIR/questions"
+    jq -nc --argjson at "$(serve_now)" --arg n "$n" --arg u "$url" --arg why "$reason" '{at: $at, number: ($n | tonumber), url: $u, reason: $why}' |
+      state_append "$SERVE_DIR/questions"
     return 0
   fi
   notify_post "$event" "$n" "$url" "$reason"
@@ -623,10 +628,10 @@ run_docs() {
   run_session_flags "$wt"
   run_trust "$wt"
   printf "Pull requests %s were just merged on %s. Bring the living docs up to date with them (README, architecture, user-facing changelog), with the project's docs skill if it has one. If nothing needs to change, stop. Otherwise commit on branch %s, run senior-mode check, push and open a pull request; never merge it.\n" \
-    "${RUN_PRS[*]}" "$RUN_SLUG" "$branch" >"$RUN_DIR/docs.prompt"
+    "${RUN_PRS[*]}" "$RUN_SLUG" "$branch" | state_write "$RUN_DIR/docs.prompt"
   {
     echo '#!/usr/bin/env bash'
-    printf 'ps -o pgid= -p $$ | tr -d " " >%q\n' "$RUN_DIR/docs.pgid"
+    printf 'ps -o pgid= -p $$ | tr -d " " >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/docs.pgid" "$RUN_DIR/docs.pgid" "$RUN_DIR/docs.pgid"
     printf 'cd %q || exit 1\n' "$wt"
     printf 'SENIOR_MODE_RUN=1 %q -p --model sonnet --permission-mode bypassPermissions --output-format json' "$RUN_CLAUDE"
     [ ${#SESSION_FLAGS[@]} -eq 0 ] || printf ' %q' "${SESSION_FLAGS[@]}"
@@ -634,7 +639,7 @@ run_docs() {
     echo 'rc=$?'
     run_usage_line null docs "$RUN_DIR/docs.json"
     printf 'echo $rc >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/docs.exit" "$RUN_DIR/docs.exit" "$RUN_DIR/docs.exit"
-  } >"$script"
+  } | state_write "$script"
   run_detach "$script"
   pid=$!
   limit=$((RUN_TIMEOUT * ${SENIOR_MODE_TIMEOUT_UNIT:-60}))
@@ -662,7 +667,7 @@ run_docs() {
     RUN_FAILED+=("$reason (branch $branch kept, log $RUN_DIR/docs.log)")
   }
   jq -nc --arg r "$reason" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{session: "docs", outcome: (if $r == "" then "done" else "failed" end),
-    reason: (if $r == "" then null else $r end), finishedAt: $t}' >"$RUN_DIR/docs-outcome.json"
+    reason: (if $r == "" then null else $r end), finishedAt: $t}' | state_write "$RUN_DIR/docs-outcome.json"
 }
 
 # Is the plugin enabled for the sessions the run starts? Claude Code keeps it in `enabledPlugins`
@@ -816,7 +821,7 @@ run_prepare() {
 run_token_new() {
   RUN_TOKEN=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
   [ ${#RUN_TOKEN} -eq 48 ] || die "cannot draw a random token for the run"
-  (umask 077 && printf '%s\n' "$RUN_TOKEN" >"$RUN_DIR/token") || die "cannot write the run token"
+  (umask 077 && printf '%s\n' "$RUN_TOKEN" | state_write "$RUN_DIR/token") || die "cannot write the run token"
 }
 
 # One look at the sessions in `running` (the caller's array): finished ones are read (run_finish), the ones

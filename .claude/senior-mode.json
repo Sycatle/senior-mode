@@ -27,6 +27,10 @@
       "run": ".github/scripts/docs-drift.sh"
     },
     {
+      "name": "state writes",
+      "run": ".github/scripts/state-writes.sh"
+    },
+    {
       "name": "script tests",
       "run": ".github/scripts/script-tests.sh"
     },

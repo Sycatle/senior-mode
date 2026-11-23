@@ -624,6 +624,13 @@ whose end it never read. Each goes back to Ready and is picked again, its worktr
 ticket are counted in `<n>.recovered`: when the count reaches `autonomy.maxConsecutiveFailures`, the ticket gets
 `needs-human` instead (an [alert](#alerts)). A session that is still alive is left alone.
 
+The state files of `serve` survive a power cut or a kill. Each is written whole to `<file>.tmp.<pid>`, synced and
+moved into place, so a reader sees the old file or the new one; read-modify-write (the counts of `launches`, the
+breaker, the hold) holds one `flock` on `state.lock`, which the kernel drops with its holder. A file that cannot be read
+is not fatal: it is set aside as `<file>.corrupt-<epoch>` (kept 7 days, said once) and its default applies. At start,
+the temporary files of a write that a kill cut are removed. A `serve.pid` whose process is not a `senior-mode` is
+replaced; one that is refuses the second `serve`.
+
 ### Session slots
 
 Parallel sessions must not collide on a port, a database or a cache. `run` starts every ticket session

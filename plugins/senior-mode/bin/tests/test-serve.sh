@@ -1678,5 +1678,44 @@ once || fail "AH: serve failed: $(cat "$work/out")"
 [ ! -e "$state/held" ] || fail "AH: a green main did not lift the hold: $(cat "$state/held")"
 started 95 || fail "AH: #95 not started once main is green: $(cat "$work/out")"
 
+# AE: the state files (spec 373 section 3). A serve.pid of a process that is not a serve (a reused pid) is replaced; a
+# serve that runs refuses the second (G). Files cut to half, as a power cut leaves them without the atomic write, are set
+# aside as <file>.corrupt-<epoch> once, the default applies, and the ticket still ends delivered.
+config '{}'
+board 98
+session 98-sonnet delivered pr
+fresh
+mkdir -p "$state"
+sleep 60 &
+stale=$!
+echo "$stale" >"$state/serve.pid"
+half() { local n; n=$(wc -c <"$1"); head -c $((n / 2)) "$1" >"$1.half" && mv "$1.half" "$1"; }
+jq -nc '{cause: "deps", since: 1800000000, probe: "expensive", nextProbe: 1900000000, detail: "npm install failed"}' >"$state/held"
+echo "0123456789abcdef 98" >"$state/queued-300"
+echo "1" >"$state/rounds-98"
+echo "sonnet" >"$state/98.model"
+echo "1800000000 ticket" >"$state/launches"
+echo "1800000001 ticket" >>"$state/launches"
+for f in held queued-300 rounds-98 98.model; do half "$state/$f"; done
+half "$state/launches"
+once || fail "AE: serve failed on cut files: $(cat "$work/out")"
+kill "$stale" 2>/dev/null || true
+grep -q 'already runs' "$work/out" && fail "AE: a pid that is not a serve stopped it: $(cat "$work/out")"
+outcome_of 98 delivered AE
+for f in held queued-300; do
+  [ "$(find "$state" -name "$f.corrupt-*" | wc -l)" -eq 1 ] || fail "AE: $f was not set aside: $(ls "$state")"
+  [ ! -e "$state/$f" ] || fail "AE: $f is still there"
+done
+[ "$(grep -c 'held could not be read' "$work/out")" -eq 1 ] || fail "AE: the cut hold is not said once: $(cat "$work/out")"
+SENIOR_MODE_NOW=1800000030 once || fail "AE: serve failed on the next poll: $(cat "$work/out")"
+grep -q 'could not be read' "$work/out" && fail "AE: a file set aside is said again: $(cat "$work/out")"
+# A temporary file of a write that a kill cut stays out of the way and is removed at the next start.
+echo partial >"$state/limit-until.tmp.4999990"
+echo done >"$state/held.tmp.$$"
+once || fail "AE: serve failed: $(cat "$work/out")"
+[ ! -e "$state/limit-until.tmp.4999990" ] || fail "AE: the temporary file of a dead writer is left"
+[ -e "$state/held.tmp.$$" ] || fail "AE: the temporary file of a live writer was removed"
+rm -f "$state/held.tmp.$$"
+
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

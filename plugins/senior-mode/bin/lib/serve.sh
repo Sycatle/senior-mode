@@ -71,7 +71,7 @@ serve_backoff() {
 # of a ticket or test-author session goes back to Ready, its worktree and branch kept, for the first poll after it.
 # A message with no reset time waits 5, 10, 20, 40, then 60 minutes (limit-streak counts the ends in a row).
 serve_limit() {
-  local n=$1 text until now prev streak wait
+  local n=$1 text until now streak wait
   [ ! -s "$RUN_DIR/$n.outcome" ] || return 1
   text=$({
     head -c 20000 "$RUN_DIR/$n-${RUN_MODEL[$n]}.json" 2>/dev/null
@@ -83,17 +83,12 @@ serve_limit() {
     until=$((until + 60))
     rm -f "$SERVE_DIR/limit-streak"
   else
-    streak=$(cat "$SERVE_DIR/limit-streak" 2>/dev/null) || streak=0
-    [[ $streak =~ ^[0-9]+$ ]] || streak=0
-    streak=$((streak + 1))
-    echo "$streak" >"$SERVE_DIR/limit-streak"
+    streak=$(state_update state_counter_add "$SERVE_DIR/limit-streak") || streak=1
     wait=$((5 << (streak < 5 ? streak - 1 : 4)))
     [ "$wait" -le 60 ] || wait=60
     until=$((now + wait * 60))
   fi
-  prev=$(cat "$SERVE_DIR/limit-until" 2>/dev/null) || prev=0
-  [[ $prev =~ ^[0-9]+$ ]] || prev=0
-  [ "$prev" -ge "$until" ] || echo "$until" >"$SERVE_DIR/limit-until"
+  state_update state_keep_later "$SERVE_DIR/limit-until" "$until" || true
   echo "#$n: the session hit the usage limit; nothing is launched until $(date -d "@$until" '+%F %T' 2>/dev/null || echo "$until")" >&2
   # The ticket goes back to Ready: its start is not one against autonomy.ticketsPerHour (#355).
   [ "${RUN_ROLE[$n]:-ticket}" != ticket ] || serve_start_back "$n"
@@ -104,8 +99,7 @@ serve_limit() {
 # The last start of the ticket $1 is taken back from ticket-starts.
 serve_start_back() {
   [ -s "$SERVE_DIR/ticket-starts" ] || return 0
-  awk -v n="$1" '{ l[NR] = $0; if ($2 == n) last = NR } END { for (i = 1; i <= NR; i++) if (i != last) print l[i] }' \
-    "$SERVE_DIR/ticket-starts" >"$SERVE_DIR/ticket-starts.tmp" && mv "$SERVE_DIR/ticket-starts.tmp" "$SERVE_DIR/ticket-starts"
+  state_update serve_starts_drop "$1" || true
 }
 
 # A session that ended without a verdict on its ticket, for a reason that is not the ticket's (a usage limit, a
@@ -217,8 +211,7 @@ serve_end() {
 # died at startup and the usage limit's streak are over. A ticket that was retried ten times in a row has recovered.
 serve_settled() {
   local n=$1 count
-  count=$(cat "$SERVE_DIR/$n.transient" 2>/dev/null) || count=0
-  [[ $count =~ ^[0-9]+$ ]] || count=0
+  count=$(state_num "$SERVE_DIR/$n.transient")
   if [ "$count" -ge 10 ]; then
     echo "#$n: the API answers again after $count transient ends"
     notify recovered "" "#$n: the session ran again after $count transient ends in a row"
@@ -250,35 +243,27 @@ serve_environment() {
 # in a row one environment alert goes out and the retries go on at the longest delay. The third session in a row, across
 # tickets, that died at startup holds every launch (launch-backoff-until: the time, then the streak).
 serve_transient() {
-  local n=$1 cause=$2 why=$3 count delay now until prev model=${RUN_MODEL[$1]} life streak
-  count=$(cat "$SERVE_DIR/$n.transient" 2>/dev/null) || count=0
-  [[ $count =~ ^[0-9]+$ ]] || count=0
-  count=$((count + 1))
-  echo "$count" >"$SERVE_DIR/$n.transient"
+  local n=$1 cause=$2 why=$3 count delay now until model=${RUN_MODEL[$1]} life streak
+  count=$(state_update state_counter_add "$SERVE_DIR/$n.transient") || count=1
   delay=$(serve_backoff "$count")
   now=$(serve_now)
   until=$((now + delay))
-  echo "$until" >"$SERVE_DIR/$n.retry"
-  case ${RUN_ROLE[$n]:-ticket} in reviewer | integrator) ;; *) echo "$model" >"$SERVE_DIR/$n.model" ;; esac
-  prev=$(cat "$SERVE_DIR/transient-until" 2>/dev/null) || prev=0
-  [[ $prev =~ ^[0-9]+$ ]] || prev=0
-  [ "$prev" -ge "$until" ] || echo "$until" >"$SERVE_DIR/transient-until"
+  state_put "$SERVE_DIR/$n.retry" "$until"
+  case ${RUN_ROLE[$n]:-ticket} in reviewer | integrator) ;; *) state_put "$SERVE_DIR/$n.model" "$model" ;; esac
+  state_update state_keep_later "$SERVE_DIR/transient-until" "$until" || true
   # A session that died at once (a startup error) is not a launch against autonomy.sessionsPerHour.
   life=$((SECONDS - ${RUN_STARTED[$n]:-$SECONDS}))
-  if [ "$life" -lt 60 ] && [ -s "${RUN_LAUNCH_LOG:-/nonexistent}" ]; then
-    sed -i '$d' "$RUN_LAUNCH_LOG" 2>/dev/null || true
+  if [ "$life" -lt 60 ] && [ -n "${RUN_LAUNCH_LOG:-}" ]; then
+    state_update serve_launch_drop "$n" || true
   fi
   # Nor a ticket start against autonomy.ticketsPerHour (#355): its last start is taken back.
   [ "$life" -ge 60 ] || serve_start_back "$n"
   echo "#$n: the session ended on a transient error ($why); it resumes on $model in ${delay}s (end $count in a row), not counted as a failure" >&2
   if [ "$cause" = startup ]; then
-    streak=$(cut -d' ' -f1 "$SERVE_DIR/startup-streak" 2>/dev/null) || streak=0
-    [[ $streak =~ ^[0-9]+$ ]] || streak=0
-    streak=$((streak + 1))
-    echo "$streak" >"$SERVE_DIR/startup-streak"
+    streak=$(state_update state_counter_add "$SERVE_DIR/startup-streak") || streak=1
     if [ "$streak" -ge 3 ]; then
       until=$((now + $(serve_backoff "$streak")))
-      echo "$until" >"$SERVE_DIR/launch-backoff-until"
+      state_put "$SERVE_DIR/launch-backoff-until" "$until"
       echo "serve: $streak sessions in a row died at startup; not launching until $(date -d "@$until" '+%F %T' 2>/dev/null || echo "$until")" >&2
     fi
   fi
@@ -291,16 +276,13 @@ serve_transient() {
 
 # The time before which the ticket $1 is not started again (its transient backoff), 0 when none.
 serve_retry_at() {
-  local at
-  at=$(cat "$SERVE_DIR/$1.retry" 2>/dev/null) || at=0
-  [[ $at =~ ^[0-9]+$ ]] || at=0
-  echo "$at"
+  state_num "$SERVE_DIR/$1.retry"
 }
 
 # The model of the next session of ticket $1: the one a transient end interrupted, else Sonnet.
 serve_model() {
   local m
-  m=$(cat "$SERVE_DIR/$1.model" 2>/dev/null) || m=""
+  m=$(state_get "$SERVE_DIR/$1.model" 'sonnet|opus') || m=""
   echo "${m:-sonnet}"
 }
 
@@ -316,17 +298,30 @@ serve_hold_set() {
   case $cause in claude-auth | deps) kind=expensive ;; esac
   next=$now
   [ "$kind" = cheap ] || next=$((now + 300))
-  jq -nc --arg c "$cause" --argjson s "$now" --arg k "$kind" --argjson x "$next" --arg d "$detail" \
-    '{cause: $c, since: $s, probe: $k, nextProbe: $x, detail: $d}' >"$SERVE_DIR/held"
+  state_update serve_hold_write "$cause" "$detail" "$now" "$kind" "$next" || return 0
   echo "serve: holding all launches, environment problem ($cause): $detail; probing again, or senior-mode serve --resume" >&2
   notify environment "" "serve holds all launches, environment problem ($cause): $detail"
   project_post_update "senior-mode serve holds all launches: environment problem ($cause): $detail. It resumes by itself once the probe is green." AT_RISK >/dev/null 2>&1 ||
     echo "serve: could not post the hold as a Project status update" >&2
 }
 
-# A field of the hold, empty when there is none (or when the file does not parse).
+# Run by state_update: writes the hold, unless there is one.
+serve_hold_write() {
+  [ ! -s "$SERVE_DIR/held" ] || return 1
+  jq -nc --arg c "$1" --arg d "$2" --argjson s "$3" --arg k "$4" --argjson x "$5" \
+    '{cause: $c, since: $s, probe: $k, nextProbe: $x, detail: $d}' | state_write "$SERVE_DIR/held"
+}
+
+# A field of the hold, empty when there is none; a file that does not parse is set aside (state_json).
 serve_held() {
-  jq -r --arg k "$1" '.[$k] // empty' "$SERVE_DIR/held" 2>/dev/null || true
+  local j
+  j=$(state_json "$SERVE_DIR/held") || return 0
+  jq -r --arg k "$1" '.[$k] // empty' <<<"$j" 2>/dev/null || true
+}
+
+# Run by state_update: the next probe and the diagnosis of the hold.
+serve_hold_next() {
+  jq -c --argjson x "$1" --arg d "$2" '.nextProbe = $x | .detail = $d' "$SERVE_DIR/held" | state_write "$SERVE_DIR/held"
 }
 
 # Is the hold one that stops the board too (gh or Claude not signed in)? Any other hold stops launches only: a merge
@@ -451,12 +446,14 @@ serve_finish() {
 # The test-author session of an M ticket is over: its tests are recorded as the red tests (senior-mode red-tests
 # record), then the ticket session starts on the same branch.
 serve_finish_tests() {
-  local n=$1 outcome reason=""
+  local n=$1 outcome reason="" red rc=0
   outcome=$(head -n 1 "$RUN_DIR/$n.outcome" 2>/dev/null) || outcome=""
   if [ "$outcome" = delivered ]; then
-    if (cd "${RUN_WT[$n]}" && "$SELF" red-tests record "$n") >"$RUN_DIR/$n.red" 2>&1; then
+    red=$(cd "${RUN_WT[$n]}" && "$SELF" red-tests record "$n" 2>&1) || rc=$?
+    printf '%s\n' "$red" | state_write "$RUN_DIR/$n.red"
+    if [ "$rc" -eq 0 ]; then
       RUN_ROLE[$n]=ticket
-      serve_prompt "$n" "${RUN_TITLE[$n]:-}" "${RUN_BRANCH[$n]}" >"$RUN_DIR/$n.prompt"
+      serve_prompt "$n" "${RUN_TITLE[$n]:-}" "${RUN_BRANCH[$n]}" | state_write "$RUN_DIR/$n.prompt"
       run_launch "$n" sonnet || return 0
       return 1
     fi
@@ -522,13 +519,15 @@ serve_finish_integrator() {
 serve_hold() {
   local now=$1 until cause diag since next now_diag
   if [ -f "$SERVE_DIR/paused" ]; then
-    until=$(sed -n 1p "$SERVE_DIR/paused")
+    until=$(state_get "$SERVE_DIR/paused" '[0-9]+') || until=""
     if [[ $until =~ ^[0-9]+$ ]] && [ "$now" -lt "$until" ]; then
       echo "paused by the circuit breaker, $(sed -n 2p "$SERVE_DIR/paused"); resumes at $until or with senior-mode serve --resume"
       return 0
     fi
-    rm -f "$SERVE_DIR/paused"
-    echo "serve: the breaker cooldown is over, launching again" >&2
+    if [ -e "$SERVE_DIR/paused" ]; then
+      rm -f "$SERVE_DIR/paused"
+      echo "serve: the breaker cooldown is over, launching again" >&2
+    fi
   fi
   if [ -s "$SERVE_DIR/held" ]; then
     cause=$(serve_held cause)
@@ -536,8 +535,7 @@ serve_hold() {
     diag=$(serve_held detail)
     since=$(serve_held since)
     [ -n "$cause" ] && [[ $next =~ ^[0-9]+$ ]] && [[ $since =~ ^[0-9]+$ ]] || {
-      echo "serve: the hold file is unreadable; removed" >&2
-      rm -f "$SERVE_DIR/held"
+      state_quarantine "$SERVE_DIR/held"
       cause=""
     }
     if [ -n "$cause" ] && [ "$now" -ge "$next" ]; then
@@ -552,8 +550,7 @@ serve_hold() {
           expensive) next=$((now + (now - since < 3600 ? 300 : 900))) ;;
           *) next=$now ;;
         esac
-        jq -c --argjson x "$next" --arg d "${now_diag:-$diag}" '.nextProbe = $x | .detail = $d' "$SERVE_DIR/held" >"$SERVE_DIR/held.tmp" &&
-          mv -f "$SERVE_DIR/held.tmp" "$SERVE_DIR/held"
+        state_update serve_hold_next "$next" "${now_diag:-$diag}" || true
         diag=${now_diag:-$diag}
         echo "serve: still holding all launches, environment problem ($cause): the probe is red" >&2
       fi
@@ -563,12 +560,12 @@ serve_hold() {
       return 0
     fi
   fi
-  until=$(awk 'NR == 1 { print $1 }' "$SERVE_DIR/launch-backoff-until" 2>/dev/null) || until=""
+  until=$(state_get "$SERVE_DIR/launch-backoff-until" '[0-9]+') || until=""
   if [[ $until =~ ^[0-9]+$ ]] && [ "$now" -lt "$until" ]; then
     echo "sessions died at startup in a row, resumes at $until"
     return 0
   fi
-  until=$(cat "$SERVE_DIR/limit-until" 2>/dev/null) || until=""
+  until=$(state_get "$SERVE_DIR/limit-until" '[0-9]+') || until=""
   if [[ $until =~ ^[0-9]+$ ]]; then
     if [ "$now" -lt "$until" ]; then
       echo "usage limit reached, resumes at $until"
@@ -576,7 +573,7 @@ serve_hold() {
     fi
     rm -f "$SERVE_DIR/limit-until"
   fi
-  until=$(cat "$SERVE_DIR/transient-until" 2>/dev/null) || until=""
+  until=$(state_get "$SERVE_DIR/transient-until" '[0-9]+') || until=""
   if [[ $until =~ ^[0-9]+$ ]]; then
     if [ "$now" -lt "$until" ]; then
       echo "backing off after a transient error (network, API or startup), resumes at $until"
@@ -594,25 +591,47 @@ serve_hold() {
 # count of failures starts again, so a resume gets a fresh chance. The pause is alerted once (no ticket to mention: the
 # webhook and the line on stderr).
 serve_breaker() {
-  local now trips last cooldown i
+  local now trips cooldown out
   [ "$RUN_FAILS" -ge "$RUN_MAXFAIL" ] || return 0
   RUN_FAILS=0
   RUN_STOP=""
   if [ ! -f "$SERVE_DIR/paused" ]; then
     now=$(serve_now)
-    read -r trips last <"$SERVE_DIR/breaker" 2>/dev/null || true
-    [[ ${trips:-} =~ ^[0-9]+$ ]] || trips=0
-    [[ ${last:-} =~ ^[0-9]+$ ]] || last=0
-    [ $((now - last)) -lt 86400 ] || trips=0
-    trips=$((trips + 1))
-    echo "$trips $now" >"$SERVE_DIR/breaker"
-    cooldown=$SERVE_COOLDOWN
-    for ((i = 1; i < trips && cooldown < SERVE_BREAKER_MAX; i++)); do cooldown=$((cooldown * 2)); done
-    [ "$cooldown" -le "$SERVE_BREAKER_MAX" ] || cooldown=$SERVE_BREAKER_MAX
-    printf '%s\n%s\n' "$((now + cooldown))" "$RUN_MAXFAIL failed tickets in a row (autonomy.maxConsecutiveFailures)" >"$SERVE_DIR/paused"
+    out=$(state_update serve_breaker_trip "$now") || return 0
+    read -r trips cooldown <<<"$out"
     echo "serve: paused, $RUN_MAXFAIL failed tickets in a row; it resumes in $cooldown seconds (pause $trips since the last merge) or with: senior-mode serve --resume" >&2
     notify breaker "" "$RUN_MAXFAIL failed tickets in a row (autonomy.maxConsecutiveFailures)"
   fi
+}
+
+# Run by state_update: counts a trip of the breaker (`breaker`: trips, time of the last), writes the pause (`paused`: the
+# time it ends, the reason) and prints `trips cooldown`.
+serve_breaker_trip() {
+  local now=$1 trips last cooldown i
+  read -r trips last < <(state_get "$SERVE_DIR/breaker" '[0-9]+ [0-9]+') || true
+  [[ ${trips:-} =~ ^[0-9]+$ ]] || trips=0
+  [[ ${last:-} =~ ^[0-9]+$ ]] || last=0
+  [ $((now - last)) -lt 86400 ] || trips=0
+  trips=$((trips + 1))
+  state_put "$SERVE_DIR/breaker" "$trips $now" || return 1
+  cooldown=$SERVE_COOLDOWN
+  for ((i = 1; i < trips && cooldown < SERVE_BREAKER_MAX; i++)); do cooldown=$((cooldown * 2)); done
+  [ "$cooldown" -le "$SERVE_BREAKER_MAX" ] || cooldown=$SERVE_BREAKER_MAX
+  printf '%s\n%s\n' "$((now + cooldown))" "$RUN_MAXFAIL failed tickets in a row (autonomy.maxConsecutiveFailures)" | state_write "$SERVE_DIR/paused" || return 1
+  echo "$trips $cooldown"
+}
+
+# Run by state_update. `launches` holds one line `<epoch> <kind>` per session started (run_launch, kind `ticket` or the
+# role). The lines of the last hour stay; a session that died at once takes back its own line (<n>.launched).
+serve_launch_trim() {
+  awk -v c="$1" '$1 > c' "$RUN_LAUNCH_LOG" | state_write "$RUN_LAUNCH_LOG"
+}
+serve_launch_drop() {
+  local line
+  line=$(state_get "$RUN_DIR/$1.launched" '[0-9]+ [a-z-]+') || return 0
+  rm -f "$RUN_DIR/$1.launched"
+  [ -f "$RUN_LAUNCH_LOG" ] || return 0
+  awk -v l="$line" '$0 == l && !d { d = 1; next } { print }' "$RUN_LAUNCH_LOG" | state_write "$RUN_LAUNCH_LOG"
 }
 
 # Is a ceiling reached? Prints which and returns 0 when it is: launches in the last hour, the load average over
@@ -621,7 +640,7 @@ serve_ceiling() {
   local now count load cpus mem
   now=$(serve_now)
   if [ -f "$RUN_LAUNCH_LOG" ]; then
-    awk -v c="$((now - 3600))" '$1 > c' "$RUN_LAUNCH_LOG" >"$RUN_LAUNCH_LOG.tmp" && mv "$RUN_LAUNCH_LOG.tmp" "$RUN_LAUNCH_LOG"
+    state_update serve_launch_trim "$((now - 3600))" || true
     count=$(awk 'END { print NR }' "$RUN_LAUNCH_LOG")
     if [ "$count" -ge "$SERVE_PER_HOUR" ]; then
       echo "$count sessions launched in the last hour (autonomy.sessionsPerHour $SERVE_PER_HOUR, the safety cap)"
@@ -662,8 +681,7 @@ serve_report() {
 serve_ready() {
   local now last prs pr ok=true
   now=$(serve_now)
-  last=$(cat "$SERVE_DIR/ready-last" 2>/dev/null) || last=""
-  [[ $last =~ ^[0-9]+$ ]] || last=$now
+  last=$(state_num "$SERVE_DIR/ready-last" "$now")
   if prs=$(gh_retry pr list --repo "$RUN_SLUG" --state merged --limit 50 --json number,headRefName,mergedAt); then
     while IFS= read -r pr; do
       [ -n "$pr" ] || continue
@@ -674,7 +692,12 @@ serve_ready() {
     ok=false
   fi
   "$SELF" ready || ok=false
-  [ "$ok" = false ] || echo "$now" >"$SERVE_DIR/ready-last"
+  [ "$ok" = false ] || state_put "$SERVE_DIR/ready-last" "$now"
+}
+
+# The tickets of the batch of the lead $1 (<n>.batch), the ticket alone when it has none.
+serve_batch() {
+  state_get "$SERVE_DIR/$1.batch" '[0-9]+( [0-9]+)*' || echo "$1"
 }
 
 # After a crash or a restart (#272): a ticket serve launched (its <n>.sh is in the serve dir) whose session is
@@ -701,16 +724,13 @@ serve_recover() {
   for n in "${cand[@]}"; do
     jq -e --argjson n "$n" '.items[] | select(.number == $n and .open and .status == "In progress" and (.labels | index("needs-human") | not))' \
       <<<"$data" >/dev/null || continue
-    count=$(cat "$SERVE_DIR/$n.recovered" 2>/dev/null) || count=0
-    [[ $count =~ ^[0-9]+$ ]] || count=0
-    count=$((count + 1))
-    echo "$count" >"$SERVE_DIR/$n.recovered"
+    count=$(state_update state_counter_add "$SERVE_DIR/$n.recovered") || continue
     if [ "$count" -ge "$RUN_MAXFAIL" ]; then
       echo "serve: #$n has lost its session $count times; needs-human"
       notify needs-human "$n" "serve found the ticket In progress with no live session $count times (autonomy.maxConsecutiveFailures); the session files are in $SERVE_DIR"
     else
       # A lost batch session puts every ticket of the batch back.
-      for m in $(cat "$SERVE_DIR/$n.batch" 2>/dev/null || echo "$n"); do
+      for m in $(serve_batch "$n"); do
         if (item_set "$m" Status Ready) >/dev/null; then
           echo "serve: #$m was In progress with no live session; back to Ready (recovery $count of $((RUN_MAXFAIL - 1)))"
         else
@@ -729,13 +749,22 @@ serve_note() {
   RUN_WAITING+=("$2")
 }
 
+# Run by state_update: the starts older than the cutoff $1 go; the last start of the ticket $1 is taken back.
+serve_starts_trim() {
+  awk -v c="$1" '$1 > c' "$SERVE_DIR/ticket-starts" | state_write "$SERVE_DIR/ticket-starts"
+}
+serve_starts_drop() {
+  awk -v n="$1" '{ l[NR] = $0; if ($2 == n) last = NR } END { for (i = 1; i <= NR; i++) if (i != last) print l[i] }' \
+    "$SERVE_DIR/ticket-starts" | state_write "$SERVE_DIR/ticket-starts"
+}
+
 # Is autonomy.ticketsPerHour reached? Prints the reason and returns 0 when it is. It counts ticket starts, not the
 # role sessions a ticket costs (#355): one line "<time> <ticket>" in ticket-starts per ticket begun.
 serve_ticket_cap() {
   local now count f=$SERVE_DIR/ticket-starts
   [ -f "$f" ] || return 1
   now=$(serve_now)
-  awk -v c="$((now - 3600))" '$1 > c' "$f" >"$f.tmp" && mv "$f.tmp" "$f"
+  state_update serve_starts_trim "$((now - 3600))" || true
   count=$(awk 'END { print NR }' "$f")
   [ "$count" -ge "$SERVE_TICKETS_PER_HOUR" ] || return 1
   echo "$count tickets started in the last hour (autonomy.ticketsPerHour $SERVE_TICKETS_PER_HOUR)"
@@ -848,7 +877,7 @@ serve_done() {
   serve_backmerge "$t" "$pr"
   hotfix_release "$t" "$pr"
   # Every ticket of a batch is done with its one pull request (the lead's <n>.batch).
-  for m in $(cat "$SERVE_DIR/$t.batch" 2>/dev/null || echo "$t"); do
+  for m in $(serve_batch "$t"); do
     RUN_MERGED+=("#$m ${RUN_TITLE[$m]:-} (pull request #$pr)")
     if (item_set "$m" Status Done) >/dev/null; then
       cycle_end "$m"
@@ -865,8 +894,9 @@ serve_queued() {
   local f pr sha t state
   for f in "$SERVE_DIR"/queued-*; do
     [ -e "$f" ] || continue
+    case $f in *.corrupt-* | *.tmp.*) continue ;; esac
     pr=${f##*queued-}
-    read -r sha t <"$f" || continue
+    read -r sha t < <(state_get "$f" '[0-9a-f]+ [0-9]+') || continue
     state=$(gh_retry pr view "$pr" -R "$RUN_SLUG" --json state --jq .state) || continue
     case $state in
       MERGED) serve_done "$t" "$pr" ;;
@@ -898,7 +928,7 @@ serve_do_merge() {
   if [ "$state" = MERGED ]; then
     serve_done "$t" "$pr"
   elif [ "$queued" = true ]; then
-    echo "$sha $t" >"$SERVE_DIR/queued-$pr"
+    state_put "$SERVE_DIR/queued-$pr" "$sha $t"
     echo "#$t: pull request #$pr queued for auto-merge"
   else
     serve_note "w$pr" "#$t ${RUN_TITLE[$t]:-}: pull request #$pr, merged but GitHub says it is ${state:-unknown}"
@@ -909,11 +939,12 @@ serve_do_merge() {
 # the new head, then the review is carried over when `git range-diff` finds the same patches, or asked again
 # when it finds any change (the head has no review status, so the next poll starts a reviewer).
 serve_requalify() {
-  local t=$1 pr=$2 old=$3 new=$4 ref=$5 wt log="$SERVE_DIR/$1.check.log" same=false cmd ob nb ci review
+  local t=$1 pr=$2 old=$3 new=$4 ref=$5 wt log="$SERVE_DIR/$1.check.log" same=false cmd ob nb ci review rd
   git_bound fetch -q origin 2>/dev/null || true
   if git cat-file -e "$old^{commit}" 2>/dev/null && git cat-file -e "$new^{commit}" 2>/dev/null &&
     ob=$(git merge-base "$old" "$new") && nb=$(git merge-base "$RUN_BASE" "$new") &&
-    git range-diff --no-color "$ob..$old" "$nb..$new" >"$SERVE_DIR/$t.range-diff" 2>/dev/null &&
+    rd=$(git range-diff --no-color "$ob..$old" "$nb..$new" 2>/dev/null) && [ -n "$rd" ] &&
+    printf '%s\n' "$rd" | state_write "$SERVE_DIR/$t.range-diff" &&
     awk 'NF && $3 != "=" { bad = 1 } END { exit (bad || NR == 0) }' "$SERVE_DIR/$t.range-diff"; then
     same=true
   fi
@@ -955,7 +986,7 @@ serve_requalify() {
 serve_rebase() {
   local t=$1 pr=$2 old=$3 ref=$4 new="" i err="$SERVE_DIR/$1.rebase"
   git_bound fetch -q origin "$ref" 2>/dev/null || true
-  printf '%s\n' "$old" >"$SERVE_DIR/rebased-$pr"
+  state_put "$SERVE_DIR/rebased-$pr" "$old"
   if ! gh_bound pr update-branch "$pr" --rebase -R "$RUN_SLUG" >/dev/null 2>"$err"; then
     rm -f "$SERVE_DIR/rebased-$pr"
     if grep -qi conflict "$err"; then return 2; fi
@@ -1001,8 +1032,8 @@ serve_conflict() {
   unset 'RUN_CWD[$t]'
   RUN_WT[$t]=$wt
   RUN_BRANCH[$t]=$new
-  echo "$pr" >"$RUN_DIR/$t.oldpr"
-  serve_integrator_prompt "$t" "${RUN_TITLE[$t]:-}" "$ref" "$pr" "$new" >"$RUN_DIR/$t.prompt"
+  state_put "$RUN_DIR/$t.oldpr" "$pr"
+  serve_integrator_prompt "$t" "${RUN_TITLE[$t]:-}" "$ref" "$pr" "$new" | state_write "$RUN_DIR/$t.prompt"
   echo "#$t: pull request #$pr conflicts with $RUN_BASE; the integrator resolves it on $new"
   if run_launch "$t" opus; then running+=("$t"); fi
 }
@@ -1058,8 +1089,8 @@ serve_red_retry() {
   RUN_ROLE[$t]=ticket
   unset 'RUN_CWD[$t]'
   run_open "$t" || return 1
-  : >"$SERVE_DIR/red-retry-$t"
-  serve_red_prompt "$t" "${RUN_TITLE[$t]:-}" "${RUN_BRANCH[$t]}" "$pr" "$reason" >"$RUN_DIR/$t.prompt"
+  : | state_write "$SERVE_DIR/red-retry-$t"
+  serve_red_prompt "$t" "${RUN_TITLE[$t]:-}" "${RUN_BRANCH[$t]}" "$pr" "$reason" | state_write "$RUN_DIR/$t.prompt"
   echo "#$t: pull request #$pr has no red-tests record; the ticket session resumes once to prove its tests"
   if run_launch "$t" sonnet; then running+=("$t"); else return 1; fi
 }
@@ -1068,8 +1099,7 @@ serve_red_retry() {
 # branch with the findings, twice at most; then a person.
 serve_changes() {
   local t=$1 pr=$2 ref=$3 rounds
-  rounds=$(cat "$SERVE_DIR/rounds-$t" 2>/dev/null) || rounds=0
-  [[ $rounds =~ ^[0-9]+$ ]] || rounds=0
+  rounds=$(state_num "$SERVE_DIR/rounds-$t")
   if [ "$rounds" -ge 2 ]; then
     serve_needs_human "$t" "$pr" "the reviewer still requests changes after $rounds fix rounds"
     return 0
@@ -1078,8 +1108,8 @@ serve_changes() {
   RUN_ROLE[$t]=ticket
   unset 'RUN_CWD[$t]'
   run_open "$t" || return 0
-  echo $((rounds + 1)) >"$SERVE_DIR/rounds-$t"
-  serve_fix_prompt "$t" "${RUN_TITLE[$t]:-}" "${RUN_BRANCH[$t]}" "$pr" $((rounds + 1)) >"$RUN_DIR/$t.prompt"
+  state_put "$SERVE_DIR/rounds-$t" "$((rounds + 1))"
+  serve_fix_prompt "$t" "${RUN_TITLE[$t]:-}" "${RUN_BRANCH[$t]}" "$pr" $((rounds + 1)) | state_write "$RUN_DIR/$t.prompt"
   echo "#$t: the reviewer requested changes on pull request #$pr; the ticket session resumes (round $((rounds + 1)) of 2)"
   if run_launch "$t" sonnet; then running+=("$t"); fi
 }
@@ -1117,7 +1147,7 @@ serve_review() {
   RUN_BRANCH[$t]=$ref
   SERVE_PR[$t]=$pr
   SERVE_SHA[$t]=$sha
-  serve_review_prompt "$t" "${RUN_TITLE[$t]:-}" "$pr" "$sha" "$model" >"$RUN_DIR/$t.prompt"
+  serve_review_prompt "$t" "${RUN_TITLE[$t]:-}" "$pr" "$sha" "$model" | state_write "$RUN_DIR/$t.prompt"
   echo "#$t: reviewing pull request #$pr on $model"
   if run_launch "$t" "$model"; then running+=("$t"); else git worktree remove --force "$wt" 2>/dev/null || true; fi
 }
@@ -1134,9 +1164,9 @@ serve_prs() {
     [ "$SERVE_TERM" = false ] || break
     RUN_TITLE[$t]=$title
     serve_busy "$t" && continue
-    if [ -f "$SERVE_DIR/queued-$pr" ] && [ "$(cut -d' ' -f1 "$SERVE_DIR/queued-$pr")" = "$sha" ]; then continue; fi
+    if [ -f "$SERVE_DIR/queued-$pr" ] && [ "$(state_get "$SERVE_DIR/queued-$pr" '[0-9a-f]+ [0-9]+' | cut -d' ' -f1)" = "$sha" ]; then continue; fi
     # A rebase whose requalification was cut short (serve stopped, the new head came late): carry on.
-    if [ -f "$SERVE_DIR/rebased-$pr" ] && old=$(cat "$SERVE_DIR/rebased-$pr") && [ "$old" != "$sha" ]; then
+    if [ -f "$SERVE_DIR/rebased-$pr" ] && old=$(state_get "$SERVE_DIR/rebased-$pr" '[0-9a-f]+') && [ "$old" != "$sha" ]; then
       if [ "$acted" = false ]; then
         serve_requalify "$t" "$pr" "$old" "$sha" "$ref"
         acted=true
@@ -1242,7 +1272,7 @@ serve_poll() {
       RUN_ROLE[$n]="test-author"
       unset 'RUN_CWD[$n]'
       if run_open "$n"; then
-        serve_tests_prompt "$n" "${RUN_TITLE[$n]}" "${RUN_BRANCH[$n]}" >"$RUN_DIR/$n.prompt"
+        serve_tests_prompt "$n" "${RUN_TITLE[$n]}" "${RUN_BRANCH[$n]}" | state_write "$RUN_DIR/$n.prompt"
         if run_launch "$n" "$(serve_model "$n")"; then running+=("$n"); fi
       fi
     else
@@ -1251,7 +1281,7 @@ serve_poll() {
       if run_start "$n"; then running+=("$n"); fi
     fi
     if [ "$begins" = true ] && [ ${#running[@]} -gt "$started_before" ]; then
-      echo "$(serve_now) $n" >>"$SERVE_DIR/ticket-starts"
+      echo "$(serve_now) $n" | state_append "$SERVE_DIR/ticket-starts"
     fi
   done
   serve_report
@@ -1293,10 +1323,9 @@ serve_digest() {
   local now last body
   [ "$(config_get notify.digest)" = true ] || return 0
   now=$(serve_now)
-  last=$(cat "$SERVE_DIR/digest" 2>/dev/null) || last=0
-  [[ $last =~ ^[0-9]+$ ]] || last=0
+  last=$(state_num "$SERVE_DIR/digest")
   [ $((now - last)) -ge 86400 ] || return 0
-  echo "$now" >"$SERVE_DIR/digest"
+  state_put "$SERVE_DIR/digest" "$now"
   if body=$("$SELF" status --since 24h 2>/dev/null) && [ -n "$body" ] && project_post_update "$body"; then
     echo "serve: daily digest posted as a Project status update"
   else
@@ -1320,7 +1349,7 @@ serve_digest_at() {
   [[ ! $(date -d "@$now" +%H:%M 2>/dev/null || date -r "$now" +%H:%M) < $at ]] || return 0
   day=$(date -d "@$now" +%F 2>/dev/null || date -r "$now" +%F)
   [ "$(cat "$SERVE_DIR/digest-at" 2>/dev/null)" != "$day" ] || return 0
-  echo "$day" >"$SERVE_DIR/digest-at"
+  state_put "$SERVE_DIR/digest-at" "$day"
   if ! st=$("$SELF" status --json --since 24h 2>/dev/null) || ! usage=$(retro_usage "$SERVE_COMMON" "$(iso_time $((now - 86400)))" ""); then
     echo "serve: could not build the daily digest; trying again tomorrow" >&2
     return 0
@@ -1346,6 +1375,11 @@ serve_digest_at() {
     echo "notify: the webhook did not answer (digest)" >&2
 }
 
+# Run by state_update: the questions of the file $1 as one JSON array, the file emptied (an alert added meanwhile is not lost).
+serve_questions_take() {
+  jq -sc 'map(.reason |= (gsub("[[:cntrl:]]"; " ") | .[:300]))' "$1" && state_write "$1" </dev/null
+}
+
 # The questions that serve queued (notify, #308) go out as one notification, once the oldest has waited
 # notify.batchMinutes (default 60; 0 sends at each poll): at most one per window, whatever the number of questions. The
 # text is plain, control characters stripped and 300 characters at most (a title can come from an outsider). The label and
@@ -1357,8 +1391,7 @@ serve_questions() {
   minutes=$(serve_int notify.batchMinutes 0)
   first=$(jq -rs 'map(.at) | min' "$file") || return 0
   [ $((now - first)) -ge $((minutes * 60)) ] || return 0
-  items=$(jq -sc 'map(.reason |= (gsub("[[:cntrl:]]"; " ") | .[:300]))' "$file") || return 0
-  : >"$file"
+  items=$(state_update serve_questions_take "$file") || return 0
   count=$(jq 'length' <<<"$items")
   text=$(jq -r 'map("#\(.number) \(.reason)") | join("; ") | gsub("[[:cntrl:]]"; " ")' <<<"$items")
   text="$count decision$([ "$count" = 1 ] || echo s) wait for you: $text"
@@ -1400,11 +1433,12 @@ serve_loop() {
   RUN_DIR=$SERVE_DIR
   RUN_LAUNCH_LOG=$SERVE_DIR/launches
   mkdir -p "$SERVE_DIR"
-  old=$(cat "$SERVE_DIR/serve.pid" 2>/dev/null) || old=""
-  if [[ $old =~ ^[0-9]+$ ]] && kill -0 "$old" 2>/dev/null && [[ $(ps -o args= -p "$old" 2>/dev/null) == *senior-mode* ]]; then
+  old=$(state_num "$SERVE_DIR/serve.pid")
+  if [ "$old" -gt 0 ] && kill -0 "$old" 2>/dev/null && [[ $(ps -o args= -p "$old" 2>/dev/null) == *senior-mode* ]]; then
     die "serve already runs in this repository (pid $old)"
   fi
-  echo $$ >"$SERVE_DIR/serve.pid"
+  state_sweep "$SERVE_DIR"
+  state_put "$SERVE_DIR/serve.pid" "$$"
   # shellcheck disable=SC2064 # expand now: SERVE_DIR is local and gone when the trap runs
   trap "rm -f '$SERVE_DIR/serve.pid' '$SERVE_DIR/token'" EXIT
   trap 'SERVE_TERM=true' INT TERM

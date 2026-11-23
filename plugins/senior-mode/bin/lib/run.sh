@@ -260,13 +260,13 @@ run_blocker() {
   # the globs of the base branch, so a pull request cannot unprotect itself.
   elif [ "$RUN_ZONES_KNOWN" != true ]; then
     echo "the protected zones could not be read: $RUN_BASE has no .claude/senior-mode.json"
-  elif ! files=$(gh_retry api "repos/$RUN_SLUG/pulls/$pr/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)'); then
+  elif ! files=$(gh_retry api "repos/$RUN_SLUG/pulls/$pr/files" --paginate --jq '.[] | "\(.filename)\t\(.changes // 0)", ((.previous_filename // empty) | "\(.)\t0")'); then
     echo "its changed files could not be read"
-  elif zones=$(protected_match "$RUN_GLOBS" <<<"$files") && [ -n "$zones" ]; then
+  elif zones=$(protected_match "$RUN_GLOBS" < <(cut -f1 <<<"$files")) && [ -n "$zones" ]; then
     echo "it touches a protected zone ($(paste -sd, - <<<"$zones" | sed 's/,/, /g'))"
   else
-    # One commit per ticket of a batch (#297).
-    delivery_blocker "$RUN_SLUG" "$pr" "$3"
+    # One commit per ticket and the size budget of the tickets it closes (#297, #303).
+    delivery_blocker "$RUN_SLUG" "$pr" "$3" "$files"
   fi
 }
 

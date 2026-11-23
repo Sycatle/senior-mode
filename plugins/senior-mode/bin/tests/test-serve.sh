@@ -33,6 +33,8 @@ case "$*" in
       echo '{"data": {"createProjectV2StatusUpdate": {"statusUpdate": {"id": "SU_1"}}}}'
     elif grep -q '"sha":' "$FIX/graphql-in"; then
       echo '{"data": {"repository": {"object": {"associatedPullRequests": {"nodes": [{"state": "OPEN", "closingIssuesReferences": {"nodes": []}}]}}}}}'
+    elif grep -q projectItems "$FIX/graphql-in" && [ -f "$FIX/item-$(jq -r '.variables.number' "$FIX/graphql-in").json" ]; then
+      cat "$FIX/item-$(jq -r '.variables.number' "$FIX/graphql-in").json"
     else cat "$FIX/board.json"; fi ;;
   "api repos/acme/app --jq "*) echo "{\"allow_auto_merge\": $(cat "$FIX/allow-auto" 2>/dev/null || echo false)}" | respond ;;
   "api repos/acme/app/commits/"*"/status"*)
@@ -71,7 +73,7 @@ case "$*" in
   "project item-edit"*) ;;
   "auth status"*) [ ! -f "$FIX/gh-auth-bad" ] ;;
   "api repos/acme/app/pulls/"*"/commits"*) cat "$FIX/commits-$(sed -E 's#.*/pulls/([0-9]+)/commits.*#\1#' <<<"$*").json" | respond ;;
-  "api repos/acme/app/pulls/"*"/files"*) echo src/app.ts ;;
+  "api repos/acme/app/pulls/"*"/files"*) cat "$FIX/files-$(sed -E 's#.*/pulls/([0-9]+)/files.*#\1#' <<<"$*")" 2>/dev/null || echo src/app.ts ;;
   "api repos/acme/app/pulls/"[0-9]*) cat "$FIX/pull-$(sed -E 's#^api repos/acme/app/pulls/([0-9]+).*#\1#' <<<"$*").json" | respond ;;
   "api repos/acme/app/pulls?head="*)
     n=$(sed -E 's#.*head=acme:[a-z]+/([0-9]+)-.*#\1#' <<<"$*")
@@ -1039,22 +1041,33 @@ once || fail "W: serve failed: $(cat "$work/out")"
 grep -q 'issues/.*/labels\|issues/.*/comments' "$GH_LOG" && fail "W: a transient blocker got needs-human: $(cat "$GH_LOG")"
 grep -q 'Waiting for a human.*senior-mode/security not green' "$work/out" || fail "W: the transient wait is not said: $(cat "$work/out")"
 green "$sha66"
-# A pull request that is not ready for its tickets (#297): needs-human on the pull request and the ticket, with the
-# reason; it is never merged. A batch with a commit per ticket merges.
+# A pull request that is not ready for its tickets (#297, #303): needs-human on the pull request and the ticket, with
+# the numbers; it is never merged. One that is within budget, with a commit per ticket, merges.
+size_item() { jq -nc --arg s "$2" '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"},
+  fieldValues: {nodes: [{name: $s, field: {name: "Size"}}]}}]}}}}}' >"$FIX/item-$1.json"; }
+size_item 66 S
+size_item 67 S
+printf 'src/big.ts\t450\npackage-lock.json\t9000\n' >"$FIX/files-166"
+PRBODY="Closes #66" pr 166 feat/66-x "$sha66" clean
+fresh
+once || fail "X: serve failed: $(cat "$work/out")"
+grep -q '^pr merge' "$GH_LOG" && fail "X: merged a pull request over its size budget"
+grep -q 'issues/166/comments.*450 changed lines, 150 over the size budget of 300' "$GH_LOG" || fail "X: no comment with the numbers: $(grep 'issues/166' "$GH_LOG")"
+grep -q 'issues/166/labels.*needs-human' "$GH_LOG" || fail "X: #166 not needs-human: $(cat "$GH_LOG")"
+grep -q 'issues/66/labels.*needs-human' "$GH_LOG" || fail "X: ticket #66 not needs-human: $(cat "$GH_LOG")"
+printf 'src/ok.ts\t200\n' >"$FIX/files-166"
 printf '%s\n' '[{"commit": {"message": "feat: both\n\nRefs #66"}}]' >"$FIX/commits-166.json"
 PRBODY=$'Closes #66\nCloses #67' pr 166 feat/66-x "$sha66" clean
 fresh
 once || fail "X: serve failed: $(cat "$work/out")"
 grep -q '^pr merge' "$GH_LOG" && fail "X: merged a batch without a commit for #67"
 grep -q 'issues/166/comments.*no commit references #67' "$GH_LOG" || fail "X: the missing ticket is not named: $(grep 'issues/166' "$GH_LOG")"
-grep -q 'issues/166/labels.*needs-human' "$GH_LOG" || fail "X: #166 not needs-human: $(cat "$GH_LOG")"
-grep -q 'issues/66/labels.*needs-human' "$GH_LOG" || fail "X: ticket #66 not needs-human: $(cat "$GH_LOG")"
 printf '%s\n' '[{"commit": {"message": "feat: a\n\nRefs #66"}}, {"commit": {"message": "feat: b\n\nCloses #67"}}]' >"$FIX/commits-166.json"
 PRBODY=$'Closes #66\nCloses #67' pr 166 feat/66-x "$sha66" clean
 fresh
 once || fail "X: serve failed: $(cat "$work/out")"
 grep -q "^pr merge 166 --rebase --match-head-commit $sha66" "$GH_LOG" || fail "X: a ready batch pull request was not merged: $(cat "$work/out")"
-rm -f "$FIX/commits-166.json"
+rm -f "$FIX"/item-*.json "$FIX/files-166" "$FIX/commits-166.json"
 prs_reset
 pr 166 feat/66-x "$sha66" clean
 green "$sha66"

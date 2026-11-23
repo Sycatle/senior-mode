@@ -53,7 +53,9 @@ recurring design findings in its project memory.
 
 Turns acceptance criteria into failing tests, through the test seam the spec names, and checks they
 fail for the right reason. It edits test files only (by instruction) and does not commit: the
-implementer commits the tests with the code.
+implementer commits the tests with the code. For an M ticket, a separate session with
+`SENIOR_MODE_ROLE=test-author` does commit them first; they are then read-only for the implementer
+(see [Session roles](autonomy.md#session-roles)).
 
 ## `implementer`
 
@@ -70,7 +72,8 @@ Claude to retry on Opus.
 
 Judges a pull request it did not write, from an empty context. It reads the diff, the linked issue
 and spec, and the tests, applies the [`review`](skills.md#review) skill, posts one comment and sets
-the status `senior-mode/review`. It cannot edit files. It keeps recurring findings in its project
+the status `senior-mode/review`; it is the only role that may (`SENIOR_MODE_ROLE=reviewer`, see
+[Session roles](autonomy.md#session-roles)). It cannot edit files. It keeps recurring findings in its project
 memory (in `.claude/agent-memory/`, git-ignored by `setup repo`: it stays on the machine and `retro`
 reads it there).
 

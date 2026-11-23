@@ -33,7 +33,6 @@ case "$*" in
       *) printf 'false\tsha:%s\n' "$ref" ;;
     esac
     exit 0 ;;
-  "api repos/acme/app/issues/"*) cat "$FIX/issue-$(sed -E 's#api repos/acme/app/issues/([0-9]+).*#\1#' <<<"$*")"; exit 0 ;;
 esac
 [ "$*" = "api graphql --input -" ] || { echo "unexpected: $*" >&2; exit 1; }
 body=$(cat)
@@ -306,19 +305,23 @@ extra_prs=$(jq -sc '.' < <(
   pr 58 feat/58-stranger main mallory NONE false false 1 "Supersedes #59"
   pr 59 feat/59-target main alice MEMBER false false 1 ""
   pr 63 feat/63-into-dev dev alice MEMBER false false 1 "see: Supersedes #65"
-  pr 65 feat/65-quoted main alice MEMBER false false 1 ""))
+  pr 65 feat/65-quoted main alice MEMBER false false 1 ""
+  pr 66 feat/66-fenced main alice MEMBER false false 1 $'Notes:\n```\nSupersedes #67\n```'
+  pr 67 feat/67-example main alice MEMBER false false 1 ""))
 extra_branches=$(jq -sc '.' < <(
   branch main 0 1; branch feat/17-thing 1 1; branch feat/50-old 1 1; branch fix/62-merged 2 30; branch feat/63-into-dev 1 1
   branch dev 0 30; branch release/1.0 0 30 true; branch staging 0 30
   branch chore/60-lost 0 30; branch feat/61-wip 0 30; branch "fix/70-a#b" 0 30; branch "fix/71-100%" 0 30
   branch feat/80-fresh 0 1; branch feat/81-moved 0 30; branch chore/90-ruleset 0 30; branch feat/27-pushed 0 2))
 jq -c --argjson prs "$extra_prs" --argjson br "$extra_branches" --arg old "$old30" --arg recent "$(ago DAY)" \
-  --argjson i27 "$(item 27 "In progress" "P1 next" S null '[]' '[]')" --argjson i28 "$(item 28 "In progress" "P1 next" S null '[]' '[]')" '
+  --argjson i27 "$(item 27 "In progress" "P1 next" S null '[]' '[]')" --argjson i28 "$(item 28 "In progress" "P1 next" S null '[]' '[]')" \
+  --argjson i35 "$(item 35 "In progress" "P1 next" S null '[]' '[]')" '
   .data.repository.defaultBranchRef = {name: "main"}
   | .data.repository.pullRequests.nodes += $prs
   | .data.repository.branches = {pageInfo: {hasNextPage: false, endCursor: null}, nodes: $br}
   | .data.node.items.nodes |= (map(if .content.number == 21 then .content.updatedAt = $old else . end)
-    + [$i27 | .content.updatedAt = $old, $i28 | .content.updatedAt = $recent])' "$FIX/page-first.keep" >"$FIX/page-first.json"
+    + [($i27 | .content.updatedAt = $old), ($i28 | .content.updatedAt = $recent),
+       ($i35 | .content.updatedAt = $old | .updatedAt = $recent)])' "$FIX/page-first.keep" >"$FIX/page-first.json"
 run status --json --since 7d || fail "status --json with hygiene failed: $(cat "$work/err")"
 [ "$(calls)" -eq 1 ] || fail "hygiene makes status take $(calls) gh calls, wanted 1"
 [ "$(json '.hygiene.stale | map(.number)')" = "[50,53]" ] || fail "stale: $(json .hygiene.stale)"
@@ -334,10 +337,12 @@ want='["staging","chore/60-lost","feat/61-wip","fix/70-a#b","fix/71-100%","feat/
 [ "$(json '.hygiene.superseded | map(select(.number == 54 or .number == 57 or .number == 59) | .why)')" = \
   '["they supersede each other","comes from a fork","is by someone who cannot write here"]' ] || fail "superseded why: $(json .hygiene.superseded)"
 [ "$(json '.hygiene.superseded | map(select(.number == 65))')" = "[]" ] || fail "a Supersedes inside a line counts: $(json .hygiene.superseded)"
+[ "$(json '.hygiene.superseded | map(select(.number == 67))')" = "[]" ] || fail "a Supersedes inside a fenced code block counts: $(json .hygiene.superseded)"
 # A ticket is an orphan when it has no worktree, no open pull request, no branch anywhere (local or remote)
-# and has not moved for hygiene.days: #27 has a remote branch, #28 moved yesterday.
+# and has not moved for hygiene.days: #27 has a remote branch, #28 moved yesterday, #35 has an old issue but
+# was moved to In progress yesterday (a Status change touches the board item, not the issue).
 [ "$(json '.hygiene.orphans | map(.number)')" = "[21]" ] || fail "orphans: $(json .hygiene.orphans)"
-[ "$(json '.drift | map(.number)')" = "[24,26,25,28]" ] || fail "an orphan is also drift: $(json .drift)"
+[ "$(json '.drift | map(.number)')" = "[24,26,25,28,35]" ] || fail "an orphan is also drift: $(json .drift)"
 run status --since 7d || fail "status with hygiene failed: $(cat "$work/err")"
 n=$(jq -r '.hygiene | (.stale + .branches + .superseded + .orphans) | length' < <(cd "$repo" && "$cli" status --json --since 7d))
 for want in "Hygiene ($n)" "pull request #50 PR 50: no activity for 20 days" "pull request #53 PR 53: no activity for 25 days" \
@@ -367,8 +372,12 @@ echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3, "fields": {"Stat
   "options": {"Backlog": "o0", "Ready": "o1", "In review": "o3", "Done": "o4"}}}}}' >"$repo/.claude/senior-mode.json"
 : >"$FIX/open-heads"
 jq -r '.data.repository.branches.nodes[].name' "$FIX/page-first.json" >"$FIX/remote-branches"
-echo "open $old30" >"$FIX/issue-21"
-jq -nc '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"}, fieldValues: {nodes: [{name: "In progress", field: {name: "Status"}}]}}]}}}}}' >"$FIX/item-21.json"
+# live21 <Status> <issue updatedAt> <board item updatedAt>: what a fresh read of #21 answers
+live21() {
+  jq -nc --arg s "$1" --arg i "$2" --arg b "$3" '{data: {repository: {issue: {state: "OPEN", updatedAt: $i, projectItems: {nodes: [
+    {project: {id: "PVT_1"}, updatedAt: $b, fieldValues: {nodes: [{name: $s, field: {name: "Status"}}]}}]}}}}}' >"$FIX/item-21.json"
+}
+live21 "In progress" "$old30" "$old30"
 run status --fix --since 7d || fail "status --fix with hygiene failed: $(cat "$work/err")"
 grep -q '^pr close 50 --comment .*#51' "$GH_LOG" || fail "--fix did not close #50 naming #51: $(cat "$GH_LOG")"
 [ "$(grep -c '^pr close' "$GH_LOG")" -eq 1 ] || fail "--fix closed more than the superseded pull request: $(grep '^pr close' "$GH_LOG")"
@@ -393,19 +402,26 @@ grep -q '^left: #21 ' "$work/out" && fail "#21 is moved and also left to a human
 grep -q '^left: #28 .*human' "$work/out" || fail "--fix does not leave the recent #28 to a human: $(cat "$work/out")"
 run status --fix --json --since 7d || fail "status --fix --json with hygiene failed: $(cat "$work/err")"
 [ "$(json '.hygiene.fixed | map(.kind)')" = '["superseded","branch","branch","branch","orphan"]' ] || fail "--fix --json hygiene fixed: $(json .hygiene.fixed)"
-# A fresh look before moving a ticket: it moved since the report, it has a branch now, or it left In progress.
-echo "open $(ago 3600)" >"$FIX/issue-21"
-run status --fix --since 7d || fail "status --fix with an orphan that moved failed: $(cat "$work/err")"
-grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" && fail "--fix moved #21 that was updated since the report: $(cat "$GH_LOG")"
-grep -q '^left: #21 .*changed since the report' "$work/out" || fail "an orphan that moved is not said: $(cat "$work/out")"
-echo "open $old30" >"$FIX/issue-21"
+# A fresh look before moving a ticket: the issue moved since the report, or only the board item did (a Status
+# change touches the item, not the issue: a ticket just started, with no branch pushed yet), it has a branch
+# now, or it left In progress.
+notmoved() { grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" && fail "--fix moved #21 $1: $(cat "$GH_LOG")"; }
+live21 "In progress" "$(ago 3600)" "$old30"
+run status --fix --since 7d || fail "status --fix with an orphan whose issue moved failed: $(cat "$work/err")"
+notmoved "whose issue was updated since the report"
+grep -q '^left: #21 .*changed since the report' "$work/out" || fail "an orphan whose issue moved is not said: $(cat "$work/out")"
+live21 "In progress" "$old30" "$(ago 3600)"
+run status --fix --since 7d || fail "status --fix with an orphan whose board item moved failed: $(cat "$work/err")"
+notmoved "whose Status changed since the report"
+grep -q '^left: #21 .*changed since the report' "$work/out" || fail "an orphan whose Status moved is not said: $(cat "$work/out")"
+live21 "In progress" "$old30" "$old30"
 echo "feat/21-late" >>"$FIX/remote-branches"
 run status --fix --since 7d || fail "status --fix with an orphan that got a branch failed: $(cat "$work/err")"
-grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" && fail "--fix moved #21 that has a branch now: $(cat "$GH_LOG")"
-jq -nc '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"}, fieldValues: {nodes: [{name: "Ready", field: {name: "Status"}}]}}]}}}}}' >"$FIX/item-21.json"
+notmoved "that has a branch now"
 sed -i '$d' "$FIX/remote-branches"
+live21 Ready "$old30" "$old30"
 run status --fix --since 7d || fail "status --fix with an orphan no longer In progress failed: $(cat "$work/err")"
-grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" && fail "--fix moved #21 that is not In progress anymore: $(cat "$GH_LOG")"
+notmoved "that is not In progress anymore"
 # A repair that fails is said and fails the command.
 export GH_FAIL_ON="pr close"
 run status --fix --since 7d && fail "--fix exits zero when a repair failed"
@@ -413,7 +429,7 @@ grep -q '^not fixed: pull request #50' "$work/out" || fail "failed repair not sa
 unset GH_FAIL_ON
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
 
-# More than one page of branches: the next page is read, so a branch past the first 100 is judged too, and a
+# More than one page of branches (#164): the next page is read, so a branch past the first 100 is judged too, and a
 # ticket whose only branch is on it is not an orphan.
 i29=$(item 29 "In progress" "P1 next" S null '[]' '[]' | jq -c --arg old "$old30" '.content.updatedAt = $old')
 jq -c --argjson i "$i29" '.data.repository.branches.pageInfo = {hasNextPage: true, endCursor: "B1"} | .data.node.items.nodes += [$i]' \

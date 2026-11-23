@@ -446,6 +446,26 @@ command, not a model, applies these bounds:
   a private `senior-mode-e2e-<uid>` directory of `$TMPDIR` (or `/tmp`); a directory that is a link, not yours or not
   mode 0700 is refused.
 
+### Ready by rule
+
+`senior-mode ready [--pr <n>] [--dry-run]` takes the human out of the step between framing and delivery
+(`serve` calls it after a framing pull request merges). It looks at Backlog tickets that are open and have
+neither `needs-human` nor `needs-info`: with `--pr`, the tickets named (`#n`) in the body of the merged
+framing pull request `n` (its branch must be `docs/...`); without it, the tickets an agent filed, that is
+whose body ends with `filed-by: agent` (`issue create` adds it in an unattended session).
+
+- **Definition of Ready**: acceptance criteria (a list under an `Acceptance criteria` heading), Size,
+  Priority and Paths (the text field of the board, globs separated by commas; a board without the field
+  counts as no Paths). A ticket that passes is set Ready.
+- **Agent-filed tickets** also need size S, a Severity that is not high or critical, and Paths outside the
+  `protected` zones of the default branch. The match is cautious: a Paths glob counts as in a zone when it, or a
+  file name made from it, matches a protected glob, or when it shares its fixed directory start with one.
+- **Anything else** gets the `needs-human` label and a comment that lists what is missing; it is not looked at
+  again until a person fixes it and removes the label.
+
+The check is mechanical: the [`ready` skill](skills.md) still judges what a script cannot (spec, open
+questions, test seams).
+
 ### Session slots
 
 Parallel sessions must not collide on a port, a database or a cache. `run` starts every ticket session

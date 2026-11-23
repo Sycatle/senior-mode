@@ -1723,6 +1723,7 @@ BOARD_QUERY='query($project: ID!, $owner: String!, $name: String!, $after: Strin
   node(id: $project) { ... on ProjectV2 { items(first: 100, after: $after) {
     pageInfo { hasNextPage endCursor }
     nodes {
+      updatedAt
       fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } } }
       content { ... on Issue { number title url state closedAt updatedAt labels(first: 20) { nodes { name } }
         milestone { title dueOn } blockedBy(first: 20) { nodes { number state } } } } } } } }
@@ -1816,10 +1817,11 @@ board_data() {
       | select((.state // "") | IN("FAILURE", "ERROR")) // select((.conclusion // "") | IN("FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE"))
       | .context // .name];
     (.[0].data.repository // {}) as $r
-    | {items: [.[].data.node.items.nodes[] | select(.content.number != null) | .content as $c
+    | {items: [.[].data.node.items.nodes[] | select(.content.number != null) | .updatedAt as $moved | .content as $c
         | {number: $c.number, title: $c.title, url: $c.url, open: ($c.state == "OPEN"),
            status: single("Status"), priority: single("Priority"), size: single("Size"), severity: single("Severity"),
-           labels: [$c.labels.nodes[].name], milestone: $c.milestone.title, due: $c.milestone.dueOn, updated: $c.updatedAt,
+           labels: [$c.labels.nodes[].name], milestone: $c.milestone.title, due: $c.milestone.dueOn,
+           updated: ([$c.updatedAt, $moved] | map(select(. != null)) | max),
            blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number]}],
        prs: [$r.pullRequests.nodes[]? | {number, title, url, branch: .headRefName, labels: [.labels.nodes[].name], failing: failing}],
        branches: [$r.branches.nodes[]?.name],
@@ -2055,13 +2057,17 @@ iso_time() {
 #   says it may be closed: the claimant is not a draft nor from a fork, wrote #12 or may write here, and
 #   neither is a claimant itself (two that claim each other: none); `why` says what stops it otherwise;
 # - orphans: tickets In progress that show no life: no worktree ($trees maps a ticket to its worktree),
-#   no open pull request, no branch (remote or in $locals), no activity on the issue for $days days.
+#   no open pull request, no branch (remote or in $locals), no activity for $days days (the issue, or its
+#   board item: a Status change moves the item only);
+#   a `Supersedes` line inside a fenced code block does not count.
 # `hygiene_lines` words them.
 # shellcheck disable=SC2016 # a jq program, not shell
-HYGIENE_DEF='def hygiene($days; $trees; $now; $locals):
+HYGIENE_DEF='def prose: reduce (split("\n")[]) as $l ({f: false, out: []};
+      if ($l | test("^\\s{0,3}(```|~~~)")) then .f |= not elif .f then . else .out += [$l] end) | .out[];
+  def hygiene($days; $trees; $now; $locals):
     def age($t): ((($now | fromdateiso8601) - ($t | fromdateiso8601)) / 86400 | floor);
     . as $d | ($d.hygiene.prs // []) as $prs | $d.hygiene.base as $base | ([$prs[].base] | unique) as $bases
-    | [$prs[] | . as $p | [(.body // "") | split("\n")[] | capture("^supersedes\\s+#(?<m>[0-9]+)"; "i") | .m | tonumber]
+    | [$prs[] | . as $p | [(.body // "") | prose | capture("^supersedes\\s+#(?<m>[0-9]+)"; "i") | .m | tonumber]
         | unique[] | select(. != $p.number) | {m: ., by: $p.number}] as $claims
     | ($claims | map(.by) | unique) as $claimants
     | {base: $base, days: $days,
@@ -2205,13 +2211,26 @@ ref_path() {
 # Whether the ticket $2 of repository $1 still looks abandoned on a fresh read, for a repair at $3 days.
 # Prints why not when it does not. The report may be minutes old, and a run on another machine leaves
 # no worktree here: the board, the issue, the open pull requests and the branches are read again.
+# What a fresh read of an issue answers: its state, its last update and its board item (a Status change moves the
+# item, not the issue).
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+ORPHAN_QUERY='query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { issue(number: $number) { state updatedAt projectItems(first: 20) { nodes {
+    updatedAt project { id }
+    fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } } } } } } }
+}'
 orphan_check() {
-  local slug=$1 n=$2 days=$3 status issue heads
-  status=$(item_get "$n" Status) || { echo "could not read its Status"; return 1; }
-  [ "$status" = "In progress" ] || { echo "its Status is ${status:-empty} now"; return 1; }
-  issue=$(gh_retry api "repos/$slug/issues/$n" --jq '[.state, .updated_at] | join(" ")') || { echo "could not read the issue"; return 1; }
-  jq -ne --arg i "$issue" --argjson days "$days" --argjson now "$(date +%s)" '($i | split(" ")) as $p
-    | $p[0] == "open" and ($now - ($p[1] | fromdateiso8601)) / 86400 >= $days' >/dev/null || { echo "the issue changed since the report"; return 1; }
+  local slug=$1 n=$2 days=$3 project answer live state status activity heads
+  project=$(jq -r '.project.id // empty' "$(config_file)")
+  answer=$(jq -nc --arg q "$ORPHAN_QUERY" --arg o "${slug%%/*}" --arg n "${slug#*/}" --argjson i "$n" \
+    '{query: $q, variables: {owner: $o, name: $n, number: $i}}' | gh_retry api graphql --input -) &&
+    live=$(jq -r --arg p "$project" '.data.repository.issue as $i | [$i.projectItems.nodes[] | select(.project.id == $p)][0] as $m
+      | [$i.state, ([$m.fieldValues.nodes[] | select(.field.name == "Status") | .name][0] // "empty"), ([$i.updatedAt, $m.updatedAt] | max)] | @tsv' <<<"$answer") ||
+    { echo "could not read the issue"; return 1; }
+  IFS=$'\t' read -r state status activity <<<"$live"
+  [ "$status" = "In progress" ] || { echo "its Status is $status now"; return 1; }
+  jq -ne --arg s "$state" --arg a "$activity" --argjson days "$days" --argjson now "$(date +%s)" \
+    '$s == "OPEN" and ($now - ($a | fromdateiso8601)) / 86400 >= $days' >/dev/null || { echo "the issue or its Status changed since the report"; return 1; }
   ticket_trees "$(git rev-parse --show-toplevel)" | jq -e --arg n "$n" 'has($n) | not' >/dev/null || { echo "it has a worktree now"; return 1; }
   heads=$({ gh_retry pr list --state open --limit 1000 --json headRefName --jq '.[].headRefName' &&
     gh_retry api "repos/$slug/branches" --paginate --jq '.[].name' && git for-each-ref --format='%(refname:short)' refs/heads; }) ||

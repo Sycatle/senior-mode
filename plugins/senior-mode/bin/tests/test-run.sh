@@ -53,7 +53,8 @@ case "$*" in
     jq -c --argjson n "$n" '.data.node.items.nodes[] | select(.content.number == $n) | .content
       | {title, state, labels: .labels.nodes}' "$FIX/board.json" ;;
   "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
-  "project item-edit"*) ;;
+  "project item-edit"*)
+    if [ -f "$FIX/item-edit-fails-after-merge" ] && grep -q '^pr merge' "$GH_LOG"; then echo "HTTP 403: forbidden" >&2; exit 1; fi ;;
   "api repos/acme/app/pulls/"*"/files"*)
     pr=$(sed -E 's#.*/pulls/([0-9]+)/files.*#\1#' <<<"$*")
     cat "$FIX/files-$pr" 2>/dev/null || echo src/app.ts ;;
@@ -786,6 +787,18 @@ read -r -a pids <"$FIX/pids-130"
 for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && fail "P: process $pid of the session is still alive"; done
 for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
 PATH=$saved
+
+# S: the merge succeeds but setting the ticket Done fails (#163): the merge stays reported, the failure is said.
+config '{"merge": true}' '{"protection": "ruleset"}'
+board 140 '[]'
+session 140-sonnet delivered pr
+echo "$green" >"$FIX/status-140"
+touch "$FIX/item-edit-fails-after-merge"
+run || fail "S: run failed when the Status could not be set Done: $(cat "$work/out")"
+rm -f "$FIX/item-edit-fails-after-merge"
+grep -qx 'pr merge 240 --rebase --match-head-commit sha140 -R acme/app' "$GH_LOG" || fail "S: #140 not merged: $(grep merge "$GH_LOG")"
+grep -q 'Merged.*#140' "$work/out" || fail "S: report misses the merge: $(cat "$work/out")"
+grep -q '#140: merged, but could not set the Status Done' "$work/out" || fail "S: the failed Done is not said: $(cat "$work/out")"
 
 # E: nothing Ready, bad arguments.
 config '{}'

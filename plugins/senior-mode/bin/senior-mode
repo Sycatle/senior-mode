@@ -110,10 +110,11 @@ item_set() {
     ids+=("$(jq -r --arg f "$field" '.project.fields[$f].id' "$file")" "$option")
   done
   item=$(gh_retry project item-add "$number" --owner "$owner" \
-    --url "https://github.com/$(repo_slug)/issues/$issue" --format json --jq .id)
+    --url "https://github.com/$(repo_slug)/issues/$issue" --format json --jq .id) || return 1
   for ((i = 0; i < ${#ids[@]}; i += 2)); do
+    # `|| return 1`: a caller that tests item_set runs it with errexit off, and must still see a failure.
     gh_retry project item-edit --project-id "$project" --id "$item" \
-      --field-id "${ids[i]}" --single-select-option-id "${ids[i + 1]}" >/dev/null
+      --field-id "${ids[i]}" --single-select-option-id "${ids[i + 1]}" >/dev/null || return 1
     echo "#$issue ${*:i+1:1} = ${*:i+2:1}"
   done
 }

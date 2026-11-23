@@ -3271,7 +3271,8 @@ run_detach() {
 }
 
 # Writes the script of a ticket session on a model and starts it in a window of the tmux session
-# senior-mode-run, else in the background. The script leaves <n>.exit when the session ends. A window
+# senior-mode-run, else in the background. serve gives a session a role (RUN_ROLE[<n>], the SENIOR_MODE_ROLE the
+# guards read) and may give it a directory of its own (RUN_CWD[<n>]); run gives none. The script leaves <n>.exit when the session ends. A window
 # that tmux does not start fails the ticket at once (run_halt) and returns 1: no session would ever
 # leave <n>.exit, and run would wait for the whole timeout.
 # shellcheck disable=SC2016 # lines of the script, expanded when it runs
@@ -3284,10 +3285,10 @@ run_launch() {
     echo '#!/usr/bin/env bash'
     # Its process group, for run_timeout to kill the session with everything it started.
     printf 'ps -o pgid= -p $$ | tr -d " " >%q\n' "$RUN_DIR/$n.pgid"
-    printf 'cd %q || exit 1\n' "${RUN_WT[$n]}"
+    printf 'cd %q || exit 1\n' "${RUN_CWD[$n]:-${RUN_WT[$n]}}"
     # Through `slot` (#153): a slot of its own, among the ${parallel:-autonomy.parallel} of the run.
-    printf 'SENIOR_MODE_RUN=1 SENIOR_MODE_RUN_OUTCOME=%q SENIOR_MODE_SLOTS=%q %q slot -- %q -p --model %q --permission-mode bypassPermissions --output-format json' \
-      "$RUN_DIR/$n.outcome" "${parallel:-$(config_get autonomy.parallel)}" "$SELF" "$RUN_CLAUDE" "$model"
+    printf 'SENIOR_MODE_RUN=1 %sSENIOR_MODE_RUN_OUTCOME=%q SENIOR_MODE_SLOTS=%q %q slot -- %q -p --model %q --permission-mode bypassPermissions --output-format json' \
+      "${RUN_ROLE[$n]:+SENIOR_MODE_ROLE=${RUN_ROLE[$n]} }" "$RUN_DIR/$n.outcome" "${parallel:-$(config_get autonomy.parallel)}" "$SELF" "$RUN_CLAUDE" "$model"
     [ -z "${SENIOR_MODE_PLUGIN_DIR:-}" ] || printf ' --plugin-dir %q' "$SENIOR_MODE_PLUGIN_DIR"
     printf ' "$(cat %q)" >%q 2>%q\n' "$RUN_DIR/$n.prompt" "$RUN_DIR/$n-$model.json" "$RUN_DIR/$n-$model.log"
     printf 'echo $? >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit"
@@ -3313,8 +3314,8 @@ run_launch() {
 }
 
 # Opens the ticket with `senior-mode start` (worktree, branch and Status In progress, named and tracked
-# as everywhere else), then launches it on Sonnet. A ticket that cannot be opened is given up.
-run_start() {
+# as everywhere else). A ticket that cannot be opened is given up.
+run_open() {
   local n=$1 out rc=0
   out=$(SENIOR_MODE_RUN=1 SENIOR_MODE_RUN_TOKEN_FILE="$RUN_DIR/token" start "$n" 2>"$RUN_DIR/$n.err") || rc=$?
   RUN_BRANCH[$n]=$(sed -n 's/^branch //p' <<<"$out")
@@ -3324,8 +3325,14 @@ run_start() {
     return 1
   fi
   [ "$rc" -eq 0 ] || echo "#$n: could not set the Status In progress: $(head -n 1 "$RUN_DIR/$n.err")" >&2
-  run_prompt "$n" "${RUN_TITLE[$n]}" "${RUN_BRANCH[$n]}" >"$RUN_DIR/$n.prompt"
-  run_launch "$n" sonnet
+}
+
+# Opens the ticket (run_open), then launches its session on Sonnet with the prompt of RUN_PROMPT (run's own
+# by default).
+run_start() {
+  run_open "$1" || return 1
+  "${RUN_PROMPT:-run_prompt}" "$1" "${RUN_TITLE[$1]}" "${RUN_BRANCH[$1]}" >"$RUN_DIR/$1.prompt"
+  run_launch "$1" sonnet
 }
 
 # A ticket whose session cannot go on, as opposed to failed work: labelled needs-human with a comment
@@ -3418,41 +3425,51 @@ run_timeout() {
     "An autonomous senior-mode run stopped this ticket's session (autonomy.sessionTimeout)" "The session log is"
 }
 
-# A delivered ticket: merged when merging is on and every bound holds (ADR 0003, 0008), else listed
-# for a human with the reason. $2 is the open pull request as the REST list gives it.
-run_merge() {
-  local n=$1 pr sha reason="" missing files zones
-  pr=$(jq -r '.[0].number' <<<"$2")
-  sha=$(jq -r '.[0].head.sha' <<<"$2")
+# Why the pull request $1 (head $2, $3 its REST object) may not merge on its own, in one phrase, or nothing when
+# every bound holds (ADR 0003, 0008, 0018): merging is on, the server enforces protection, no needs-human, the
+# three statuses green on the head, no protected zone among the files GitHub would merge.
+run_blocker() {
+  local pr=$1 sha=$2 missing files zones
   if [ "$RUN_MERGE" != true ]; then
-    reason="merging is off (autonomy.merge)"
+    echo "merging is off (autonomy.merge)"
   elif [ "$RUN_PROTECTION" != ruleset ]; then
-    reason="the server enforces no branch protection (github.protection is ${RUN_PROTECTION:-unset})"
-  elif jq -e '[.[0].labels[]?.name] | index("needs-human")' <<<"$2" >/dev/null; then
-    reason="labelled needs-human"
+    echo "the server enforces no branch protection (github.protection is ${RUN_PROTECTION:-unset})"
+  elif jq -e '[.labels[]?.name] | index("needs-human")' <<<"$3" >/dev/null; then
+    echo "labelled needs-human"
   elif ! missing=$(gh_retry api "repos/$RUN_SLUG/commits/$sha/status" | jq -r '["senior-mode/ci", "senior-mode/review", "senior-mode/security"]
       - [.statuses[] | select(.state == "success") | .context] | join(" and ")'); then
-    reason="its statuses could not be read"
+    echo "its statuses could not be read"
   elif [ -n "$missing" ]; then
-    reason="$missing not green"
+    echo "$missing not green"
   # The command applies the protected zones, not the reviewer: the files GitHub would merge, against
-  # the globs of the base branch, so a pull request cannot unprotect itself. --match-head-commit
-  # refuses a head pushed after these checks.
+  # the globs of the base branch, so a pull request cannot unprotect itself.
   elif [ "$RUN_ZONES_KNOWN" != true ]; then
-    reason="the protected zones could not be read: $RUN_BASE has no .claude/senior-mode.json"
+    echo "the protected zones could not be read: $RUN_BASE has no .claude/senior-mode.json"
   elif ! files=$(gh_retry api "repos/$RUN_SLUG/pulls/$pr/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)'); then
-    reason="its changed files could not be read"
+    echo "its changed files could not be read"
   elif zones=$(protected_match "$RUN_GLOBS" <<<"$files") && [ -n "$zones" ]; then
-    reason="it touches a protected zone ($(paste -sd, - <<<"$zones" | sed 's/,/, /g'))"
-  elif gh pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
-    RUN_MERGED+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
-    RUN_PRS+=("#$pr")
-    (item_set "$n" Status Done) >/dev/null || {
-      echo "#$n: merged, but could not set the Status Done" >&2
-      RUN_NOT_DONE+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
-    }
-    return 0
-  else
+    echo "it touches a protected zone ($(paste -sd, - <<<"$zones" | sed 's/,/, /g'))"
+  fi
+}
+
+# A delivered ticket: merged when merging is on and every bound holds (run_blocker), else listed for a human
+# with the reason. $2 is the open pull request as the REST list gives it. --match-head-commit refuses a head
+# pushed after the checks.
+run_merge() {
+  local n=$1 pr sha reason
+  pr=$(jq -r '.[0].number' <<<"$2")
+  sha=$(jq -r '.[0].head.sha' <<<"$2")
+  reason=$(run_blocker "$pr" "$sha" "$(jq -c '.[0]' <<<"$2")")
+  if [ -z "$reason" ]; then
+    if gh pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
+      RUN_MERGED+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
+      RUN_PRS+=("#$pr")
+      (item_set "$n" Status Done) >/dev/null || {
+        echo "#$n: merged, but could not set the Status Done" >&2
+        RUN_NOT_DONE+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
+      }
+      return 0
+    fi
     reason="the merge failed: $(head -n 1 "$RUN_DIR/$n.merge")"
   fi
   RUN_WAITING+=("#$n ${RUN_TITLE[$n]}: pull request #$pr, $reason")
@@ -3496,10 +3513,15 @@ run_finish() {
     delivered)
       RUN_FAILS=0
       run_record "$n" delivered "${RUN_REASON[$n]:-}"
-      waiting=${#RUN_WAITING[@]}
-      run_merge "$n" "$pulls"
-      # Left for a human, the ticket is In review whatever its session did (#261); a merged one is Done.
-      if [ ${#RUN_WAITING[@]} -gt "$waiting" ]; then run_review "$n"; fi
+      # serve leaves the merge to its integrator pass and the review to its reviewer; the ticket is In review.
+      if [ -n "${RUN_ROLE[$n]:-}" ]; then
+        run_review "$n"
+      else
+        waiting=${#RUN_WAITING[@]}
+        run_merge "$n" "$pulls"
+        # Left for a human, the ticket is In review whatever its session did (#261); a merged one is Done.
+        if [ ${#RUN_WAITING[@]} -gt "$waiting" ]; then run_review "$n"; fi
+      fi
       ;;
     outgrown:*)
       RUN_STOP="#$n outgrew its size"
@@ -3750,14 +3772,15 @@ run_token_new() {
 
 # One look at the sessions in `running` (the caller's array): finished ones are read (run_finish), the ones
 # past autonomy.sessionTimeout are killed (run_timeout), the others stay. RUN_ON_EXIT, when set, names a
-# function that gets a finished session first and returns 0 when it took care of it (serve: a usage limit).
+# function that gets a finished session first and returns 0 when it took care of it (serve: a usage limit);
+# RUN_FINISH names the one that reads how it went (default run_finish; serve: one per role).
 # SENIOR_MODE_TIMEOUT_UNIT: seconds in a minute of autonomy.sessionTimeout (default 60), for the tests.
 run_reap() {
   local n still=()
   for n in "${running[@]}"; do
     if [ -f "$RUN_DIR/$n.exit" ]; then
       if [ -n "${RUN_ON_EXIT:-}" ] && "$RUN_ON_EXIT" "$n"; then continue; fi
-      run_finish "$n" && continue
+      "${RUN_FINISH:-run_finish}" "$n" && continue
     elif [ $((SECONDS - RUN_STARTED[$n])) -ge $((RUN_TIMEOUT * ${SENIOR_MODE_TIMEOUT_UNIT:-60})) ]; then
       run_timeout "$n"
       continue
@@ -3775,7 +3798,7 @@ run_reap() {
 run() {
   local max="" parallel="" n title t left
   local -a queue=() running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_REVIEWED=() RUN_NOT_REVIEW=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
-  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=()
+  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=()
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP=""
   while [ $# -gt 0 ]; do
@@ -3891,8 +3914,8 @@ serve_reset() {
 }
 
 # RUN_ON_EXIT of serve (see run_reap): a session that ended on the subscription usage limit and said nothing
-# of its ticket is not a failure. Nothing is launched until the reset time (limit-until), and the ticket goes
-# back to Ready, its worktree and branch kept, for the first poll after it.
+# of its ticket is not a failure. Nothing is launched until the reset time (limit-until), and the ticket of a
+# ticket or test-author session goes back to Ready, its worktree and branch kept, for the first poll after it.
 serve_limit() {
   local n=$1 text until now prev
   [ ! -s "$RUN_DIR/$n.outcome" ] || return 1
@@ -3907,8 +3930,80 @@ serve_limit() {
   [[ $prev =~ ^[0-9]+$ ]] || prev=0
   [ "$prev" -ge "$until" ] || echo "$until" >"$SERVE_DIR/limit-until"
   echo "#$n: the session hit the usage limit; nothing is launched until $(date -d "@$until" '+%F %T' 2>/dev/null || echo "$until")" >&2
-  (item_set "$n" Status Ready) >/dev/null || echo "#$n: could not set the Status back to Ready" >&2
+  case ${RUN_ROLE[$n]:-ticket} in
+    # A reviewer or an integrator leaves no status: the pull request is looked at again after the reset (ADR 0019).
+    reviewer | integrator) [ -z "${RUN_CWD[$n]:-}" ] || git worktree remove --force "${RUN_CWD[$n]}" 2>/dev/null || true ;;
+    *) (item_set "$n" Status Ready) >/dev/null || echo "#$n: could not set the Status back to Ready" >&2 ;;
+  esac
   return 0
+}
+
+# RUN_FINISH of serve (see run_reap): reads how a finished session went, by its role. Returns 1 when the
+# ticket goes on with another session.
+serve_finish() {
+  case ${RUN_ROLE[$1]:-ticket} in
+    test-author) serve_finish_tests "$1" ;;
+    reviewer) serve_finish_review "$1" ;;
+    integrator) serve_finish_integrator "$1" ;;
+    *) run_finish "$1" ;;
+  esac
+}
+
+# The test-author session of an M ticket is over: its tests are recorded as the red tests (senior-mode red-tests
+# record), then the ticket session starts on the same branch.
+serve_finish_tests() {
+  local n=$1 outcome reason=""
+  outcome=$(head -n 1 "$RUN_DIR/$n.outcome" 2>/dev/null) || outcome=""
+  if [ "$outcome" = delivered ]; then
+    if (cd "${RUN_WT[$n]}" && "$SELF" red-tests record "$n") >"$RUN_DIR/$n.red" 2>&1; then
+      RUN_ROLE[$n]=ticket
+      serve_prompt "$n" "${RUN_TITLE[$n]:-}" "${RUN_BRANCH[$n]}" >"$RUN_DIR/$n.prompt"
+      run_launch "$n" sonnet || return 0
+      return 1
+    fi
+    reason="its tests could not be recorded: $(head -n 1 "$RUN_DIR/$n.red")"
+  elif [ -n "$outcome" ]; then
+    reason=${outcome#*: }
+  else
+    reason="the session ended without saying how it went (exit code $(cat "$RUN_DIR/$n.exit"), log in $RUN_DIR)"
+  fi
+  run_record "$n" failed "$reason"
+  run_giveup "$n" "the test-author session wrote no red tests: $reason"
+}
+
+# A reviewer session is over: it must have left senior-mode/review on the head it reviewed; else the pull
+# request is a person's (a reviewer that ends without a verdict would be started again at every poll).
+serve_finish_review() {
+  local n=$1 pr=${SERVE_PR[$1]} sha=${SERVE_SHA[$1]} review
+  [ -z "${RUN_CWD[$n]:-}" ] || git worktree remove --force "${RUN_CWD[$n]}" 2>/dev/null || true
+  review=$(serve_states "$sha" | jq -r '.["senior-mode/review"] // empty') || review=""
+  if [ -n "$review" ]; then
+    RUN_FAILS=0
+    echo "#$n: pull request #$pr reviewed: senior-mode/review is $review"
+    return 0
+  fi
+  gh_retry api "repos/$RUN_SLUG/issues/$pr/labels" -f 'labels[]=needs-human' >/dev/null || echo "#$n: could not label #$pr needs-human" >&2
+  run_halt "$n" "the reviewer session of pull request #$pr ended without setting senior-mode/review" "$RUN_DIR/$n-${RUN_MODEL[$n]}.log" \
+    "An autonomous senior-mode serve found this pull request's reviewer session over" "The session log is"
+}
+
+# An integrator session is over: the pull request it opened on the -rN branch supersedes the old one, which is
+# closed (the new one is reviewed like any other); without one, the old pull request is a person's.
+serve_finish_integrator() {
+  local n=$1 old new outcome
+  old=$(cat "$RUN_DIR/$n.oldpr" 2>/dev/null) || old=""
+  outcome=$(head -n 1 "$RUN_DIR/$n.outcome" 2>/dev/null) || outcome=""
+  new=$(gh_retry api "repos/$RUN_SLUG/pulls?head=${RUN_SLUG%%/*}:${RUN_BRANCH[$n]}&state=open" --jq '.[0].number // empty') || new=""
+  if [ -n "$new" ] && [ "$outcome" = delivered ]; then
+    RUN_FAILS=0
+    gh api "repos/$RUN_SLUG/issues/$old/comments" -f body="Superseded by #$new, which resolves the conflicts with $RUN_BASE." >/dev/null || true
+    gh_retry api "repos/$RUN_SLUG/pulls/$old" -X PATCH -f state=closed >/dev/null || echo "#$n: could not close pull request #$old" >&2
+    echo "#$n: pull request #$new supersedes #$old"
+    return 0
+  fi
+  RUN_FAILS=$((RUN_FAILS + 1))
+  RUN_FAILED+=("#$n ${RUN_TITLE[$n]:-}: the integrator could not resolve pull request #$old (${outcome:-no outcome}; branch ${RUN_BRANCH[$n]} kept)")
+  serve_needs_human "$n" "$old" "the integrator session could not resolve its conflicts with $RUN_BASE (${outcome:-no outcome})"
 }
 
 # Is serve held back (not an error)? Prints why and returns 0 when it is: the circuit breaker's pause (until its
@@ -3983,6 +4078,8 @@ serve_ceiling() {
 # What the sessions that ended since the last poll left to a person, once.
 serve_report() {
   local t
+  for t in "${RUN_MERGED[@]}"; do echo "Merged: $t"; done
+  for t in "${RUN_NOT_DONE[@]}"; do echo "Status not set to Done: $t"; done
   for t in "${RUN_FAILED[@]}"; do echo "Failed: $t"; done
   for t in "${RUN_REVIEWED[@]}"; do echo "Status set to In review: $t"; done
   for t in "${RUN_NOT_REVIEW[@]}"; do echo "Status not set to In review: $t"; done
@@ -3990,46 +4087,496 @@ serve_report() {
   RUN_FAILED=() RUN_WAITING=() RUN_MERGED=() RUN_NOT_DONE=() RUN_REVIEWED=() RUN_NOT_REVIEW=() RUN_PRS=()
 }
 
-# One poll: reads the sessions that ended, trips the breaker, then, unless held or at a ceiling, starts the
-# Ready tickets in `pick` order while there is a free slot.
+# Says why a pull request waits, once: the line is repeated only when the reason changes. $1 names the pull
+# request, $2 is the line.
+serve_note() {
+  [ "${SERVE_NOTED[$1]:-}" != "$2" ] || return 0
+  SERVE_NOTED[$1]=$2
+  RUN_WAITING+=("$2")
+}
+
+# The prompt of a ticket session under serve (role ticket, ADR 0017): it delivers up to a pull request with
+# senior-mode/ci and senior-mode/security published; the reviewer and the integrator are other sessions.
+serve_prompt() {
+  local tests
+  if [ -f "$SERVE_COMMON/senior-mode/runs/$1/red-tests" ]; then
+    tests="2. The failing tests are written and committed already, by a test-author session; they are recorded
+   and read-only for you (the guard denies editing, moving or deleting them). The implementer agent makes them
+   pass (skills tdd, verify, commit) and may add tests of its own. A red test that is wrong stays as it is:
+   say so in the pull request."
+  else
+    tests="2. The test-author agent writes failing tests from the acceptance criteria and records the red run;
+   the implementer agent makes them pass (skills tdd, verify, commit): tests land in the same commit
+   as the code they cover."
+  fi
+  cat <<PROMPT
+You are one ticket session (SENIOR_MODE_ROLE=ticket) of senior-mode serve on $RUN_SLUG. Nobody will answer
+questions: decide within the ticket, its spec and the project's rules, or give up as described below.
+
+Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode team:
+1. Read the ticket (\`gh issue view $1\`), its spec and its acceptance criteria.
+$tests
+3. \`senior-mode check\` passes on a clean tree; push the branch; open a pull request from the
+   template with \`Closes #$1\` and the red run; \`senior-mode publish\`;
+   \`senior-mode item set $1 Status "In review"\`.
+4. Stop there. A reviewer session reviews the pull request from a fresh context and sets
+   senior-mode/review: you never set it, never merge, never touch another ticket. You may be resumed on this
+   branch with the reviewer's findings. A risk you meet outside this ticket is filed, never fixed here:
+   \`senior-mode issue create --severity ... --kind ... --path ... --rule ...\` (no exploit detail in the body).
+
+Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
+- \`delivered\` once the pull request is open with senior-mode/ci and senior-mode/security published;
+- \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
+- \`failed: <reason>\` otherwise, in one plain sentence.
+PROMPT
+}
+
+# The task of the test-author session of an M ticket (#191): the red tests, committed alone, before any code.
+serve_tests_prompt() {
+  cat <<PROMPT
+You are the test-author session (SENIOR_MODE_ROLE=test-author) of ticket #$1 ("$2") for senior-mode serve on
+$RUN_SLUG, in this worktree, on branch $3. Nobody will answer questions.
+
+Use the test-author agent (skill tdd): read the ticket (\`gh issue view $1\`), its spec and its acceptance
+criteria, write the failing tests, run them (each must fail for the expected reason), and commit the tests
+alone in a \`test:\` commit with the red output in the body. Edit no production code, push nothing, open no
+pull request: a ticket session builds on your commit next, and cannot change your tests.
+
+Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
+- \`delivered\` once the tests are committed;
+- \`failed: <reason>\` otherwise (for example a criterion that cannot be tested as written), in one plain sentence.
+PROMPT
+}
+
+# The task of the reviewer session (#150): the pull request $3 of ticket $1, head $4.
+serve_review_prompt() {
+  cat <<PROMPT
+You are the reviewer session (SENIOR_MODE_ROLE=reviewer) of senior-mode serve on $RUN_SLUG. You did not write
+this pull request. Nobody will answer questions.
+
+Review pull request #$3 of ticket #$1 ("$2"), head commit $4, in a fresh context with the reviewer agent
+(skill review): the diff, the ticket and its spec, the tests, the protected zones (\`senior-mode protected\`).
+When senior-mode/security is pending on the head, the security agent reviews it too. Post the review comment
+with its brief, then set senior-mode/review on $4 (\`gh api repos/$RUN_SLUG/statuses/$4 -f state=... -f context=senior-mode/review -f description=...\`):
+- \`success\` when you approve (the red tests, when the ticket has any, still pass unchanged);
+- \`failure\` when you request changes: the comment lists each blocking finding with its \`file:line\` and the
+  fix, because the ticket session is resumed with it;
+- \`pending\` and the label \`needs-human\` when a person must decide (a protected zone, a high or critical finding).
+You change no file and merge nothing.
+
+Last, write one line to the file \$SENIOR_MODE_RUN_OUTCOME: \`reviewed: <the state you set>\`, or
+\`failed: <reason>\` when you could not review.
+PROMPT
+}
+
+# The task of a ticket session resumed on its branch with the findings of the reviewer: $4 the pull request, $5 the round.
+serve_fix_prompt() {
+  cat <<PROMPT
+You are the ticket session (SENIOR_MODE_ROLE=ticket) of senior-mode serve on $RUN_SLUG, resumed on ticket
+#$1 ("$2"), in this worktree, on branch $3. Nobody will answer questions.
+
+The reviewer requested changes on pull request #$4 (round $5 of 2). Read its findings (\`gh pr view $4 --comments\`,
+the latest review comment) and fix the blocking ones, nothing else. The red tests, if the ticket has any,
+stay as they are. Then \`senior-mode check\` on a clean tree, push the branch, \`senior-mode publish\`,
+\`senior-mode item set $1 Status "In review"\`. You never set senior-mode/review and never merge.
+
+Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME: \`delivered\` once the fixes are pushed
+and published, \`outgrown: <reason>\` if the findings need more than this ticket, or \`failed: <reason>\`.
+PROMPT
+}
+
+# The task of the integrator session (#151): $4 the old pull request and branch $3, to resolve on branch $5.
+serve_integrator_prompt() {
+  cat <<PROMPT
+You are the integrator session (SENIOR_MODE_ROLE=integrator) of senior-mode serve on $RUN_SLUG, in this
+worktree, on branch $5, which starts from branch $3 of pull request #$4 (ticket #$1 "$2"). Nobody will answer
+questions.
+
+Pull request #$4 is approved but conflicts with $RUN_BASE. Rebase this branch onto $RUN_BASE, resolve the
+conflicts keeping the intent of both sides and the behaviour the tests expect, then \`senior-mode check\` on a
+clean tree, push the branch $5 and open a pull request from the template with \`Closes #$1\` and, on a line
+of its own in the body, \`Supersedes #$4\`; then \`senior-mode publish\`. Do not close #$4, do not merge, do not
+set senior-mode/review (a reviewer session reviews the new pull request). If the conflict is a decision
+only a person can take, stop and say so.
+
+Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME: \`delivered\` once the new pull request is open
+and published, or \`failed: <reason>\` in one plain sentence.
+PROMPT
+}
+
+# A ticket's session is the only one it has: the numbers of the tickets with a session running.
+serve_busy() {
+  [[ " ${running[*]} " == *" $1 "* ]]
+}
+
+# May a session start now? Not when serve is stopping, held back (serve_hold), without a free slot or after the
+# failures the breaker counts; then the guards (#117) are in place and no ceiling is reached. What it says, it
+# says once per poll.
+serve_can_launch() {
+  [ "$SERVE_TERM" = false ] && [ -z "$SERVE_HELD" ] && [ ${#running[@]} -lt "$SERVE_PARALLEL" ] && [ "$RUN_FAILS" -lt "$RUN_MAXFAIL" ] || return 1
+  if [ -z "$SERVE_GUARDS" ]; then
+    if (run_guards "$SERVE_COMMON"); then
+      SERVE_GUARDS=ok
+    else
+      SERVE_GUARDS=bad
+      echo "serve: the guards are not in place; nothing launched, trying again at the next poll" >&2
+    fi
+  fi
+  [ "$SERVE_GUARDS" = ok ] || return 1
+  if [ -z "$SERVE_WAIT" ] && SERVE_WAIT=$(serve_ceiling); then
+    echo "serve: waiting for the next poll: $SERVE_WAIT"
+  fi
+  [ -z "$SERVE_WAIT" ]
+}
+
+# The state of each status of a commit, {context: state}.
+serve_states() {
+  gh_retry api "repos/$RUN_SLUG/commits/$1/status" --jq '[.statuses[] | {key: .context, value: .state}] | from_entries'
+}
+
+# A pull request that needs a person: needs-human on it and on its ticket, and why on the pull request.
+serve_needs_human() {
+  local n=$1 pr=$2 reason=$3 t
+  for t in "$pr" "$n"; do
+    gh_retry api "repos/$RUN_SLUG/issues/$t/labels" -f 'labels[]=needs-human' >/dev/null || echo "#$n: could not label #$t needs-human" >&2
+  done
+  gh api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve: $reason
+
+It is labelled needs-human: a person decides what happens next." >/dev/null || echo "#$n: could not comment on #$pr" >&2
+  serve_note "nh$pr" "#$n ${RUN_TITLE[$n]:-}: pull request #$pr, $reason"
+}
+
+# The pull requests of tickets In review, in `pick` order, as `ticket pr sha branch title` lines: open, not a draft,
+# not needs-human, on a branch named <type>/<ticket>-... $1 is the board, $2 the open pull requests.
+# shellcheck disable=SC2016 # a jq program, not shell
+serve_candidates() {
+  jq -r --argjson d "$1" '[.[] | . as $p
+      | (try ($p.head.ref | capture("^[a-z]+/(?<n>[0-9]+)(-|$)") | .n | tonumber) catch null) as $t
+      | select($t != null)
+      | ($d.items[] | select(.number == $t and .open and .status == "In review")) as $i
+      | select((($i.labels | index("needs-human")) // ([$p.labels[]?.name] | index("needs-human"))) | not)
+      | select(.draft | not)
+      | {t: $t, pr: $p.number, sha: $p.head.sha, ref: $p.head.ref, title: $i.title,
+         k: ([($i.priority // "") | scan("^P([0-9]+)") | .[0] | tonumber] | first // 99)}]
+    | sort_by([.k, .t])[] | [.t, .pr, .sha, .ref, .title] | @tsv' <<<"$2"
+}
+
+# A merged pull request: counted, its ticket Done.
+serve_done() {
+  local t=$1 pr=$2
+  rm -f "$SERVE_DIR/queued-$pr" "$SERVE_DIR/rounds-$t"
+  RUN_MERGED+=("#$t ${RUN_TITLE[$t]:-} (pull request #$pr)")
+  (item_set "$t" Status Done) >/dev/null || {
+    echo "#$t: merged, but could not set the Status Done" >&2
+    RUN_NOT_DONE+=("#$t ${RUN_TITLE[$t]:-} (pull request #$pr)")
+  }
+}
+
+# The pull requests queued for auto-merge (queued-<pr>: the head and the ticket): merged is read back, then
+# Done; a closed one is forgotten. One whose head is no longer the queued one is a candidate again.
+serve_queued() {
+  local f pr sha t state
+  for f in "$SERVE_DIR"/queued-*; do
+    [ -e "$f" ] || continue
+    pr=${f##*queued-}
+    read -r sha t <"$f" || continue
+    state=$(gh_retry pr view "$pr" -R "$RUN_SLUG" --json state --jq .state) || continue
+    case $state in
+      MERGED) serve_done "$t" "$pr" ;;
+      CLOSED) rm -f "$f" ;;
+    esac
+  done
+}
+
+# Does the repository allow auto-merge (#173)?
+serve_auto() {
+  gh_retry api "repos/$RUN_SLUG" --jq '.allow_auto_merge // false' 2>/dev/null || echo false
+}
+
+# Merges the pull request $2 of ticket $1 at head $3: queued with auto-merge when the repository allows it
+# (else, or when GitHub refuses, merged now), --match-head-commit in both. Merged means the state read back is
+# MERGED; only then the ticket is Done.
+serve_do_merge() {
+  local t=$1 pr=$2 sha=$3 err="$SERVE_DIR/$1.merge" queued=false state
+  : >"$err"
+  if [ "$(serve_auto)" = true ] &&
+    gh pr merge "$pr" --auto --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$err"; then
+    queued=true
+  elif ! gh pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$err"; then
+    serve_note "w$pr" "#$t ${RUN_TITLE[$t]:-}: pull request #$pr, the merge failed: $(head -n 1 "$err")"
+    return 0
+  fi
+  state=$(gh_retry pr view "$pr" -R "$RUN_SLUG" --json state --jq .state) || state=""
+  if [ "$state" = MERGED ]; then
+    serve_done "$t" "$pr"
+  elif [ "$queued" = true ]; then
+    echo "$sha $t" >"$SERVE_DIR/queued-$pr"
+    echo "#$t: pull request #$pr queued for auto-merge"
+  else
+    serve_note "w$pr" "#$t ${RUN_TITLE[$t]:-}: pull request #$pr, merged but GitHub says it is ${state:-unknown}"
+  fi
+}
+
+# After a rebase of the pull request $2 (ticket $1) from head $3 to head $4 (branch $5): check and publish on
+# the new head, then the review is carried over when `git range-diff` finds the same patches, or asked again
+# when it finds any change (the head has no review status, so the next poll starts a reviewer).
+serve_requalify() {
+  local t=$1 pr=$2 old=$3 new=$4 ref=$5 wt log="$SERVE_DIR/$1.check.log" same=false cmd ob nb ci review
+  git fetch -q origin 2>/dev/null || true
+  if git cat-file -e "$old^{commit}" 2>/dev/null && git cat-file -e "$new^{commit}" 2>/dev/null &&
+    ob=$(git merge-base "$old" "$new") && nb=$(git merge-base "$RUN_BASE" "$new") &&
+    git range-diff --no-color "$ob..$old" "$nb..$new" >"$SERVE_DIR/$t.range-diff" 2>/dev/null &&
+    awk 'NF && $3 != "=" { bad = 1 } END { exit (bad || NR == 0) }' "$SERVE_DIR/$t.range-diff"; then
+    same=true
+  fi
+  wt=$(worktree_path "$RUN_ROOT" "integrate-$t")
+  git worktree remove --force "$wt" 2>/dev/null || true
+  if ! git worktree add -q --detach "$wt" "$new" 2>/dev/null; then
+    serve_needs_human "$t" "$pr" "it was rebased on $RUN_BASE but a worktree of the new head could not be opened to check it"
+    return 0
+  fi
+  cmd=$(install_command "$wt")
+  [ -z "$cmd" ] || (cd "$wt" && bash -c "$cmd" </dev/null) >"$log" 2>&1 || true
+  (cd "$wt" && "$SELF" check) >>"$log" 2>&1 || true
+  if ! (cd "$wt" && "$SELF" publish) >>"$log" 2>&1; then
+    git worktree remove --force "$wt" 2>/dev/null || true
+    serve_needs_human "$t" "$pr" "it was rebased on $RUN_BASE but its check result could not be published (log $log)"
+    return 0
+  fi
+  git worktree remove --force "$wt" 2>/dev/null || true
+  rm -f "$SERVE_DIR/rebased-$pr"
+  ci=$(serve_states "$new" | jq -r '.["senior-mode/ci"] // empty') || ci=""
+  if [ "$ci" != success ]; then
+    serve_needs_human "$t" "$pr" "it was rebased on $RUN_BASE and its check is $ci now (log $log)"
+    return 0
+  fi
+  review=$(serve_states "$old" | jq -r '.["senior-mode/review"] // empty') || review=""
+  if [ "$same" = true ] && [ "$review" = success ]; then
+    gh_retry api "repos/$RUN_SLUG/statuses/$new" -f state=success -f context=senior-mode/review \
+      -f description="carried over from ${old:0:7}: git range-diff shows the same patches" >/dev/null ||
+      echo "#$t: could not carry the review over to ${new:0:7}" >&2
+    gh api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve rebased this pull request on $RUN_BASE (\`${old:0:7}\` to \`${new:0:7}\`): \`git range-diff\` shows the same patches, so the review of \`${old:0:7}\` is carried over; check and publish ran again." >/dev/null || true
+  else
+    gh api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve rebased this pull request on $RUN_BASE (\`${old:0:7}\` to \`${new:0:7}\`): \`git range-diff\` shows changes, so check and publish ran again and a new review is requested." >/dev/null || true
+  fi
+}
+
+# The pull request $2 of ticket $1 (head $3, branch $4) is behind its base: rebased on the server
+# (`gh pr update-branch --rebase`), then requalified. Returns 0 when the head moved (new head in SERVE_HEAD),
+# 1 when not, 2 for a conflict.
+serve_rebase() {
+  local t=$1 pr=$2 old=$3 ref=$4 new="" i err="$SERVE_DIR/$1.rebase"
+  git fetch -q origin "$ref" 2>/dev/null || true
+  printf '%s\n' "$old" >"$SERVE_DIR/rebased-$pr"
+  if ! gh pr update-branch "$pr" --rebase -R "$RUN_SLUG" >/dev/null 2>"$err"; then
+    rm -f "$SERVE_DIR/rebased-$pr"
+    if grep -qi conflict "$err"; then return 2; fi
+    serve_note "w$pr" "#$t ${RUN_TITLE[$t]:-}: pull request #$pr, it is behind $RUN_BASE and could not be updated: $(head -n 1 "$err")"
+    return 1
+  fi
+  for ((i = 0; i < 6; i++)); do
+    new=$(gh_retry api "repos/$RUN_SLUG/pulls/$pr" --jq .head.sha) || new=""
+    { [ -n "$new" ] && [ "$new" != "$old" ]; } && break
+    sleep "${SENIOR_MODE_POLL:-15}"
+  done
+  if [ -z "$new" ] || [ "$new" = "$old" ]; then
+    echo "#$t: pull request #$pr is being rebased; looking again at the next poll" >&2
+    return 1
+  fi
+  serve_requalify "$t" "$pr" "$old" "$new" "$ref"
+}
+
+# The pull request $2 of ticket $1 (branch $3) conflicts with its base: an Opus integrator session resolves it
+# on the branch <branch>-r2 (-r3 the second time), in a worktree of its own, and opens a pull request that says
+# "Supersedes #<old>". A resolution that was tried twice is a person's. Returns 0 when a session started.
+serve_conflict() {
+  local t=$1 pr=$2 ref=$3 base=$3 k=2 new wt
+  if [[ $ref =~ ^(.*)-r([0-9]+)$ ]]; then
+    base=${BASH_REMATCH[1]}
+    k=$((BASH_REMATCH[2] + 1))
+  fi
+  if [ "$k" -gt 3 ]; then
+    serve_needs_human "$t" "$pr" "it conflicts with $RUN_BASE again after the integrator resolved it twice"
+    return 1
+  fi
+  serve_can_launch || return 1
+  new=$base-r$k
+  git fetch -q origin 2>/dev/null || true
+  wt=$(worktree_path "$RUN_ROOT" "$t-r$k")
+  git worktree remove --force "$wt" 2>/dev/null || true
+  git branch -D -q "$new" 2>/dev/null || true
+  if ! git worktree add -q --no-track -b "$new" "$wt" "origin/$ref" 2>/dev/null; then
+    serve_needs_human "$t" "$pr" "it conflicts with $RUN_BASE and a worktree for the integrator could not be opened on $new"
+    return 1
+  fi
+  RUN_ROLE[$t]=integrator
+  unset 'RUN_CWD[$t]'
+  RUN_WT[$t]=$wt
+  RUN_BRANCH[$t]=$new
+  echo "$pr" >"$RUN_DIR/$t.oldpr"
+  serve_integrator_prompt "$t" "${RUN_TITLE[$t]:-}" "$ref" "$pr" "$new" >"$RUN_DIR/$t.prompt"
+  echo "#$t: pull request #$pr conflicts with $RUN_BASE; the integrator resolves it on $new"
+  if run_launch "$t" opus; then running+=("$t"); fi
+}
+
+# The review of an approved pull request $2 (ticket $1, head $3, branch $4): merged by the integrator pass. Returns
+# 0 when it acted (merged, queued, rebased, a conflict session started), so that a poll merges at most one.
+serve_merge() {
+  local t=$1 pr=$2 ref=$4 pull sha reason state rc=0
+  pull=$(gh_retry api "repos/$RUN_SLUG/pulls/$pr") || return 1
+  sha=$(jq -r '.head.sha' <<<"$pull")
+  reason=$(run_blocker "$pr" "$sha" "$pull")
+  if [ -n "$reason" ]; then
+    serve_note "w$pr" "#$t ${RUN_TITLE[$t]:-}: pull request #$pr, $reason"
+    return 1
+  fi
+  state=$(jq -r '.mergeable_state // "unknown"' <<<"$pull")
+  case $state in
+    unknown) return 1 ;;
+    dirty)
+      serve_conflict "$t" "$pr" "$ref"
+      return
+      ;;
+    behind)
+      serve_rebase "$t" "$pr" "$sha" "$ref" || rc=$?
+      [ "$rc" -ne 2 ] || {
+        serve_conflict "$t" "$pr" "$ref"
+        return
+      }
+      [ "$rc" -eq 0 ] || return 1
+      pull=$(gh_retry api "repos/$RUN_SLUG/pulls/$pr") || return 0
+      sha=$(jq -r '.head.sha' <<<"$pull")
+      # A rebase that changed the patches has no review on its new head: the next poll starts a reviewer.
+      [ -z "$(run_blocker "$pr" "$sha" "$pull")" ] || return 0
+      ;;
+  esac
+  serve_do_merge "$t" "$pr" "$sha"
+}
+
+# Changes requested on the pull request $2 (branch $3) of ticket $1: the ticket session resumes on the same
+# branch with the findings, twice at most; then a person.
+serve_changes() {
+  local t=$1 pr=$2 ref=$3 rounds
+  rounds=$(cat "$SERVE_DIR/rounds-$t" 2>/dev/null) || rounds=0
+  [[ $rounds =~ ^[0-9]+$ ]] || rounds=0
+  if [ "$rounds" -ge 2 ]; then
+    serve_needs_human "$t" "$pr" "the reviewer still requests changes after $rounds fix rounds"
+    return 0
+  fi
+  serve_can_launch || return 0
+  RUN_ROLE[$t]=ticket
+  unset 'RUN_CWD[$t]'
+  run_open "$t" || return 0
+  echo $((rounds + 1)) >"$SERVE_DIR/rounds-$t"
+  serve_fix_prompt "$t" "${RUN_TITLE[$t]:-}" "${RUN_BRANCH[$t]}" "$pr" $((rounds + 1)) >"$RUN_DIR/$t.prompt"
+  echo "#$t: the reviewer requested changes on pull request #$pr; the ticket session resumes (round $((rounds + 1)) of 2)"
+  if run_launch "$t" sonnet; then running+=("$t"); fi
+}
+
+# A pull request In review whose head has senior-mode/ci and no review status: a reviewer session on Opus, in a
+# detached worktree of that head (ADR 0017, 0019: no reviewer, no review; the status stays unset and the next
+# poll after a usage limit's reset tries again).
+serve_review() {
+  local t=$1 pr=$2 sha=$3 ref=$4 wt
+  serve_can_launch || return 0
+  git fetch -q origin "$ref" 2>/dev/null || true
+  wt=$(worktree_path "$RUN_ROOT" "review-$t")
+  git worktree remove --force "$wt" 2>/dev/null || true
+  if ! git worktree add -q --detach "$wt" "$sha" 2>/dev/null; then
+    echo "#$t: could not open a worktree to review pull request #$pr; trying again at the next poll" >&2
+    return 0
+  fi
+  RUN_ROLE[$t]=reviewer
+  RUN_CWD[$t]=$wt
+  RUN_WT[$t]=$wt
+  RUN_BRANCH[$t]=$ref
+  SERVE_PR[$t]=$pr
+  SERVE_SHA[$t]=$sha
+  serve_review_prompt "$t" "${RUN_TITLE[$t]:-}" "$pr" "$sha" >"$RUN_DIR/$t.prompt"
+  echo "#$t: reviewing pull request #$pr"
+  if run_launch "$t" opus; then running+=("$t"); else git worktree remove --force "$wt" 2>/dev/null || true; fi
+}
+
+# Every pull request of a ticket In review, in `pick` order: its head decides. CI success and no review
+# status: a reviewer session. Review failure: the ticket session resumes. Review success: merged (the integrator
+# pass), at most one per poll.
+serve_prs() {
+  local data=$1 prs=$2 acted=false t pr sha ref title states review ci old
+  while IFS=$'\t' read -r t pr sha ref title; do
+    [ -n "$t" ] || continue
+    [ "$SERVE_TERM" = false ] || break
+    RUN_TITLE[$t]=$title
+    serve_busy "$t" && continue
+    if [ -f "$SERVE_DIR/queued-$pr" ] && [ "$(cut -d' ' -f1 "$SERVE_DIR/queued-$pr")" = "$sha" ]; then continue; fi
+    # A rebase whose requalification was cut short (serve stopped, the new head came late): carry on.
+    if [ -f "$SERVE_DIR/rebased-$pr" ] && old=$(cat "$SERVE_DIR/rebased-$pr") && [ "$old" != "$sha" ]; then
+      if [ "$acted" = false ]; then
+        serve_requalify "$t" "$pr" "$old" "$sha" "$ref"
+        acted=true
+      fi
+      continue
+    fi
+    states=$(serve_states "$sha") || continue
+    review=$(jq -r '.["senior-mode/review"] // empty' <<<"$states")
+    ci=$(jq -r '.["senior-mode/ci"] // empty' <<<"$states")
+    case $review in
+      "") [ "$ci" != success ] || serve_review "$t" "$pr" "$sha" "$ref" ;;
+      failure | error) serve_changes "$t" "$pr" "$ref" ;;
+      success)
+        if [ "$acted" = false ] && serve_merge "$t" "$pr" "$sha" "$ref"; then acted=true; fi
+        ;;
+    esac
+  done < <(serve_candidates "$data" "$prs")
+}
+
+# One poll: reads the sessions that ended, trips the breaker, then looks at the pull requests In review
+# (reviewer sessions, the ticket sessions resumed with findings, at most one merge) and, unless held or at a
+# ceiling, starts the Ready tickets in `pick` order while there is a free slot. A hold (breaker, usage limit)
+# stops every launch, reviewers and integrator sessions included; a merge needs no session and goes on.
 serve_poll() {
-  local now reason data n title
+  local now reason data prs n size title
   local -a queue=()
   now=$(serve_now)
   RUN_STOP=""
+  SERVE_HELD="" SERVE_GUARDS="" SERVE_WAIT=""
   run_reap
   serve_report
   serve_breaker
-  # Hook point (#150, #151): the reviewer sessions of pull requests waiting for review and the integrator
-  # pass go here, behind the same hold and ceilings (serve_hold, serve_ceiling) and the same slots.
-  if reason=$(serve_hold "$now"); then
-    echo "serve: not launching: $reason"
-    return 0
+  if SERVE_HELD=$(serve_hold "$now"); then
+    echo "serve: not launching: $SERVE_HELD"
   fi
-  [ ${#running[@]} -lt "$SERVE_PARALLEL" ] || return 0
   if ! data=$(board_data false); then
     echo "serve: cannot read the board; trying again at the next poll" >&2
     return 0
   fi
-  while IFS=$'\t' read -r n title; do
+  serve_queued
+  if prs=$(gh_retry api "repos/$RUN_SLUG/pulls?state=open&per_page=100"); then
+    serve_prs "$data" "$prs"
+  else
+    echo "serve: cannot read the open pull requests; trying again at the next poll" >&2
+  fi
+  while IFS=$'\t' read -r n size title; do
     [ -n "$n" ] || continue
     [[ " ${running[*]} " != *" $n "* ]] || continue
     RUN_TITLE[$n]=$title
+    SERVE_SIZE[$n]=$size
     queue+=("$n")
-  done < <(jq -r "$PICK_DEF"'pick[] | [.number, .title] | @tsv' <<<"$data")
-  [ ${#queue[@]} -gt 0 ] || return 0
-  # The guards (#117): the daily probe runs here too, so a serve that lives for days is checked every day.
-  if ! (run_guards "$SERVE_COMMON"); then
-    echo "serve: the guards are not in place; nothing launched, trying again at the next poll" >&2
-    return 0
-  fi
+  done < <(jq -r "$PICK_DEF"'pick[] | [.number, (.size // "-"), .title] | @tsv' <<<"$data")
   for n in "${queue[@]}"; do
-    [ "$SERVE_TERM" = false ] && [ ${#running[@]} -lt "$SERVE_PARALLEL" ] && [ "$RUN_FAILS" -lt "$RUN_MAXFAIL" ] || break
-    if reason=$(serve_ceiling); then
-      echo "serve: waiting for the next poll: $reason"
-      break
+    serve_can_launch || break
+    if [ "${SERVE_SIZE[$n]}" = M ] && [ ! -f "$SERVE_COMMON/senior-mode/runs/$n/red-tests" ]; then
+      # An M ticket: its red tests come first, from a session of their own (#191).
+      RUN_ROLE[$n]="test-author"
+      unset 'RUN_CWD[$n]'
+      if run_open "$n"; then
+        serve_tests_prompt "$n" "${RUN_TITLE[$n]}" "${RUN_BRANCH[$n]}" >"$RUN_DIR/$n.prompt"
+        if run_launch "$n" sonnet; then running+=("$n"); fi
+      fi
+    else
+      RUN_ROLE[$n]=ticket
+      unset 'RUN_CWD[$n]'
+      if run_start "$n"; then running+=("$n"); fi
     fi
-    if run_start "$n"; then running+=("$n"); fi
   done
   serve_report
   serve_breaker
@@ -4092,11 +4639,15 @@ serve_digest() {
 serve_loop() {
   local interval old sleeper
   local -a running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_REVIEWED=() RUN_NOT_REVIEW=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
-  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=()
+  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=()
+  local -A SERVE_PR=() SERVE_SHA=() SERVE_SIZE=() SERVE_NOTED=()
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP="" RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
-  local RUN_FAILS=0 RUN_STOP="" RUN_ON_EXIT=serve_limit RUN_LAUNCH_LOG
+  local RUN_FAILS=0 RUN_STOP="" RUN_ON_EXIT=serve_limit RUN_FINISH=serve_finish RUN_PROMPT=serve_prompt RUN_LAUNCH_LOG
   local SERVE_DIR SERVE_COMMON SERVE_TERM=false SERVE_PARALLEL SERVE_PER_HOUR SERVE_MIN_MEM SERVE_COOLDOWN SERVE_GRACE
+  local SERVE_HELD="" SERVE_GUARDS="" SERVE_WAIT=""
   run_prepare serve
+  # ADR 0018: under serve everything green merges, unless the repository sets autonomy.merge itself.
+  jq -e '(.autonomy // {}) | has("merge")' "$(config_file)" >/dev/null || RUN_MERGE=true
   interval=$(serve_int serve.interval 1)
   SERVE_GRACE=$(serve_int serve.grace 0)
   SERVE_COOLDOWN=$(serve_int serve.breakerCooldown 0)

@@ -51,7 +51,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `autonomy.parallel` | `1` | Tickets a run works on at once, and the number of [session slots](autonomy.md#session-slots); those whose [Paths](autonomy.md#run) overlap never run together, and one with no Paths runs alone |
 | `limits.prLines` | `400` | A positive whole number of lines. `senior-mode pick` batches Ready S tickets whose Paths overlap, at most `prLines` / 50 per batch (3 at most; an S is about 50 lines), see [batches](autonomy.md#run) |
 | `autonomy.maxConsecutiveFailures` | `2` | Failed tickets in a row after which a run starts no new one |
-| `autonomy.merge` | `false` | Whether a run merges the pull requests that pass every bound |
+| `autonomy.merge` | `false` | Whether a run merges the pull requests that pass every bound. Under [`serve`](commands.md#the-senior-mode-script) it defaults to `true` unless the repository sets it ([ADR 0018](../adr/0018-daemon-merge-policy.md)) |
 | `autonomy.escalate` | `true` | Whether a ticket that fails on Sonnet is retried once on Opus |
 | `autonomy.sessionTimeout` | `90` | Minutes a ticket session may run (a whole number from 1 to 1440). Past it, a [run](autonomy.md#run) kills the session (its process group), labels the ticket `needs-human` with the log path, counts a failure for the circuit breaker and does not retry on Opus; the ticket's Status is left as it is. The docs session after merges is bounded by the same limit |
 | `autonomy.schedule` | `"02:00"` | Time of day (`HH:MM`) of the [scheduled run](autonomy.md#scheduled-runs), unless `senior-mode schedule install --at` says otherwise |

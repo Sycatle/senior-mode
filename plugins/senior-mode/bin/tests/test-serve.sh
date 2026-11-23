@@ -260,6 +260,28 @@ SENIOR_MODE_NOW=1800000100 once || fail "C: serve failed: $(cat "$work/out")"
 started 21 && fail "C: launched within the hour"
 SENIOR_MODE_NOW=1800003601 once || fail "C: serve failed: $(cat "$work/out")"
 started 21 || fail "C: not launched an hour later: $(cat "$work/out")"
+# C2: tickets per hour (#355) count ticket starts, not role sessions; the log names the binding cap.
+config '{"parallel": 2, "ticketsPerHour": 1}'
+board 20 21
+fresh
+once || fail "C2: serve failed: $(cat "$work/out")"
+started 20 || fail "C2: no launch: $(cat "$CLAUDE_LOG")"
+started 21 && fail "C2: two tickets started in the hour"
+grep -q 'autonomy.ticketsPerHour 1' "$work/out" || fail "C2: the binding cap is not named: $(cat "$work/out")"
+grep -q 'autonomy.sessionsPerHour' "$work/out" && fail "C2: the session cap is named, it does not bind: $(cat "$work/out")"
+# Without sessionsPerHour, the safety cap is 6 sessions per slot: 6 role sessions in the hour stop one slot, not two.
+config '{"parallel": 1}'
+board 20
+fresh
+mkdir -p "$state" && printf '1800000000\n%.0s' 1 2 3 4 5 6 >"$state/launches"
+SENIOR_MODE_NOW=1800000100 once || fail "C2: serve failed: $(cat "$work/out")"
+started 20 && fail "C2: launched past the safety cap of one slot"
+grep -q 'autonomy.sessionsPerHour 6, the safety cap' "$work/out" || fail "C2: the safety cap is not named: $(cat "$work/out")"
+config '{"parallel": 2}'
+fresh
+mkdir -p "$state" && printf '1800000000\n%.0s' 1 2 3 4 5 6 >"$state/launches"
+SENIOR_MODE_NOW=1800000100 once || fail "C2: serve failed: $(cat "$work/out")"
+started 20 || fail "C2: the safety cap does not scale with parallel: $(cat "$work/out")"
 
 # D: memory and CPU: a launch waits for the next poll.
 config '{"minMemoryMB": 99999999}'
@@ -766,7 +788,8 @@ echo '{}' >"$repo/.claude/senior-mode.json"
 [ "$(cd "$repo" && "$cli" config get serve.interval)" = 60 ] &&
   [ "$(cd "$repo" && "$cli" config get serve.grace)" = 600 ] &&
   [ "$(cd "$repo" && "$cli" config get serve.breakerCooldown)" = 300 ] &&
-  [ "$(cd "$repo" && "$cli" config get autonomy.sessionsPerHour)" = 6 ] &&
+  [ "$(cd "$repo" && "$cli" config get autonomy.sessionsPerHour)" = 0 ] &&
+  [ "$(cd "$repo" && "$cli" config get autonomy.ticketsPerHour)" = 6 ] &&
   [ "$(cd "$repo" && "$cli" config get autonomy.minMemoryMB)" = 1024 ] &&
   [ "$(cd "$repo" && "$cli" config get notify.digest)" = true ] &&
   [ -z "$(cd "$repo" && "$cli" config get notify.mention)" ] &&

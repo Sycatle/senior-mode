@@ -20,8 +20,9 @@ Argument: $ARGUMENTS (a ticket number; empty means the top of `pick`). Answer in
 4. **Start.** `senior-mode start <issue>` makes the worktree and the branch and sets In progress.
    Work only in that worktree. If it refuses on the `wip` limit, offer to finish the ticket it names.
 5. **Red.** `test-author` agent, from the ticket and its spec (skill `tdd`). Keep the failing output.
-6. **Green.** `implementer` agent, atomic commits (skill `commit`), then `senior-mode check` (skill
-   `verify`). Show the user the diff summary; they can redirect at any point.
+   An agent launched in the background is not done: wait for its result before going on.
+6. **Green.** `implementer` agent, atomic commits (skill `commit`); once it has returned, never
+   before, `senior-mode check` (skill `verify`). Show the user the diff summary; they can redirect at any point.
 7. **Pull request.** Push, open it from the template with `Closes #<n>`, the red run, what was
    verified and the spec change or `Spec-Unchanged:`. `senior-mode item set <n> Status "In review"`,
    `senior-mode publish`.

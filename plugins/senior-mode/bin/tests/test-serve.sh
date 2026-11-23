@@ -23,7 +23,12 @@ jqf="" prev=""
 for a in "$@"; do [ "$prev" = --jq ] && jqf=$a; prev=$a; done
 respond() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
 case "$*" in
-  "api graphql --input -") cat >/dev/null; cat "$FIX/board.json" ;;
+  "api graphql --input -")
+    cat >"$FIX/graphql-in"
+    if grep -q createProjectV2StatusUpdate "$FIX/graphql-in"; then
+      cat "$FIX/graphql-in" >>"$FIX/status-updates"
+      echo '{"data": {"createProjectV2StatusUpdate": {"statusUpdate": {"id": "SU_1"}}}}'
+    else cat "$FIX/board.json"; fi ;;
   "api repos/acme/app/dependabot/alerts"* | "api repos/acme/app/secret-scanning/alerts"*) echo '[]' | respond ;;
   "issue view "*)
     n=$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*")
@@ -73,6 +78,11 @@ outcome=$(sed -n 1p "$fx")
   echo "[{\"number\": $((n + 100)), \"head\": {\"sha\": \"sha$n\"}, \"labels\": []}]" >"$FIX/pulls-$n"
 echo '{"result": "ok"}'
 STUB
+cat >"$work/stub/curl" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >>"$CURL_LOG"
+[ ! -f "$FIX/curl-fails" ]
+STUB
 cat >"$work/stub/tmux" <<'STUB'
 #!/usr/bin/env bash
 case $1 in
@@ -93,7 +103,7 @@ cat >"$work/stub/loginctl" <<'STUB'
 echo "Linger=$(cat "$FIX/linger")"
 STUB
 chmod +x "$work/stub/"*
-export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" CLAUDE_LOG="$work/claude.log" SYS_LOG="$work/sys.log" FIX="$work/fix" \
+export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" CLAUDE_LOG="$work/claude.log" SYS_LOG="$work/sys.log" CURL_LOG="$work/curl.log" FIX="$work/fix" \
   SENIOR_MODE_RETRY_DELAY=0 XDG_DATA_HOME="$work/xdg" SENIOR_MODE_POLL=0.1 CLAUDE_CONFIG_DIR="$work/claude-home" \
   SENIOR_MODE_PROBE_RETRY=0 SENIOR_MODE_MANAGED_SETTINGS="$work/managed-settings.json" XDG_CONFIG_HOME="$work/cfg" USER=tester \
   SENIOR_MODE_NOW=1800000000 SENIOR_MODE_LOADAVG=0
@@ -108,10 +118,10 @@ git init -q -b main "$repo"
 git -C "$repo" remote add origin "$work/github.com/acme/app.git"
 mkdir -p "$repo/.claude"
 fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2", "In review": "o3", "Backlog": "o0", "Done": "o4"}}}'
-# config <autonomy json> [<serve json>]
+# config <autonomy json> [<serve json> [<notify json>]]; the daily digest is off unless the notify json turns it on.
 config() {
-  jq -n --argjson f "$fields" --argjson a "$1" --argjson s "${2:-{\}}" '{project: {id: "PVT_1", owner: "acme", number: 3, fields: $f},
-    autonomy: ({minMemoryMB: 0} + $a), serve: $s, github: {protection: "ruleset"}}' >"$repo/.claude/senior-mode.json"
+  jq -n --argjson f "$fields" --argjson a "$1" --argjson s "${2:-{\}}" --argjson nt "${3:-{\}}" '{project: {id: "PVT_1", owner: "acme", number: 3, fields: $f},
+    autonomy: ({minMemoryMB: 0} + $a), serve: $s, notify: ({digest: false} + $nt), github: {protection: "ruleset"}}' >"$repo/.claude/senior-mode.json"
   git -C "$repo" add -A
   git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: config" --allow-empty
   git -C "$repo" push -q origin main
@@ -309,6 +319,70 @@ done
 grep -q 'issues/52/labels' "$GH_LOG" || fail "G: no needs-human on the ticket killed at the end of the grace: $(cat "$GH_LOG")"
 grep -q '^app-52 opus' "$CLAUDE_LOG" && fail "G: retried on Opus while stopping"
 
+# J: alerts (#155). A failed ticket gets needs-human and a mention of the repository owner, and the webhook gets
+# {event, repo, number, url, reason}; a ticket stopped for good (timeout) is a needs-human event; the breaker
+# pause is an event without a number. A webhook that fails does not stop serve; no webhook, no curl.
+: >"$CURL_LOG"
+config '{"escalate": false}' '{}' '{"webhook": "https://hooks.example/senior"}'
+board 60
+session 60-sonnet "failed: it broke"
+fresh
+once || fail "J: serve failed: $(cat "$work/out")"
+grep -q 'issues/60/labels.*needs-human' "$GH_LOG" || fail "J: failed ticket not labelled needs-human: $(cat "$GH_LOG")"
+grep -q 'issues/60/comments.*@acme' "$GH_LOG" || fail "J: the owner is not mentioned: $(cat "$GH_LOG")"
+jq -e '.event == "failed" and .repo == "acme/app" and .number == 60 and .url == "https://github.com/acme/app/issues/60"
+  and (.reason | test("it broke"))' <<<"$(sed -n 's/.* -d //p' "$CURL_LOG" | head -n 1)" >/dev/null ||
+  fail "J: webhook payload wrong: $(cat "$CURL_LOG")"
+grep -q 'https://hooks.example/senior' "$CURL_LOG" || fail "J: webhook url not called: $(cat "$CURL_LOG")"
+config '{"escalate": false}' '{}' '{"mention": "bob"}'
+session 60-sonnet "failed: it broke"
+: >"$CURL_LOG"
+fresh
+once || fail "J: serve failed: $(cat "$work/out")"
+grep -q 'issues/60/comments.*@bob' "$GH_LOG" || fail "J: notify.mention not used: $(cat "$GH_LOG")"
+[ ! -s "$CURL_LOG" ] || fail "J: curl called without notify.webhook: $(cat "$CURL_LOG")"
+# A timeout is a needs-human event; a failing webhook is said on stderr and serve goes on.
+config '{"sessionTimeout": 1}' '{}' '{"webhook": "https://hooks.example/senior"}'
+board 61
+session 61-sonnet "" "" hang
+touch "$FIX/curl-fails"
+fresh
+SENIOR_MODE_TIMEOUT_UNIT=1 once || fail "J: serve failed with a failing webhook: $(cat "$work/out")"
+rm -f "$FIX/curl-fails"
+grep -q '"event":"needs-human"' "$CURL_LOG" || fail "J: no needs-human event: $(cat "$CURL_LOG")"
+grep -q 'webhook' "$work/out" || fail "J: the failing webhook is not said: $(cat "$work/out")"
+# The breaker pause.
+config '{"parallel": 3, "maxConsecutiveFailures": 2, "escalate": false}' '{"breakerCooldown": 100}' '{"webhook": "https://hooks.example/senior"}'
+board 62 63
+session 62-sonnet "failed: broke"
+session 63-sonnet "failed: broke too"
+: >"$CURL_LOG"
+fresh
+once || fail "J: serve failed: $(cat "$work/out")"
+[ "$(grep -c '"event":"breaker"' "$CURL_LOG")" = 1 ] || fail "J: breaker event not sent once: $(cat "$CURL_LOG")"
+grep '"event":"breaker"' "$CURL_LOG" | grep -q '"number":null' || fail "J: breaker event has a number: $(cat "$CURL_LOG")"
+rm -f "$state/paused"
+
+# K: the daily digest (#155): `status --since 24h` posted as a Project status update once a day.
+: >"$FIX/status-updates"
+config '{}' '{}' '{"digest": true}'
+board 70
+session 70-sonnet delivered pr
+fresh
+SENIOR_MODE_NOW=1800000000 once || fail "K: serve failed: $(cat "$work/out")"
+[ "$(grep -c 'createProjectV2StatusUpdate' "$FIX/status-updates")" = 1 ] || fail "K: no status update posted: $(cat "$work/out")"
+jq -e '.variables.project == "PVT_1" and (.variables.body | test("Done in the last 24h"))' "$FIX/status-updates" >/dev/null ||
+  fail "K: status update wrong: $(cat "$FIX/status-updates")"
+[ "$(cat "$state/digest" 2>/dev/null)" = 1800000000 ] || fail "K: the mark is not kept: $(cat "$state/digest" 2>&1)"
+SENIOR_MODE_NOW=1800003600 once || fail "K: serve failed: $(cat "$work/out")"
+[ "$(grep -c 'createProjectV2StatusUpdate' "$FIX/status-updates")" = 1 ] || fail "K: a second digest within the day"
+SENIOR_MODE_NOW=1800086400 once || fail "K: serve failed: $(cat "$work/out")"
+[ "$(grep -c 'createProjectV2StatusUpdate' "$FIX/status-updates")" = 2 ] || fail "K: no digest the next day: $(cat "$work/out")"
+config '{}' '{}' '{"digest": false}'
+rm -f "$state/digest"
+SENIOR_MODE_NOW=1800200000 once || fail "K: serve failed: $(cat "$work/out")"
+[ "$(grep -c 'createProjectV2StatusUpdate' "$FIX/status-updates")" = 2 ] || fail "K: digest posted with notify.digest false"
+
 # H: install and uninstall of the systemd user unit.
 config '{}' '{"grace": 120}'
 unit=$XDG_CONFIG_HOME/systemd/user/senior-mode-serve.service
@@ -352,7 +426,10 @@ echo '{}' >"$repo/.claude/senior-mode.json"
   [ "$(cd "$repo" && "$cli" config get serve.grace)" = 600 ] &&
   [ "$(cd "$repo" && "$cli" config get serve.breakerCooldown)" = 3600 ] &&
   [ "$(cd "$repo" && "$cli" config get autonomy.sessionsPerHour)" = 6 ] &&
-  [ "$(cd "$repo" && "$cli" config get autonomy.minMemoryMB)" = 1024 ] || fail "I: config defaults wrong"
+  [ "$(cd "$repo" && "$cli" config get autonomy.minMemoryMB)" = 1024 ] &&
+  [ "$(cd "$repo" && "$cli" config get notify.digest)" = true ] &&
+  [ -z "$(cd "$repo" && "$cli" config get notify.mention)" ] &&
+  [ -z "$(cd "$repo" && "$cli" config get notify.webhook)" ] || fail "I: config defaults wrong"
 
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

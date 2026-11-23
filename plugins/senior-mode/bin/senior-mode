@@ -18,6 +18,7 @@ DEFAULTS='{
   "protected": [],
   "secrets": [],
   "audit": true,
+  "board": { "template": "PVT_kwHOAZfEPs4Bs2sq" },
   "envGuard": { "forbidden": [] },
   "review": { "sections": [] },
   "docs": { "extra": [] },
@@ -993,11 +994,28 @@ board_fields() {
     gh_retry api graphql --input - --jq '[.data.node.fields.nodes[] | select(.name)]'
 }
 
-# Finds the Project of the repository (cached number, else same title) or creates it; prints
-# "<number> <id>". Called as `setup_project || die`, which turns off set -e here: every command
-# checks its own status.
+# Copies the template Project into the repository's owner, without draft issues: views and built-in
+# workflows come with it, fields too. Prints "<number> <id>". Reads template and owner_node of setup_github.
+copy_template() { # title
+  jq -nc --arg t "$template" --arg o "$owner_node" --arg title "$1" '{variables: {template: $t, owner: $o, title: $title},
+    query: "mutation($template: ID!, $owner: ID!, $title: String!) { copyProjectV2(input: {projectId: $template,
+    ownerId: $owner, title: $title, includeDraftIssues: false}) { projectV2 { id number } } }"}' |
+    gh_retry api graphql --input - --jq '.data.copyProjectV2.projectV2 | "\(.number) \(.id)"'
+}
+
+# Sets fields of a Project (updateProjectV2): $2 is a JSON object of the input fields.
+project_update() { # project-id fields
+  jq -nc --arg id "$1" --argjson f "$2" '{variables: {input: ({projectId: $id} + $f)},
+    query: "mutation($input: UpdateProjectV2Input!) { updateProjectV2(input: $input) { projectV2 { id } } }"}' |
+    gh_retry api graphql --input - >/dev/null
+}
+
+# Finds the Project of the repository (cached number, else same title) or copies the template Project
+# (a copy is private: public when the repository is); prints "<number> <id> <copied|found>". Called as
+# `setup_project || die`, which turns off set -e here: every command checks its own status. Reads
+# template, owner_node and private of setup_github.
 setup_project() {
-  local file=$1 owner=$2 name=$3 slug=$4 number id err
+  local file=$1 owner=$2 name=$3 slug=$4 number id err how=found out
   number=$(jq -r '.project.number // empty' "$file")
   if [ -n "$number" ]; then
     err=$(mktemp)
@@ -1010,15 +1028,53 @@ setup_project() {
   if [ -z "$number" ]; then
     number=$(gh_retry project list --owner "$owner" --limit 100 --format json \
       --jq "[.projects[] | select(.title == \"$name\")][0].number // empty") || return 1
-    if [ -z "$number" ]; then
-      number=$(gh_retry project create --owner "$owner" --title "$name" --format json --jq .number) || return 1
-      echo "Project #$number $name: created" >&2
+    if [ -n "$number" ]; then
+      id=$(gh_retry project view "$number" --owner "$owner" --format json --jq .id) || return 1
+    else
+      out=$(copy_template "$name") || { echo "senior-mode: cannot copy the template Project $template (board.template)" >&2; return 1; }
+      read -r number id <<<"$out"
+      how=copied
+      echo "Project #$number $name: copied from the template" >&2
+      [ "$private" != false ] || project_update "$id" '{"public": true}' || return 1
     fi
-    id=$(gh_retry project view "$number" --owner "$owner" --format json --jq .id) || return 1
   fi
   [ -n "$id" ] || return 1
   gh_retry project link "$number" --owner "$owner" --repo "$slug" >/dev/null || return 1
-  echo "$number $id"
+  echo "$number $id $how"
+}
+
+# The views and the built-in workflows of a Project, as {views: [name], workflows: [{name, enabled}]}.
+board_shape() { # project-id
+  jq -nc --arg id "$1" '{variables: {id: $id}, query: "query($id: ID!) { node(id: $id) { ... on ProjectV2 {
+    views(first: 20) { nodes { name } } workflows(first: 20) { nodes { name enabled } } } } }"}' |
+    gh_retry api graphql --input - --jq '.data.node | {views: [.views.nodes[].name], workflows: .workflows.nodes}'
+}
+
+# What the template has and the Project $1 lacks, in words: its views, and the built-in workflows it has
+# on. Empty when nothing lacks; status 1 when either Project cannot be read.
+board_lacks() { # project-id template-id
+  local mine tpl
+  mine=$(board_shape "$1") && tpl=$(board_shape "$2") || return 1
+  jq -nr --argjson m "$mine" --argjson t "$tpl" '
+    [([$t.views[] | select(. as $v | $m.views | index($v) | not)] | if length > 0 then "views " + join(", ") else empty end),
+     ([$t.workflows[] | select(.enabled) | .name | select(. as $w | $m.workflows | map(select(.enabled) | .name) | index($w) | not)]
+       | if length > 0 then "workflows " + join(", ") else empty end)] | join("; ")'
+}
+
+# Compares the Project with the template (#176): the copy is checked and a gap named with where to fix it
+# (GitHub has no API for views and built-in workflows); an existing Project is never replaced, and
+# setup names --migrate. Reads template of setup_github.
+setup_board_template() { # project-id copied|found
+  local lacks
+  lacks=$(board_lacks "$1" "$template" 2>/dev/null) ||
+    { echo "board: could not read the template Project $template; compare the Project with it by hand"; return 0; }
+  if [ "$2" = copied ]; then
+    if [ -z "$lacks" ]; then echo "board: the copy has the views and workflows of the template"
+    else echo "board: the copy lacks $lacks that the template has; add the views by hand (GitHub has no API for views) and turn the workflows on in Project → Workflows"
+    fi
+  elif [ -n "$lacks" ]; then
+    echo "board: the Project lacks $lacks that the template has; senior-mode setup github --migrate builds a new Project from the template and moves every item (add --dry-run to see the mapping first)"
+  fi
 }
 
 # Creates missing board fields with their colours, repairs the options of existing ones.
@@ -1290,7 +1346,7 @@ setup_security() { # root slug
 }
 
 setup_github() {
-  local root file slug owner name owner_type project number id fields labels label color description err ci="" globs review=false codeowner codeowners_owns=false reason
+  local root file slug owner name owner_type owner_node private template project number id how fields labels label color description err ci="" globs review=false codeowner codeowners_owns=false reason
   case "$*" in "") ;; "--ci local" | "--ci actions") ci=$2 ;; *) usage ;; esac
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
@@ -1302,10 +1358,12 @@ setup_github() {
       die "could not write .claude/senior-mode.json"
   fi
   slug=$(repo_slug) owner=${slug%%/*} name=${slug#*/}
-  owner_type=$(gh_retry api "repos/$slug" --jq .owner.type) || die "cannot read $slug on GitHub"
+  IFS='|' read -r owner_type owner_node private < <(gh_retry api "repos/$slug" \
+    --jq '[.owner.type, .owner.node_id, (.private | tostring)] | join("|")') || die "cannot read $slug on GitHub"
+  template=$(jq -r --argjson d "$DEFAULTS" '($d * .).board.template' "$file")
 
-  project=$(setup_project "$file" "$owner" "$name" "$slug") || die "could not find or create the Project"
-  read -r number id <<<"$project"
+  project=$(setup_project "$file" "$owner" "$name" "$slug") || die "could not find or copy the Project"
+  read -r number id how <<<"$project"
   setup_fields "$id"
   fields=$(board_fields "$id") || die "could not read the fields of Project #$number"
   jq --arg o "$owner" --argjson n "$number" --arg id "$id" --argjson f "$fields" \
@@ -1314,6 +1372,7 @@ setup_github() {
     "$file" >"$file.tmp" || die "could not write .claude/senior-mode.json"
   mv "$file.tmp" "$file"
   echo "Project #$number $name: linked, fields Status, Priority, Size, Severity, Paths; ids cached in .claude/senior-mode.json"
+  setup_board_template "$id" "$how"
   setup_board_workflows "$id"
 
   labels='needs-human|d93f0b|Waiting for a human decision or merge

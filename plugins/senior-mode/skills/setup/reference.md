@@ -8,6 +8,14 @@ default branch, and the pre-push hook is the only gate. Relay it in plain words,
 out (make the repository public, or upgrade to Pro or Team and rerun setup), and get an explicit
 acknowledgement before going on.
 
+## Board
+
+With no Project, `senior-mode setup github` copies the template Project (`board.template`): views,
+fields and built-in workflows come with the copy. It then ensures the fields Status, Priority, Size,
+Severity and Paths (text), keeping existing options. Relay `board: the copy lacks ...` (views to add
+by hand, workflows to turn on in the Project's Workflows tab: no API does either). An existing Project is
+never replaced: on `board: the Project lacks ...`, say what is missing and offer `--migrate`.
+
 ## Scanners
 
 `senior-mode setup github` turns on Dependabot alerts, secret scanning and push

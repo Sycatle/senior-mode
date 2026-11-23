@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0](https://github.com/Sycatle/senior-mode/compare/senior-mode--v0.3.0...senior-mode--v0.4.0) (2026-11-23)
+
+
+### Features
+
+* **run:** start a batch as one worktree, one session and one pull request ([217feb4](https://github.com/Sycatle/senior-mode/commit/217feb456ce9d0cf3a202e38fc3221b9dc19b9a2)), refs [#263](https://github.com/Sycatle/senior-mode/issues/263)
+* **serve:** ready by rule each poll and recovery of orphaned tickets ([16e439e](https://github.com/Sycatle/senior-mode/commit/16e439eabd54eb14201bff2c71d521d022a7d15c)), refs [#272](https://github.com/Sycatle/senior-mode/issues/272)
+* **serve:** recover every ticket of a lost batch session ([1520ce4](https://github.com/Sycatle/senior-mode/commit/1520ce4c2a96673b8b7f72713da322a1572968ad)), refs [#263](https://github.com/Sycatle/senior-mode/issues/263)
+* **serve:** reviewer, test-author, fix-round and integrator sessions with native auto-merge ([f7e32ba](https://github.com/Sycatle/senior-mode/commit/f7e32baa3a0c20045493526a6e303a399900d8c6)), refs [#151](https://github.com/Sycatle/senior-mode/issues/151) [#173](https://github.com/Sycatle/senior-mode/issues/173)
+
+
+### Bug Fixes
+
+* **serve:** label a pull request that can never merge needs-human ([6268fa1](https://github.com/Sycatle/senior-mode/commit/6268fa1f591f74667dd1b0359179a69dcfad52ae)), refs [#282](https://github.com/Sycatle/senior-mode/issues/282)
+
 ## [0.3.0](https://github.com/Sycatle/senior-mode/compare/senior-mode--v0.2.0...senior-mode--v0.3.0) (2026-11-23)
 
 

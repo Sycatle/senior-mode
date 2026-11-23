@@ -49,6 +49,7 @@ Recipes and signs you left the mode: `${CLAUDE_SKILL_DIR}/refactor.md`.
 - Real collaborators when cheap; fakes at boundaries (network, clock, payment provider), not mocks of
   your own internals.
 - Deterministic: no sleeps, no order dependence, fixed clocks and seeds.
+- Fixtures written by hand, synthetic; never copied from a real export or dump.
 
 Avoid: tautological tests that restate the implementation, asserting on private state, snapshot tests
 as the only check, tests written after the fact to reach coverage.

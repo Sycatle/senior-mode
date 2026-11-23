@@ -123,7 +123,7 @@ setup_board_template() { # project-id copied|found
     else echo "board: the copy lacks $lacks that the template has; add the views by hand (GitHub has no API for views) and turn the workflows on in Project → Workflows"
     fi
   elif [ -n "$lacks" ]; then
-    echo "board: the Project lacks $lacks that the template has; senior-mode setup github --migrate builds a new Project from the template and moves every item (add --dry-run to see the mapping first)"
+    echo "board: the Project lacks $lacks that the template has; senior-mode setup github --upgrade adds the fields and options it lacks (--dry-run lists them), and --migrate builds a new Project from the template and moves every item (add --dry-run to see the mapping first)"
   fi
 }
 
@@ -438,4 +438,57 @@ setup_board_workflows() {
     { echo "built-in workflows: could not read them; check Project → Workflows by hand"; return 0; }
   [ -z "$off" ] ||
     echo "built-in workflows off: $off; turn them on in the Project → Workflows (no API can), so the board moves to Done"
+}
+
+# Caches in the config the Project and the ids of its fields (Status, Priority, Size, Severity, Paths); $5 is the
+# fields of board_fields, $6 true to keep project.migration (an interrupted migration) of the former entry.
+# shellcheck disable=SC2016 # a jq program, not shell
+cache_project() { # config-file owner number id fields keep-migration
+  jq --arg o "$2" --argjson n "$3" --arg id "$4" --argjson f "$5" --argjson keep "$6" \
+    '((if $keep then (.project // {} | with_entries(select(.key == "migration"))) else {} end)
+      + {owner: $o, number: $n, id: $id, fields: ($f | map(select(.name | IN("Status", "Priority", "Size", "Severity", "Paths")))
+      | map({key: .name, value: (if .options then {id, options: (.options | map({key: .name, value: .id}) | from_entries)} else {id} end)}) | from_entries)}) as $p
+      | .project = $p' \
+    "$1" >"$1.tmp" || die "could not write .claude/senior-mode.json"
+  mv "$1.tmp" "$1"
+}
+
+# Adds to the board of the config every field and single-select option the template has and the board lacks (#298), and
+# nothing else: no value, option, item or view is touched or removed, and the ruleset, labels and repository settings
+# are not read. A field matches by name in any case, an option by name or by the alias of $BOARD (Todo is Backlog). The
+# Iteration field and the dates Start and End are made as `setup github` makes them (setup_cycle). With dry set, lists
+# and changes nothing. A rerun finds nothing to add. Reads template of setup_github.
+# shellcheck disable=SC2016 # jq programs, not shell
+setup_upgrade() { # config-file dry-run owner
+  local file=$1 dry=$2 owner=$3 number id tplf boardf plan fields options added=""
+  number=$(jq -r '.project.number // empty' "$file") id=$(jq -r '.project.id // empty' "$file")
+  [ -n "$number" ] && [ -n "$id" ] || die "no Project to upgrade in .claude/senior-mode.json; run senior-mode setup github first"
+  tplf=$(board_fields "$template") || die "cannot read the template Project $template (board.template)"
+  boardf=$(board_fields "$id") || die "cannot read the fields of Project #$number"
+  # The fields to create come from the migration plan; the options are the template's that the board has under neither
+  # their name nor an alias of $BOARD (a board whose Status has Todo does not lack Backlog).
+  plan=$(migrate_plan "$tplf" "$boardf" '[]' '[]' | jq -c --argjson tpl "$tplf" --argjson brd "$boardf" --argjson board "$BOARD" '
+    .options = [$tpl[] | select(.options) | . as $f
+      | ($brd[] | select(.options and (.name | ascii_downcase) == ($f.name | ascii_downcase))) as $t
+      | {field: $t.name, id: $t.id, current: ($t.options | map({id, name, color, description})),
+         missing: [$f.options[] | . as $w | [($board[$f.name] // [])[] | select(.name == $w.name) | .aliases[]? | ascii_downcase] as $al
+           | select([$t.options[] | .name | ascii_downcase] | any(. == ($w.name | ascii_downcase) or IN($al[])) | not)
+           | {name, color, description: (.description // "")}]}
+      | select(.missing | length > 0)]')
+  fields=$(jq -r '[.create[] | "\(.name) (\(.kind))"] | join(", ")' <<<"$plan")
+  options=$(jq -r '[.options[] | .field as $f | .missing[] | "\($f) \(.name)"] | join(", ")' <<<"$plan")
+  jq -e '.[] | select(.name == "Iteration")' <<<"$boardf" >/dev/null || fields+="${fields:+, }Iteration (ITERATION)"
+  if [ "$dry" = true ]; then
+    echo "upgrade: Project #$number: fields to add: ${fields:-none}"
+    echo "upgrade: Project #$number: options to add: ${options:-none}"
+    echo "upgrade: dry run, nothing changed; senior-mode setup github --upgrade does it"
+    return 0
+  fi
+  migrate_fields "$id" "$plan"
+  boardf=$(board_fields "$id") || die "cannot read the fields of Project #$number"
+  cache_project "$file" "$owner" "$number" "$id" "$boardf" true
+  setup_cycle "$id" "$file"
+  [ -z "$fields" ] || added+="fields added: $fields"
+  [ -z "$options" ] || added+="${added:+; }options added: $options"
+  echo "upgrade: Project #$number: ${added:-nothing to add, the board has every field and option of the template}"
 }

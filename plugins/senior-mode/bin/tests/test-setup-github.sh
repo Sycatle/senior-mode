@@ -66,6 +66,9 @@ case "$*" in
       # An Iteration field is read by its own query, not with the others.
       jq -nc --argjson v "$v" '{data: {node: {field: {id: "F_Iteration", configuration: {duration: $v.cfg.duration, completedIterations: [],
         iterations: ($v.cfg.iterations | to_entries | map(.value + {id: "it\(.key)"}))}}}}}' >"$FIX/iteration.json"
+      # The board lists it among its fields, as GitHub does.
+      jq 'if any(.data.node.fields.nodes[]; .name == "Iteration") then . else .data.node.fields.nodes += [{id: "F_Iteration", name: "Iteration", dataType: "ITERATION"}] end' \
+        "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"
     elif grep -q createProjectV2Field <<<"$body"; then
       dt=$(grep -o 'dataType: [A-Z_]*' <<<"$body" | head -1 | cut -d' ' -f2)
       jq --argjson v "$v" --arg dt "${dt:-TEXT}" '.data.node.fields.nodes += [{id: ("F_" + $v.name), name: $v.name}
@@ -907,6 +910,98 @@ echo '{"language": "fr"}' >"$repo/.claude/senior-mode.json"
 migrate && fail "--migrate succeeds with no Project"
 grep -q "no Project to migrate" "$work/err" || fail "no explanation: $(cat "$work/err")"
 (cd "$repo" && "$cli" setup github --dry-run) >/dev/null 2>&1 && fail "--dry-run accepted without --migrate"
+
+# --upgrade (#298): an existing board gets the fields and options of the template it lacks, nothing else.
+# The board predates 0.5: no Severity, Paths, Iteration, Start or End, a Status that still says Todo, a Priority with
+# one option. The template has them all, and a Team field.
+rm -f "$FIX/rulesets.json" "$FIX/iteration.json" "$FIX"/fields-PVT_*.json
+jq -n --argjson st "$(status_opts '["Backlog","Ready","In progress","In review","Done"]')" --argjson pr "$(status_opts '["P0 now","P1 next","P2 later","P3 someday"]')" \
+  --argjson sz "$(status_opts '["S","M","L"]')" --argjson sv "$(status_opts '["critical","high","moderate","low"]')" --argjson tm "$(status_opts '["Core","Infra"]')" \
+  '{data: {node: {fields: {nodes: [{}, {id: "T_Title", name: "Title", dataType: "TITLE"}, {id: "TF_Status", name: "Status", options: $st},
+    {id: "TF_Priority", name: "Priority", options: $pr}, {id: "TF_Size", name: "Size", options: $sz}, {id: "TF_Severity", name: "Severity", options: $sv},
+    {id: "TF_Team", name: "Team", options: $tm}, {id: "TF_Paths", name: "Paths", dataType: "TEXT"}, {id: "TF_Iteration", name: "Iteration", dataType: "ITERATION"},
+    {id: "TF_Start", name: "Start", dataType: "DATE"}, {id: "TF_End", name: "End", dataType: "DATE"}]}}}}' >"$FIX/fields-PVT_TPL.json"
+jq -n '{data: {node: {fields: {nodes: [{}, {id: "F_Status", name: "Status", options: [
+    {id: "O_todo", name: "Todo", color: "GRAY", description: ""}, {id: "O_prog", name: "In progress", color: "YELLOW", description: ""},
+    {id: "O_done", name: "Done", color: "PURPLE", description: "Shipped"}]},
+  {id: "F_Priority", name: "Priority", options: [{id: "O_p0", name: "P0 now", color: "RED", description: "Mine"}]},
+  {id: "F_Size", name: "Size", options: [{id: "O_s", name: "s", color: "GREEN", description: ""}, {id: "O_m", name: "M", color: "YELLOW", description: ""},
+    {id: "O_l", name: "L", color: "RED", description: ""}]}]}}}}' >"$FIX/fields.json"
+echo '{"language": "fr", "board": {"template": "PVT_TPL"}, "github": {"requiredChecks": false}, "protected": ["auth/**"],
+  "project": {"owner": "acme", "number": 5, "id": "PVT_UP", "migration": {"number": 8, "id": "PVT_MIG"}}}' >"$repo/.claude/senior-mode.json"
+upgrade() { : >"$GH_LOG"; (cd "$repo" && "$cli" setup github --upgrade "$@") >"$work/out" 2>"$work/err"; }
+opts() { jq -c --arg f "$1" '[.data.node.fields.nodes[] | select(.name == $f) | .options[] | .name]' "$FIX/fields.json"; }
+# Nothing else than the Project: no ruleset, label, repository setting, workflow, CODEOWNERS or scanner is read or written.
+not_the_project() {
+  local what
+  for what in "rulesets" "label create" "repo edit" "workflow" "CODEOWNERS" "vulnerability-alerts" "actions/" "api user"; do
+    logged "$what" && fail "$1: touched $what: $(cat "$GH_LOG")"
+  done
+  [ ! -e "$repo/.github/CODEOWNERS" ] || fail "$1: wrote CODEOWNERS"
+}
+
+# --dry-run lists and changes nothing.
+cp "$repo/.claude/senior-mode.json" "$work/before"
+cp "$FIX/fields.json" "$work/fields.before"
+upgrade --dry-run || fail "upgrade --dry-run failed: $(cat "$work/err")"
+[ "$(mutations)" = 0 ] || fail "upgrade --dry-run mutated GitHub: $(grep '^{.*mutation(' "$GH_LOG")"
+cmp -s "$work/before" "$repo/.claude/senior-mode.json" || fail "upgrade --dry-run wrote the config"
+cmp -s "$work/fields.before" "$FIX/fields.json" || fail "upgrade --dry-run changed the fields"
+for want in "fields to add: Severity (SINGLE_SELECT), Team (SINGLE_SELECT), Paths (TEXT), Start (DATE), End (DATE), Iteration (ITERATION)" \
+  "options to add: Status Ready, Status In review, Priority P1 next, Priority P2 later, Priority P3 someday" "dry run, nothing changed"; do
+  grep -qF -- "$want" "$work/out" || fail "upgrade --dry-run without '$want': $(cat "$work/out")"
+done
+grep -q "Backlog" "$work/out" && fail "Backlog reported missing although the board has its alias Todo: $(cat "$work/out")"
+not_the_project "upgrade --dry-run"
+
+# The upgrade adds them, and lists them.
+upgrade || fail "upgrade failed: $(cat "$work/err")"
+[ "$(opts Status)" = '["Todo","In progress","Done","Ready","In review"]' ] || fail "Status options: $(opts Status)"
+[ "$(opts Priority)" = '["P0 now","P1 next","P2 later","P3 someday"]' ] || fail "Priority options: $(opts Priority)"
+[ "$(opts Severity)" = '["critical","high","moderate","low"]' ] || fail "Severity not created with its options: $(opts Severity)"
+[ "$(opts Team)" = '["Core","Infra"]' ] || fail "the Team field of the template not created: $(opts Team)"
+for f in Paths Start End Iteration; do
+  jq -e --arg f "$f" '.data.node.fields.nodes[] | select(.name == $f)' "$FIX/fields.json" >/dev/null || fail "field $f not created"
+done
+logged 'dataType: ITERATION' || fail "no Iteration field created: $(cat "$GH_LOG")"
+for want in "fields added: Severity (SINGLE_SELECT), Team (SINGLE_SELECT), Paths (TEXT), Start (DATE), End (DATE), Iteration (ITERATION)" \
+  "options added: Status Ready, Status In review"; do
+  grep -qF -- "$want" "$work/out" || fail "upgrade without '$want': $(cat "$work/out")"
+done
+# Existing values are untouched: ids, colours and descriptions of the options the board had stay as they are.
+jq -e '.data.node.fields.nodes[] | select(.name == "Status") | .options | map(select(.id == "O_done" and .color == "PURPLE" and .description == "Shipped")) | length == 1' \
+  "$FIX/fields.json" >/dev/null || fail "an existing Status option was changed: $(opts Status)"
+[ "$(jq -r '.data.node.fields.nodes[] | select(.name == "Priority") | .options[0] | [.id, .description] | join("|")' "$FIX/fields.json")" = "O_p0|Mine" ] ||
+  fail "an existing Priority option was changed"
+[ "$(opts Size)" = '["s","M","L"]' ] || fail "an existing Size option renamed or reordered: $(opts Size)"
+logged "deleteProjectV2" && fail "something deleted"
+not_the_project upgrade
+# The ids are cached for the commands that read them; an interrupted migration stays recorded.
+[ "$(cfg '.project.fields.Severity.id')/$(cfg '.project.fields.Paths.id')" = F_Severity/F_Paths ] || fail "new fields not cached: $(cfg .project.fields)"
+[ "$(cfg '.project.fields.Status.options.Ready')" = O_Ready ] || fail "new options not cached: $(cfg .project.fields.Status)"
+[ "$(cfg '.project.fields | [.Iteration.id, .Start.id, .End.id] | join(",")')" = F_Iteration,F_Start,F_End ] || fail "cycle fields not cached: $(cfg .project.fields)"
+[ "$(cfg .project.migration.id)" = PVT_MIG ] || fail "an interrupted migration forgotten: $(cfg .project)"
+[ "$(cfg .github.requiredChecks)" = false ] && [ "$(cfg '.protected | length')" = 1 ] || fail "other config keys changed"
+[ "$(cfg .github.protection)" = null ] || fail "github.protection written by an upgrade"
+
+# A rerun adds nothing.
+cp "$repo/.claude/senior-mode.json" "$work/before"
+cp "$FIX/fields.json" "$work/fields.before"
+upgrade || fail "second upgrade failed: $(cat "$work/err")"
+[ "$(mutations)" = 0 ] || fail "a rerun mutated GitHub: $(grep '^{.*mutation(' "$GH_LOG")"
+grep -q "nothing to add" "$work/out" || fail "a rerun does not say there is nothing to add: $(cat "$work/out")"
+cmp -s "$work/fields.before" "$FIX/fields.json" || fail "a rerun changed the fields"
+cmp -s "$work/before" "$repo/.claude/senior-mode.json" || fail "a rerun changed the config"
+upgrade --dry-run || fail "--dry-run after the upgrade failed"
+{ grep -q "fields to add: none" "$work/out" && grep -q "options to add: none" "$work/out"; } || fail "a dry run after the upgrade finds something: $(cat "$work/out")"
+
+# Not with --migrate or --ci, and it needs a Project in the config.
+(cd "$repo" && "$cli" setup github --upgrade --migrate) >/dev/null 2>&1 && fail "--upgrade accepted with --migrate"
+(cd "$repo" && "$cli" setup github --upgrade --ci actions) >/dev/null 2>&1 && fail "--upgrade accepted with --ci"
+echo '{"language": "fr", "board": {"template": "PVT_TPL"}}' >"$repo/.claude/senior-mode.json"
+upgrade && fail "--upgrade succeeds with no Project"
+grep -q "no Project to upgrade" "$work/err" || fail "no explanation: $(cat "$work/err")"
+logged "copyProjectV2" && fail "--upgrade copied the template"
 
 [ "$failures" -eq 0 ] && echo "setup-github: all cases pass"
 exit "$failures"

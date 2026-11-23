@@ -253,7 +253,7 @@ while IFS= read -r segment; do
           case $k in
             core.hookspath) key=hooks ;;
             include.path | includeif.*.path) key=include ;;
-            alias.*) key=alias ;;
+            alias.*) key="alias" ;;
           esac
         elif [[ $a != -* ]]; then
           case $key in

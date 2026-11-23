@@ -18,6 +18,7 @@ case "$*" in
   "project item-add"*) sed -E 's#.*/issues/([0-9]+).*#ITEM_\1#' <<<"$*"; exit 0 ;;
   "project item-edit"*) exit 0 ;;
   "pr list"*) echo '[]'; exit 0 ;;
+  "api repos/acme/app/branches?protected"*) exit 0 ;;
 esac
 [ "$*" = "api graphql --input -" ] || { echo "unexpected: $*" >&2; exit 1; }
 body=$(cat)

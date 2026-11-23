@@ -1913,9 +1913,21 @@ pick_free() {
     | [range(0; $queue | length) | select(. as $i | $run | all(.[]; (collide($g[($queue[$i] | tostring)]; $g[tostring]) | not)))] | first // empty' <<<"$1"
 }
 
+# Batches (#189): the picked tickets in order, each with `batch`, the numbers of the tickets delivered
+# together with it (itself included), or null. Only Ready S tickets with Paths are batched, and only
+# with a ticket whose Paths overlap one already in the batch; at most $cap per batch. A ticket joins the
+# first batch that takes it, else starts one.
+# shellcheck disable=SC2016 # a jq program, not shell
+BATCH_DEF='def batchable: .size == "S" and (globs | length) > 0;
+  def grouped($cap): reduce .[] as $t ([]; ([range(0; length) as $i | select($t | batchable)
+      | select((.[$i] | length) < $cap and (.[$i][0] | batchable) and any(.[$i][]; overlap(globs; $t | globs))) | $i] | first) as $at
+    | if $at == null then . + [[$t]] else .[$at] += [$t] end);
+  def batched($cap): . as $all | (grouped($cap) | map(map(.number))) as $g
+    | $all | map(.number as $n | . + {batch: ([$g[] | select(length > 1 and any(.[]; . == $n))] | first // null)});'
+
 # senior-mode pick [--json] [--max N]
 pick() {
-  local json=false max="" data
+  local json=false max="" data cap
   while [ $# -gt 0 ]; do
     case $1 in
       --json) json=true ;;
@@ -1929,13 +1941,20 @@ pick() {
     shift
   done
   data=$(board_data false) || exit 1
+  # An S is about 50 lines (skill triage): a batch holds at most limits.prLines / 50 tickets, 3 at most.
+  cap=$(config_get limits.prLines)
+  [[ $cap =~ ^[1-9][0-9]*$ ]] || die "limits.prLines must be a positive whole number, not $cap"
+  cap=$((cap / 50))
+  [ "$cap" -le 3 ] || cap=3
   if [ "$json" = true ]; then
-    jq -c --argjson max "${max:-0}" "$PICK_DEF"'pick | if $max > 0 then .[:$max] else . end
-      | map({number, title, url, priority, size, milestone, due})' <<<"$data"
+    jq -c --argjson max "${max:-0}" --argjson cap "$cap" "$PICK_DEF$PATHS_DEF$BATCH_DEF"'pick | if $max > 0 then .[:$max] else . end
+      | batched($cap) | map({number, title, url, priority, size, milestone, due, paths: globs, batch})' <<<"$data"
   else
-    jq -r --argjson max "${max:-0}" "$PICK_DEF"'pick | if $max > 0 then .[:$max] else . end
+    jq -r --argjson max "${max:-0}" --argjson cap "$cap" "$PICK_DEF$PATHS_DEF$BATCH_DEF"'pick | if $max > 0 then .[:$max] else . end
+      | batched($cap)
       | if length == 0 then "No Ready ticket to pick." else .[] | "#\(.number) \(.priority // "no priority") · \(.size // "?") · \(.title)"
-        + (if .milestone then " (\(.milestone))" else "" end) end' <<<"$data"
+        + (if .milestone then " (\(.milestone))" else "" end)
+        + (if .batch then " [batch \(.batch | map("#\(.)") | join(" "))]" else "" end) end' <<<"$data"
   fi
 }
 

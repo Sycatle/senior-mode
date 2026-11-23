@@ -160,6 +160,49 @@ run pick --json || fail "pick with a critical ticket failed: $(cat "$work/err")"
 [ "$(json 'map(.number)')" = "[30,11,16,12,10]" ] || fail "critical not first: $(cat "$work/out")"
 cp "$FIX/page-first.keep" "$FIX/page-first.json"
 
+# Batches (#189): Ready S tickets whose Paths overlap are grouped, up to 3 (and limits.prLines / 50, an S being
+# ~50 lines); an M or L ticket, a ticket without Paths and an S that overlaps nothing are never batched.
+cp "$FIX/page-first.json" "$FIX/page-first.keep"
+with_paths() { # <item json> <paths>
+  jq -c --arg p "$2" '.fieldValues.nodes += [{text: $p, field: {name: "Paths"}}]' <<<"$1"
+}
+batch_items=$(jq -sc '.' < <(
+  with_paths "$(item 41 Ready "P2 later" S null '[]' '[]')" "src/a/**, docs/x.md"
+  with_paths "$(item 42 Ready "P2 later" S null '[]' '[]')" "src/a/x.ts"
+  with_paths "$(item 43 Ready "P2 later" M null '[]' '[]')" "src/a/**"
+  with_paths "$(item 44 Ready "P2 later" S null '[]' '[]')" "docs/guide/**"
+  item 45 Ready "P2 later" S null '[]' '[]'
+  with_paths "$(item 46 Ready "P2 later" S null '[]' '[]')" "src/a/y.ts"
+  with_paths "$(item 47 Ready "P2 later" S null '[]' '[]')" "src/a/z.ts"
+  with_paths "$(item 48 Ready "P2 later" S null '[]' '[]')" "lib/**"
+  with_paths "$(item 49 Ready "P2 later" S null '[]' '[]')" "lib/b.ts"
+))
+page "" "$batch_items" >"$FIX/page-first.json"
+run pick --json || fail "pick of batches failed: $(cat "$work/err")"
+[ "$(json 'map(.number)')" = "[41,42,43,44,45,46,47,48,49]" ] || fail "batches change the order: $(cat "$work/out")"
+[ "$(json 'map(.batch)')" = "[[41,42,46],[41,42,46],null,null,null,[41,42,46],null,[48,49],[48,49]]" ] ||
+  fail "batches: $(json 'map({number, batch})')"
+[ "$(json '.[0].paths')" = '["src/a/**","docs/x.md"]' ] || fail "paths not listed: $(json '.[0].paths')"
+[ "$(json '.[4].paths')" = '[]' ] || fail "a ticket without Paths lists some: $(json '.[4].paths')"
+run pick || fail "pick of batches failed: $(cat "$work/err")"
+grep -q '^#41 P2 later · S · Ticket 41 \[batch #41 #42 #46\]$' "$work/out" || fail "batch not shown in a line: $(cat "$work/out")"
+grep -q '^#43 P2 later · M · Ticket 43$' "$work/out" || fail "an M ticket shown as batched: $(cat "$work/out")"
+grep -q '^#45 .*batch' "$work/out" && fail "a ticket without Paths is batched: $(cat "$work/out")"
+run pick --max 2 --json || fail "pick --max with batches failed: $(cat "$work/err")"
+[ "$(json 'map(.batch)')" = "[[41,42],[41,42]]" ] || fail "--max cuts batches: $(json 'map(.batch)')"
+# limits.prLines caps a batch at prLines / 50 tickets: 100 lines, 2 tickets; under 100 lines, none.
+cp "$repo/.claude/senior-mode.json" "$work/config.keep"
+jq '.limits.prLines = 100' "$work/config.keep" >"$repo/.claude/senior-mode.json"
+run pick --json || fail "pick with limits.prLines 100 failed: $(cat "$work/err")"
+[ "$(json 'map(.batch)')" = "[[41,42],[41,42],null,null,null,null,null,[48,49],[48,49]]" ] || fail "prLines 100: $(json 'map({number, batch})')"
+jq '.limits.prLines = 99' "$work/config.keep" >"$repo/.claude/senior-mode.json"
+run pick --json || fail "pick with limits.prLines 99 failed: $(cat "$work/err")"
+[ "$(json 'map(.batch) | unique')" = "[null]" ] || fail "prLines 99 still batches: $(json 'map(.batch)')"
+cp "$work/config.keep" "$repo/.claude/senior-mode.json"
+cp "$FIX/page-first.keep" "$FIX/page-first.json"
+run pick --json || fail "pick failed after the batch cases"
+[ "$(json 'map(.batch) | unique')" = "[null]" ] || fail "tickets without Paths are batched: $(json 'map(.batch)')"
+
 for bad in "--max 0" "--max x" "--max" "--nope"; do
   # shellcheck disable=SC2086 # the words are the arguments
   run pick $bad && fail "pick accepted: $bad"

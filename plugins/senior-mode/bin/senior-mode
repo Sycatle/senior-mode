@@ -2418,21 +2418,29 @@ Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 EOF
 }
 
+# Can run give a background session a process group of its own? setsid (util-linux), else perl's
+# POSIX::setsid (always on macOS). Without either, a session that outlives the timeout cannot be stopped.
+run_can_detach() {
+  command -v setsid >/dev/null || command -v perl >/dev/null
+}
+
 # Starts a session script in the background, in its own session so that run_kill can kill the group
-# without killing run; without setsid the session cannot be stopped (run_kill says so).
+# without killing run. run checks run_can_detach before it starts anything.
 run_detach() {
   if command -v setsid >/dev/null; then
     nohup setsid bash "$1" >/dev/null 2>&1 &
   else
-    nohup bash "$1" >/dev/null 2>&1 &
+    nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' bash "$1" >/dev/null 2>&1 &
   fi
 }
 
 # Writes the script of a ticket session on a model and starts it in a window of the tmux session
-# senior-mode-run, else in the background. The script leaves <n>.exit when the session ends.
+# senior-mode-run, else in the background. The script leaves <n>.exit when the session ends. A window
+# that tmux does not start fails the ticket at once (run_halt) and returns 1: no session would ever
+# leave <n>.exit, and run would wait for the whole timeout.
 # shellcheck disable=SC2016 # lines of the script, expanded when it runs
 run_launch() {
-  local n=$1 model=$2 script=$RUN_DIR/$1.sh cmd
+  local n=$1 model=$2 script=$RUN_DIR/$1.sh cmd rc=0
   rm -f "$RUN_DIR/$n.outcome" "$RUN_DIR/$n.exit" "$RUN_DIR/$n.pgid"
   RUN_MODEL[$n]=$model
   RUN_STARTED[$n]=$SECONDS
@@ -2450,9 +2458,14 @@ run_launch() {
   cmd="bash $(printf '%q' "$script")"
   if command -v tmux >/dev/null; then
     if tmux has-session -t senior-mode-run 2>/dev/null; then
-      tmux new-window -d -t senior-mode-run -n "#$n" "$cmd"
+      tmux new-window -d -t senior-mode-run -n "#$n" "$cmd" 2>"$RUN_DIR/$n.tmux" || rc=$?
     else
-      tmux new-session -d -s senior-mode-run -n "#$n" "$cmd"
+      tmux new-session -d -s senior-mode-run -n "#$n" "$cmd" 2>"$RUN_DIR/$n.tmux" || rc=$?
+    fi
+    if [ "$rc" -ne 0 ]; then
+      run_halt "$n" "the session window did not start: $(head -n 1 "$RUN_DIR/$n.tmux" 2>/dev/null || true)" "$RUN_DIR/$n.tmux" \
+        "An autonomous senior-mode run could not start this ticket's session"
+      return 1
     fi
   else
     run_detach "$script"
@@ -2474,6 +2487,23 @@ run_start() {
   [ "$rc" -eq 0 ] || echo "#$n: could not set the Status In progress: $(head -n 1 "$RUN_DIR/$n.err")" >&2
   run_prompt "$n" "${RUN_TITLE[$n]}" "${RUN_BRANCH[$n]}" >"$RUN_DIR/$n.prompt"
   run_launch "$n" sonnet
+}
+
+# A ticket whose session cannot go on, as opposed to failed work: labelled needs-human with a comment
+# ($4 opens it, $3 is the file to look at), recorded as failed with reason $2 and counted for the
+# circuit breaker. Its Status stays In progress, needs-human is the signal.
+run_halt() {
+  local n=$1 reason=$2 log=$3 intro=$4
+  gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
+    echo "#$n: could not label the ticket needs-human" >&2
+  gh api "repos/$RUN_SLUG/issues/$n/comments" -f body="$intro: $reason
+
+The session log is \`$log\`. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the worktree \`${RUN_WT[$n]}\`; the Status is unchanged. A person decides what happens next." \
+    >/dev/null || echo "#$n: could not comment on the ticket" >&2
+  run_record "$n" failed "$reason"
+  RUN_FAILED+=("#$n ${RUN_TITLE[$n]}: $reason (branch ${RUN_BRANCH[$n]} kept, log $log)")
+  RUN_FAILS=$((RUN_FAILS + 1))
+  [ "$RUN_FAILS" -lt "$RUN_MAXFAIL" ] || RUN_STOP="$RUN_FAILS failed ticket(s) in a row (autonomy.maxConsecutiveFailures)"
 }
 
 # A ticket the run stops working on: back to Backlog with a comment, kept worktree and branch.
@@ -2512,19 +2542,11 @@ run_kill() {
 # retried on Opus: ADR 0014 escalates failed work, not a stuck session. Its Status stays In progress,
 # needs-human is the signal.
 run_timeout() {
-  local n=$1 reason log=$RUN_DIR/$1-${RUN_MODEL[$1]}.log
+  local n=$1 reason
   reason="timed out after $RUN_TIMEOUT minute$([ "$RUN_TIMEOUT" -eq 1 ] || echo s)"
   run_kill "$n" "#$n"
-  gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
-    echo "#$n: could not label the ticket needs-human" >&2
-  gh api "repos/$RUN_SLUG/issues/$n/comments" -f body="An autonomous senior-mode run stopped this ticket's session: $reason (autonomy.sessionTimeout).
-
-The session log is \`$log\`. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the worktree \`${RUN_WT[$n]}\`; the Status is unchanged. A person decides what happens next." \
-    >/dev/null || echo "#$n: could not comment on the ticket" >&2
-  run_record "$n" failed "$reason"
-  RUN_FAILED+=("#$n ${RUN_TITLE[$n]}: $reason (branch ${RUN_BRANCH[$n]} kept, log $log)")
-  RUN_FAILS=$((RUN_FAILS + 1))
-  [ "$RUN_FAILS" -lt "$RUN_MAXFAIL" ] || RUN_STOP="$RUN_FAILS failed ticket(s) in a row (autonomy.maxConsecutiveFailures)"
+  run_halt "$n" "$reason" "$RUN_DIR/$n-${RUN_MODEL[$n]}.log" \
+    "An autonomous senior-mode run stopped this ticket's session (autonomy.sessionTimeout)"
 }
 
 # A delivered ticket: merged when merging is on and every bound holds (ADR 0003, 0008), else listed
@@ -2601,7 +2623,8 @@ run_finish() {
           "${outcome#failed: }" >>"$RUN_DIR/$n.prompt"
         RUN_ESCALATED[$n]=true
         RUN_REASON[$n]=${outcome#failed: }
-        run_launch "$n" opus
+        # A window that did not start has failed the ticket: it is finished, not going on.
+        run_launch "$n" opus || return 0
         return 1
       fi
       run_record "$n" failed "${outcome#failed: }"
@@ -2784,6 +2807,7 @@ run() {
     shift
   done
   [ "$(id -u)" != 0 ] || die "run cannot work as root: claude refuses to skip permission prompts for root; use a normal user"
+  run_can_detach || die "run needs setsid or perl to stop a session that outlives autonomy.sessionTimeout, and has neither (install util-linux for setsid); nothing was started."
   file=$(config_file)
   max=${max:-$(config_get autonomy.maxTickets)}
   parallel=${parallel:-$(config_get autonomy.parallel)}

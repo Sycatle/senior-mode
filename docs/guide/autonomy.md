@@ -156,7 +156,8 @@ Runs before every Bash command, in any repository where the plugin is enabled. I
   setting, and setting or unsetting `core.hooksPath` with `git config`, an empty value included
   (reading it is allowed). An empty quote pair or an unquoted backslash inside a word (`--no""-verify`,
   `--for\ce`, `core.hooksPath\=x`, `\+main`) does not hide it, the backslash being dropped as the
-  shell does (an escaped space or quote goes with it);
+  shell does (an escaped space or quote stays one character, so `core.hooksPath \ ` is a value, not
+  nothing);
 - `gh alias set` and `gh alias import`: an alias hides the command it runs from this guard;
 - force-push: `--force`, `-f`, `--force-with-lease`, `--force-if-includes`, a `+` refspec;
 - pushing every branch: `--all`, `--mirror`, `--branches`;
@@ -167,8 +168,9 @@ Runs before every Bash command, in any repository where the plugin is enabled. I
   the number is a variable. `env`, `sudo`, `xargs` and the like in front of `gh` or `git` do not
   hide the command; for `gh api`, only the endpoint counts, not the text of a `-f body=...`, as long
   as the quoting is plain (with a backslash, `$'...'` or a command substitution the whole command
-  is read, a method that cannot be read there counts as a write unless every one says `GET`, and a
-  body that names a ruleset path is then denied too);
+  is read, without its backslashes (`pulls/5/me\rge`, `rule\sets`), a method that cannot be read
+  there counts as a write unless every one says `GET`, and a body that names a ruleset path is then
+  denied too);
 - in a `run` session (`SENIOR_MODE_RUN=1`), any merge: `gh pr merge`, and through `gh api` the
   merge endpoints and the `mergePullRequest` and `enablePullRequestAutoMerge` mutations; and any
   write to rulesets or branch protection, through `gh api` paths or GraphQL ruleset and

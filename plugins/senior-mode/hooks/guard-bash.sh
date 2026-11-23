@@ -10,10 +10,11 @@ input=$(cat)
 # Quoted text is data (commit messages, echo), never options: replace it before parsing. A quoted
 # single word (a URL, a ref) is unquoted instead. An empty pair touching a word (`--for""ce`) is removed;
 # alone it is an argument (`core.hooksPath ""`) and stays, as `Q`. Outside quotes a backslash is dropped
-# as the shell does (`--for\ce`, `core.hooksPath\=x`); an escaped space or quote is dropped with it, so
-# it neither splits a word nor opens a quote. A backslash-newline continues the line.
+# as the shell does (`--for\ce`, `core.hooksPath\=x`); an escaped space or quote becomes `Q`, so it neither
+# splits a word nor opens a quote, and a value made only of them is still an argument. A backslash-newline
+# continues the line.
 command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
-  | gsub("\"(?<w>[^\"\\\\\\s$`]+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'|(?<=\\S)(?:\"\"|'"'"''"'"')|(?:\"\"|'"'"''"'"')(?=\\S)|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')|\\\\(?<c>[^\\n \"'"'"'])|\\\\[ \"'"'"']"; .w // .v // .g // .c // "")
+  | gsub("\"(?<w>[^\"\\\\\\s$`]+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'|(?<=\\S)(?:\"\"|'"'"''"'"')|(?:\"\"|'"'"''"'"')(?=\\S)|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')|\\\\(?<c>[^\\n \"'"'"'])|\\\\(?<e>[ \"'"'"'])"; .w // .v // .g // .c // (if .e then "Q" else "" end))
   | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
 cwd=$(jq -r '.cwd // empty' <<<"$input")
 raw=$(jq -r '.tool_input.command // ""' <<<"$input")
@@ -24,8 +25,10 @@ raw=$(jq -r '.tool_input.command // ""' <<<"$input")
 # instead (a false positive beats a bypass).
 raw_ep=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
   | gsub("(?<f>\\s(-f|-F|-H|-q|-t|--field|--raw-field|--header|--jq|--template|--input)(\\s+|=)?)(\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"'|[^\\s\"'"'"'])+"; "\(.f)V")' <<<"$input")
+# The raw text without its backslashes: the shell reads `me\rge` as `merge`, so do the endpoint checks.
+rawb=${raw//\\/}
 ep=$raw_ep untrusted=false
-case ${raw//\\$'\n'/ } in *\\* | *\$\'* | *\$\"* | *\$\(* | *\`*) ep=$raw untrusted=true ;; esac
+case ${raw//\\$'\n'/ } in *\\* | *\$\'* | *\$\"* | *\$\(* | *\`*) ep=$rawb untrusted=true ;; esac
 # The command with its quotes and backslashes removed, in lower case: for what the words may have lost.
 flat=${raw,,} flat=${flat//[\"\'\\]/}
 
@@ -138,11 +141,11 @@ while IFS= read -r segment; do
     if [ "${SENIOR_MODE_RUN:-}" = 1 ]; then
       $merge && deny "a run session never merges: senior-mode run merges after its own checks, or a human does."
       # A GraphQL mutation sits in quoted text, which $command no longer holds: read the raw one.
-      [[ ${gs[0]:-} == api && ($ep =~ pulls/[^/[:space:]]+/merge|/merges || $raw =~ mergePullRequest|enablePullRequestAutoMerge) ]] &&
+      [[ ${gs[0]:-} == api && ($ep =~ pulls/[^/[:space:]]+/merge|/merges || $rawb =~ mergePullRequest|enablePullRequestAutoMerge) ]] &&
         deny "a run session never merges, not through gh api either."
       # The rules that bound the run are the human's (spec 130, #116).
       [[ ($write == true && $ep =~ /rulesets([/?[:space:]\"\']|$)|/branches/[^[:space:]]+/protection) ||
-        (${gs[0]:-} == api && $raw =~ (create|update|delete)(RepositoryRuleset|BranchProtectionRule)) ]] &&
+        (${gs[0]:-} == api && $rawb =~ (create|update|delete)(RepositoryRuleset|BranchProtectionRule)) ]] &&
         deny "a run session never changes rulesets or branch protection: say in the pull request what a human should change."
     fi
     # The ruleset lets admins bypass it on purpose (spec 0001 §11); an agent running as an admin must not.

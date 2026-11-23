@@ -125,6 +125,11 @@ expect deny 'gh api -f body=it\'"'"'s -X PUT repos/a/b/pulls/5/merge'
 expect deny "gh api -f body=\$'a\\'b' -X PUT repos/a/b/pulls/5/merge"
 expect deny "gh api -f body=\$'x\\'y' -X PUT repos/a/b/pulls/5/merge -F z='a'"
 expect deny 'gh api -f body=a\"b -X PUT repos/a/b/pulls/5/merge -f z="c"'
+# Review of d7cb41a: an unquoted backslash does not hide a word of the endpoint outside a run either.
+expect deny 'gh api -X PUT repos/o/r/pulls/5/me\rge'
+expect deny 'gh api -X PUT repos/o/r/pu\lls/5/merge'
+expect deny 'gh api repos/o/r/pulls/5/me\rge -X PUT -f merge_method=rebase'
+expect allow 'gh api repos/o/r/pu\lls/5'
 # Second review of #218: with odd quoting earlier on the line, a quoted or computed method is not lost.
 expect deny 'gh api -f body=a\"b -X "PUT" repos/a/b/pulls/5/merge -f z="c"'
 expect deny "gh api -f body=a\\\"b -X 'PUT' repos/a/b/pulls/5/merge -f z=c"
@@ -161,8 +166,16 @@ expect deny 'git push origin \+main'
 expect deny 'git push origin \+feat/1-shared'
 expect deny 'git push --force\-with-lease'
 expect deny 'git push origin ma\in'
-expect deny 'git commit -m x --no-verify\ '
-expect deny 'git commit --no-verify\ '
+# A value made only of escaped characters is still an argument, not nothing.
+expect deny 'git config core.hooksPath \ '
+expect deny 'git config core.hooksPath \"\"'
+expect deny "git config core.hooksPath \\'\\'"
+expect deny 'git config core.hooksPath \"'
+expect deny 'git config --local core.hooksPath \ \ '
+expect deny 'git -c core.hooksPath=\  commit -m x'
+expect allow 'git config user.name \ '
+expect allow 'git commit -m x --no-verify\ '
+expect allow 'git -c\ core.hooksPath=/x commit -m x'
 expect deny 'git commit -m x\" --no-verify'
 expect deny 'git commit -m \"a b\" --no-verify'
 expect deny "git commit -m x\\' --no-verify"
@@ -236,6 +249,18 @@ expect deny 'gh api repos/a/b/branches/main/protection/required_status_checks -X
 expect deny 'gh api -X put repos/a/b/pulls/5/merge'
 expect deny "gh api graphql -f query='mutation { updateRepositoryRuleset(input: {}) { clientMutationId } }'"
 expect deny "gh api graphql -f query='mutation { deleteBranchProtectionRule(input: {}) { clientMutationId } }'"
+# Review of d7cb41a: an unquoted backslash does not hide a word of the endpoint or a mutation name.
+expect deny 'gh api repos/o/r/pulls/5/me\rge -X PUT'
+expect deny 'gh api -X PUT repos/o/r/pu\lls/5/merge'
+expect deny 'gh api -X PUT repos/o/r/rule\sets/1 -f enforcement=disabled'
+expect deny 'gh api repos/o/r/rul\esets -f name=x'
+expect deny 'gh api -X DELETE repos/o/r/branches/main/prot\ection'
+expect deny 'gh api graphql -f query=merge\PullRequest'
+expect deny 'gh api graphql -f query=enable\PullRequestAutoMerge'
+expect deny 'gh api graphql -f query=createRepository\Ruleset'
+expect deny 'gh api graphql -f query=deleteBranch\ProtectionRule'
+expect allow 'gh api repos/o/r/pu\lls/5'
+expect allow 'gh api -X GET repos/o/r/rule\sets'
 # Second review of #218: an odd quoting plus a quoted or computed method is still a write.
 expect deny 'gh api -f body=a\"b --method "POST" repos/a/b/rulesets -f z="c"'
 expect deny 'gh api -f body=a\"b -X $M repos/a/b/rulesets/1 -f z="c"'

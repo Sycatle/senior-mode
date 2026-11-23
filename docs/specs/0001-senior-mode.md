@@ -455,7 +455,7 @@ Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
   "ci": { "mode": "local" },
   "github": { "protection": "ruleset" },
   "envGuard": { "forbidden": ["db.prod.example.com", "/acct-[0-9]{12}/"] },
-  "limits": { "prLines": 400 },
+  "limits": { "prLines": 400, "diffLines": { "S": 300, "M": 800, "L": 2000 } },
   "docs": { "extra": [ { "path": "docs/runbook.md", "purpose": "How to operate and restore the service" } ] }
 }
 ```

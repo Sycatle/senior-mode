@@ -7,7 +7,8 @@
 # not the session's script, to check that run kills nothing it does not recognise).
 # A claude session whose prompt says "guard probe" is the daily probe of #117: $FIX/probe says whether the
 # stub honours the deny (default: prints the deny, runs nothing), ignores it (runs the denied command) or
-# is silent (no deny to see). CLAUDE_CONFIG_DIR holds the user settings that enable the plugin.
+# is silent (no deny to see), hangs ("hang") or hangs with a child process, recorded in $FIX/pids-probe,
+# to check that a stopped probe leaves none ("hangkids"). CLAUDE_CONFIG_DIR holds the user settings that enable the plugin.
 # The per-ticket outcome files `run` leaves are checked against the records of fixture-runs.sh, the same
 # ones test-retro.sh feeds to `retro`.
 # shellcheck disable=SC2016 # jq programs and stub bodies, not expanded here
@@ -82,6 +83,11 @@ if [[ ${!#} == *"guard probe"* ]]; then
     ignore) git init -q "$(sed -nE 's#.*init -q ([^ `]+).*#\1#p' <<<"${!#}")"; echo '{"type": "result"}' ;;
     silent) echo '{"type": "result"}' ;;
     hang) exec sleep 30 ;;
+    hangkids)
+      sleep 300 &
+      echo "$$ $!" >"$FIX/pids-probe"
+      wait
+      ;;
   esac
   exit 0
 fi
@@ -132,7 +138,8 @@ STUB
 sed 's/CLAUDE_LOG/SYACODE_LOG/' "$work/stub/claude" >"$work/stub/syacode"
 chmod +x "$work/stub/"* "$work/tmux/tmux"
 export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" CLAUDE_LOG="$work/claude.log" SYACODE_LOG="$work/syacode.log" TMUX_LOG="$work/tmux.log" \
-  FIX="$work/fix" SENIOR_MODE_RETRY_DELAY=0 XDG_DATA_HOME="$work/xdg" SENIOR_MODE_POLL=0.1 CLAUDE_CONFIG_DIR="$work/claude-home"
+  FIX="$work/fix" SENIOR_MODE_RETRY_DELAY=0 XDG_DATA_HOME="$work/xdg" SENIOR_MODE_POLL=0.1 CLAUDE_CONFIG_DIR="$work/claude-home" \
+  SENIOR_MODE_PROBE_RETRY=0
 mkdir -p "$CLAUDE_CONFIG_DIR"
 echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DIR/settings.json"
 
@@ -509,6 +516,70 @@ SENIOR_MODE_PROBE_TIMEOUT=1 run && fail "M: run started although the probe sessi
 [ "$SECONDS" -lt 20 ] || fail "M: the probe was not stopped after its timeout ($SECONDS s)"
 grep -q 'app-103' "$CLAUDE_LOG" && fail "M: a ticket started after a probe that timed out"
 echo honour >"$FIX/probe"
+
+# probe-group (#209): a probe stopped on its timeout is stopped with the processes it started (hooks, MCP
+# servers): it runs in its own process group, which is killed.
+config '{}'
+board 104 '[]'
+session 104-sonnet delivered pr
+probe_failed=$repo/.git/senior-mode/probe-failed
+rm -f "$probe" "$probe_failed" "$FIX/pids-probe"
+echo hangkids >"$FIX/probe"
+SENIOR_MODE_PROBE_TIMEOUT=1 run && fail "probe-group: run started although the probe session never ended"
+[ -s "$FIX/pids-probe" ] || fail "probe-group: the probe stub did not start its child"
+sleep 0.3
+pids=()
+read -r -a pids <"$FIX/pids-probe" || true
+for p in "${pids[@]}"; do
+  if kill -0 "$p" 2>/dev/null; then
+    fail "probe-group: process $p of the probe survived its timeout"
+    kill -KILL "$p" 2>/dev/null
+  fi
+done
+
+# probe-signal (#209): Ctrl-C or a TERM during the probe leaves neither its worktree, nor its temporary
+# directory, nor its processes behind.
+rm -f "$probe" "$probe_failed" "$FIX/pids-probe"
+mkdir -p "$work/tmp"
+(cd "$repo" && TMPDIR="$work/tmp" SENIOR_MODE_PROBE_TIMEOUT=60 exec "$cli" run) >"$work/out" 2>&1 &
+rp=$!
+for _ in $(seq 100); do
+  { git -C "$repo" worktree list | grep -q probe && [ -s "$FIX/pids-probe" ]; } && break
+  sleep 0.1
+done
+kill -TERM "$rp" 2>/dev/null
+wait "$rp"
+git -C "$repo" worktree list | grep -q probe && fail "probe-signal: the probe worktree was left: $(git -C "$repo" worktree list)"
+[ -z "$(ls -A "$work/tmp")" ] || fail "probe-signal: the probe left its temporary directory: $(ls "$work/tmp")"
+sleep 0.3
+pids=()
+read -r -a pids <"$FIX/pids-probe" || true
+for p in "${pids[@]}"; do
+  if kill -0 "$p" 2>/dev/null; then
+    fail "probe-signal: process $p of the probe survived the signal"
+    kill -KILL "$p" 2>/dev/null
+  fi
+done
+[ -e "$probe" ] && fail "probe-signal: an interrupted probe was recorded as passed"
+
+# probe-backoff (#209): a failed probe is recorded with its time and not retried for an hour
+# (SENIOR_MODE_PROBE_RETRY, in seconds), so a cron tick does not start a Haiku session every time; run
+# still refuses to start meanwhile, and the probe is retried once the hour is past.
+rm -f "$probe" "$probe_failed"
+echo silent >"$FIX/probe"
+SENIOR_MODE_PROBE_RETRY=3600 run && fail "probe-backoff: run started although no deny showed in the probe session"
+[ -s "$probe_failed" ] || fail "probe-backoff: the failure was not recorded"
+echo honour >"$FIX/probe"
+SENIOR_MODE_PROBE_RETRY=3600 run && fail "probe-backoff: run started although the probe failed less than an hour ago"
+grep -q 'haiku' "$CLAUDE_LOG" && fail "probe-backoff: a second probe session within the hour"
+grep -q 'guard probe' "$work/out" || fail "probe-backoff: the refusal does not name the probe: $(cat "$work/out")"
+grep -q 'probe.log' "$work/out" || fail "probe-backoff: the refusal does not point at the probe log: $(cat "$work/out")"
+grep -q 'app-104' "$CLAUDE_LOG" && fail "probe-backoff: a ticket started during the back-off"
+printf '%s\nstale\n' "$(($(date +%s) - 4000))" >"$probe_failed"
+SENIOR_MODE_PROBE_RETRY=3600 run || fail "probe-backoff: run refused after the hour, with a probe that honours the deny: $(cat "$work/out")"
+grep -q 'haiku' "$CLAUDE_LOG" || fail "probe-backoff: no new probe after the hour"
+[ -e "$probe_failed" ] && fail "probe-backoff: a pass left the failure record"
+[ "$(cat "$probe" 2>/dev/null)" = "$(date +%F)" ] || fail "probe-backoff: probe date not recorded"
 
 # Open alerts: a high Dependabot alert, a moderate and a low one (nothing to file), and an exposed secret
 # whose value must never reach an issue.

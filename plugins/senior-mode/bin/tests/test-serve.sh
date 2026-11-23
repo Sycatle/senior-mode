@@ -4,7 +4,7 @@
 # plays a ticket session from $FIX/claude-<n>-<model> (line 1: the outcome to write, empty for none; line 2:
 # "pr" to open a pull request; line 3: "hang" to never end, with a child process recorded in $FIX/pids-<n>,
 # "slow" to end after two seconds, "limit" to end on the subscription usage limit with the message in
-# $FIX/limit-msg; the file claude-<n>-<model>-<role> wins over claude-<n>-<model> for a session with that
+# $FIX/limit-msg, "flaky:<message>" to die once with the message on stderr (exit 1), then behave; the file claude-<n>-<model>-<role> wins over claude-<n>-<model> for a session with that
 # SENIOR_MODE_ROLE; line 2 may be "pr:<number>" for another pull request number; line 4: "review:<state>" posts
 # senior-mode/review on the head checked out, "commit" commits a test file). gh serves the open pull requests,
 # their statuses and their merge state from $FIX (see the helpers below). systemctl logs its calls to $SYS_LOG. SENIOR_MODE_SERVE_ONCE=1 makes serve poll once, wait for
@@ -69,6 +69,7 @@ case "$*" in
       | {title, state, labels: .labels.nodes}' "$FIX/board.json" ;;
   "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
   "project item-edit"*) ;;
+  "auth status"*) [ ! -f "$FIX/gh-auth-bad" ] ;;
   "api repos/acme/app/pulls/"*"/files"*) echo src/app.ts ;;
   "api repos/acme/app/pulls/"[0-9]*) cat "$FIX/pull-$(sed -E 's#^api repos/acme/app/pulls/([0-9]+).*#\1#' <<<"$*").json" | respond ;;
   "api repos/acme/app/pulls?head="*)
@@ -105,6 +106,12 @@ case $(sed -n 3p "$fx") in
     echo "$$ $!" >"$FIX/pids-$n"
     wait ;;
   slow) sleep 2 ;;
+  flaky:*)
+    if [ ! -f "$FIX/flaky-done-$n-$model" ]; then
+      touch "$FIX/flaky-done-$n-$model"
+      sed -n 3p "$fx" | cut -d: -f2- >&2
+      exit 1
+    fi ;;
   limit)
     jq -nc --rawfile m "$FIX/limit-msg" '{type: "result", is_error: true, result: $m}'
     exit 1 ;;
@@ -641,6 +648,114 @@ rm -f "$FIX/gh-hang"
 grep -q 'cannot read the open pull requests; trying again at the next poll' "$work/out" || fail "Y2: not said: $(cat "$work/out")"
 started 64 || fail "Y2: the poll did not go on to launch #64: $(cat "$work/out")"
 
+# AA: a session that ends on a transient error (#377, #334) is resumed on the same model after a backoff, with no
+# failure counted, no escalation, no needs-human and no launch against sessionsPerHour; nothing else starts meanwhile.
+config '{"maxConsecutiveFailures": 1}'
+for msg in "Claude Code is still loading your organization's settings. Your organization requires them before a session can start." \
+  'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}' \
+  'getaddrinfo EAI_AGAIN api.anthropic.com' 'API Error: 503 Service Unavailable'; do
+  board 70 71
+  rm -f "$FIX"/flaky-done-*
+  session 70-sonnet delivered pr "flaky:$msg"
+  session 71-sonnet delivered pr
+  fresh
+  SENIOR_MODE_NOW=1800000000 once || fail "AA: serve failed: $(cat "$work/out")"
+  grep -q '^app-70 opus' "$CLAUDE_LOG" && fail "AA: escalated to Opus after a transient end ($msg)"
+  [ ! -e "$state/70.json" ] || fail "AA: an outcome was recorded for a transient end: $(cat "$state/70.json")"
+  [ ! -e "$state/paused" ] || fail "AA: a transient end counted as a failure ($msg)"
+  grep -q 'issues/70/' "$GH_LOG" && fail "AA: a transient end made the ticket needs-human"
+  grep -q 'transient error' "$work/out" || fail "AA: not said ($msg): $(cat "$work/out")"
+  [ "$(cat "$state/70.retry" 2>/dev/null)" = 1800000030 ] || fail "AA: no backoff of 30s: $(cat "$state/70.retry" 2>&1)"
+  [ "$(cat "$state/70.model" 2>/dev/null)" = sonnet ] || fail "AA: the model is not kept"
+  [ "$(awk 'END { print NR }' "$state/launches")" -eq 0 ] || fail "AA: the dead launch is counted: $(cat "$state/launches")"
+  grep -c 'item-edit.*--single-select-option-id o1' "$GH_LOG" | grep -qx 1 || fail "AA: #70 not back to Ready: $(grep item-edit "$GH_LOG")"
+  # In the backoff nothing starts, #71 included; after it #70 resumes on Sonnet.
+  SENIOR_MODE_NOW=1800000010 once || fail "AA: serve failed: $(cat "$work/out")"
+  [ ! -s "$CLAUDE_LOG" ] || fail "AA: a session started during the backoff: $(cat "$CLAUDE_LOG")"
+  grep -q 'backing off' "$work/out" || fail "AA: the backoff is not said: $(cat "$work/out")"
+  SENIOR_MODE_NOW=1800000031 once || fail "AA: serve failed: $(cat "$work/out")"
+  grep -q '^app-70 sonnet' "$CLAUDE_LOG" || fail "AA: #70 not resumed on Sonnet: $(cat "$CLAUDE_LOG")"
+  outcome_of 70 delivered AA
+  [ ! -e "$state/70.retry" ] || fail "AA: the backoff is not cleared by the delivery"
+done
+# The backoff doubles at each end in a row; the seventh is a ticket's.
+board 70
+rm -f "$FIX"/flaky-done-*
+session 70-sonnet delivered pr "flaky:getaddrinfo EAI_AGAIN api.anthropic.com"
+fresh
+mkdir -p "$state"
+echo 2 >"$state/70.transient"
+SENIOR_MODE_NOW=1800000000 once || fail "AA: serve failed: $(cat "$work/out")"
+[ "$(cat "$state/70.retry" 2>/dev/null)" = 1800000120 ] || fail "AA: the third end in a row is not 120s: $(cat "$state/70.retry" 2>&1)"
+grep -q '3 transient ends in a row' "$work/out" || fail "AA: the third end is not said: $(cat "$work/out")"
+rm -f "$FIX"/flaky-done-*
+fresh
+mkdir -p "$state"
+echo 6 >"$state/70.transient"
+SENIOR_MODE_NOW=1800000000 once || fail "AA: serve failed: $(cat "$work/out")"
+grep -q '^app-70 opus' "$CLAUDE_LOG" || fail "AA: the seventh transient end in a row is not a ticket's: $(cat "$CLAUDE_LOG")"
+
+# AB: an environment end pauses the whole daemon, with the diagnosis, no failure, no needs-human; a probe that is
+# green lifts it by itself, with the backoff of the probes in between; --resume lifts it by hand.
+config '{"maxConsecutiveFailures": 1}' '{}' '{"webhook": "https://hooks.example/h"}'
+board 72 73
+session 72-sonnet "failed: environment: npm install failed: ENOSPC: no space left on device"
+session 73-sonnet delivered pr
+fresh
+: >"$FIX/status-updates"
+SENIOR_MODE_DISK_FREE_MB=10 SENIOR_MODE_NOW=1800000000 once || fail "AB: serve failed: $(cat "$work/out")"
+grep -q '^app-72 opus' "$CLAUDE_LOG" && fail "AB: an environment end was escalated"
+grep -q 'paused, environment problem (disk): #72: .*no space left' "$work/out" || fail "AB: no diagnosis in the log: $(cat "$work/out")"
+[ "$(sed -n 2p "$state/environment" 2>/dev/null)" = disk ] || fail "AB: no environment state: $(cat "$state/environment" 2>&1)"
+[ ! -e "$state/paused" ] && [ ! -e "$state/72.json" ] || fail "AB: an environment end counted as a failure"
+grep -q 'issues/72/' "$GH_LOG" && fail "AB: an environment end made the ticket needs-human"
+grep -q AT_RISK "$FIX/status-updates" || fail "AB: the pause is not in the Project status: $(cat "$FIX/status-updates")"
+grep -q 'environment' "$CURL_LOG" || fail "AB: the webhook did not get the pause: $(cat "$CURL_LOG" 2>&1)"
+grep -c 'item-edit.*--single-select-option-id o1' "$GH_LOG" | grep -qx 1 || fail "AB: #72 not back to Ready"
+# Paused: nothing starts, the probe is red (no room) and the next one is later.
+SENIOR_MODE_DISK_FREE_MB=10 SENIOR_MODE_NOW=1800000030 once || fail "AB: serve failed: $(cat "$work/out")"
+[ ! -s "$CLAUDE_LOG" ] || fail "AB: a session started while paused: $(cat "$CLAUDE_LOG")"
+grep -q 'environment problem (disk)' "$work/out" || fail "AB: the hold is not said: $(cat "$work/out")"
+SENIOR_MODE_DISK_FREE_MB=10 SENIOR_MODE_NOW=1800000061 once || fail "AB: serve failed: $(cat "$work/out")"
+grep -q 'the probe is red' "$work/out" || fail "AB: a red probe is not said: $(cat "$work/out")"
+[ "$(sed -n 1p "$state/environment")" = 1800000181 ] || fail "AB: the next probe is not 120s later: $(cat "$state/environment")"
+[ ! -s "$CLAUDE_LOG" ] || fail "AB: a session started on a red probe"
+SENIOR_MODE_DISK_FREE_MB=100000 SENIOR_MODE_NOW=1800000100 once || fail "AB: serve failed: $(cat "$work/out")"
+[ -e "$state/environment" ] || fail "AB: probed before its time"
+session 72-sonnet delivered pr
+SENIOR_MODE_DISK_FREE_MB=100000 SENIOR_MODE_NOW=1800000200 once || fail "AB: serve failed: $(cat "$work/out")"
+grep -q 'environment is healthy again' "$work/out" || fail "AB: not resumed on a green probe: $(cat "$work/out")"
+[ ! -e "$state/environment" ] || fail "AB: the pause is not lifted"
+started 72 || fail "AB: #72 not started after the pause: $(cat "$CLAUDE_LOG")"
+grep -q ON_TRACK "$FIX/status-updates" || fail "AB: the resume is not in the Project status"
+# gh not signed in: the probe is gh's; --resume lifts it by hand.
+board 74
+session 74-sonnet "failed: environment: HTTP 401 Bad credentials"
+fresh
+SENIOR_MODE_NOW=1800000000 once || fail "AB: serve failed: $(cat "$work/out")"
+[ "$(sed -n 2p "$state/environment" 2>/dev/null)" = gh-auth ] || fail "AB: gh auth not recognised: $(cat "$state/environment" 2>&1)"
+touch "$FIX/gh-auth-bad"
+SENIOR_MODE_NOW=1800000061 once || fail "AB: serve failed: $(cat "$work/out")"
+grep -q 'the probe is red' "$work/out" || fail "AB: gh auth probe not red: $(cat "$work/out")"
+rm -f "$FIX/gh-auth-bad"
+(cd "$repo" && "$cli" serve --resume) >"$work/out" 2>&1 || fail "AB: --resume failed: $(cat "$work/out")"
+[ ! -e "$state/environment" ] || fail "AB: --resume left the environment pause"
+
+# AC: the breaker counts ticket failures only and its pause doubles at each pause with no delivery in between (#377).
+config '{"parallel": 1, "maxConsecutiveFailures": 1, "escalate": false}' '{"breakerCooldown": 100}'
+board 75
+session 75-sonnet "failed: broke"
+fresh
+SENIOR_MODE_NOW=1800000000 once || fail "AC: serve failed: $(cat "$work/out")"
+[ "$(sed -n 1p "$state/paused" 2>/dev/null)" = 1800000100 ] || fail "AC: first pause is not 100s: $(cat "$state/paused" 2>&1)"
+rm -f "$state/paused"
+SENIOR_MODE_NOW=1800000000 once || fail "AC: serve failed: $(cat "$work/out")"
+[ "$(sed -n 1p "$state/paused" 2>/dev/null)" = 1800000200 ] || fail "AC: second pause is not 200s: $(cat "$state/paused" 2>&1)"
+rm -f "$state/paused"
+session 75-sonnet delivered pr
+SENIOR_MODE_NOW=1800000000 once || fail "AC: serve failed: $(cat "$work/out")"
+[ ! -e "$state/trips" ] || fail "AC: a delivery does not reset the pauses: $(cat "$state/trips")"
+
 # I: options and config are checked.
 (cd "$repo" && "$cli" serve --bogus) >"$work/out" 2>&1 && fail "I: an unknown option was accepted"
 grep -q 'usage:.*serve' "$work/out" || fail "I: usage does not name serve: $(cat "$work/out")"
@@ -650,7 +765,7 @@ grep -q 'serve.interval must be' "$work/out" || fail "I: bad interval not explai
 echo '{}' >"$repo/.claude/senior-mode.json"
 [ "$(cd "$repo" && "$cli" config get serve.interval)" = 60 ] &&
   [ "$(cd "$repo" && "$cli" config get serve.grace)" = 600 ] &&
-  [ "$(cd "$repo" && "$cli" config get serve.breakerCooldown)" = 3600 ] &&
+  [ "$(cd "$repo" && "$cli" config get serve.breakerCooldown)" = 300 ] &&
   [ "$(cd "$repo" && "$cli" config get autonomy.sessionsPerHour)" = 6 ] &&
   [ "$(cd "$repo" && "$cli" config get autonomy.minMemoryMB)" = 1024 ] &&
   [ "$(cd "$repo" && "$cli" config get notify.digest)" = true ] &&

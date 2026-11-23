@@ -118,16 +118,21 @@ run_open() {
 # by default); a batch gets the prompt of RUN_PROMPT_BATCH (run's own by default): serve sets both, for a session
 # that cannot set senior-mode/review (#305).
 run_start() {
+  local model=sonnet
   run_open "$1" || return 1
   rm -f "$RUN_DIR/$1.batch"
-  if [ -n "${RUN_BATCH[$1]:-}" ]; then
+  # A session that a transient error interrupted (serve_transient) resumes on its model, with its prompt as it was.
+  if [ -s "$RUN_DIR/$1.model" ] && [ -s "$RUN_DIR/$1.prompt" ]; then
+    model=$(cat "$RUN_DIR/$1.model")
+    [ -z "${RUN_BATCH[$1]:-}" ] || echo "${RUN_BATCH[$1]}" >"$RUN_DIR/$1.batch"
+  elif [ -n "${RUN_BATCH[$1]:-}" ]; then
     # The tickets of the batch, for serve_recover to find them after a restart.
     echo "${RUN_BATCH[$1]}" >"$RUN_DIR/$1.batch"
     "${RUN_PROMPT_BATCH:-run_prompt_batch}" "$1" "${RUN_BRANCH[$1]}" "${RUN_BATCH[$1]}" >"$RUN_DIR/$1.prompt"
   else
     "${RUN_PROMPT:-run_prompt}" "$1" "${RUN_TITLE[$1]}" "${RUN_BRANCH[$1]}" >"$RUN_DIR/$1.prompt"
   fi
-  run_launch "$1" sonnet
+  run_launch "$1" "$model"
 }
 
 # A ticket whose session cannot go on, as opposed to failed work: labelled needs-human with a comment

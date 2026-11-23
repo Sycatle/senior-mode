@@ -44,6 +44,12 @@ if grep -q createProjectV2StatusUpdate <<<"$body"; then
   exit 0
 fi
 if grep -q LABELED_EVENT <<<"$body"; then cat "$FIX/labeled.json"; exit 0; fi
+if grep -q issueOrPullRequest <<<"$body"; then
+  [ -z "${SPEC_FAIL:-}" ] || { echo "HTTP 403: forbidden" >&2; exit 1; }
+  jq -nc --argjson b "$(cat "$FIX/spec-prs")" --arg q "$(jq -r .query <<<"$body")" '[$q | scan("p([0-9]+):") | .[0]]
+    | map({key: ("p" + .), value: {body: $b[.]}}) | from_entries | {data: {repository: .}}'
+  exit 0
+fi
 [ -z "$(jq -r '.variables.number // empty' <<<"$body")" ] || { cat "$FIX/item-$(jq -r .variables.number <<<"$body").json"; exit 0; }
 after=$(jq -r '.variables.after // "first"' <<<"$body")
 [ "$(jq -r '.variables.branchesAfter // empty' <<<"$body")" != B1 ] || { cat "$FIX/more-branches.json"; exit 0; }
@@ -596,6 +602,67 @@ UPDATE_FAIL=1 run status --publish && fail "a failed update exits zero"
 grep -q "could not post the status update" "$work/err" || fail "failed update not said: $(cat "$work/err")"
 grep -q '^In progress' "$work/out" || fail "a failed update loses the report"
 run status --watch --publish && fail "--watch --publish accepted"
+
+# Spec drift (#169): the accepted specs whose paths changed since the spec did, with no Spec-Unchanged line in
+# the commit message or in the body of the pull request the commit came from. Its own repository.
+page "" "$items" >"$FIX/page-first.json"
+spec="$work/spec"
+cp -r "$repo" "$spec"
+sc() { # <message> <file> [body]: a commit that changes the file
+  mkdir -p "$spec/$(dirname "$2")"
+  echo "$1" >>"$spec/$2"
+  git -C "$spec" add -A
+  git -C "$spec" -c user.name=t -c user.email=t@t commit -q -m "$1" ${3:+-m "$3"}
+}
+run_spec() { : >"$GH_LOG"; : >"$FIX/bodies"; (cd "$spec" && "$cli" "$@") >"$work/out" 2>"$work/err"; }
+echo '{}' >"$FIX/spec-prs"
+run_spec status --json || fail "status --json without a spec failed: $(cat "$work/err")"
+[ "$(json '[.specDrift, .specDriftNote] | tojson')" = '"[[],null]"' ] || fail "no spec, no drift: $(json '[.specDrift, .specDriftNote]')"
+run_spec status || fail "status without a spec failed"
+grep -q 'Spec drift' "$work/out" && fail "an empty Spec drift section is shown: $(cat "$work/out")"
+mkdir -p "$spec/docs/specs"
+printf -- '---\nid: 1\ntitle: Alpha\nstatus: accepted\nsize: M\npaths: ["src/**", "api/x.ts"]\n---\n# Alpha\n' >"$spec/docs/specs/0001-alpha.md"
+printf -- "---\nid: 2\ntitle: Beta\nstatus: draft\npaths: ['lib/**']\n---\n" >"$spec/docs/specs/0002-beta.md"
+sc "docs(spec): alpha and beta" docs/specs/0001-alpha.md
+sc "feat: a" src/deep/a.ts
+sc "feat: b" src/b.ts "Spec-Unchanged: no behaviour change"
+sc "fix: c (#77)" src/c.ts
+sc "fix: d (#78)" src/d.ts
+sc "fix: e (#79)" src/e.ts "Spec-Unchanged: internal"
+sc "fix: f" api/x.ts
+sc "fix: lib only" lib/l.ts
+sc "docs: unrelated" other/o.md
+printf '{"77": "Fixes a thing.", "78": "Spec-Unchanged: refactor only\\n", "79": null}' >"$FIX/spec-prs"
+run_spec status --json || fail "status --json with drift failed: $(cat "$work/err")"
+[ "$(json '.specDrift | length')" = 1 ] || fail "one spec drifts: $(json '.specDrift')"
+[ "$(json '.specDrift[0] | [.spec, .id, .title] | join("|")')" = '"docs/specs/0001-alpha.md|1|Alpha"' ] || fail "spec fields: $(json '.specDrift[0]')"
+[ "$(json '[.specDrift[0].commits[] | .subject] | sort | join("|")')" = '"feat: a|fix: c (#77)|fix: f"' ] ||
+  fail "the offending commits: $(json '.specDrift[0].commits')"
+[ "$(json '.specDrift[0].commits[] | select(.subject == "fix: c (#77)") | .pr')" = 77 ] || fail "pull request of a commit: $(json '.specDrift[0].commits')"
+[ "$(json '.specDriftNote')" = null ] || fail "a note without a reason: $(json '.specDriftNote')"
+[ "$(grep -c issueOrPullRequest "$FIX/bodies")" = 1 ] || fail "pull request bodies are not read in one call: $(grep -c issueOrPullRequest "$FIX/bodies")"
+run_spec status || fail "status with drift failed: $(cat "$work/err")"
+grep -q '^Spec drift (1)$' "$work/out" || fail "Spec drift section missing: $(cat "$work/out")"
+grep -q '^  docs/specs/0001-alpha.md: 3 commits' "$work/out" || fail "spec line missing: $(cat "$work/out")"
+grep -qE '^    [0-9a-f]{7} fix: c \(#77\)$' "$work/out" || fail "commit line missing: $(cat "$work/out")"
+grep -q 'fix: d' "$work/out" && fail "a commit whose pull request has Spec-Unchanged is listed: $(cat "$work/out")"
+grep -q 'feat: b' "$work/out" && fail "a commit with Spec-Unchanged is listed: $(cat "$work/out")"
+grep -q 'lib only' "$work/out" && fail "a commit under a draft spec is listed: $(cat "$work/out")"
+# Without GitHub the commits that need a pull request body cannot be told: skipped, with a note.
+SPEC_FAIL=1 run_spec status --json || fail "status --json fails when the pull requests cannot be read: $(cat "$work/err")"
+[ "$(json '.specDrift | length')" = 0 ] || fail "drift reported without the pull request bodies: $(json '.specDrift')"
+json '.specDriftNote' | grep -q 'pull request' || fail "no note when the pull requests cannot be read: $(json '.specDriftNote')"
+SPEC_FAIL=1 run_spec status || fail "status fails when the pull requests cannot be read"
+grep -q '^Spec drift: not checked' "$work/out" || fail "text note missing: $(cat "$work/out")"
+# A change of the spec resets it.
+sc "docs(spec): alpha follows the code" docs/specs/0001-alpha.md
+run_spec status --json || fail "status --json after the spec changed failed: $(cat "$work/err")"
+[ "$(json '.specDrift | length')" = 0 ] || fail "the spec changed and still drifts: $(json '.specDrift')"
+[ "$(grep -c issueOrPullRequest "$FIX/bodies")" = 0 ] || fail "pull request bodies read with nothing to check"
+sc "feat: g" src/g.ts
+run_spec status --json || fail "status --json failed: $(cat "$work/err")"
+[ "$(json '.specDrift[0].commits | map(.subject) | join("|")')" = '"feat: g"' ] || fail "drift since the new spec: $(json '.specDrift')"
+[ "$(grep -c issueOrPullRequest "$FIX/bodies")" = 0 ] || fail "a commit without a pull request number reads pull requests"
 
 # Errors.
 run status --since soon && fail "accepted --since soon"

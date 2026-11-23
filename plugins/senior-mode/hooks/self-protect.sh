@@ -8,7 +8,11 @@
 # A guardrail for honest mistakes, not a sandbox, like guard-bash.sh: a Bash command is read as
 # written, so `bash -c "..."`, variables and scripts are not followed; a `cd` with a literal path earlier in
 # the command is (both the cwd and where it went are checked).
-[ "${SENIOR_MODE_RUN:-}" = 1 ] || exit 0
+# Also, in a session with SENIOR_MODE_ROLE=ticket, run or not, denies changes to the red tests: the files
+# listed in <git common dir>/senior-mode/runs/<ticket>/red-tests (one path per line from the repository
+# root, written when the test-author session of an M ticket is done; the ticket is read in the branch,
+# `feat/<n>-slug`), which a separate session wrote and the implementer must make pass unchanged (spec 131, #191).
+[ "${SENIOR_MODE_RUN:-}" = 1 ] || [ "${SENIOR_MODE_ROLE:-}" = ticket ] || exit 0
 set -o pipefail
 input=$(cat)
 # One jq call for the fields; the unit separator, not whitespace, keeps empty fields.
@@ -24,6 +28,11 @@ here=$(cd "$cwd/$(git -C "$cwd" rev-parse --show-cdup)" 2>/dev/null && pwd) || h
 # packed-refs, HEAD, the objects, info/, modules/ and the worktrees/ admin dirs are not removed or overwritten
 # by hand either.
 common=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+reds=() list=""
+if [ "${SENIOR_MODE_ROLE:-}" = ticket ] && [[ $(git -C "$cwd" symbolic-ref --short -q HEAD) =~ ^[^/]+/([0-9]+)(-|$) ]]; then
+  list=$common/senior-mode/runs/${BASH_REMATCH[1]}/red-tests
+  [ -f "$list" ] && mapfile -t reds <"$list"
+fi
 
 deny() { # path as written
   jq -nc --arg r "senior-mode: during a run, $1 belongs to the project's own guard rails (workflows, .claude/, .githooks/, the git hooks and config) and an agent does not change them. Do not work around this: leave that change out, say in the pull request that a human has to make it, and carry on with the rest." \
@@ -32,7 +41,14 @@ deny() { # path as written
 }
 
 deny_discard() { # what
+  [ "${SENIOR_MODE_RUN:-}" = 1 ] || return 0
   jq -nc --arg r "senior-mode: during a run, $1 discards branches, reflogs or objects that cannot be brought back, and an agent does not do that. Do not work around this: leave it out, say in the pull request what a human should clean up, and carry on with the rest." \
+    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
+  exit 0
+}
+
+deny_red() { # path as written
+  jq -nc --arg r "senior-mode: $1 is one of the red tests of this ticket, written by a separate test-author session from the acceptance criteria. The implementer makes them pass and does not edit, move or delete them (you may add tests of your own). Do not work around this: if a red test is wrong, leave it as it is, say so in the pull request and let a human decide." \
     '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
   exit 0
 }
@@ -55,6 +71,7 @@ normalize() {
 # Where a relative path may point: the cwd, and every directory a `cd` earlier in the command went to (a
 # subshell or a failed `cd` is not told apart, so each is tried).
 bases=("$cwd") cur=$cwd
+whole=false # the command removes or moves what it is given, a directory with what is in it
 
 # Denies a path, as written, that is under a protected directory of the repository.
 check() {
@@ -65,6 +82,18 @@ check() {
 check_path() { # absolute-or-relative path, as written
   local p=$1 r rel rest
   p=$(normalize "$p")
+  if [ ${#reds[@]} -gt 0 ]; then
+    [ "$p" = "$list" ] && deny_red "$2"
+    for r in "$root" "$here"; do
+      for rel in "${reds[@]}"; do
+        [ -n "$rel" ] || continue
+        [ "$p" = "$r/$rel" ] && deny_red "$2"
+        # A directory that holds a red test goes with it (`rm -r tests`, `mv tests old`).
+        $whole && [[ $r/$rel == "$p"/* ]] && deny_red "$2"
+      done
+    done
+  fi
+  [ "${SENIOR_MODE_RUN:-}" = 1 ] || return 0
   # An unexpanded glob directly under the common dir (`rm -rf .git/*`) reaches the hooks and the config.
   rest=${p#"$common"/}
   [[ -n $common && $p == "$common"/* && ${rest%%/*} == *[\*\?\[]* ]] && deny "$2"
@@ -144,7 +173,11 @@ while IFS= read -r segment; do
         bases+=("$cur")
       fi
       ;;
-    tee | rm | rmdir | unlink | touch | truncate | shred | mv | chmod | chown | chgrp) for a in ${paths[@]+"${paths[@]}"}; do check "$a"; done ;;
+    tee | rm | rmdir | unlink | touch | truncate | shred | mv | chmod | chown | chgrp)
+      ! [[ $cmd =~ ^(rm|rmdir|unlink|shred|mv)$ ]] || whole=true
+      for a in ${paths[@]+"${paths[@]}"}; do check "$a"; done
+      whole=false
+      ;;
     cp | install | ln) check "$last"; check "$into" ;;
     sed | perl) ! $inplace || for a in ${paths[@]+"${paths[@]}"}; do check "$a"; done ;;
     dd) for a in ${args[@]+"${args[@]}"}; do [[ $a == of=* ]] && check "${a#of=}"; done ;;
@@ -160,7 +193,11 @@ while IFS= read -r segment; do
           *) sub=$a ;;
         esac
       done
+      case $sub in
+        rm | mv) whole=true ;;
+      esac
       case $sub in rm | mv | checkout | restore) for a in ${paths[@]+"${paths[@]}"}; do check "$a"; done ;; esac
+      whole=false
       # Refs and objects discarded by command: update-ref -d on a branch or HEAD, a reflog expired or
       # deleted, unreachable objects pruned at once. git takes `--pr=now` for `--prune=now`: so does this.
       # A dry run of reflog expire or prune (`--dry-run`, `--d`, `-n`) discards nothing.

@@ -27,7 +27,7 @@ decide() {
   local filter=$1 out
   shift
   out=$(jq -nc --arg d "${dir:-$repo}" "$@" "{hook_event_name: \"PreToolUse\", session_id: \"s\", cwd: \$d} $filter" |
-    env -u SENIOR_MODE_RUN ${run+SENIOR_MODE_RUN="$run"} "$hook")
+    env -u SENIOR_MODE_RUN -u SENIOR_MODE_ROLE ${run+SENIOR_MODE_RUN="$run"} ${role+SENIOR_MODE_ROLE="$role"} "$hook")
   reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason // empty' <<<"$out" 2>/dev/null)
   verdict=allow
   [ "$(jq -r '.hookSpecificOutput.permissionDecision // empty' <<<"$out" 2>/dev/null)" = deny ] && verdict=deny
@@ -416,6 +416,58 @@ bash_ allow 'rm -rf .githooks'
 run=
 edit allow "$repo/.claude/settings.json" Edit "" "empty SENIOR_MODE_RUN"
 run=1
+
+# --- #191: the red tests of the test-author session are read-only for the ticket session ---
+# The list of the test-author's files is <git common dir>/senior-mode/runs/<ticket>/red-tests, one path per
+# line from the repository root; the ticket is read in the branch (feat/2-y is ticket 2). It acts for
+# SENIOR_MODE_ROLE=ticket, in a run or not.
+mkdir -p "$repo/.git/senior-mode/runs/2" "$tw/web"
+printf 'tests/a.sh\nweb/tests/b.test.js\n' >"$repo/.git/senior-mode/runs/2/red-tests"
+role=ticket
+for run in 1 ""; do
+  [ -n "$run" ] || unset run
+  label=${run:+run }
+  dir=$tw edit deny "$tw/tests/a.sh" Edit "" "${label}ticket edits a red test"
+  dir=$tw edit deny "$tw/tests/a.sh" Write "" "${label}ticket writes a red test"
+  dir=$tw edit deny "$tw/web/tests/b.test.js" MultiEdit "" "${label}ticket multi-edits a red test"
+  dir=$tw edit deny "tests/a.sh" Edit "" "${label}relative path to a red test"
+  dir=$tw edit deny "$tw/src/../tests/a.sh" Edit "" "${label}a .. segment does not hide a red test"
+  dir=$tw/web edit deny "tests/b.test.js" Edit "" "${label}relative path from a subdirectory"
+  dir=$tw edit deny "$repo/.git/senior-mode/runs/2/red-tests" Write "" "${label}the list itself"
+  dir=$tw edit allow "$tw/tests/new.sh" Write "" "${label}a new test of the implementer"
+  dir=$tw edit allow "$tw/tests/a.sh.md" Edit "" "${label}a name that only starts like a red test"
+  dir=$tw edit allow "$tw/src/app.js" Edit "" "${label}code"
+  for c in 'echo x >> tests/a.sh' 'echo x > tests/a.sh' 'rm tests/a.sh' 'rm -f web/tests/b.test.js' 'mv tests/a.sh /tmp/a.sh'
+    do dir=$tw bash_ deny "$c" "$tw"; done
+  for c in 'mv /tmp/x tests/a.sh' 'cp /tmp/x tests/a.sh' 'sed -i s/a/b/ tests/a.sh' 'git rm tests/a.sh' 'git mv tests/a.sh tests/c.sh' \
+    'git checkout HEAD~1 -- tests/a.sh' 'truncate -s0 tests/a.sh' 'echo x | tee tests/a.sh' 'cd tests && rm a.sh' 'rm -rf tests' \
+    'rm -r web' 'mv web web2' "rm $repo/.git/senior-mode/runs/2/red-tests" \
+    "rm -f $tw/tests/a.sh" 'rm ./tests/../tests/a.sh' 'FOO=1 rm tests/a.sh' 'sudo rm tests/a.sh'
+    do dir=$tw bash_ deny "$c" "$tw"; done
+  for c in 'cat tests/a.sh' 'bash tests/a.sh' 'echo x > tests/new.sh' 'rm tests/new.sh' 'cp tests/a.sh /tmp/a.sh' 'cp /tmp/x tests/' \
+    'git add tests/a.sh' 'git commit -m "test: x"' 'echo "rm tests/a.sh" > src/note.txt' 'git commit -m "rm tests/a.sh"' \
+    'sed s/a/b/ tests/a.sh' 'sed -n 1p tests/a.sh' 'touch src/x.js' 'rm src/x.js' 'git rm src/x.js'
+    do dir=$tw bash_ allow "$c" "$tw"; done
+done
+# Not a ticket session: the roles that write the tests, review, or integrate, and a manual session, edit freely.
+for role in test-author reviewer integrator ""; do
+  [ -n "$role" ] || unset role
+  dir=$tw edit allow "$tw/tests/a.sh" Edit "" "role ${role:-unset}"
+  dir=$tw bash_ allow "rm tests/a.sh" "$tw"
+done
+role=ticket
+# A branch with no list, a list that is not there, and a branch that names no ticket have nothing to protect.
+dir=$work/wt edit allow "$work/wt/tests/a.sh" Edit "" "ticket 1 has no list"
+mkdir -p "$work/nobranch"
+git -C "$repo" worktree add -q --detach "$work/nobranch/d" 2>/dev/null
+dir=$work/nobranch/d edit allow "$work/nobranch/d/tests/a.sh" Edit "" "detached head"
+# A ticket session outside a run is not given the run's guard rails.
+dir=$tw edit allow "$tw/.claude/settings.json" Edit "" "ticket role without SENIOR_MODE_RUN"
+run=1
+dir=$tw edit deny "$tw/.claude/settings.json" Edit "" "ticket role in a run keeps the run's guard rails"
+dir=$tw decide '+ {tool_name: "Edit", tool_input: {file_path: $p}}' --arg p "$tw/tests/a.sh"
+grep -q test-author <<<"$reason" || fail "red test reason does not name the test-author: $reason"
+unset role
 
 # --- Other events and tools pass through ---
 decide '+ {tool_name: "Read", tool_input: {file_path: ($d + "/.claude/settings.json")}}'

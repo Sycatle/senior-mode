@@ -40,6 +40,8 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, even an empty one; `senior-mode protected` and the reviewer read it, and `setup github` maps it to [CODEOWNERS](autonomy.md#code-owners) |
 | `ci.mode` | `local` | `local` or `actions` |
 | `audit` | `true` | `false` turns off the [dependency audit](#dependency-audit) of `check`; `status` then says so. Set it yourself, setup does not write it |
+| `security.minPackageAgeDays` | `30` | A dependency the branch adds fails `check` when its package was first published fewer days ago ([new dependencies](#new-dependencies)); a whole number from 1 |
+| `security.minWeeklyDownloads` | `50` | A dependency the branch adds fails `check` when its package had fewer downloads last week; a whole number from 1 |
 | `secrets` | none | Extra globs the [secrets guard](autonomy.md#secrets-guard-guard-secretssh) denies, added to its defaults: `"*.token"` matches a file name anywhere, `"config/prod.*"` and `"**/vault/*"` match from the repository root. It never allows a default. Add it yourself; setup does not write it |
 | `github.protection` | written by setup | `ruleset` when the `senior-mode` ruleset protects the default branch, `none` when GitHub refused it (private repository on a Free plan): the branch is then not protected on the server |
 | `review.sections` | none | Project review checklists, see [below](#project-review-sections) |
@@ -126,8 +128,9 @@ and, in `actions` mode, the workflow all run it, from the repository root.
 - A node project that declares dependencies but has no `node_modules` fails at once with
   `dependencies not installed: run <install command>`, before any check runs.
 - When `envGuard.forbidden` lists something, setup adds the `env guard` check (below).
-- `check` starts with two built-in steps that are not in the list: the `secret scan`, which cannot be
-  turned off, and the `dependency audit`, which `audit: false` turns off (both below). A passing check
+- `check` starts with three built-in steps that are not in the list: the `secret scan`, which cannot be
+  turned off, the `dependency audit`, which `audit: false` turns off, and the `new dependencies`
+  lookup (all below). A passing check
   that has warnings prints them under its `ok`.
 
 Not in the list yet: spec drift (planned, no milestone yet). You can add your own as a check entry.
@@ -189,6 +192,24 @@ has it, and a tool that hangs fails the check saying it timed out; without `time
 
 `"audit": false` turns the step off, and `senior-mode status` prints `Dependency audit: off` while it
 is. Turning it off is a human's call.
+
+### New dependencies
+
+Agents invent package names, or mistype popular ones, and an attacker can publish under that name
+(slopsquatting). The `new dependencies` step looks up every dependency the branch adds, against where it
+left the default branch, to a `package.json`, `requirements*.txt`, `pyproject.toml` (PEP 621 and
+Poetry), `Cargo.toml` or `go.mod`, on its registry (npm, PyPI, crates.io, the Go module proxy). Local,
+git, URL and indirect Go dependencies are left out. The step fails when a package:
+
+- is not on its registry;
+- was first published less than `security.minPackageAgeDays` days ago (default 30);
+- had fewer than `security.minWeeklyDownloads` downloads last week (default 50; crates.io gives 90
+  days, divided by 13; the Go proxy gives none, so Go modules are not held to it).
+
+A name one or two letters from a popular package of `popular-packages` (in the plugin) is a warning.
+A registry that does not answer leaves its packages unchecked and says so: the step is a `skip` when
+none answered, and a warning names the unchecked packages otherwise. Both thresholds are whole numbers
+from 1. `SENIOR_MODE_REGISTRY_TIMEOUT` bounds each request (15 seconds).
 
 ### Environment guard
 

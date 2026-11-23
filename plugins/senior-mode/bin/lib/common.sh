@@ -14,6 +14,7 @@ DEFAULTS='{
   "protected": [],
   "secrets": [],
   "audit": true,
+  "security": { "minPackageAgeDays": 30, "minWeeklyDownloads": 50 },
   "board": { "template": "PVT_kwHOAZfEPs4Bs2sq", "archiveAfterDays": 14, "iterationDays": 14 },
   "envGuard": { "forbidden": [] },
   "review": { "sections": [] },

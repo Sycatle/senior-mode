@@ -23,7 +23,15 @@ arg() { local prev=""; for a in "$@"; do [ "$prev" = "$FLAG" ] && echo "$a"; pre
 case "$*" in
   "api graphql --input -")
     body=$(cat)
-    if grep -q ProjectV2ItemStatusChangedEvent <<<"$body"; then
+    if grep -q createProjectV2StatusUpdate <<<"$body"; then
+      [ -z "${UPDATE_FAIL:-}" ] || { echo "HTTP 403: forbidden" >&2; exit 1; }
+      printf '%s\n' "$body" >>"$FIX/status-updates"
+      echo '{"data": {"createProjectV2StatusUpdate": {"statusUpdate": {"id": "SU_1"}}}}'
+    elif grep -q ProjectV2IterationField <<<"$body"; then
+      cat "$FIX/iteration.json"
+    elif grep -q LABELED_EVENT <<<"$body"; then
+      cat "$FIX/labeled.json"
+    elif grep -q ProjectV2ItemStatusChangedEvent <<<"$body"; then
       printf '%s\n' "$body" >>"$FIX/history-bodies"
       cat "$FIX/history.json"
     else
@@ -139,11 +147,11 @@ printf 'success\n6/6 checks passed\n' >"$checks/bbbbbbb2222222222222222222222222
 printf 'failure\nfailed: test\n' >"$checks/ccccccc3333333333333333333333333333333333"
 touch -d "20 days ago" "$checks/ccccccc3333333333333333333333333333333333"
 
-run() { : >"$GH_LOG"; : >"$FIX/board-bodies"; : >"$FIX/history-bodies"; (cd "$repo" && "$cli" "$@") >"$work/out" 2>"$work/err"; }
+run() { : >"$GH_LOG"; : >"$FIX/board-bodies"; : >"$FIX/history-bodies"; : >"$FIX/status-updates"; (cd "$repo" && "$cli" "$@") >"$work/out" 2>"$work/err"; }
 json() { jq -c "$1" "$work/out"; }
 
 run retro --json || fail "retro --json failed: $(cat "$work/err")"
-[ "$(grep -c '^api ' "$GH_LOG")" -eq 4 ] || fail "retro makes $(grep -c '^api ' "$GH_LOG") gh calls, wanted 4 (the two alert lists, board, history)"
+[ "$(grep -c '^api ' "$GH_LOG")" -eq 5 ] || fail "retro makes $(grep -c '^api ' "$GH_LOG") gh calls, wanted 5 (the two alert lists, board, history, the status update)"
 [ "$(jq -r '.variables.repo' "$FIX/board-bodies")" = true ] || fail "retro does not reuse the board with repository facts"
 [ "$(jq -r '.variables.owner + "/" + .variables.name' "$FIX/history-bodies")" = acme/app ] || fail "history repository: $(cat "$FIX/history-bodies")"
 since_sent=$(jq -r '.variables.since' "$FIX/history-bodies")
@@ -180,6 +188,18 @@ run retro --json --since 30d || fail "--since failed: $(cat "$work/err")"
 [ "$(json '.runs.escalated | map(.ticket)')" = "[11,12]" ] || fail "--since 30d escalated runs: $(json .runs)"
 [ "$(json '.checkFailures | length')" -eq 2 ] || fail "--since 30d check failures: $(json .checkFailures)"
 
+# #177: each pass ends with the health of the Project, a Project status update; the report stays pure JSON.
+[ "$(grep -c createProjectV2StatusUpdate "$FIX/status-updates")" -eq 1 ] || fail "retro posted no status update: $(cat "$FIX/status-updates")"
+[ "$(jq -r '.variables | [.status, .start, .target // "none"] | join("|")' "$FIX/status-updates")" = "ON_TRACK|$(date -u +%Y-%m-%d)|none" ] ||
+  fail "health of a quiet board: $(cat "$FIX/status-updates")"
+jq -e '.variables.body | startswith("On track: ") and contains("Board: ") and contains("Needs a human: nothing")' "$FIX/status-updates" >/dev/null ||
+  fail "health body: $(cat "$FIX/status-updates")"
+grep -q 'Project status update posted: On track' "$work/err" || fail "--json says the update on stderr: $(cat "$work/err")"
+jq -e . "$work/out" >/dev/null || fail "retro --json with the update is not pure JSON"
+UPDATE_FAIL=1 run retro --json || fail "a status update that fails fails retro: $(cat "$work/err")"
+grep -q "could not post the status update" "$work/err" || fail "a failed update is not said: $(cat "$work/err")"
+jq -e .done "$work/out" >/dev/null || fail "a failed update loses the report"
+
 # Plain words.
 run retro || fail "retro failed: $(cat "$work/err")"
 for want in "Done in the last 7d (3)" "#5 Ticket 5" "Cycle time" "median 63h" "worst 96h (#6 Ticket 6)" \
@@ -191,6 +211,58 @@ done
 grep -qF "#4 " "$work/out" && fail "a ticket outside the period is listed: $(cat "$work/out")"
 grep -qF "#5 S" "$work/out" && fail "a ticket within its size is flagged: $(cat "$work/out")"
 [ "$(git -C "$repo" status --porcelain | wc -l)" -eq 0 ] || fail "retro left changes in the tree: $(git -C "$repo" status --porcelain)"
+
+grep -q "Project status update posted: On track" "$work/out" || fail "plain retro does not say the update: $(cat "$work/out")"
+
+# #179: an archived item still counts, with its size.
+cp "$FIX/board.json" "$FIX/board.keep"
+jq -c '(.data.node.items.nodes[] | select(.content.number == 5)) += {isArchived: true}' "$FIX/board.keep" >"$FIX/board.json"
+run retro --json || fail "retro with an archived item failed: $(cat "$work/err")"
+[ "$(json '.done | map(.number)')" = "[5,6,7]" ] || fail "an archived item is not counted: $(json .done)"
+[ "$(json '.done[0].size')" = '"S"' ] || fail "an archived item lost its size: $(json '.done[0]')"
+cp "$FIX/board.keep" "$FIX/board.json"
+
+# #180: --iteration reports one cycle, the current one or a named one, instead of a --since period.
+iter_day() { date -u -d "@$(($(date +%s) + $1 * DAY))" +%Y-%m-%d; }
+jq -nc --arg a "$(iter_day -30)" --arg b "$(iter_day -2)" '{data: {node: {field: {id: "IT", configuration: {duration: 14,
+  completedIterations: [{id: "i1", title: "Iteration 1", startDate: $a, duration: 14}],
+  iterations: [{id: "i2", title: "Iteration 2", startDate: $b, duration: 14}]}}}}}' >"$FIX/iteration.json"
+run retro --json --iteration || fail "retro --iteration failed: $(cat "$work/err")"
+[ "$(json '.iteration')" = '"Iteration 2"' ] || fail "current iteration: $(json .iteration)"
+[ "$(json '.since[:10]')" = "\"$(iter_day -2)\"" ] || fail "iteration start: $(json .since)"
+[ "$(json '.until[:10]')" = "\"$(iter_day 12)\"" ] || fail "iteration end: $(json .until)"
+[ "$(jq -r '.variables.since[:10]' "$FIX/history-bodies")" = "$(iter_day -2)" ] || fail "history not read from the iteration start"
+[ "$(json '.done | map(.number)')" = "[5,6,7]" ] || fail "iteration done: $(json .done)"
+run retro --json --iteration "Iteration 1" || fail "retro --iteration <name> failed: $(cat "$work/err")"
+[ "$(json '.iteration')" = '"Iteration 1"' ] || fail "named iteration: $(json .iteration)"
+[ "$(json '.done | map(.number)')" = "[4]" ] || fail "an earlier cycle holds its own tickets only: $(json .done)"
+run retro --iteration || fail "plain retro --iteration failed"
+grep -q "Done in iteration Iteration 2 ($(iter_day -2) to $(iter_day 11)) (3)" "$work/out" || fail "iteration heading: $(cat "$work/out")"
+run retro --iteration "Iteration 9" && fail "an unknown iteration is accepted"
+grep -q "no iteration Iteration 9" "$work/err" || fail "unknown iteration not explained: $(cat "$work/err")"
+run retro --iteration --since 7d && fail "--iteration with --since is accepted"
+echo '{"data": {"node": {"field": null}}}' >"$FIX/iteration.json"
+run retro --iteration && fail "--iteration on a board with no Iteration field"
+grep -q "no iteration" "$work/err" || fail "no field not explained: $(cat "$work/err")"
+
+# #177: off track and at risk, with the rule in the body and the target date of the milestone.
+jq -nc '{data: {repository: {i8: {timelineItems: {nodes: [{createdAt: "2020-01-01T00:00:00Z", label: {name: "needs-human"}}]}}}}}' >"$FIX/labeled.json"
+jq -c --arg due "$(ago $((3 * DAY)))" '(.data.node.items.nodes[] | select(.content.number == 8) | .content) += {milestone: {title: "v1", dueOn: $due}}' \
+  "$FIX/board.keep" >"$FIX/board.json"
+run retro --json || fail "retro with a late milestone failed: $(cat "$work/err")"
+[ "$(jq -r '.variables | [.status, .target] | join("|")' "$FIX/status-updates")" = "OFF_TRACK|$(ago $((3 * DAY)) | cut -c1-10)" ] ||
+  fail "past due milestone: $(cat "$FIX/status-updates")"
+jq -e '.variables.body | startswith("Off track: milestone v1 was due ") and contains("1 open issue")' "$FIX/status-updates" >/dev/null || fail "off track rule: $(cat "$FIX/status-updates")"
+jq -c '(.data.node.items.nodes[] | select(.content.number == 8) | .content.labels.nodes) += [{name: "needs-human"}]' "$FIX/board.keep" >"$FIX/board.json"
+run retro --json || fail "retro with a stuck ticket failed: $(cat "$work/err")"
+[ "$(jq -r '.variables.status' "$FIX/status-updates")" = AT_RISK ] || fail "needs-human for long: $(cat "$FIX/status-updates")"
+jq -e '.variables.body | startswith("At risk: #8 has needed a human for ") and contains("Needs a human: #8 Ticket 8")' "$FIX/status-updates" >/dev/null ||
+  fail "at risk rule: $(cat "$FIX/status-updates")"
+jq -nc --arg at "$(ago $((2 * HOUR)))" '{data: {repository: {i8: {timelineItems: {nodes: [{createdAt: "2020-01-01T00:00:00Z", label: {name: "needs-human"}},
+  {createdAt: $at, label: {name: "needs-human"}}]}}}}}' >"$FIX/labeled.json"
+run retro --json || fail "retro with a fresh needs-human failed"
+[ "$(jq -r '.variables.status' "$FIX/status-updates")" = ON_TRACK ] || fail "the last labeled event decides: $(cat "$FIX/status-updates")"
+cp "$FIX/board.keep" "$FIX/board.json"
 
 # Repository hygiene (#226): reported, never acted on.
 cp "$FIX/board.json" "$FIX/board.keep"

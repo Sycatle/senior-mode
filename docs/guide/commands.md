@@ -84,6 +84,8 @@ State: **Available.**
 - **Produces.** A summary in the `language` of your config, with what needs you first. Ask for "the
   week for the client" and it runs `senior-mode status --since 7d`, a digest without jargon.
 - **Live view.** `senior-mode status --watch` in a terminal or tmux pane redraws every 30 seconds.
+- **Health.** `senior-mode status --publish` posts the board's health (on track, at risk, off track, with the counts, the tickets that need a human, failing pull requests and drift) as a Project status update; it cannot be combined with `--watch`. `senior-mode retro` posts it on each pass.
+- **Cycle.** `setup github` adds an Iteration field (`board.iterationDays` days, default 14) and Start and End dates; `start` sets Start and the current iteration, a merge sets End. `run` archives items Done for more than `board.archiveAfterDays` days (default 14); archived items stay in `retro`. `senior-mode retro --iteration [<name>]` reviews one iteration (the current one by default).
 - Only the plain run moves the "since last time" mark (kept in `.claude/senior-mode/`, ignored by git);
   `--since`, `--json` and `--watch` leave it alone.
 

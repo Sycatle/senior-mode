@@ -12,7 +12,7 @@ acknowledgement before going on.
 
 With no Project, `senior-mode setup github` copies the template Project (`board.template`): views,
 fields and built-in workflows come with the copy. It then ensures the fields Status, Priority, Size,
-Severity and Paths (text), keeping existing options. Relay `board: the copy lacks ...` (views to add
+Severity and Paths (text), keeping existing options, then Iteration (`board.iterationDays`, 26 iterations from this week's Monday), Start and End (dates). Relay `board: the copy lacks ...` (views to add
 by hand, workflows to turn on in the Project's Workflows tab: no API does either). An existing Project is
 never replaced: on `board: the Project lacks ...`, say what is missing and offer `--migrate` (show
 `--migrate --dry-run` first: items, fields and options to create, nothing changed). It copies the template, adds

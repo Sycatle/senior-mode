@@ -289,12 +289,26 @@ Limits, as for the other guards: a guardrail for honest mistakes, not a sandbox.
 started from Bash are not read, so a determined session can change a red test or post a status; the
 branch protection and the review of the pull request are the backstop (a changed red test shows in
 the diff). The ticket is read in the branch name of the session's directory: a `cd` to another worktree
-in the same command is not followed. The roles are set by whoever starts the session, and the serve
-loop that starts `test-author` and `reviewer` sessions comes with [#149](https://github.com/Sycatle/senior-mode/issues/149):
-until then `run` starts ticket sessions without a role, which still review and set the status
-themselves as described in [Run](#run). A reviewer that runs as a subagent of the ticket session
+in the same command is not followed. The roles are set by whoever starts the session: `serve` sets one on every session it starts
+(`ticket`, `test-author`, `reviewer`, `integrator`), while `run` starts ticket sessions without a role, which still
+review and set the status themselves as described in [Run](#run). A reviewer that runs as a subagent of the ticket session
 shares its environment, so it cannot post the status once the role is `ticket`: that is the point
 of the separate session.
+
+**What `serve` does at each poll** ([spec 131](../specs/131-autonomy.md), ADRs 0017 to 0019). First it settles the
+pull requests queued for auto-merge. Then, for the tickets In review (not `needs-human`, not draft), in `pick` order:
+a pull request with `senior-mode/ci` success and no `senior-mode/review` gets a `reviewer` session (Opus, a detached
+worktree of the head, removed afterwards); a review of changes requested resumes the ticket session on the same
+branch, 2 rounds at most, then `needs-human` on the pull request and the ticket; a reviewer that ends without a
+status is `needs-human` too. Then the integrator pass merges one pull request per poll: when `autonomy.merge` is on
+(the default under `serve`), `senior-mode/ci`, `senior-mode/review` and `senior-mode/security` are `success`, no
+protected zone is touched and nothing is `needs-human`, it runs `gh pr merge --rebase --match-head-commit <head>`
+(with `--auto` when the repository allows auto-merge, falling back to a direct merge) and sets Status Done only once
+the pull request reads back as merged. A pull request behind its base is rebased on the server; when `git range-diff`
+shows the same patches, check and publish run again on the new head and the review carries over, otherwise a new
+review is requested. A conflict starts an Opus `integrator` session on `<branch>-r2` (`-r3` once more, then
+`needs-human`), whose pull request supersedes and closes the old one. An M ticket without recorded red tests gets a
+`test-author` session before its ticket session. The usage limit and the breaker hold the launches, not the merges.
 
 ### Secrets guard (`guard-secrets.sh`)
 

@@ -58,7 +58,7 @@ case "$*" in
   "project list"*) [ -z "${LIST_ERR:-}" ] || { echo "$LIST_ERR" >&2; exit 1; }
     respond <"$FIX/projects.json" ;;
   "project link"*) [ -z "${LINK_ERR:-}" ] || { echo "$LINK_ERR" >&2; exit 1; } ;;
-  "project create"*) echo '{"number":7,"id":"PVT_NEW","title":"app"}' | tee "$FIX/project.json" | respond ;;
+  "project create"*) echo "project create is gone: the board is copied from the template" >&2; exit 1 ;;
   "api graphql"*)
     body=$(cat); echo "$body" >>"$GH_LOG"
     v=$(jq -c .variables <<<"$body")
@@ -70,6 +70,17 @@ case "$*" in
       jq --argjson v "$v" '(.data.node.fields.nodes[] | select(.id == $v.field)
         | .options) = ($v.options | map(.id //= ("O_" + .name)))' "$FIX/fields.json" >"$FIX/f" &&
         mv "$FIX/f" "$FIX/fields.json"
+    elif grep -q copyProjectV2 <<<"$body"; then
+      [ -z "${COPY_ERR:-}" ] || { echo "$COPY_ERR" >&2; exit 1; }
+      jq -nc --argjson n "${COPY_NUMBER:-7}" --arg i "${COPY_ID:-PVT_NEW}" '{number: $n, id: $i, title: "app"}' >"$FIX/project.json"
+      jq -nc --argjson n "${COPY_NUMBER:-7}" --arg i "${COPY_ID:-PVT_NEW}" '{data: {copyProjectV2: {projectV2: {id: $i, number: $n}}}}' | respond
+    elif grep -q 'updateProjectV2(input' <<<"$body"; then
+      jq --argjson v "$v" '.data.node += ($v.input | del(.projectId))' "$FIX/board.json" >"$FIX/f" && mv "$FIX/f" "$FIX/board.json"
+    elif grep -q 'views(first' <<<"$body"; then
+      if [ "$(jq -r .id <<<"$v")" = PVT_TPL ]; then
+        [ -z "${TEMPLATE_ERR:-}" ] || { echo "$TEMPLATE_ERR" >&2; exit 1; }
+        respond <"$FIX/template-project.json"
+      else respond <"$FIX/workflows-project.json"; fi
     elif grep -q workflows <<<"$body"; then
       [ ! -f "$FIX/workflows-fail" ] || { echo "HTTP 403: forbidden" >&2; exit 1; }
       respond <"$FIX/workflows-project.json"
@@ -83,18 +94,21 @@ repo="$work/repo"
 git init -q "$repo"
 git -C "$repo" remote add origin git@github.com:acme/app.git
 mkdir -p "$repo/.claude" "$FIX"
-echo '{"language": "fr"}' >"$repo/.claude/senior-mode.json"
-echo '{"owner": {"type": "User"}}' >"$FIX/repo.json"
+echo '{"language": "fr", "board": {"template": "PVT_TPL"}}' >"$repo/.claude/senior-mode.json"
+repo_json() { echo "{\"owner\": {\"type\": \"$1\", \"node_id\": \"U_acme\"}, \"private\": ${2:-true}}" >"$FIX/repo.json"; }
+repo_json User
+echo '{"data": {"node": {"readme": null, "shortDescription": null}}}' >"$FIX/board.json"
 echo '{"rules": []}' >"$FIX/ruleset-9.json"
 echo '{"projects": [{"number": 2, "title": "other"}]}' >"$FIX/projects.json"
 echo '{"data": {"node": {"fields": {"nodes": [{}, {"id": "F_Status", "name": "Status", "options": [
   {"id": "O_todo", "name": "Todo", "color": "GRAY", "description": ""},
   {"id": "O_prog", "name": "In Progress", "color": "YELLOW", "description": ""},
   {"id": "O_done", "name": "Done", "color": "PURPLE", "description": "Shipped"}]}]}}}}' >"$FIX/fields.json"
-project_workflows() { # enabled flags of "Item closed" and "Pull request merged"
-  jq -n --argjson c "$1" --argjson m "$2" '{data: {node: {workflows: {nodes: [
+project_workflows() { # enabled flags of "Item closed" and "Pull request merged"; the template has the same views and workflows
+  jq -n --argjson c "$1" --argjson m "$2" '{data: {node: {views: {nodes: [{name: "BACKLOG"}, {name: "KANBAN"}]}, workflows: {nodes: [
     {name: "Item closed", enabled: $c}, {name: "Pull request merged", enabled: $m},
     {name: "Auto-add to project", enabled: false}]}}}}' >"$FIX/workflows-project.json"
+  cp "$FIX/workflows-project.json" "$FIX/template-project.json"
 }
 project_workflows true true
 
@@ -111,7 +125,15 @@ status_field() {
 
 # A repository without senior-mode.
 setup
-logged "project create --owner acme --title app" || fail "no Project created"
+logged "project create" && fail "an empty Project created instead of a copy of the template"
+logged "copyProjectV2" || fail "the template Project was not copied"
+logged '"template":"PVT_TPL"' || fail "copied from another Project than board.template: $(cat "$GH_LOG")"
+logged '"owner":"U_acme"' || fail "the copy is not owned by the repository's owner"
+logged '"title":"app"' || fail "the copy is not named after the repository"
+logged "includeDraftIssues: false" || fail "draft issues copied"
+logged '"public":true' && fail "the copy of a private repository made public"
+grep -q "Project #7 app: copied from the template" "$work/err" "$work/out" || fail "copy not reported: $(cat "$work/out" "$work/err")"
+grep -q "the copy lacks" "$work/out" && fail "a copy that has everything reported lacking: $(cat "$work/out")"
 logged "project link 7 --owner acme --repo acme/app" || fail "Project not linked"
 [ "$(cfg .project.number)/$(cfg .project.id)/$(cfg .project.owner)" = 7/PVT_NEW/acme ] || fail "project not cached: $(cfg .project)"
 [ "$(cfg .language)" = fr ] || fail "other config keys lost"
@@ -147,12 +169,61 @@ logged "/protection" && fail "classic branch protection rewritten"
 # Running it again changes nothing that exists.
 before=$(cat "$repo/.claude/senior-mode.json")
 setup
-logged "project create" && fail "second run creates a Project"
+logged "copyProjectV2" && fail "second run copies the template again"
 logged "createProjectV2Field" && fail "second run creates a field"
 logged "updateProjectV2Field" && fail "second run rewrites field options"
 logged "api -X POST repos/acme/app/rulesets" && fail "second run creates another ruleset"
 logged "api -X PUT repos/acme/app/rulesets/9" || fail "second run does not update the ruleset"
 [ "$(cat "$repo/.claude/senior-mode.json")" = "$before" ] || fail "second run changes the config"
+
+# The board template: the default is the Project senior-mode ships, board.template overrides it.
+echo '{"language": "fr"}' >"$repo/.claude/senior-mode.json"
+setup
+logged '"template":"PVT_kwHOAZfEPs4Bs2sq"' || fail "the default template is not the shipped one: $(cat "$GH_LOG")"
+[ "$(cd "$repo" && "$cli" config get board.template)" = PVT_kwHOAZfEPs4Bs2sq ] ||
+  fail "board.template has no default"
+echo '{"language": "fr", "board": {"template": "PVT_TPL"}}' >"$repo/.claude/senior-mode.json"
+
+# A public repository gets a public Project.
+repo_json User false
+setup
+logged '"public":true' || fail "the copy of a public repository is not made public: $(cat "$GH_LOG")"
+repo_json User
+
+# Views and workflows the template has and the copy lacks are named, with where to fix them.
+jq '.data.node.views.nodes += [{name: "ROADMAP"}] | .data.node.workflows.nodes += [{name: "Item added to project", enabled: true}]' \
+  "$FIX/template-project.json" >"$FIX/f" && mv "$FIX/f" "$FIX/template-project.json"
+echo '{"language": "fr", "board": {"template": "PVT_TPL"}}' >"$repo/.claude/senior-mode.json"
+setup
+grep -q "the copy lacks views ROADMAP; workflows Item added to project" "$work/out" || fail "what the copy lacks not named: $(cat "$work/out")"
+grep -q "by hand" "$work/out" || fail "no word on where to fix it: $(cat "$work/out")"
+# A workflow the template has off is not asked for.
+grep -q "workflows .*Item closed" "$work/out" && fail "a workflow off in the template reported lacking: $(cat "$work/out")"
+
+# An existing Project is never replaced: setup lists what the template has and it lacks and names --migrate.
+: >"$GH_LOG"
+setup
+logged "copyProjectV2" && fail "an existing Project copied over"
+grep -q "the Project lacks views ROADMAP; workflows Item added to project" "$work/out" || fail "existing Project: lacks not named: $(cat "$work/out")"
+grep -q -- "--migrate" "$work/out" || fail "existing Project: --migrate not mentioned: $(cat "$work/out")"
+# Nothing lacking: nothing said.
+project_workflows true true
+setup
+grep -q "lacks" "$work/out" && fail "an existing Project that matches the template reported lacking: $(cat "$work/out")"
+# A template that cannot be read does not stop setup.
+jq '.data.node.views.nodes += [{name: "ROADMAP"}]' "$FIX/template-project.json" >"$FIX/f" && mv "$FIX/f" "$FIX/template-project.json"
+TEMPLATE_ERR="gh: Could not resolve to a node (HTTP 404)" setup
+grep -q "could not read the template Project PVT_TPL" "$work/out" || fail "unreadable template not said: $(cat "$work/out")"
+project_workflows true true
+
+# A template that cannot be copied stops setup, with no config written.
+echo '{"language": "fr", "board": {"template": "PVT_TPL"}}' >"$repo/.claude/senior-mode.json"
+cp "$repo/.claude/senior-mode.json" "$work/before"
+: >"$GH_LOG"
+(cd "$repo" && COPY_ERR="gh: Could not resolve to a ProjectV2 (HTTP 404)" "$cli" setup github) >"$work/out" 2>"$work/err" &&
+  fail "setup succeeds although the template cannot be copied"
+grep -q "Could not resolve" "$work/err" || fail "copy error not reported: $(cat "$work/err")"
+cmp -s "$work/before" "$repo/.claude/senior-mode.json" || fail "config rewritten after a failed copy"
 
 # A required check someone added by hand to the ruleset survives the update (merged, not replaced), and
 # ours are not listed twice.
@@ -207,7 +278,7 @@ setup
 (cd "$repo" && VIEW_ERR="HTTP 401: Bad credentials" "$cli" setup github) >"$work/out" 2>"$work/err" &&
   fail "setup succeeds although the Project cannot be read"
 grep -q "Bad credentials" "$work/err" || fail "view error not reported: $(cat "$work/err")"
-logged "project create" && fail "creates a Project after a view error"
+logged "copyProjectV2" && fail "copies the template after a view error"
 logged "project list" && fail "looks the Project up by title after a view error"
 
 # A cached Project that no longer exists falls back to the one with the repository's title, in an organization.
@@ -216,9 +287,9 @@ echo '{"projects": [{"number": 5, "title": "app"}]}' >"$FIX/projects.json"
 echo '{"number": 5, "id": "PVT_5"}' >"$FIX/project.json"
 jq '(.data.node.fields.nodes[] | select(.name == "Status") | .options) += [{"id": "O_ice", "name": "Icebox", "color": "BLUE", "description": ""}]' \
   "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"
-echo '{"owner": {"type": "Organization"}}' >"$FIX/repo.json"
+repo_json Organization
 setup
-logged "project create" && fail "creates a Project although one has the repository's title"
+logged "copyProjectV2" && fail "copies the template although a Project has the repository's title"
 [ "$(cfg .project.number)" = 5 ] || fail "Project found by title not used: $(cfg .project.number)"
 [ "$(cfg '.project.fields.Status.options.Icebox')" = O_ice ] || fail "a Project's own option was dropped"
 logged "label create type:" && fail "type labels in an organization (issue types instead)"
@@ -229,7 +300,7 @@ failing() {
   cp "$repo/.claude/senior-mode.json" "$work/before"
   (cd "$repo" && env "$1=HTTP 401: Bad credentials" "$cli" setup github) >"$work/out" 2>"$work/err" &&
     fail "$1: setup succeeds although a Project command failed"
-  logged "project create" && fail "$1: creates a Project after the failure"
+  logged "copyProjectV2" && fail "$1: copies the template after the failure"
   cmp -s "$work/before" "$repo/.claude/senior-mode.json" || fail "$1: config rewritten after the failure"
 }
 echo '{"language": "fr", "project": {"number": 99}}' >"$repo/.claude/senior-mode.json"
@@ -330,7 +401,7 @@ rm -f "$dep"
 co=$repo/.github/CODEOWNERS
 review_required() { tr -d ' \n' <"$GH_LOG" | grep -qF '"require_code_owner_review":true'; }
 set_protected() { jq --argjson p "$1" '.protected = $p' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"; }
-echo '{"owner": {"type": "User"}}' >"$FIX/repo.json"
+repo_json User
 set_protected '[]'
 setup
 [ ! -e "$co" ] || fail "CODEOWNERS written without protected globs: $(cat "$co")"
@@ -430,7 +501,7 @@ echo '{"rules": []}' >"$FIX/ruleset-9.json"
 
 # An organization has no user to own the file: the owner is the signed-in user.
 rm "$co"
-echo '{"owner": {"type": "Organization"}}' >"$FIX/repo.json"
+repo_json Organization
 setup
 [ "$(cat "$co")" = "# senior-mode:begin (managed from protected in .claude/senior-mode.json; edit outside this block)
 *.pem @maintainer

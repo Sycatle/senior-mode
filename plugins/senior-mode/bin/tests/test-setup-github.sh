@@ -33,7 +33,13 @@ case "$*" in
     if [ -f "$FIX/rulesets.json" ]; then respond <"$FIX/rulesets.json"; else echo '[]' | respond; fi ;;
   "api -X POST repos/acme/app/rulesets"*) plan_limit write; cat >>"$GH_LOG"
     echo '[{"id": 9, "name": "senior-mode", "source_type": "Repository"}]' >"$FIX/rulesets.json" ;;
-  "api repos/acme/app/rulesets/"*" --jq"*) respond <"$FIX/ruleset-9.json" ;;
+  "api repos/acme/app/rulesets/"*" --jq"*)
+    # RULESET_GET_ERR fails every read of the ruleset, RULESET_GET_FAIL_ONCE only the first; real gh error line
+    [ -z "${RULESET_GET_ERR:-}" ] || { echo "$RULESET_GET_ERR" >&2; exit 1; }
+    if [ -n "${RULESET_GET_FAIL_ONCE:-}" ] && [ ! -f "$FIX/get-failed" ]; then
+      touch "$FIX/get-failed"; echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2; exit 1
+    fi
+    respond <"$FIX/ruleset-9.json" ;;
   "api -X PUT repos/acme/app/rulesets/"*) cat >>"$GH_LOG" ;;
   "api -X PUT repos/acme/app/vulnerability-alerts"*) sec_limit alerts ;;
   "api -X PUT repos/acme/app/automated-security-fixes"*) sec_limit fixes ;;
@@ -394,6 +400,18 @@ jq -n '{rules: [{type: "pull_request", parameters: {require_code_owner_review: t
 setup
 review_required || fail "ruleset already requiring review lowered"
 grep -q "stays required: the ruleset already requires it" "$work/out" || fail "ruleset reason not said: $(cat "$work/out")"
+
+# A ruleset that cannot be read is not a ruleset that does not require review: it stays required, and
+# says why. When setup's own read of the ruleset fails, it does not write at all.
+rm -f "$FIX/get-failed"
+RULESET_GET_FAIL_ONCE=1 setup
+review_required || fail "an unreadable ruleset lowered the review"
+grep -q "stays required: the current ruleset could not be read" "$work/out" || fail "unreadable ruleset not said: $(cat "$work/out")"
+: >"$GH_LOG"
+(cd "$repo" && RULESET_GET_ERR="gh: Resource not accessible by personal access token (HTTP 403)" "$cli" setup github) \
+  >"$work/out" 2>"$work/err" && fail "setup went on although the ruleset could not be read"
+logged "-X PUT repos/acme/app/rulesets" && fail "ruleset written although it could not be read: $(cat "$GH_LOG")"
+grep -q "ruleset on the default branch" "$work/err" || fail "unreadable ruleset not reported: $(cat "$work/err")"
 echo '{"rules": []}' >"$FIX/ruleset-9.json"
 
 # An organization has no user to own the file: the owner is the signed-in user.

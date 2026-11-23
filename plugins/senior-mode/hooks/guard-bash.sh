@@ -189,8 +189,23 @@ check_push() {
   done
 }
 
+# A `cd <dir>` earlier in the command moves where the git that follows runs (the Bash tool resets the cwd
+# after every call, so a worktree is entered with `cd <worktree> && git push`). A directory that does not
+# exist, or a word that is not a plain path, leaves the session cwd.
+cdir=$cwd
 while IFS= read -r segment; do
   read -ra w <<<"$segment"
+  if [ "${w[0]:-}" = cd ]; then
+    t=${w[1]:-}
+    [ "$t" = -- ] && t=${w[2]:-}
+    t=${t/#\~/$HOME}
+    if [[ -n $t && $t != -* && $t != *\$* ]]; then
+      cdir=$(cd "$cdir" 2>/dev/null && cd "$t" 2>/dev/null && pwd) || cdir=$cwd
+    else
+      cdir=$cwd
+    fi
+    continue
+  fi
   # Leading words that only set up the command: assignments, export, wrappers. A git setting handed
   # over through the environment switches the hooks off as surely as -c does.
   i=0
@@ -285,11 +300,11 @@ while IFS= read -r segment; do
     continue
   fi
   [ "${w[i]##*/}" = git ] 2>/dev/null || continue
-  dir=$cwd
+  dir=$cdir
   i=$((i + 1))
   while [[ ${w[i]:-} == -* ]]; do
     case ${w[i]} in
-      -C) dir=$(cd "$dir" 2>/dev/null && cd "${w[i + 1]}" 2>/dev/null && pwd) || dir=$cwd; i=$((i + 2)) ;;
+      -C) dir=$(cd "$dir" 2>/dev/null && cd "${w[i + 1]}" 2>/dev/null && pwd) || dir=$cdir; i=$((i + 2)) ;;
       -c) check_kv "${w[i + 1]:-}"; i=$((i + 2)) ;;
       --config-env=*) check_kv "${w[i]#*=}"; i=$((i + 1)) ;;
       --config-env) check_kv "${w[i + 1]:-}"; i=$((i + 2)) ;;

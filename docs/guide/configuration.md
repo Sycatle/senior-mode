@@ -106,6 +106,82 @@ warning: preset: "typescript" is deprecated, use "node"
 A key that the plugin reads but the schema lacks is a bug of the plugin: a test keeps every key of the
 defaults in the schema.
 
+## Layers, overrides and process profiles
+
+Customization follows the [levers that add and never lift](../adr/0027-customization-levers-that-add-and-never-lift.md)
+([spec](../specs/330-customization-levers.md)).
+
+### Layers
+
+A key takes the value of the highest of five layers; objects merge key by key, a list or a scalar of a
+higher layer replaces the lower one. Lowest first:
+
+1. the plugin defaults;
+2. the **profile** (`process.profile`, below);
+3. the **organization**: `<git common dir>/senior-mode/organization.json` (shared by the worktrees of a clone;
+   `.github` repository of the organization, copied there by whoever manages the machine);
+4. the **repository**: `.claude/senior-mode.json`;
+5. the **local** file, untracked: `.claude/senior-mode.local.json` at the root of the main worktree.
+
+The safety lists (`protected`, `secrets`, `envGuard.forbidden`) are the **union** of the layers: a layer adds to
+them, none removes. `senior-mode config explain <key>` prints the value, the layer that won, and every layer's
+value with the ones it shadows:
+
+```
+wip = 7
+winner: local (.claude/senior-mode.local.json)
+layers, highest first:
+  local         7  wins
+  repository    4  shadowed by local
+  defaults      1  shadowed by local
+```
+
+`senior-mode serve` and `run` read the configuration, the profile files, the lifts' ADRs and the overrides from
+the **base branch** (`origin/HEAD`), never from a pull request's head or the working tree
+(`SENIOR_MODE_CONFIG_SOURCE=base` does the same by hand). The result is checked first: an invalid one (an unknown
+key, an unknown profile, a lift without its ADR) leaves the **last valid** config in force, says so once on
+stderr, and says when a valid one returns. The last valid one is kept in `<git common dir>/senior-mode/`.
+
+### Overrides
+
+A file under `.claude/senior-mode/overrides/` with the path of a plugin file **replaces** it, and
+`NAME.append.EXT` **adds** to it: `overrides/skills/review/SKILL.append.md` extends the review skill,
+`overrides/agents/reviewer.md` replaces the reviewer agent. Only `skills/`, `agents/` and `templates/` can be
+overridden: the hooks and the CLI are the safety base. `senior-mode override list` lists them, `override show
+skills/review/SKILL.md` prints the text in force, and `context` tells a session which overrides bind it.
+`setup repo` writes a template with its override applied. `config validate` refuses a file that targets nothing
+(with the closest plugin file) or a hook.
+
+### Process profiles
+
+A profile is a file: `plugins/senior-mode/profiles/<name>.json` (shipped), or
+`.claude/senior-mode/profiles/<name>.json` in the project (shadows a shipped one of the same name). It has
+`description`, `extends` (the profile it derives from), `config` (a layer of `.claude/senior-mode.json` keys) and
+`gates` ([schema](../../plugins/senior-mode/schema/profile.schema.json)). `process.profile` chooses it:
+
+```json
+{ "process": { "profile": "team" } }
+```
+
+- `strict` (the default): every locked gate stands.
+- `fast` ([ADR 0016](../adr/0016-this-repository-delivery.md)): no independent review, a pull request merges
+  once `check` is green.
+- A custom profile: `{"extends": "strict", "config": {"wip": 2}}`.
+
+The **locked safety base** is the secret scan, the protected zones, the bash guard, no force-push or
+`--no-verify`, `check` green before a merge, and the trust gate; `process.gates` says which stand. Lifting one
+means a profile that sets it to `false` **and** an entry in `process.lifts` of the repository layer naming an ADR of
+the repository whose status is `accepted` and which is on the base branch:
+
+```json
+{ "process": { "profile": "fast", "lifts": [{ "rule": "review", "adr": "docs/adr/0016-this-repository-delivery.md" }] } }
+```
+
+Without the ADR the lift is refused with the reason (`config validate` fails, the gate stays locked, the daemon
+keeps the last valid config). A lift in another layer is ignored. In this version only the review gate can be
+lifted: a profile that opens another gate is refused. `status` shows the profile and one `WARNING locked gate
+lifted` line per lift.
+
 ## Project review sections
 
 `review.sections` is a list of Markdown checklist files, relative to the repository root. The

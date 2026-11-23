@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/Sycatle/senior-mode/main/plugins/senior-mode/schema/profile.schema.json",
+  "title": "senior-mode process profile",
+  "description": "A process profile: a file under profiles/ in the plugin, or .claude/senior-mode/profiles/<name>.json in a project. `extends` names the profile it derives from; `config` is a layer of .claude/senior-mode.json keys (it sits under the organization, repository and local layers); `gates` sets the locked gates, and a gate set to false is a lift that needs an accepted ADR of the repository in process.lifts.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "description": { "type": "string" },
+    "extends": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "secretScan": { "type": "boolean" },
+        "protectedZones": { "type": "boolean" },
+        "bashGuard": { "type": "boolean" },
+        "noForcePush": { "type": "boolean" },
+        "checkGreen": { "type": "boolean" },
+        "review": { "type": "boolean" },
+        "trustGate": { "type": "boolean" }
+      }
+    },
+    "config": { "type": "object", "description": "Keys of .claude/senior-mode.json, validated against its schema." }
+  }
+}

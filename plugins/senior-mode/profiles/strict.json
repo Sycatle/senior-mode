@@ -1,0 +1,13 @@
+{
+  "$schema": "../schema/profile.schema.json",
+  "description": "The default process: every locked gate stands, the independent review included.",
+  "gates": {
+    "secretScan": true,
+    "protectedZones": true,
+    "bashGuard": true,
+    "noForcePush": true,
+    "checkGreen": true,
+    "review": true,
+    "trustGate": true
+  }
+}

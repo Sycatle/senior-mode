@@ -92,7 +92,14 @@ if [[ ${!#} == *"guard probe"* ]]; then
   exit 0
 fi
 [[ $PWD == */senior-mode/worktrees/*/run-docs-* ]] && echo "$PWD" >>"$FIX/docs-pwd"
+if [[ $PWD == */senior-mode/worktrees/*/run-docs-* ]]; then
+  case $(cat "$FIX/docs" 2>/dev/null) in
+    fail) echo "docs: the session broke" >&2; exit 3 ;;
+    die) kill -9 "$PPID"; exit 0 ;;
+  esac
+fi
 if [[ $PWD == */senior-mode/worktrees/*/run-docs-* ]] && [ "$(cat "$FIX/docs" 2>/dev/null)" = hang ]; then
+  date +%s >"$FIX/docs-start"
   sleep 300 &
   echo "$$ $!" >"$FIX/pids-docs"
   wait
@@ -445,6 +452,38 @@ echo "$green" >"$FIX/status-111"
 run || fail "R: run failed: $(cat "$work/out")"
 jq -e '.session == "docs" and .outcome == "done" and .reason == null' "$(run_dir)/docs-outcome.json" >/dev/null ||
   fail "R: a docs session that finished is not recorded done"
+# A docs session that ends with a non-zero exit code: recorded failed with the code and the log, reported, no ticket labelled.
+echo fail >"$FIX/docs"
+board 112 '[]'
+session 112-sonnet delivered pr
+echo "$green" >"$FIX/status-112"
+run || fail "R: run failed on a docs session that exited 3: $(cat "$work/out")"
+jq -e '.session == "docs" and .outcome == "failed" and (.reason | test("^docs session failed \\(exit code 3, log in .*/docs\\.log\\)$"))' \
+  "$(run_dir)/docs-outcome.json" >/dev/null || fail "R: the docs failure is not recorded: $(cat "$(run_dir)/docs-outcome.json")"
+grep -q 'docs: docs session failed (exit code 3' "$work/out" || fail "R: report misses the docs failure: $(cat "$work/out")"
+grep -q 'issues/.*labels' "$GH_LOG" && fail "R: a docs failure labelled a ticket"
+# A docs script that dies without writing its exit file: the real cause is reported at once, not a timeout.
+echo die >"$FIX/docs"
+board 113 '[]'
+session 113-sonnet delivered pr
+echo "$green" >"$FIX/status-113"
+SECONDS=0
+SENIOR_MODE_TIMEOUT_UNIT=30 run || fail "R: run failed on a docs script that died: $(cat "$work/out")"
+[ "$SECONDS" -lt 20 ] || fail "R: run waited for the timeout on a docs script that died ($SECONDS s)"
+jq -e '.session == "docs" and .outcome == "failed" and (.reason | test("ended without leaving its exit code"))' \
+  "$(run_dir)/docs-outcome.json" >/dev/null || fail "R: the dead docs script is not recorded: $(cat "$(run_dir)/docs-outcome.json")"
+grep -q 'timed out' "$work/out" && fail "R: a dead docs script is reported as a timeout: $(cat "$work/out")"
+# The poll never overshoots the timeout: with a 5 s poll and a 2 s timeout the docs session is killed after about 2 s.
+echo hang >"$FIX/docs"
+board 114 '[]'
+session 114-sonnet delivered pr
+echo "$green" >"$FIX/status-114"
+SENIOR_MODE_POLL=5 SENIOR_MODE_TIMEOUT_UNIT=2 run || fail "R: run failed: $(cat "$work/out")"
+docs_took=$(($(date +%s) - $(cat "$FIX/docs-start")))
+[ "$docs_took" -le 3 ] || fail "R: the docs session outlived its 2 s timeout by the poll interval ($docs_took s)"
+read -r -a pids <"$FIX/pids-docs"
+for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
+rm -f "$FIX/docs"
 
 # M: before a run starts (#117): the plugin must be enabled and hooks.json present, and once a day a probe
 # session tries a denied, inert command (git -c core.hooksPath=... init <tmp>/ran). The deny must show in

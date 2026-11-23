@@ -165,16 +165,28 @@ Runs before every Bash command, in any repository where the plugin is enabled. I
   `--for\ce`, `core.hooksPath\=x`, `\+main`) does not hide it, the backslash being dropped as the
   shell does (an escaped space or quote stays one character, so `core.hooksPath \ ` is a value, not
   nothing). A long option or a git or gh command split by a variable (`--for${x}ce`, `pu${x}sh`) is
-  denied; a variable alone (`git $sub`, `git push origin $B`) is not followed;
+  denied, and so is a config key split by one (`core.hooks${x}Path`, also quoted, in `git config`, `-c`,
+  `--config-env` and `GIT_CONFIG_KEY_<n>`); a variable alone (`git $sub`, `git push origin $B`,
+  `git config core.$k v`, `git config "$key" v`) is not followed. `GIT_CONFIG_NOSYSTEM` set to a true
+  value is denied too: it drops the system config, where a policy such as `core.hooksPath` may sit;
+- git takes an unambiguous abbreviation of a long option, so a prefix of a denied option is denied as
+  the option itself: `--no-v` up to `--no-verif` for `--no-verify`, `--for`, `--forc`, `--force-w`... for
+  the force options of `git push`, `--al`, `--m`, `--b` for `--all`, `--mirror`, `--branches`, `--h` for
+  `git reset --hard`, `--ed` for `git config --edit`, and the abbreviations of `--unset`, `--unset-all`,
+  `--replace-all` and `--add` on `core.hooksPath`. The minimum length is the shortest prefix git
+  accepts (tested with git 2.43); shorter prefixes are ambiguous and git rejects them. `gh` (cobra)
+  does not abbreviate (`gh pr merge --admi` is an unknown flag), so its options are read in full;
 - the indirections that reach the same switches: `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` set to
   any file, `git config --edit` (an editor writes any key), `include.path` and `includeIf.<cond>.path`
   set through `git config`, `-c`, `--config-env` or the environment (`git config --file <f>` is read
-  by its key like any other), and an `alias.<name>` whose value contains `--no-verify`, `--force` or
-  `core.hooksPath` (the value is read anywhere in the command). Reading any of these keys is allowed;
+  by its key like any other), and an `alias.<name>` whose value contains `--no-verify`, `--force`,
+  an abbreviation of them, `push -f` (any short cluster with `f`), `commit -n` or `core.hooksPath` (the
+  value is read anywhere in the command). Reading any of these keys is allowed;
 - `gh alias set` and `gh alias import`: an alias hides the command it runs from this guard;
 - force-push: `--force`, `-f`, `--force-with-lease`, `--force-if-includes`, a `+` refspec;
 - pushing every branch: `--all`, `--mirror`, `--branches`;
-- pushing to the default branch (open a pull request instead);
+- pushing to the default branch (open a pull request instead), also when a variable splits its name
+  (`ma${x}in`, `HEAD:ma${x}in`); a ref that is only a variable (`HEAD:$BRANCH`) is not followed;
 - `git reset --hard` on a shared branch (the default branch, or one that exists on `origin` or has
   an upstream);
 - `gh pr merge --admin`, and a merge through `gh api` with `PUT` on `pulls/<n>/merge`, even when
@@ -182,7 +194,8 @@ Runs before every Bash command, in any repository where the plugin is enabled. I
   hide the command, and the endpoint is read up to any character that cannot continue the path
   (`pulls/5/merge;`, `merge|`, `merge)`). A `gh api` write whose endpoint is only a variable (`-X PUT
   "$EP"`, a `-f` or `--input` with `$EP`) is denied, since where it goes cannot be read; `-X $M` is
-  not followed. For `gh api`, only the endpoint counts, not the text of a `-f body=...`, as long
+  not followed, and an endpoint that only ends in a variable-built `/merge` or `/protection` path
+  (`-X PUT "$BASE/merge"`) counts as the endpoint it names. For `gh api`, only the endpoint counts, not the text of a `-f body=...`, as long
   as the quoting is plain (with a backslash, `$'...'` or a command substitution the whole command
   is read, without its backslashes (`pulls/5/me\rge`, `rule\sets`), a method that cannot be read
   there counts as a write unless every one says `GET`, a command with no `-X`, `-f`, `-F`, `--field`,
@@ -195,8 +208,10 @@ Runs before every Bash command, in any repository where the plugin is enabled. I
 It reads commands as written. It is a guardrail for honest mistakes, not a sandbox: `bash -c "..."`,
 `eval` and `sh -c` strings are not parsed, a variable holding a value (a method, a branch, a config key)
 is not followed, a `GIT_CONFIG_PARAMETERS` value that hides a `$` is refused rather than read, and other
-GraphQL calls are not parsed. Git accepts an unambiguous abbreviation of a long option (`--no-verif`):
-the guard reads the full names only.
+GraphQL calls are not parsed. A `cd` earlier in the command is not followed either (`cd /other &&
+git push` is read from the starting directory). Other limits: an `includeIf.<cond>.path` key split by
+a variable, a variable in a word of a ref that is not the default branch, an endpoint split in the
+middle of `merge` (`/me${x}rge`), and an alias that runs a denied command by another route (`!sh -c`).
 
 ### Self-protection (`self-protect.sh`)
 
@@ -204,8 +219,15 @@ Active only while the environment variable `SENIOR_MODE_RUN=1` is set, which `ru
 sessions it starts. Outside a run it does nothing. It denies Edit, Write, MultiEdit and NotebookEdit
 on `.github/workflows/**`, `.claude/**` and `.githooks/**` at the repository root, and on the git
 hooks, `.git/config` and `config.worktree` of the common dir (every worktree shares them), the
-`.git` directory itself (`rm -rf .git`, `rm -rf .git/*`), and its `refs`, `objects` and `worktrees`
-(`rm -rf .git/refs`; use `git worktree remove`), and Bash commands that obviously write
+`.git` directory itself (`rm -rf .git`, `rm -rf .git/*`), and its `refs`, `packed-refs`, `HEAD`,
+`objects`, `info` and `modules` and `worktrees` (`rm -rf .git/refs`; use `git worktree remove`). A
+relative `.git/...` path from a linked worktree is denied too (`.git` is a file there, so it would
+fail anyway). In a run it also denies the commands that discard what cannot be brought back:
+`git update-ref -d` on a branch or `HEAD`, `git reflog expire` and `delete`, `git gc --prune=now` (or
+`all`) and `git prune --expire now`, abbreviations included (`--pr=now`); `git update-ref --stdin`
+with `delete` lines is not read. A `cd` with a literal path earlier in the command is followed: a
+relative path is checked from the starting directory and from where the `cd` went (`cd .git && rm -rf
+hooks`); `cd`, `cd -` and `cd $dir` are not. Bash commands that obviously write
 there: redirections, `tee`, `cp`, `mv`, `rm`, `touch`, `truncate`, `chmod`, `chown`, `chgrp`,
 `install`, `ln`, `dd of=`, `sed -i`, `perl -i`, `git rm`, `git mv`, `git checkout` and
 `git restore` on those paths, also behind `sudo`, `env`, `xargs`, `nice`, `doas` and the like. An agent therefore cannot weaken the checks, the hooks or the

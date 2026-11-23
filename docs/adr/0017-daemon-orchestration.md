@@ -4,6 +4,7 @@ title: A daemon orchestrates ticket, reviewer and integrator sessions; run is on
 status: accepted
 spec: 131
 supersedes: 0007 (in part: the loop), 0012 (in part: the timer is one way to start a pass)
+amended-by: 0021 (failure classes, reconciliation from GitHub, resume over restart)
 ---
 
 ## Context

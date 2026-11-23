@@ -283,8 +283,13 @@ command, not a model, applies these bounds:
   stops too, but not a process that left the group. The ticket gets the `needs-human` label and a
   comment with the log path, counts as a failure for the circuit breaker, and is not retried on Opus:
   a stuck session is not failed work ([ADR 0014](../adr/0014-model-escalation-in-runs.md)). Its Status
-  stays In progress; the label is the signal. Where the session has no group of its own (no tmux and
-  no `setsid`, as on macOS), it is not killed: `run` says so, and still labels and records the ticket.
+  stays In progress; the label is the signal. Background sessions (no tmux) are started with `setsid`,
+  or with perl's `POSIX::setsid` where `setsid` is missing (macOS); with neither, `run` starts nothing
+  and says so, since it could not stop a stuck session. A process that left the group on its own is
+  the one thing `run` may not stop: it says so, and still labels and records the ticket.
+- **Window that does not start:** if tmux cannot start the window of a session (the first one or the
+  retry on Opus), the ticket fails at once instead of waiting for the timeout: `needs-human`, a comment
+  with tmux's error, a `failed` record, one failure for the circuit breaker.
   The docs session that follows merges is bounded by the same timeout and killed the same way. It has
   no ticket, so nothing is labelled: `run` says so on stderr and in its report, and records the outcome
   in `docs-outcome.json` next to the ticket records (`retro` does not read it). Its branch and worktree

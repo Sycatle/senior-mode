@@ -132,7 +132,7 @@ kind "credentialed URL" "Zx9k" "REDIS_URL=${p}Zx9k@cache.internal:6379"
 # form is reported.
 p=postgres://app:
 # shellcheck disable=SC2016 # the values are literal text, not expansions
-for pwd in 'Zq9{x}' 'q8{Abc}z' 'Ab$(9z' 'Zq9%(x)s' 'Zq9${x}k' 'Zq9%sQ4' 'Zq9***Q4' 'Zq9{{x}}k' 'p<a>ss' 'Zx9$DB_PASS' '$DB_PASS9z' '{DB_PASS}9z' '<db_pass>9z' '${DB_PASS}9z' '%(db_pass)s9z'; do
+for pwd in 'Zq9{x}' 'q8{Abc}z' 'Ab$(9z' 'Zq9%(x)s' 'Zq9${x}k' 'Zq9%sQ4' 'Zq9***Q4' 'Zq9{{x}}k' 'p<a>ss' 'Zx9$DB_PASS' '{DB_PASS}9z' '<db_pass>9z' '${DB_PASS}9z' '%(db_pass)s9z'; do
   kind "credentialed URL" "$pwd" "DATABASE_URL=${p}${pwd}@db.internal:5432/app"
 done
 

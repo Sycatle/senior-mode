@@ -519,13 +519,14 @@ secret_scan() {
           if (tolower(v) ~ /example|changeme|placeholder|your|dummy|sample|xxxx/) next
         }
         mode == "url" {
-          # A password is not reported when it is a template (${X}, $(X), $X, {X}, %(x)s, %s, <x>, ***) or when
-          # the whole of it is a placeholder word, digits kept: a short password, or Secret123, is a real one.
-          # No {n,m} interval: mawk, BSD awk and busybox do not all read it.
+          # A password is not reported when the whole of it is one template form (${X}, $(X), $X, {X}, {{X}},
+          # %(x)s, %s, <x>, ***) or, below, a placeholder word, digits kept: a short password, or Secret123, is a
+          # real one, and so is one that merely contains a template (Zq9{x}). X is an identifier. A password that
+          # is only $name or {name} stays a template. No {n,m} interval: mawk, BSD awk and busybox do not all read it.
           pw = m
           sub(/^[^:]*:\/\/[^:\/@]*:/, "", pw)
           sub(/@.*/, "", pw)
-          if (pw ~ /[$][{(]|<[^>]+>|%s|%[(][^)]*[)]s|[{][A-Za-z_][A-Za-z0-9_.-]*[}]|[*][*][*]|[{][{]|^[$][A-Za-z_][A-Za-z0-9_]*$/) next
+          if (pw ~ /^([$][{][A-Za-z_][A-Za-z0-9_]*[}]|[$][(][A-Za-z_][A-Za-z0-9_]*[)]|[$][A-Za-z_][A-Za-z0-9_]*|[{][A-Za-z_][A-Za-z0-9_]*[}]|[{][{][A-Za-z_][A-Za-z0-9_]*[}][}]|%[(][A-Za-z_][A-Za-z0-9_]*[)]s|(%s)+|<[A-Za-z_][A-Za-z0-9_-]*>|[*][*][*]+)$/) next
           w = tolower(pw)
           gsub(/[_-]/, "", w)
           if (w ~ /^(pass(word|wd)?|secret|example|changeme|changeit|placeholder|dummy|sample|test(ing)?|user(name)?|(your|my)(pass(word|wd)?|secret)?(here)?)$/ || w ~ /^xxx+$/) next

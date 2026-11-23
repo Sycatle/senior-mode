@@ -124,9 +124,10 @@ user may be empty: `redis://:password@host`), a private key, or a value of 16 ch
 assigned to a name such as `password`, `secret`, `token` or `api_key`. That last kind is a heuristic,
 not an entropy measure: the value needs a letter and a digit, and placeholders, brackets and dotted
 identifiers (`process.env.TOKEN_1`) are left alone. In a URL, the password is skipped only when
-it is a template (`${X}`, `$(X)`, `$X`, `{X}`, `%(x)s`, `%s`, `<x>`, `***`) or is, as a whole, a word such as
-`password`, `changeme`, `your_password` or `test`; a short password, one with digits (`Secret123`) or one that
-merely contains `test` or `%` is reported. The scan prints `file:line: kind` and never the value. The patterns
+it is, as a whole, one template (`${X}`, `$(X)`, `$X`, `{X}`, `{{X}}`, `%(x)s`, `%s`, `<x>`, `***`, with `X` an
+identifier) or, as a whole, a word such as `password`, `changeme`, `your_password` or `test`; a short password,
+one with digits (`Secret123`) or one that merely contains a template or `test` (`Zq9{x}`) is reported. Known
+trade-off: a real password that is only `$name` or `{name}` is taken for a template and not reported. The scan prints `file:line: kind` and never the value. The patterns
 are in `plugins/senior-mode/secret-patterns`.
 Without a default branch to compare with, the scan shows as `skip`.
 

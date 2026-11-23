@@ -133,6 +133,8 @@ Details: [`frame`](commands.md#frame). Next: [A typical day](a-typical-day.md).
 ## Where ticket work happens
 
 `senior-mode start <issue>` (or `/senior-mode:next`) makes each ticket a git worktree in
-`.git/senior-mode/worktrees/<issue>` of the repository, from whichever worktree you call it, and
-prints its path; `senior-mode status` lists it for every ticket In progress. Open it in an editor
-with `code .git/senior-mode/worktrees/<issue>`, or `cd` there and run `claude`.
+`~/.local/share/senior-mode/worktrees/<repo>/<issue>` (`$XDG_DATA_HOME` when set; `<repo>` is the name of
+your checkout and a short hash of its path), from whichever worktree you call it, and prints its path;
+`senior-mode status` lists it for every ticket In progress. Open it in an editor with `code <that path>`,
+or `cd` there and run `claude`. It is outside the repository on purpose: Claude Code refuses edits under
+`.git/` as sensitive files.

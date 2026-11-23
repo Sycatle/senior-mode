@@ -27,9 +27,11 @@ To try the plugin from your clone: `claude --plugin-dir plugins/senior-mode`.
 ## Working on a ticket
 
 `plugins/senior-mode/bin/senior-mode start <issue>` makes the branch and a worktree for it in
-`.git/senior-mode/worktrees/<issue>` of your clone (never a sibling folder, and neither are the worktrees of `frame start` and of the docs session of `run`); `senior-mode status` shows
-the path of each ticket in progress. Open it with `code .git/senior-mode/worktrees/<issue>`, or `cd`
-there and start `claude`. A ticket started before this, in a sibling `<repo>-<issue>` folder, keeps it.
+`~/.local/share/senior-mode/worktrees/<repo>/<issue>` (`$XDG_DATA_HOME` when set; `<repo>` is the name of
+your clone and a short hash of its path), never a sibling folder, and neither are the worktrees of
+`frame start` and of the docs session of `run`; `senior-mode status` shows the path of each ticket in
+progress. Open it with `code <that path>`, or `cd` there and start `claude`. A ticket started before
+this, in a sibling `<repo>-<issue>` folder or under `.git/senior-mode/worktrees`, keeps its worktree.
 
 ## Checks run on your machine
 

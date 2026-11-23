@@ -113,7 +113,7 @@ Natural-language triggers in any language route to them ("let's frame", "cadrons
 | Command | Purpose | Agents |
 |---|---|---|
 | `setup` | Adopt a repo (new or existing): detect stack, choose preset, create the Project and its fields, labels, branch protection, CI, release-please, git hooks, issue and PR templates, `CLAUDE.md` with Principles (importing `AGENTS.md` when the repository has one), `.claude/senior-mode.json`. The language is proposed from the user's `CLAUDE.md` or conversation. The status line is set for this project only. Idempotent; re-run to repair. | scout, ops |
-| `frame` | Idea → interview rounds → alternatives → spec → ADR(s) → tickets as vertical slices with acceptance criteria, dependencies, size, priority, milestone. Works in its own worktree (`.git/senior-mode/worktrees/frame-<slug>`) and branch from `origin/main` (`senior-mode frame start`; it stops when the default branch is ahead of origin), names the spec after its issue (`docs/specs/<issue>-<slug>.md`), takes ADR numbers from `origin/main` at commit time and re-checks them before the push, so parallel framings do not collide. An existing issue sized S gets no spec but a path to delivery: on the board with Size S, testable criteria checked, then `ready`. Ends with a summary of proactive suggestions the user did not ask for. | scout, researcher, architect, ops |
+| `frame` | Idea → interview rounds → alternatives → spec → ADR(s) → tickets as vertical slices with acceptance criteria, dependencies, size, priority, milestone. Works in its own worktree (`<data dir>/senior-mode/worktrees/<repo>/frame-<slug>`) and branch from `origin/main` (`senior-mode frame start`; it stops when the default branch is ahead of origin), names the spec after its issue (`docs/specs/<issue>-<slug>.md`), takes ADR numbers from `origin/main` at commit time and re-checks them before the push, so parallel framings do not collide. An existing issue sized S gets no spec but a path to delivery: on the board with Size S, testable criteria checked, then `ready`. Ends with a summary of proactive suggestions the user did not ask for. | scout, researcher, architect, ops |
 | `next [#issue]` | The daily session: short state of the board, open PRs needing a human (offered for review or merge first), then picks the top Ready ticket and delivers it with the user in the loop (TDD, commits, PR, review). Never merges without the user's explicit yes. | ops, test-author, implementer, reviewer |
 | `run` | Autonomous delivery of up to N Ready tickets, one headless session per ticket (section 10, ADR 0007). | all |
 | `status` | Plain-language dashboard: done since last time, in progress, blocked, next, waiting for a human, release state. Cheap: one GraphQL call. | none (runs `senior-mode status`) |
@@ -129,8 +129,11 @@ descriptions, and the `language` config key for replies and documents.
   last), then number. It leaves out size L, tickets with an open "blocked by" link or the `blocked`
   label, and tickets with `needs-info` (a Ready ticket should not have it; the label wins).
 - `senior-mode start <issue>` is the other step `next` and `run` share: it creates the worktree in the
-  git common dir of the main checkout (`.git/senior-mode/worktrees/<issue>`, the same from any worktree,
-  never a sibling folder; a ticket started beside the repository before #224 keeps its worktree) and the branch `<type>/<issue>-<slug>`, from the default
+  user's data dir (`${XDG_DATA_HOME:-~/.local/share}/senior-mode/worktrees/<repo>/<issue>`; `<repo>` is the
+  main checkout's name and a short hash of its path, so two clones never collide; the same from any worktree;
+  never beside the repository, and not under its `.git`, where Claude Code refuses edits as sensitive files;
+  a ticket started before #224, beside the repository or under `.git/senior-mode/worktrees`, keeps its
+  worktree) and the branch `<type>/<issue>-<slug>`, from the default
   branch fetched first (no upstream is set), then sets Status `In progress`. The type follows the
   issue's `type:` label (`feature` feat, `bug` fix, `task` and `chore` chore; feat without a label); the
   slug is the title without its Conventional prefix, lowercase ASCII (accents are transliterated with
@@ -310,7 +313,7 @@ the merge are applied by the command, not by a model. It takes the first N ticke
 for each, at most P at a time:
 
 - opens the ticket with `senior-mode start <issue>` (section 7), the same code path as the daily
-  session: the worktree `.git/senior-mode/worktrees/<issue>` of the main checkout, the branch
+  session: the worktree `<data dir>/senior-mode/worktrees/<repo>/<issue>` (see above), the branch
   `<type>/<issue>-<slug>` from the default branch (`fix` for `type:bug`, `chore` for `type:task` and
   `type:chore`, else `feat`), reused when they exist, and the status `In progress`; a ticket that
   cannot be opened is given up;

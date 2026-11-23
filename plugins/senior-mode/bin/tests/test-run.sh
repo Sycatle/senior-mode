@@ -316,7 +316,7 @@ board 50 '["type:bug"]'
 (cd "$repo" && "$cli" start 50) >/dev/null 2>&1 || fail "F: start 50 failed"
 session 50-sonnet delivered pr
 run || fail "F: run failed: $(cat "$work/out")"
-[ "$(git -C "$repo" worktree list | grep -c "worktrees/50 ")" -eq 1 ] || fail "F: not one worktree for #50: $(git -C "$repo" worktree list)"
+[ "$(git -C "$repo" worktree list | grep -c "\[fix/50-ticket-50\]")" -eq 1 ] || fail "F: not one worktree for #50: $(git -C "$repo" worktree list)"
 grep -q '^app-50 sonnet' "$CLAUDE_LOG" || fail "F: no session in the worktree of start: $(cat "$CLAUDE_LOG")"
 outcome_is_delivered 50
 

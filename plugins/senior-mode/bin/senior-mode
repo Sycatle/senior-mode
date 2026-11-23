@@ -1779,11 +1779,15 @@ start_base() {
 }
 
 # Every worktree senior-mode makes (a ticket, a framing, the docs session of a run) is
-# `<git common dir>/senior-mode/worktrees/<name>`, never a sibling of the repository (#224): $1 is the
-# git common dir, $2 the name (`<issue>`, `frame-<slug>`, `run-docs-<stamp>`). The same path from any
-# worktree. One built before #224 stays beside the repository; `branch_worktree` finds it by its branch.
+# `${XDG_DATA_HOME:-~/.local/share}/senior-mode/worktrees/<repo>/<name>` (#224): never a sibling of the
+# repository, and not under its .git, where Claude Code refuses edits as sensitive files. $1 is the main
+# worktree of the repository, $2 the name (`<issue>`, `frame-<slug>`, `run-docs-<stamp>`). <repo> is its
+# basename and 8 hex digits of the checksum of its absolute path, so two clones never collide. The same
+# path from any worktree. Older worktrees (beside the repository, or under .git/senior-mode/worktrees)
+# stay where they are; `branch_worktree` finds them by their branch.
 worktree_path() {
-  printf '%s/senior-mode/worktrees/%s\n' "$1" "$2"
+  printf '%s/senior-mode/worktrees/%s-%08x/%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}" "$(basename "$1")" \
+    "$(printf '%s' "$1" | cksum | cut -d' ' -f1)" "$2"
 }
 
 # The path of the worktree of repository $1 that has branch $2 checked out; nothing when there is none.
@@ -1791,11 +1795,11 @@ branch_worktree() {
   git -C "$1" worktree list --porcelain | awk -v b="refs/heads/$2" '$1 == "worktree" {p = substr($0, 10)} $1 == "branch" && $2 == b {print p}'
 }
 
-# The worktrees of the tickets in the repository of $1, as `<issue> <path>` lines, wherever they are:
-# any worktree on a branch `<type>/<issue>-<slug>`.
+# The worktrees of the tickets in the repository of $1, as `<issue> <path>` lines, wherever they are: any
+# worktree on a branch `<type>/<issue>-<slug>` with a type `start` makes (feat, fix, chore).
 ticket_worktrees() {
   git -C "$1" worktree list --porcelain | awk '$1 == "worktree" {p = substr($0, 10)}
-    $1 == "branch" && match($2, /^refs\/heads\/[a-z]+\/[0-9]+(-|$)/) {
+    $1 == "branch" && match($2, /^refs\/heads\/(feat|fix|chore)\/[0-9]+(-|$)/) {
       n = substr($2, 12); sub(/^[a-z]+\//, "", n); sub(/[^0-9].*/, "", n); print n, p}'
 }
 
@@ -1820,7 +1824,7 @@ frame_start() {
   branch=docs/$name
   path=$(branch_worktree "$main" "$branch")
   if [ -z "$path" ]; then
-    path=$(worktree_path "$common" "frame-$name")
+    path=$(worktree_path "$main" "frame-$name")
     [ ! -e "$path" ] || die "$path exists and is not the worktree of $branch"
     if git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
       git -C "$main" worktree add -q "$path" "$branch" >/dev/null || die "cannot create the worktree"
@@ -1861,7 +1865,7 @@ wip_check() {
 # senior-mode start <issue>: the worktree and the branch `<type>/<issue>-<slug>` of a ticket, then Status
 # In progress. Shared by `next` and `run`. The branch type follows the `type:` label (feature: feat, bug:
 # fix, task and chore: chore; feat without a label). The branch starts from the default branch, fetched
-# first when origin answers; the worktree is `<git common dir>/senior-mode/worktrees/<issue>` (#224).
+# first when origin answers; the worktree is `<data dir>/senior-mode/worktrees/<repo>/<issue>` (#224, see `worktree_path`).
 # Rerunning reuses the branch and the worktree, wherever an earlier start put it. A new worktree gets its dependencies (a node one that
 # lost them too), installed with the project's install command (#110); a failed install only warns, and
 # `check` says what is missing. Prints `branch <name>` and `worktree <path>`.
@@ -1891,7 +1895,7 @@ start() {
     path=$existing
   else
     created=true
-    path=$(worktree_path "$common" "$issue")
+    path=$(worktree_path "$main" "$issue")
     [ ! -e "$path" ] || die "$path exists and is not the worktree of $branch"
     if ! git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
       git -C "$main" fetch -q origin 2>/dev/null || true
@@ -1930,7 +1934,8 @@ iso_time() {
   date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ
 }
 
-# The dashboard as JSON, from board_data; $1 is the start of the period, $2 now, $3 the repository.
+# The dashboard as JSON, from board_data; $1 is the start of the period, $2 now, $3 the repository, $locals the
+# local branch names.
 # shellcheck disable=SC2016 # a jq program, not shell
 STATUS_JQ='. as $d | $d.items as $items | {
   repository: $repo, generatedAt: $now, since: $since,
@@ -1953,7 +1958,7 @@ STATUS_JQ='. as $d | $d.items as $items | {
       | {number, title, kind: "closed", why: "closed but \(.status // "without a Status")"}]
     + [$items[] | select(.open and .status == "Done") | {number, title, kind: "open-done", why: "open but Done"}]
     + [$items[] | select(.open and (.status | IN("In progress", "In review"))) | . as $i
-      | select([$d.prs[].branch, $d.branches[]] | any(test("^[a-z]+/\($i.number)(-|$)")) | not)
+      | select([$d.prs[].branch, $d.branches[], $locals[]] | any(test("^[a-z]+/\($i.number)(-|$)")) | not)
       | {number, title, kind: "stale", why: "\(.status) with no open pull request and no branch"}]),
   wip: {limit: $wip, count: ([$items[] | select(.open and .status == "In progress")] | length)},
   audit: $audit,
@@ -2014,7 +2019,7 @@ status_fix() {
 # One status report. $1 json|text, $2 --since duration or "", $3 true to move the "last time" mark,
 # $4 true to repair the drift (--fix).
 status_once() {
-  local json=$1 since=$2 save=$3 fix=${4:-false} root cache now_s now since_iso head data out wip audit results fixed trees
+  local json=$1 since=$2 save=$3 fix=${4:-false} root cache now_s now since_iso head data out wip audit results fixed trees locals
   local lines="" rc=0
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   cache=$root/.claude/senior-mode/status-seen
@@ -2034,8 +2039,10 @@ status_once() {
   wip=$(config_get wip)
   [[ $wip =~ ^[1-9][0-9]*$ ]] || die "wip must be a positive whole number, not $wip"
   if audit_enabled; then audit=true; else audit=false; fi
+  # The local branches count too: a ticket worked on and not pushed yet has a branch.
+  locals=$(git for-each-ref --format='%(refname:short)' refs/heads | jq -Rsc 'split("\n") | map(select(length > 0))') || locals='[]'
   out=$(jq -c --arg now "$now" --arg since "$since_iso" --arg repo "$(repo_slug)" --argjson wip "$wip" \
-    --argjson audit "$audit" "$PICK_DEF$STATUS_JQ" <<<"$data") ||
+    --argjson audit "$audit" --argjson locals "$locals" "$PICK_DEF$STATUS_JQ" <<<"$data") ||
     die "could not build the status"
   trees=$(ticket_worktrees "$root" | jq -Rsc 'split("\n") | map(select(length > 0) | capture("^(?<n>[0-9]+) (?<p>.*)$")) | map({(.n): .p}) | add // {}') ||
     trees='{}'
@@ -2557,7 +2564,7 @@ run_finish() {
 # shellcheck disable=SC2016 # lines of the script, expanded when it runs
 run_docs() {
   local wt branch=docs/run-$RUN_STAMP script=$RUN_DIR/docs.sh reason="" rc started=$SECONDS
-  wt=$(worktree_path "$(git rev-parse --path-format=absolute --git-common-dir)" "run-docs-$RUN_STAMP")
+  wt=$(worktree_path "$RUN_ROOT" "run-docs-$RUN_STAMP")
   git fetch -q origin 2>/dev/null || true
   git worktree add -q -b "$branch" "$wt" "$RUN_BASE" 2>/dev/null || {
     echo "docs: no worktree, skipped" >&2

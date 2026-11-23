@@ -107,7 +107,7 @@ compgen -G "$work/app-[0-9]*" >/dev/null && fail "a ticket worktree beside the r
 # Rerunning reuses the branch and the worktree.
 start 89 || fail "rerun failed: $(cat "$work/err")"
 grep -qx "worktree $wt/89" "$work/out" || fail "rerun worktree line: $(cat "$work/out")"
-[ "$(git -C "$repo" worktree list | grep -c "worktrees/89 ")" -eq 1 ] || fail "rerun added a second worktree"
+[ "$(git -C "$repo" worktree list | grep -c "\[$branch\]")" -eq 1 ] || fail "rerun added a second worktree"
 [ "$(wc -l <"$PM_LOG")" -eq 1 ] || fail "rerun installed again: $(cat "$PM_LOG")"
 # A reworded title does not fork the branch.
 issue "Another title" '{"name": "type:feature"}'
@@ -251,7 +251,7 @@ grep -qx "worktree $wt/frame-login-flow" "$work/out" || fail "frame worktree lin
 [ "$(git -C "$repo" symbolic-ref --short HEAD)" = main ] || fail "frame start moved the main checkout"
 logged "project item" && fail "frame start touched the board"
 fstart login-flow || fail "frame start rerun failed: $(cat "$work/err")"
-[ "$(git -C "$repo" worktree list | grep -c "worktrees/frame-login-flow ")" -eq 1 ] || fail "frame start rerun added a second worktree"
+[ "$(git -C "$repo" worktree list | grep -c "\[docs/login-flow\]")" -eq 1 ] || fail "frame start rerun added a second worktree"
 fstart "Billing, Stripe & invoices" || fail "frame start with a sentence failed: $(cat "$work/err")"
 grep -qx "branch docs/billing-stripe-invoices" "$work/out" || fail "frame slug not normalised: $(cat "$work/out")"
 for bad in "" "!!!"; do

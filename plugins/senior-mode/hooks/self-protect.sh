@@ -6,7 +6,8 @@
 # agent cannot weaken its own barriers. Outside a run it does nothing. Prints a deny decision, or
 # nothing to allow.
 # A guardrail for honest mistakes, not a sandbox, like guard-bash.sh: a Bash command is read as
-# written, so `bash -c "..."`, variables, a `cd` earlier in the command and scripts are not followed.
+# written, so `bash -c "..."`, variables and scripts are not followed; a `cd` with a literal path earlier in
+# the command is (both the cwd and where it went are checked).
 [ "${SENIOR_MODE_RUN:-}" = 1 ] || exit 0
 set -o pipefail
 input=$(cat)
@@ -20,11 +21,18 @@ root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || exit 0
 here=$(cd "$cwd/$(git -C "$cwd" rev-parse --show-cdup)" 2>/dev/null && pwd) || here=$root
 # The git hooks and config (core.hooksPath) of every worktree live in the common dir (#116); the
 # per-worktree config.worktree (extensions.worktreeConfig) lives in the common dir or under worktrees/. The refs,
-# the objects and the worktrees/ admin dirs are not removed or overwritten by hand either.
+# packed-refs, HEAD, the objects, info/, modules/ and the worktrees/ admin dirs are not removed or overwritten
+# by hand either.
 common=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
 
 deny() { # path as written
   jq -nc --arg r "senior-mode: during a run, $1 belongs to the project's own guard rails (workflows, .claude/, .githooks/, the git hooks and config) and an agent does not change them. Do not work around this: leave that change out, say in the pull request that a human has to make it, and carry on with the rest." \
+    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
+  exit 0
+}
+
+deny_discard() { # what
+  jq -nc --arg r "senior-mode: during a run, $1 discards branches, reflogs or objects that cannot be brought back, and an agent does not do that. Do not work around this: leave it out, say in the pull request what a human should clean up, and carry on with the rest." \
     '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
   exit 0
 }
@@ -44,25 +52,33 @@ normalize() {
   printf '/%s\n' "${out[*]}"
 }
 
+# Where a relative path may point: the cwd, and every directory a `cd` earlier in the command went to (a
+# subshell or a failed `cd` is not told apart, so each is tried).
+bases=("$cwd") cur=$cwd
+
 # Denies a path, as written, that is under a protected directory of the repository.
 check() {
+  local b
+  [ -n "$1" ] || return 0
+  if [[ $1 == /* ]]; then check_path "$1" "$1"; else for b in "${bases[@]}"; do check_path "$b/$1" "$1"; done; fi
+}
+check_path() { # absolute-or-relative path, as written
   local p=$1 r rel rest
-  [ -n "$p" ] || return 0
-  [[ $p == /* ]] || p=$cwd/$p
   p=$(normalize "$p")
   # An unexpanded glob directly under the common dir (`rm -rf .git/*`) reaches the hooks and the config.
   rest=${p#"$common"/}
-  [[ -n $common && $p == "$common"/* && ${rest%%/*} == *[\*\?\[]* ]] && deny "$1"
+  [[ -n $common && $p == "$common"/* && ${rest%%/*} == *[\*\?\[]* ]] && deny "$2"
   [[ -n $common && ($p == "$common" || $p == "$common"/hooks || $p == "$common"/hooks/* || $p == "$common"/config ||
     $p == "$common"/config.worktree || $p == "$common"/worktrees || $p == "$common"/worktrees/* ||
-    $p == "$common"/refs || $p == "$common"/refs/* || $p == "$common"/objects || $p == "$common"/objects/*) ]] && deny "$1"
+    $p == "$common"/refs || $p == "$common"/refs/* || $p == "$common"/objects || $p == "$common"/objects/* || $p == "$common"/HEAD || $p == "$common"/packed-refs ||
+    $p == "$common"/info || $p == "$common"/info/* || $p == "$common"/modules || $p == "$common"/modules/*) ]] && deny "$2"
   for r in "$root" "$here"; do
     [[ $p == "$r"/* ]] || continue
     rel=${p#"$r"/}
     case $rel in
       # Agents with `memory: project` keep their findings there; it guards nothing.
       .claude/agent-memory/*) ;;
-      .git | .github | .github/workflows | .github/workflows/* | .claude | .claude/* | .githooks | .githooks/*) deny "$1" ;;
+      .git | .git/* | .github | .github/workflows | .github/workflows/* | .claude | .claude/* | .githooks | .githooks/*) deny "$2" ;;
     esac
   done
 }
@@ -116,22 +132,51 @@ while IFS= read -r segment; do
     prev=$a
   done
   case $cmd in
+    cd | pushd)
+      # Later relative paths are read from there too; `cd`, `cd -` and a variable are not followed.
+      a=${paths[0]:-}
+      if [[ -n $a && $a != *[\$~]* && $a != Q ]]; then
+        [[ $a == /* ]] || a=$cur/$a
+        cur=$(normalize "$a")
+        bases+=("$cur")
+      fi
+      ;;
     tee | rm | rmdir | unlink | touch | truncate | shred | mv | chmod | chown | chgrp) for a in ${paths[@]+"${paths[@]}"}; do check "$a"; done ;;
     cp | install | ln) check "$last"; check "$into" ;;
     sed | perl) ! $inplace || for a in ${paths[@]+"${paths[@]}"}; do check "$a"; done ;;
     dd) for a in ${args[@]+"${args[@]}"}; do [[ $a == of=* ]] && check "${a#of=}"; done ;;
     git)
       # The subcommand is the first word that is not an option or an option's value (-C dir, -c k=v).
-      sub="" skip=false
+      sub="" skip=false rest=()
       for a in ${args[@]+"${args[@]}"}; do
+        if [ -n "$sub" ]; then rest+=("$a"); continue; fi
         if $skip; then skip=false; continue; fi
         case $a in
           -C | -c) skip=true ;;
           -*) ;;
-          *) sub=$a; break ;;
+          *) sub=$a ;;
         esac
       done
       case $sub in rm | mv | checkout | restore) for a in ${paths[@]+"${paths[@]}"}; do check "$a"; done ;; esac
+      # Refs and objects discarded by command: update-ref -d on a branch or HEAD, a reflog expired or
+      # deleted, unreachable objects pruned at once. git takes `--pr=now` for `--prune=now`: so does this.
+      del=false hit=false first="" prev=""
+      for a in ${rest[@]+"${rest[@]}"}; do
+        case $sub in
+          update-ref)
+            [[ $a =~ ^-[a-zA-Z]*d[a-zA-Z]*$ ]] && del=true
+            [[ $a == HEAD || $a == refs/heads/* ]] && hit=true
+            ;;
+          reflog) [[ -n $first || $a == -* ]] || { first=$a; [[ $a =~ ^(expire|delete)$ ]] && deny_discard "git reflog $a"; } ;;
+          gc) [[ $a =~ ^--p(r(u(n(e)?)?)?)?=(now|all)$ ]] && deny_discard "git gc $a" ;;
+          prune)
+            [[ $a =~ ^--exp(i(r(e)?)?)?=(now|all)$ ]] && deny_discard "git prune $a"
+            [[ $prev =~ ^--exp(i(r(e)?)?)?$ && $a =~ ^(now|all)$ ]] && deny_discard "git prune $prev $a"
+            ;;
+        esac
+        prev=$a
+      done
+      $del && $hit && deny_discard "git update-ref -d on a branch or HEAD"
       ;;
   esac
 done < <(tr ';|&()`' '\n' <<<"$command")

@@ -224,8 +224,10 @@ hooks, `.git/config` and `config.worktree` of the common dir (every worktree sha
 relative `.git/...` path from a linked worktree is denied too (`.git` is a file there, so it would
 fail anyway). In a run it also denies the commands that discard what cannot be brought back:
 `git update-ref -d` on a branch or `HEAD`, `git reflog expire` and `delete`, `git gc --prune=now` (or
-`all`) and `git prune --expire now`, abbreviations included (`--pr=now`); `git update-ref --stdin`
-with `delete` lines is not read. A `cd` with a literal path earlier in the command is followed: a
+`all`) and `git prune --expire now`, abbreviations included (`--pr=now`); a dry run (`--dry-run`, `-n`)
+of `reflog expire` or `prune` is allowed, and so is the recovery of a main checkout (`rm .git/index.lock`,
+`rm -rf .git/rebase-merge`), which is not one of the protected files; `git update-ref --stdin` with
+`delete` lines is not read. A `cd` with a literal path earlier in the command is followed: a
 relative path is checked from the starting directory and from where the `cd` went (`cd .git && rm -rf
 hooks`); `cd`, `cd -` and `cd $dir` are not. Bash commands that obviously write
 there: redirections, `tee`, `cp`, `mv`, `rm`, `touch`, `truncate`, `chmod`, `chown`, `chgrp`,

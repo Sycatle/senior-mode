@@ -75,10 +75,13 @@ check_path() { # absolute-or-relative path, as written
   for r in "$root" "$here"; do
     [[ $p == "$r"/* ]] || continue
     rel=${p#"$r"/}
+    # In a linked worktree `.git` is a file: nothing is under it. In a main checkout the git dir is the common
+    # dir, whose protected files are listed above; the rest (index.lock, rebase-merge, MERGE_HEAD) is recovery.
+    [[ $rel == .git/* && -f $r/.git ]] && deny "$2"
     case $rel in
       # Agents with `memory: project` keep their findings there; it guards nothing.
       .claude/agent-memory/*) ;;
-      .git | .git/* | .github | .github/workflows | .github/workflows/* | .claude | .claude/* | .githooks | .githooks/*) deny "$2" ;;
+      .git | .github | .github/workflows | .github/workflows/* | .claude | .claude/* | .githooks | .githooks/*) deny "$2" ;;
     esac
   done
 }
@@ -160,18 +163,22 @@ while IFS= read -r segment; do
       case $sub in rm | mv | checkout | restore) for a in ${paths[@]+"${paths[@]}"}; do check "$a"; done ;; esac
       # Refs and objects discarded by command: update-ref -d on a branch or HEAD, a reflog expired or
       # deleted, unreachable objects pruned at once. git takes `--pr=now` for `--prune=now`: so does this.
-      del=false hit=false first="" prev=""
+      # A dry run of reflog expire or prune (`--dry-run`, `--d`, `-n`) discards nothing.
+      del=false hit=false first="" prev="" dry=false
+      for a in ${rest[@]+"${rest[@]}"}; do
+        [[ $a =~ ^--d(r(y(-(r(un?)?)?)?)?)?$ || ($sub == prune && $a =~ ^-[a-zA-Z]*n[a-zA-Z]*$) ]] && dry=true
+      done
       for a in ${rest[@]+"${rest[@]}"}; do
         case $sub in
           update-ref)
             [[ $a =~ ^-[a-zA-Z]*d[a-zA-Z]*$ ]] && del=true
             [[ $a == HEAD || $a == refs/heads/* ]] && hit=true
             ;;
-          reflog) [[ -n $first || $a == -* ]] || { first=$a; [[ $a =~ ^(expire|delete)$ ]] && deny_discard "git reflog $a"; } ;;
+          reflog) [[ -n $first || $a == -* ]] || { first=$a; [[ $a =~ ^(expire|delete)$ ]] && ! $dry && deny_discard "git reflog $a"; } ;;
           gc) [[ $a =~ ^--p(r(u(n(e)?)?)?)?=(now|all)$ ]] && deny_discard "git gc $a" ;;
           prune)
-            [[ $a =~ ^--exp(i(r(e)?)?)?=(now|all)$ ]] && deny_discard "git prune $a"
-            [[ $prev =~ ^--exp(i(r(e)?)?)?$ && $a =~ ^(now|all)$ ]] && deny_discard "git prune $prev $a"
+            [[ $a =~ ^--exp(i(r(e)?)?)?=(now|all)$ ]] && ! $dry && deny_discard "git prune $a"
+            [[ $prev =~ ^--exp(i(r(e)?)?)?$ && $a =~ ^(now|all)$ ]] && ! $dry && deny_discard "git prune $prev $a"
             ;;
         esac
         prev=$a

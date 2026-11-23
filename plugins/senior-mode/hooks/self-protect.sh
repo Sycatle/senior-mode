@@ -19,7 +19,8 @@ root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || exit 0
 # git resolves symlinks in the root, Claude Code sends paths as reached from the cwd: try both.
 here=$(cd "$cwd/$(git -C "$cwd" rev-parse --show-cdup)" 2>/dev/null && pwd) || here=$root
 # The git hooks and config (core.hooksPath) of every worktree live in the common dir (#116); the
-# per-worktree config.worktree (extensions.worktreeConfig) lives in the common dir or under worktrees/.
+# per-worktree config.worktree (extensions.worktreeConfig) lives in the common dir or under worktrees/. The refs,
+# the objects and the worktrees/ admin dirs are not removed or overwritten by hand either.
 common=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
 
 deny() { # path as written
@@ -53,7 +54,8 @@ check() {
   rest=${p#"$common"/}
   [[ -n $common && $p == "$common"/* && ${rest%%/*} == *[\*\?\[]* ]] && deny "$1"
   [[ -n $common && ($p == "$common" || $p == "$common"/hooks || $p == "$common"/hooks/* || $p == "$common"/config ||
-    $p == "$common"/config.worktree || $p == "$common"/worktrees/*/config.worktree) ]] && deny "$1"
+    $p == "$common"/config.worktree || $p == "$common"/worktrees || $p == "$common"/worktrees/* ||
+    $p == "$common"/refs || $p == "$common"/refs/* || $p == "$common"/objects || $p == "$common"/objects/*) ]] && deny "$1"
   for r in "$root" "$here"; do
     [[ $p == "$r"/* ]] || continue
     rel=${p#"$r"/}

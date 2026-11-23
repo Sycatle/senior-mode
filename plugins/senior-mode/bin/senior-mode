@@ -2463,8 +2463,9 @@ clean_state() {
 }
 
 # Why the branch $1 must stay though its pull request ended; nothing when it may go. Only the branches
-# `start` and `frame start` make are candidates (`feat|fix|chore/<n>-...`, `docs/...`): a `dev`, a
-# `staging`, a `release/*` is reported, never deleted. The base of any pull request, open, closed or
+# `start`, `frame start` and `run` make are candidates (`feat|fix|chore/<n>-...`, `docs/<slug>` with a slug of
+# lower-case letters, digits and single hyphens, 40 characters at most, `docs/run-<stamp>`): a `dev`, a
+# `staging`, a `release/*`, a `docs/next.v2` is reported, never deleted. The base of any pull request, open, closed or
 # merged, stays (deleting it would close the pull requests stacked on it), and so does a protected branch
 # and a ticket In progress.
 clean_guard() {
@@ -2476,24 +2477,37 @@ clean_guard() {
     echo "protected"
   elif [[ $1 =~ ^(feat|fix|chore)/([0-9]+)(-|$) ]]; then
     ! jq -e --argjson n "${BASH_REMATCH[2]}" 'index($n)' <<<"$CLEAN_PROGRESS" >/dev/null || echo "ticket #${BASH_REMATCH[2]} is In progress"
-  elif [[ $1 != docs/?* ]]; then
+  elif [[ ! $1 =~ ^docs/[a-z0-9]+(-[a-z0-9]+)*$ ]] || [ ${#1} -gt 45 ]; then
     echo "not a branch senior-mode makes"
+  elif [ "$CLEAN_PROT_KNOWN" != true ]; then
+    # Could it be protected? Unknown: a docs/ branch is kept, as everything that is not a ticket's.
+    echo "protected branches could not be read"
   fi
 }
 
 # Why the commits of the local branch $1 are not safe to lose, with $2 the head of its pull request: they are
 # on no remote branch and not in the default branch, and not in the pull request either (a merged pull
-# request whose branch GitHub deleted still holds them). Prints nothing when they are safe.
+# request whose branch GitHub deleted still holds them). Prints nothing when they are safe. When origin could
+# not be fetched (CLEAN_STALE) the remote-tracking refs may name branches that are gone, so they prove
+# nothing: only the default branch and the pull request do, and the rest is unknown, hence kept.
 clean_unpushed() {
   local tip count
   tip=$(git rev-parse -q --verify "refs/heads/$1^{commit}") || return 0
-  count=$(git rev-list --count "$tip" --not --remotes ${CLEAN_BASE:+"$CLEAN_BASE"})
+  if [ "$CLEAN_STALE" = true ]; then
+    count=$(git rev-list --count "$tip" --not ${CLEAN_BASE:+"$CLEAN_BASE"})
+  else
+    count=$(git rev-list --count "$tip" --not --remotes ${CLEAN_BASE:+"$CLEAN_BASE"})
+  fi
   [ "$count" -gt 0 ] || return 0
   [ "$tip" != "$2" ] || return 0
   if [ -n "$2" ] && git cat-file -e "$2^{commit}" 2>/dev/null && git merge-base --is-ancestor "$tip" "$2"; then
     return 0
   fi
-  echo "$count commit$([ "$count" -eq 1 ] || echo s) on no remote branch and not in ${CLEAN_BASE:-the default branch}"
+  if [ "$CLEAN_STALE" = true ]; then
+    echo "$count commit$([ "$count" -eq 1 ] || echo s) not in ${CLEAN_BASE:-the default branch} or its pull request, and origin could not be fetched: whether they are pushed is unknown"
+  else
+    echo "$count commit$([ "$count" -eq 1 ] || echo s) on no remote branch and not in ${CLEAN_BASE:-the default branch}"
+  fi
 }
 
 # senior-mode clean [--dry-run] [--days N] (#225): removes what is finished, lists what it keeps and why.
@@ -2507,8 +2521,8 @@ clean_unpushed() {
 # branch (nor in its pull request), nor anything of a ticket In progress: those are listed with the reason
 # and the exit status stays 0. --dry-run prints what would go and changes nothing.
 clean() {
-  local CLEAN_DRY=false CLEAN_REMOVED=0 CLEAN_KEPT=0 CLEAN_RC=0 CLEAN_PRS CLEAN_BASES CLEAN_PROTECTED CLEAN_SLUG CLEAN_PROGRESS CLEAN_BASE CLEAN_WHY CLEAN_OID CLEAN_KEEP
-  local days="" common main here defname prs board mins cutoff why path branch flags sha ref rec n st oid at d f first=true
+  local CLEAN_DRY=false CLEAN_STALE=false CLEAN_PROT_KNOWN=true CLEAN_REMOVED=0 CLEAN_KEPT=0 CLEAN_RC=0 CLEAN_PRS CLEAN_BASES CLEAN_PROTECTED CLEAN_SLUG CLEAN_PROGRESS CLEAN_BASE CLEAN_WHY CLEAN_OID CLEAN_KEEP
+  local days="" prot common main here defname prs board mins cutoff why path branch flags sha ref rec n st oid at d f first=true
   local -A seen=()
   while [ $# -gt 0 ]; do
     case $1 in
@@ -2538,15 +2552,22 @@ clean() {
     die "GitHub answered something that is not a list of pull requests"
   # Every pull request counts for the bases, fork or not: a branch is a base whoever opened the pull request.
   CLEAN_BASES=$(jq -c 'map({key: .baseRefName, value: .number}) | from_entries' <<<"$prs") || die "GitHub answered something that is not a list of pull requests"
-  CLEAN_PROTECTED=$(gh_retry api "repos/$CLEAN_SLUG/branches?protected=true&per_page=100" --paginate --jq '.[].name' 2>/dev/null |
-    jq -Rsc 'split("\n") | map(select(length > 0))') || CLEAN_PROTECTED='[]'
+  if prot=$(gh_retry api "repos/$CLEAN_SLUG/branches?protected=true&per_page=100" --paginate --jq '.[].name' 2>/dev/null); then
+    CLEAN_PROTECTED=$(jq -Rsc 'split("\n") | map(select(length > 0))' <<<"$prot")
+  else
+    CLEAN_PROTECTED='[]' CLEAN_PROT_KNOWN=false
+    echo "senior-mode: could not read the protected branches; every branch that is not a ticket's (feat, fix, chore) is kept" >&2
+  fi
   board=$(board_data false) || die "cannot read the board, so what is In progress is unknown; nothing was removed"
   CLEAN_PROGRESS=$(jq -c '[.items[] | select(.open and .status == "In progress") | .number]' <<<"$board")
   mins=$((days * 1440))
   cutoff=$(iso_time $(($(date +%s) - days * 86400)))
   # A tracking ref of a branch deleted on origin would count its commits as pushed. Read-only for the
   # work tree and the branches, so a dry run does it too.
-  git fetch -q --prune origin 2>/dev/null || echo "senior-mode: could not fetch origin; tracking branches may be stale" >&2
+  if ! git fetch -q --prune origin 2>/dev/null; then
+    CLEAN_STALE=true
+    echo "senior-mode: could not fetch origin; the tracking branches may be stale, so a branch is kept unless its commits are in the default branch or its pull request" >&2
+  fi
   [ "$CLEAN_DRY" = true ] || git worktree prune
 
   # Worktrees, wherever they are. The first one is the main worktree.

@@ -60,7 +60,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `autonomy.minMemoryMB` | `1024` | Available memory (MB, `MemAvailable`) under which `serve` launches nothing until the next poll; `0` turns the check off. `serve` also waits while the load average is over the CPU count |
 | `serve.interval` | `60` | Seconds between two polls of `serve` (a whole number of at least 1) |
 | `serve.grace` | `600` | Seconds `serve` lets running sessions finish after `TERM` before it kills them and labels their tickets `needs-human` (`0`: at once). The unit written by `serve --install` waits this long plus a minute |
-| `serve.breakerCooldown` | `3600` | Seconds `serve` stays paused after `autonomy.maxConsecutiveFailures` failures in a row; `senior-mode serve --resume` ends it sooner |
+| `serve.breakerCooldown` | `300` | Seconds `serve` stays paused after `autonomy.maxConsecutiveFailures` ticket failures in a row, doubled at each pause that no delivery separates from the last (a day at most); `senior-mode serve --resume` ends it sooner |
 | `notify.mention` | `""` | Who the comment of an [alert](autonomy.md#alerts) mentions (a login, with or without `@`); the repository owner when empty |
 | `notify.webhook` | `""` | URL that gets a JSON `POST` `{event, repo, number, url, reason}` for each alert (`needs-human`, `failed`, or `breaker` for the circuit breaker's pause); off when empty |
 | `notify.digest` | `true` | Whether `serve` posts `status --since 24h` as a Project status update once a day |

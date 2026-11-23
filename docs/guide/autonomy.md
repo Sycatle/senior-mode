@@ -123,7 +123,7 @@ labelled `needs-human` (a session that timed out, vanished or was stopped) or th
 `needs-human` label and a comment that mentions `notify.mention` (the repository owner when empty).
 A pull request that `serve` can never merge (see above) gets the same, once.
 When `notify.webhook` is set, each alert is also sent as a JSON `POST`
-`{"event", "repo", "number", "url", "reason"}`, where `event` is `needs-human`, `failed` or `breaker`.
+`{"event", "repo", "number", "url", "reason"}`, where `event` is `needs-human`, `failed`, `breaker` or `environment` (the pause of an environment problem, also without a ticket).
 The circuit breaker's pause has no ticket: it is only sent to the webhook (`number` and `url` are
 `null`) and written on stderr. A webhook that does not answer is reported on stderr and never stops
 `serve`.

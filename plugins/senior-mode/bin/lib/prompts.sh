@@ -98,6 +98,9 @@ $tests
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the pull request is open with senior-mode/ci and senior-mode/security published;
 - \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
+- \`failed: environment: <reason>\` when the machine, not the ticket, is the problem (dependencies that cannot be
+  installed, a full disk, a check that is red on the base branch too, gh or Claude not signed in): serve pauses
+  until it is healthy, and does not count it against the ticket;
 - \`failed: <reason>\` otherwise, in one plain sentence.
 PROMPT
 }
@@ -136,6 +139,8 @@ Last, write one line per ticket to the file \$SENIOR_MODE_RUN_OUTCOME, each star
 - \`#<n> delivered\` once its commit is in the pull request, open with senior-mode/ci and senior-mode/security
   published;
 - \`#<n> outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
+- \`#<n> failed: environment: <reason>\` when the machine, not the ticket, is the problem (dependencies that cannot
+  be installed, a full disk, a check that is red on the base branch too, gh or Claude not signed in);
 - \`#<n> failed: <reason>\` otherwise, in one plain sentence.
 PROMPT
 }

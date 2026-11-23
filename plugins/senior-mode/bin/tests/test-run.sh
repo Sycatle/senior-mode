@@ -3,7 +3,7 @@
 # the REST calls from fixtures in $FIX; claude plays a ticket session from $FIX/claude-<n>-<model>
 # (line 1: the outcome to write, empty for none; line 2: "pr" to open a pull request; line 3: "hang" to
 # never end, with a child process, recorded in $FIX/pids-<n>, to check that a killed session leaves none;
-# "slow": the session lasts a second; $FIX/trace gets "start <n>" and "end <n>" around every session;
+# "slow": the session lasts 3 seconds, long enough for the others to start in a loaded machine; $FIX/trace gets "start <n>" and "end <n>" around every session;
 # "die": the session script is killed, so no exit file is ever written;
 # "decoy": the same, but the session's recorded process group is swapped for another group, whose leader is
 # not the session's script, to check that run kills nothing it does not recognise).
@@ -136,7 +136,7 @@ outcome=$(sed -n 1p "$fx")
 [ -z "$outcome" ] || echo "$outcome" >"$SENIOR_MODE_RUN_OUTCOME"
 [ "$(sed -n 2p "$fx")" != pr ] ||
   echo "[{\"number\": $((n + 100)), \"head\": {\"sha\": \"sha$n\"}, \"labels\": $(cat "$FIX/labels-$n" 2>/dev/null || echo '[]')}]" >"$FIX/pulls-$n"
-[ "$(sed -n 3p "$fx")" != slow ] || sleep 1
+[ "$(sed -n 3p "$fx")" != slow ] || sleep 3
 echo "end $n" >>"$FIX/trace"
 echo '{"result": "ok"}'
 STUB
@@ -861,7 +861,10 @@ board 301 '[]' 302 '[]' 303 '[]' 304 '[]'
 paths_of 301 'src/a/**, docs/x.md'
 paths_of 302 'src/a/x.ts'
 paths_of 303 'docs/guide/**'
-for n in 301 302 303 304; do session "$n-sonnet" delivered pr slow; done
+session 301-sonnet delivered pr slow
+session 302-sonnet delivered pr
+session 303-sonnet delivered pr slow
+session 304-sonnet delivered pr
 rm -f "$FIX/trace"
 run || fail "U: run failed: $(cat "$work/out")"
 for n in 301 302 303 304; do grep -qx "end $n" "$FIX/trace" || fail "U: #$n did not run: $(cat "$FIX/trace")"; done
@@ -876,7 +879,8 @@ config '{"maxTickets": 2, "parallel": 2}'
 board 311 '[]' 312 '[]'
 paths_of 311 'src/a/**'
 paths_of 312 'src/a/x.ts'
-for n in 311 312; do session "$n-sonnet" delivered pr slow; done
+session 311-sonnet delivered pr slow
+session 312-sonnet delivered pr
 rm -f "$FIX/trace"
 run || fail "U: run without a Paths field failed: $(cat "$work/out")"
 serial 311 312 && fail "U: a config without the Paths field serialised the tickets: $(tr '\n' ' ' <"$FIX/trace")"

@@ -18,7 +18,7 @@ DEFAULTS='{
   "envGuard": { "forbidden": [] },
   "review": { "sections": [] },
   "docs": { "extra": [] },
-  "github": { "protection": "" }
+  "github": { "protection": "", "requiredChecks": true }
 }'
 die() {
   echo "senior-mode: $*" >&2

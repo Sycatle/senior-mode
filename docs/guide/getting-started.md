@@ -74,7 +74,8 @@ Before changing anything, setup:
   `senior-mode/review` and `senior-mode/security`, on an up-to-date branch, and code owner review of the [protected
   zones](autonomy.md#code-owners) (setup writes `.github/CODEOWNERS` for you to commit; the owner
   merges those pull requests by hand). It adds to your existing protection and does not
-  rewrite it. Admins can bypass it with `gh pr merge --admin`; agents cannot (see
+  rewrite it. With `github.requiredChecks: false` in the config, the ruleset has no required status
+  (setup removes the rule if it had one): see [Configuration](configuration.md). Admins can bypass it with `gh pr merge --admin`; agents cannot (see
   [Autonomy](autonomy.md)). On a private repository of a GitHub Free account or organization, GitHub
   refuses rulesets: setup says so, switches to `local` mode and records `github.protection: "none"`.
   Nothing then stops a push to the default branch on the server, only your pre-push hook; setup asks

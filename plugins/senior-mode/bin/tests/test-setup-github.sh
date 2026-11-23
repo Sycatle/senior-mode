@@ -341,6 +341,41 @@ tr -d ' \n' <"$GH_LOG" | grep -qF '{"context":"ci/lint","integration_id":15368}'
 [ "$(grep -o '"senior-mode/ci"' "$GH_LOG" | wc -l)" -eq 1 ] || fail "senior-mode/ci listed twice"
 echo '{"rules": []}' >"$FIX/ruleset-9.json"
 
+# #296: github.requiredChecks false leaves the required status checks out of the ruleset, and removes the rule
+# an existing ruleset had (a check added by hand included); setup says so. The default stays true.
+cp "$repo/.claude/senior-mode.json" "$work/config.checks"
+echo '{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [
+  {"context": "senior-mode/ci"}, {"context": "ci/lint"}]}}]}' >"$FIX/ruleset-9.json"
+jq '.github.requiredChecks = false' "$work/config.checks" >"$repo/.claude/senior-mode.json"
+setup
+logged "api -X PUT repos/acme/app/rulesets/9" || fail "requiredChecks false: ruleset not updated"
+tr -d ' \n' <"$GH_LOG" | grep -qF '{"type":"required_linear_history"}' || fail "requiredChecks false: the other rules are gone: $(cat "$GH_LOG")"
+logged "required_status_checks" && fail "requiredChecks false: the ruleset still has the rule: $(cat "$GH_LOG")"
+logged "senior-mode/ci" && fail "requiredChecks false: a status is still required"
+logged "ci/lint" && fail "requiredChecks false: a check added by hand kept"
+grep -q "github.requiredChecks is false, so it requires no status check" "$work/out" || fail "requiredChecks false not said: $(cat "$work/out")"
+grep -q "senior-mode/ci, senior-mode/review and senior-mode/security on an up-to-date branch" "$work/out" && fail "requiredChecks false: the output still announces the statuses"
+[ "$(cfg .github.requiredChecks)" = false ] || fail "requiredChecks lost from the config: $(cfg .github)"
+# A new ruleset has none either.
+rm -f "$FIX/rulesets.json"
+setup
+logged "api -X POST repos/acme/app/rulesets" || fail "requiredChecks false: no ruleset created"
+logged "required_status_checks" && fail "requiredChecks false: a new ruleset has the rule: $(cat "$GH_LOG")"
+# Only a boolean is a value.
+jq '.github.requiredChecks = "no"' "$work/config.checks" >"$repo/.claude/senior-mode.json"
+: >"$GH_LOG"
+(cd "$repo" && "$cli" setup github) >"$work/out" 2>"$work/err" && fail "requiredChecks \"no\" accepted"
+grep -q "github.requiredChecks .* must be true or false" "$work/err" || fail "a bad requiredChecks not explained: $(cat "$work/err")"
+logged "label create" && fail "a bad requiredChecks reported only after the changes"
+# true is the default and says it.
+jq '.github.requiredChecks = true' "$work/config.checks" >"$repo/.claude/senior-mode.json"
+setup
+tr -d ' \n' <"$GH_LOG" | grep -qF '{"context":"senior-mode/ci"}' || fail "requiredChecks true: no required status"
+[ "$(cd "$repo" && "$cli" config get github.requiredChecks)" = true ] || fail "github.requiredChecks has no default"
+cp "$work/config.checks" "$repo/.claude/senior-mode.json"
+echo '[{"id": 9, "name": "senior-mode", "source_type": "Repository"}]' >"$FIX/rulesets.json"
+echo '{"rules": []}' >"$FIX/ruleset-9.json"
+
 grep -q 'Workflows' "$work/out" && fail "built-in workflows reported although both are on: $(cat "$work/out")"
 
 # Built-in workflows off: setup names them and says where to turn them on.

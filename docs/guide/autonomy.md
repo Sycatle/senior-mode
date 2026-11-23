@@ -35,6 +35,10 @@ Bash guard denies it. `senior-mode/security` is still open to a ticket session u
 agent gets a role of its own. `run` checks the protected zones itself before it merges, whatever the
 statuses say, so only the auto-merge of an L ticket depends on that status being honest.
 
+With `github.requiredChecks: false` (the delivery of [ADR 0016](../adr/0016-this-repository-delivery.md)),
+the ruleset requires none of the three statuses and `run` and `serve` wait for none before a merge; the
+protection, `needs-human`, external-pull-request and protected-zone bounds stay.
+
 A status published from your machine is only as trustworthy as that machine: it names the commit
 it verified ([ADR 0006](../adr/0006-local-ci.md)). Teams that need independent CI use `actions` mode.
 

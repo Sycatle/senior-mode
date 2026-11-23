@@ -228,13 +228,25 @@ run_timeout() {
     "An autonomous senior-mode run stopped this ticket's session (autonomy.sessionTimeout)" "The session log is"
 }
 
+# Whether the pull request $1 (its REST object) is external (ADR 0022, #427): its head is in another repository
+# (a fork) or its author is not a collaborator (author_association other than OWNER, MEMBER, COLLABORATOR). A
+# missing association counts as external. The daemon never merges one: its content is untrusted data and the
+# merge stays human.
+pr_external() {
+  jq -e '. as $p | ($p.head.repo.full_name != $p.base.repo.full_name)
+    or ((["OWNER", "MEMBER", "COLLABORATOR"] | index($p.author_association // "")) == null)' <<<"$1" >/dev/null
+}
+
 # Why the pull request $1 (head $2, $3 its REST object) may not merge on its own, in one phrase, or nothing when
-# every bound holds (ADR 0003, 0008, 0018): merging is on, the server enforces protection, no needs-human, the
-# three statuses green on the head, no protected zone among the files GitHub would merge.
+# every bound holds (ADR 0003, 0008, 0018, 0022): merging is on, the pull request is not external, the server
+# enforces protection, no needs-human, the three statuses green on the head, no protected zone among the files
+# GitHub would merge.
 run_blocker() {
   local pr=$1 sha=$2 missing files zones
   if [ "$RUN_MERGE" != true ]; then
     echo "merging is off (autonomy.merge)"
+  elif pr_external "$3"; then
+    echo "it is external (a fork or a non-collaborator): its merge stays human"
   elif [ "$RUN_PROTECTION" != ruleset ]; then
     echo "the server enforces no branch protection (github.protection is ${RUN_PROTECTION:-unset})"
   elif jq -e '[.labels[]?.name] | index("needs-human")' <<<"$3" >/dev/null; then

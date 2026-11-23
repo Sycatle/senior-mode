@@ -338,7 +338,7 @@ READY_QUERY='query($project: ID!, $after: String) { node(id: $project) { ... on 
 READY_ITEMS='def single($f): [.fieldValues.nodes[]? | select(.field.name == $f and .name != null) | .name][0];
   def text($f): [.fieldValues.nodes[]? | select(.field.name == $f and .text != null) | .text][0];
   [.[].data.node.items.nodes[]? | select(.content.number != null) | .content as $c
-    | {number: $c.number, open: ($c.state == "OPEN"), body: ($c.body // ""), labels: [$c.labels.nodes[].name],
+    | {number: $c.number, open: ($c.state == "OPEN"), body: ($c.body // ""), labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation,
        status: single("Status"), priority: single("Priority"), size: single("Size"), severity: single("Severity"),
        agent: (($c.body // "") | test("(^|\n)filed-by: agent[ \t]*(\n|$)")),
        paths: ((text("Paths") // "") | gsub("[\\[\\]\"\u0027]"; "") | [split("[,\\s]+"; null)[] | select(length > 0)])}]'
@@ -460,7 +460,7 @@ ready() {
         >/dev/null || echo "#$n: could not comment on the ticket" >&2
       echo "#$n needs-human: $why"
     fi
-  done < <(jq -c --argjson nums "$nums" '.[] | select(.open and .status == "Backlog" and (.labels | index("needs-human") | not)
+  done < <(jq -c --argjson nums "$nums" "$TRUST_DEF"'.[] | select(.open and trusted and .status == "Backlog" and (.labels | index("needs-human") | not)
     and (.labels | index("needs-info") | not)) | select(if $nums == null then .agent else (.number | IN($nums[])) end)' <<<"$items")
 }
 
@@ -478,7 +478,7 @@ BOARD_QUERY='query($project: ID!, $owner: String!, $name: String!, $after: Strin
       id isArchived updatedAt
       fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
         ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } }
-      content { ... on Issue { number title url state closedAt updatedAt labels(first: 20) { nodes { name } }
+      content { ... on Issue { number title url state closedAt updatedAt authorAssociation labels(first: 20) { nodes { name } }
         milestone { title dueOn } blockedBy(first: 20) { nodes { number state } } } } } } } }
   repository(owner: $owner, name: $name) @include(if: $repo) {
     latestRelease { tagName publishedAt }
@@ -574,7 +574,7 @@ board_data() {
     | {items: [.[].data.node.items.nodes[] | select(.content.number != null) | .updatedAt as $moved | .id as $iid | (.isArchived // false) as $arch | .content as $c
         | {number: $c.number, title: $c.title, url: $c.url, open: ($c.state == "OPEN"), itemId: $iid, archived: $arch, closedAt: $c.closedAt,
            status: single("Status"), priority: single("Priority"), size: single("Size"), severity: single("Severity"), paths: (text("Paths") // ""),
-           labels: [$c.labels.nodes[].name], milestone: $c.milestone.title, due: $c.milestone.dueOn,
+           labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation, milestone: $c.milestone.title, due: $c.milestone.dueOn,
            updated: ([$c.updatedAt, $moved] | map(select(. != null)) | max),
            blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number]}],
        prs: [$r.pullRequests.nodes[]? | {number, title, url, branch: .headRefName, labels: [.labels.nodes[].name], failing: failing}],
@@ -588,11 +588,20 @@ board_data() {
   if [ "$repo" = true ]; then board_more "$data"; else printf '%s\n' "$data"; fi
 }
 
-# The tickets `run` and `next` take (spec 0001 §7): Ready, open, not size L, not blocked (open
+# The trust gate (ADR 0022, #427), the one rule every selection of a ticket to work on applies (`pick`, hence
+# `next`, `run` and `serve`, and `ready`): an issue is trusted when it does not carry `triage` and either its
+# author is a collaborator (author_association OWNER, MEMBER or COLLABORATOR) or a collaborator qualified it
+# with the label `qualified`. A missing association is not a collaborator. Its input is an item of
+# board_data or ready_items.
+# shellcheck disable=SC2016 # a jq program, not shell
+TRUST_DEF='def trusted: . as $i | (($i.labels | index("triage")) | not)
+    and ((["OWNER", "MEMBER", "COLLABORATOR"] | index($i.assoc // "")) != null or ($i.labels | index("qualified")) != null);'
+
+# The tickets `run` and `next` take (spec 0001 §7): Ready, open, trusted, not size L, not blocked (open
 # "blocked by" link, `blocked` label), not waiting for information (`needs-info`). Sorted by Priority
 # (P0 first), a critical Severity ahead of the others, then milestone due date, then number.
 # shellcheck disable=SC2016 # a jq program, not shell
-PICK_DEF='def pick: [.items[] | select(.open and .status == "Ready" and .size != "L" and (.blockers | length == 0)
+PICK_DEF=$TRUST_DEF'def pick: [.items[] | select(.open and trusted and .status == "Ready" and .size != "L" and (.blockers | length == 0)
     and ((.labels | index("blocked")) | not) and ((.labels | index("needs-info")) | not))]
   | sort_by([([(.priority // "") | scan("^P([0-9]+)") | .[0] | tonumber] | first // 99),
     (if .severity == "critical" then 0 else 1 end), (.due // "9999"), .number]);'

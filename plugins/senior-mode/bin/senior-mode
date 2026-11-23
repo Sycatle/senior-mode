@@ -2377,7 +2377,7 @@ run_launch() {
     fi
     if [ "$rc" -ne 0 ]; then
       run_halt "$n" "the session window did not start: $(head -n 1 "$RUN_DIR/$n.tmux" 2>/dev/null || true)" "$RUN_DIR/$n.tmux" \
-        "An autonomous senior-mode run could not start this ticket's session"
+        "An autonomous senior-mode run could not start this ticket's session" "tmux's error output is"
       return 1
     fi
   else
@@ -2403,15 +2403,15 @@ run_start() {
 }
 
 # A ticket whose session cannot go on, as opposed to failed work: labelled needs-human with a comment
-# ($4 opens it, $3 is the file to look at), recorded as failed with reason $2 and counted for the
+# ($4 opens it, $5 says what $3, the file to look at, holds), recorded as failed with reason $2 and counted for the
 # circuit breaker. Its Status stays In progress, needs-human is the signal.
 run_halt() {
-  local n=$1 reason=$2 log=$3 intro=$4
+  local n=$1 reason=$2 log=$3 intro=$4 what=$5
   gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
     echo "#$n: could not label the ticket needs-human" >&2
   gh api "repos/$RUN_SLUG/issues/$n/comments" -f body="$intro: $reason
 
-The session log is \`$log\`. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the worktree \`${RUN_WT[$n]}\`; the Status is unchanged. A person decides what happens next." \
+$what \`$log\`. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the worktree \`${RUN_WT[$n]}\`; the Status is unchanged. A person decides what happens next." \
     >/dev/null || echo "#$n: could not comment on the ticket" >&2
   run_record "$n" failed "$reason"
   RUN_FAILED+=("#$n ${RUN_TITLE[$n]}: $reason (branch ${RUN_BRANCH[$n]} kept, log $log)")
@@ -2459,7 +2459,7 @@ run_timeout() {
   reason="timed out after $RUN_TIMEOUT minute$([ "$RUN_TIMEOUT" -eq 1 ] || echo s)"
   run_kill "$n" "#$n"
   run_halt "$n" "$reason" "$RUN_DIR/$n-${RUN_MODEL[$n]}.log" \
-    "An autonomous senior-mode run stopped this ticket's session (autonomy.sessionTimeout)"
+    "An autonomous senior-mode run stopped this ticket's session (autonomy.sessionTimeout)" "The session log is"
 }
 
 # A delivered ticket: merged when merging is on and every bound holds (ADR 0003, 0008), else listed

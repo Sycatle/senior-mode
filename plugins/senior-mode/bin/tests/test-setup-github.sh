@@ -64,7 +64,7 @@ case "$*" in
     v=$(jq -c .variables <<<"$body")
     if grep -q createProjectV2Field <<<"$body"; then
       jq --argjson v "$v" '.data.node.fields.nodes += [{id: ("F_" + $v.name), name: $v.name}
-        + (if $v.options then {options: ($v.options | map(. + {id: ("O_" + .name)}))} else {dataType: "TEXT"} end)]' \
+        + (if $v.options then {options: ($v.options | map(. + {id: ("O_" + .name)}))} else {dataType: ($v.type // "TEXT")} end)]' \
         "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"
     elif grep -q updateProjectV2Field <<<"$body"; then
       jq --argjson v "$v" '(.data.node.fields.nodes[] | select(.id == $v.field)
@@ -81,11 +81,33 @@ case "$*" in
         [ -z "${TEMPLATE_ERR:-}" ] || { echo "$TEMPLATE_ERR" >&2; exit 1; }
         respond <"$FIX/template-project.json"
       else respond <"$FIX/workflows-project.json"; fi
+    elif grep -q 'addProjectV2DraftIssue' <<<"$body"; then
+      f=$FIX/items-$(jq -r .p <<<"$v").json; [ -f "$f" ] || echo '{"data":{"node":{"items":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}' >"$f"
+      id=I_$(jq '.data.node.items.nodes | length + 1' "$f")
+      jq --argjson v "$v" --arg id "$id" '.data.node.items.nodes += [{id: $id, content: {__typename: "DraftIssue", title: $v.t, body: $v.b}, fieldValues: {nodes: []}}]' "$f" >"$f.t" && mv "$f.t" "$f"
+      jq -nc --arg id "$id" '{data: {addProjectV2DraftIssue: {projectItem: {id: $id}}}}' | respond
+    elif grep -q 'addProjectV2ItemById' <<<"$body"; then
+      f=$FIX/items-$(jq -r .p <<<"$v").json; [ -f "$f" ] || echo '{"data":{"node":{"items":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}' >"$f"
+      if [ -n "${ADD_FAIL_AFTER:-}" ] && [ "$(jq '.data.node.items.nodes | length' "$f")" -ge "$ADD_FAIL_AFTER" ]; then echo "gh: HTTP 401: Bad credentials" >&2; exit 1; fi
+      id=I_$(jq '.data.node.items.nodes | length + 1' "$f")
+      jq --argjson v "$v" --arg id "$id" '.data.node.items.nodes += [{id: $id, content: {__typename: "Issue", id: $v.c}, fieldValues: {nodes: []}}]' "$f" >"$f.t" && mv "$f.t" "$f"
+      jq -nc --arg id "$id" '{data: {addProjectV2ItemById: {item: {id: $id}}}}' | respond
+    elif grep -q 'updateProjectV2ItemFieldValue' <<<"$body"; then
+      f=$FIX/items-$(jq -r .p <<<"$v").json
+      jq --argjson v "$v" --slurpfile fl "$FIX/fields.json" '($fl[0].data.node.fields.nodes | map(select(.id == $v.f))[0]) as $fd
+        | (.data.node.items.nodes[] | select(.id == $v.i) | .fieldValues.nodes) += [{field: {name: $fd.name}}
+          + (if $v.v.singleSelectOptionId then {name: ($fd.options | map(select(.id == $v.v.singleSelectOptionId))[0].name)} else $v.v end)]' "$f" >"$f.t" && mv "$f.t" "$f"
+    elif grep -q 'items(first' <<<"$body"; then
+      f=$FIX/items-$(jq -r .id <<<"$v").json
+      if [ -f "$f" ]; then respond <"$f"; else echo '{"data":{"node":{"title":"app","public":false,"items":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}' | respond; fi
     elif grep -q 'readme' <<<"$body"; then respond <"$FIX/board.json"
     elif grep -q workflows <<<"$body"; then
       [ ! -f "$FIX/workflows-fail" ] || { echo "HTTP 403: forbidden" >&2; exit 1; }
       respond <"$FIX/workflows-project.json"
-    else respond <"$FIX/fields.json"; fi ;;
+    else
+      f=$FIX/fields-$(jq -r '.id // empty' <<<"$v").json; [ -f "$f" ] || f=$FIX/fields.json
+      respond <"$f"
+    fi ;;
 esac
 STUB
 chmod +x "$work/stub/gh"
@@ -712,6 +734,99 @@ for err in "gh: Resource not accessible by personal access token (HTTP 403)" "gh
   grep -qF "${err#gh: }" "$work/err" || fail "error not reported for: $err"
   [ "$(cfg .github.protection)" = ruleset ] || fail "protection rewritten on: $err"
 done
+
+# Migrating an existing board (#181): a Project built from the template, every item with its field values.
+rm -f "$FIX/rulesets.json"
+status_opts() { jq -c 'map({id: ("O_" + .), name: ., color: "GRAY", description: ""})' <<<"$1"; }
+jq -n --argjson st "$(status_opts '["Backlog","Ready","In progress","In review","Done"]')" --argjson pr "$(status_opts '["P0 now","P1 next","P2 later","P3 someday"]')" \
+  --argjson sz "$(status_opts '["S","M","L"]')" --argjson sv "$(status_opts '["critical","high","moderate","low"]')" \
+  '{data: {node: {fields: {nodes: [{}, {id: "F_Status", name: "Status", options: $st}, {id: "F_Priority", name: "Priority", options: $pr},
+    {id: "F_Size", name: "Size", options: $sz}, {id: "F_Severity", name: "Severity", options: $sv}, {id: "F_Paths", name: "Paths", dataType: "TEXT"}]}}}}' >"$FIX/fields.json"
+jq -n --argjson st "$(status_opts '["Todo","In Progress","Done","Icebox"]')" --argjson pr "$(status_opts '["P0 now","Urgent"]')" \
+  --argjson sz "$(status_opts '["S","M","L"]')" --argjson tm "$(status_opts '["Core","Infra"]')" \
+  '{data: {node: {fields: {nodes: [{}, {id: "OF_Status", name: "Status", options: $st}, {id: "OF_Priority", name: "Priority", options: $pr},
+    {id: "OF_Size", name: "Size", options: $sz}, {id: "OF_Team", name: "Team", options: $tm},
+    {id: "OF_Points", name: "Points", dataType: "NUMBER"}, {id: "OF_Notes", name: "Owner notes", dataType: "TEXT"},
+    {id: "OF_Sprint", name: "Sprint", dataType: "ITERATION"}, {id: "OF_Title", name: "Title", dataType: "TITLE"}]}}}}' >"$FIX/fields-PVT_OLD.json"
+item() { # item-id content-json field-values-json
+  jq -nc --arg id "$1" --argjson c "$2" --argjson v "$3" '{id: $id, content: $c, fieldValues: {nodes: $v}}'
+}
+sel() { jq -nc --arg f "$1" --arg n "$2" '{name: $n, field: {name: $f}}'; }
+jq -n --argjson a "$(item OI_1 '{"__typename":"Issue","id":"ISSUE_1"}' "[$(sel Status Todo), $(sel Priority "P0 now"), $(sel Size M), {\"number\": 3, \"field\": {\"name\": \"Points\"}}, {\"text\": \"hello\", \"field\": {\"name\": \"Owner notes\"}}, $(sel Team Core)]")" \
+  --argjson b "$(item OI_2 '{"__typename":"PullRequest","id":"PR_2"}' "[$(sel Status "In Progress"), $(sel Priority Urgent)]")" \
+  --argjson c "$(item OI_3 '{"__typename":"Issue","id":"ISSUE_3"}' "[$(sel Status Icebox)]")" \
+  --argjson d "$(item OI_4 '{"__typename":"DraftIssue","title":"Idea","body":"b"}' "[$(sel Status Done)]")" \
+  '{data: {node: {title: "app", public: true, items: {pageInfo: {hasNextPage: false}, nodes: [$a, $b, $c, $d]}}}}' >"$FIX/items-PVT_OLD.json"
+rm -f "$FIX"/items-PVT_NEW.json "$FIX"/items-PVT_MIG.json
+echo '{"language": "fr", "board": {"template": "PVT_TPL"}, "project": {"owner": "acme", "number": 5, "id": "PVT_OLD"}}' >"$repo/.claude/senior-mode.json"
+migrate() { : >"$GH_LOG"; (cd "$repo" && "$cli" setup github --migrate "$@") >"$work/out" 2>"$work/err"; }
+mutations() { grep -c '^{.*mutation(' "$GH_LOG"; }
+calls() { grep -c "^{.*$1" "$2"; } # GraphQL bodies of a log that name $1
+
+# --dry-run prints the mapping and changes nothing.
+cp "$repo/.claude/senior-mode.json" "$work/before"
+migrate --dry-run || fail "migrate --dry-run failed: $(cat "$work/err")"
+[ "$(mutations)" = 0 ] || fail "dry run mutated GitHub: $(grep '^{.*mutation(' "$GH_LOG")"
+logged "project link" && fail "dry run linked a Project"
+logged "label create" && fail "dry run went on with the rest of setup"
+cmp -s "$work/before" "$repo/.claude/senior-mode.json" || fail "dry run wrote the config: $(cat "$repo/.claude/senior-mode.json")"
+for want in "migrate: items: 4 to add, 0 already in the new Project" \
+  "migrate: fields to create as is: Team (SINGLE_SELECT), Points (NUMBER), Owner notes (TEXT)" \
+  "migrate: options to create as is: Status Icebox, Priority Urgent" \
+  "migrate: values mapped: Status Todo -> Backlog, Status In Progress -> In progress" \
+  "migrate: not migrated: Sprint (ITERATION)" "dry run, nothing changed"; do
+  grep -qF -- "$want" "$work/out" || fail "dry run without '$want': $(cat "$work/out")"
+done
+
+# A migration interrupted halfway (the third item fails) keeps the new Project in the config...
+COPY_NUMBER=8 COPY_ID=PVT_MIG ADD_FAIL_AFTER=2 migrate && fail "migration succeeded although an item could not be added"
+cp "$GH_LOG" "$work/first.log"
+[ "$(cfg .project.migration.id)" = PVT_MIG ] || fail "the new Project is not recorded while migrating: $(cfg .project)"
+[ "$(cfg .project.number)" = 5 ] || fail "the board switched before the migration was done: $(cfg .project)"
+logged '"closed":true' && fail "the old Project closed before the migration was done"
+# ...and the rerun picks up where it stopped: nothing added twice, no second copy.
+: >"$GH_LOG"
+(cd "$repo" && COPY_NUMBER=8 COPY_ID=PVT_MIG "$cli" setup github --migrate) >"$work/out" 2>"$work/err" || fail "rerun of the migration failed: $(cat "$work/err")"
+cat "$GH_LOG" >>"$work/first.log"
+[ "$(calls copyProjectV2 "$work/first.log")" = 1 ] || fail "the template copied twice"
+# Three issues and pull requests, one of them tried twice: the first try failed.
+[ "$(calls addProjectV2ItemById "$work/first.log")" = 4 ] || fail "an item added twice or missing: $(calls addProjectV2ItemById "$work/first.log")"
+[ "$(calls addProjectV2DraftIssue "$work/first.log")" = 1 ] || fail "the draft not added exactly once"
+[ "$(calls updateProjectV2ItemFieldValue "$work/first.log")" = 10 ] || fail "field values set $(calls updateProjectV2ItemFieldValue "$work/first.log") times, expected 10"
+grep -q "migrate: items: 2 to add, 2 already in the new Project" "$work/out" || fail "the rerun does not say what is left: $(cat "$work/out")"
+# Every item has its values, mapped to the new options.
+new=$FIX/items-PVT_MIG.json
+val() { jq -r --arg c "$1" --arg f "$2" '.data.node.items.nodes[] | select((.content.id // .content.title) == $c) | .fieldValues.nodes[] | select(.field.name == $f) | (.name // .text // .number)' "$new"; }
+[ "$(val ISSUE_1 Status)" = Backlog ] || fail "Todo not mapped to Backlog: $(val ISSUE_1 Status)"
+[ "$(val PR_2 Status)" = "In progress" ] || fail "In Progress not mapped to In progress: $(val PR_2 Status)"
+[ "$(val ISSUE_1 Priority)" = "P0 now" ] || fail "Priority lost"
+[ "$(val ISSUE_1 Size)" = M ] || fail "Size lost"
+[ "$(val ISSUE_1 Points)" = 3 ] || fail "number field lost"
+[ "$(val ISSUE_1 'Owner notes')" = hello ] || fail "text field lost"
+[ "$(val ISSUE_1 Team)" = Core ] || fail "single-select field the template lacks lost"
+[ "$(val PR_2 Priority)" = Urgent ] || fail "an option the template lacks lost"
+[ "$(val ISSUE_3 Status)" = Icebox ] || fail "the Status option the template lacks lost"
+[ "$(val Idea Status)" = Done ] || fail "the draft lost its Status"
+[ "$(jq '.data.node.items.nodes | length' "$new")" = 4 ] || fail "wrong item count in the new Project"
+# The new Project is the board; the old one is closed, not deleted, with the way back.
+[ "$(cfg '.project.number')/$(cfg .project.id)/$(cfg .project.owner)" = 8/PVT_MIG/acme ] || fail "new Project not recorded: $(cfg .project)"
+[ "$(cfg '.project.migration')" = null ] || fail "migration state kept after the migration: $(cfg .project)"
+[ "$(cfg '.project.fields.Status.id')" = F_Status ] || fail "the fields of the new Project are not cached: $(cfg .project.fields)"
+grep -q '"name":"Team".*"name":"Core"' "$work/first.log" || fail "the field the template lacks not created"
+grep -q '"projectId":"PVT_OLD".*"closed":true\|"closed":true.*"projectId":"PVT_OLD"' "$GH_LOG" || fail "the old Project not closed: $(cat "$GH_LOG")"
+logged "deleteProjectV2" && fail "the old Project deleted"
+grep -q "Project #5 closed, not deleted" "$work/out" || fail "old Project's fate not said: $(cat "$work/out")"
+grep -q "gh project close 5 --owner acme --undo" "$work/out" || fail "no way to reopen the old Project: $(cat "$work/out")"
+logged "project link 8 --owner acme --repo acme/app" || fail "the new Project not linked"
+logged "label create" || fail "the rest of setup did not run after the migration"
+# Public like the old one's repository only when it is: the repository here is private.
+logged '"public":true' && fail "the new Project made public for a private repository"
+
+# Without a Project to migrate there is nothing to do.
+echo '{"language": "fr"}' >"$repo/.claude/senior-mode.json"
+migrate && fail "--migrate succeeds with no Project"
+grep -q "no Project to migrate" "$work/err" || fail "no explanation: $(cat "$work/err")"
+(cd "$repo" && "$cli" setup github --dry-run) >/dev/null 2>&1 && fail "--dry-run accepted without --migrate"
 
 [ "$failures" -eq 0 ] && echo "setup-github: all cases pass"
 exit "$failures"

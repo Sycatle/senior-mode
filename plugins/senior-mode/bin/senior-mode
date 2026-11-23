@@ -32,7 +32,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] | clean [--dry-run] [--days N] | statusline | retro [--since <dur>] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] | clean [--dry-run] [--days N] | statusline | retro [--since <dur>] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions] [--migrate [--dry-run]] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -990,7 +990,7 @@ RULESET='{"name": "senior-mode", "target": "branch", "enforcement": "active",
 board_fields() {
   jq -nc --arg id "$1" '{variables: {id: $id}, query: "query($id: ID!) { node(id: $id) { ... on ProjectV2 {
     fields(first: 50) { nodes { ... on ProjectV2SingleSelectField { id name options { id name color description } }
-    ... on ProjectV2Field { id name dataType } } } } } }"}' |
+    ... on ProjectV2Field { id name dataType } ... on ProjectV2IterationField { id name dataType } } } } } }"}' |
     gh_retry api graphql --input - --jq '[.data.node.fields.nodes[] | select(.name)]'
 }
 
@@ -1116,6 +1116,190 @@ setup_board_readme() { # project-id slug language
   project_update "$1" "$(jq -nc --arg r "$new" --arg d "$desc" '{readme: $r, shortDescription: $d}')" ||
     { echo "board README: could not write it; skipped"; return 0; }
   echo "board README: written ($written, language $lang)"
+}
+
+# Every item of a Project (paged) as {title, public, items: [{item, key, kind, id, title, body, values}]}: key
+# is the node id of the issue or pull request, "draft:<title>" for a draft; values are the item's
+# single-select, text, number and date values by field name.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+BOARD_ITEMS_QUERY='query($id: ID!, $after: String) { node(id: $id) { ... on ProjectV2 { title public
+  items(first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { id
+    content { __typename ... on Issue { id } ... on PullRequest { id } ... on DraftIssue { title body } }
+    fieldValues(first: 30) { nodes {
+      ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
+      ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } }
+      ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name } } }
+      ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } } } } } } } }'
+board_items() { # project-id
+  local after="" page pages="[]" more=true count=0
+  while [ "$more" = true ]; do
+    page=$(jq -nc --arg q "$BOARD_ITEMS_QUERY" --arg id "$1" --arg a "$after" \
+      '{query: $q, variables: ({id: $id} + (if $a == "" then {} else {after: $a} end))}' | gh_retry api graphql --input -) || return 1
+    pages=$(jq -c --argjson p "$page" '. + [$p]' <<<"$pages")
+    more=$(jq -r '.data.node.items.pageInfo.hasNextPage // false' <<<"$page")
+    after=$(jq -r '.data.node.items.pageInfo.endCursor // empty' <<<"$page")
+    count=$((count + 1))
+    [ "$count" -lt 200 ] || return 1
+  done
+  jq -c '{title: .[0].data.node.title, public: .[0].data.node.public, items: [.[].data.node.items.nodes[] | select(.content != null)
+    | .content as $c | {item: .id, kind: $c.__typename, id: $c.id, title: $c.title, body: $c.body,
+      key: (if $c.__typename == "DraftIssue" then "draft:" + $c.title else $c.id end),
+      values: [.fieldValues.nodes[] | select(.field.name) | {field: .field.name, name, text, number, date}]}]}' <<<"$pages"
+}
+
+# Runs a GraphQL query or mutation with its variables (JSON); more gh arguments follow.
+gql() { # query variables [gh-argument...]
+  jq -nc --arg q "$1" --argjson v "$2" '{query: $q, variables: $v}' | gh_retry api graphql --input - "${@:3}"
+}
+
+# How the fields and values of a board map onto the fields of another (#181): a field or single-select
+# option matches by name in any case, else by the aliases of $BOARD (GitHub's Todo is our Backlog).
+# shellcheck disable=SC2016 # a jq program, not shell
+MIGRATE_DEFS='def lc: ascii_downcase;
+  def tname($f; $o): ($board[$f] // [] | map(select((.aliases // []) | map(lc) | index($o | lc))) | .[0].name) // $o;
+  def field($fs; $n): [$fs[] | select((.name | lc) == ($n | lc))][0];
+  def option($t; $f; $o): ([$t.options[]? | select((.name | lc) == ($o | lc))][0])
+    // ([$t.options[]? | select((.name | lc) == (tname($f; $o) | lc))][0]);
+  def custom: select(.options or (.dataType | IN("TEXT", "NUMBER", "DATE")));'
+
+# What a migration will do, as JSON: the fields and options to create as is, the values that change
+# name, what has no API, and the items to add. $1 old fields, $2 target fields, $3 old items, $4 the
+# new Project's items.
+# shellcheck disable=SC2016 # a jq program, not shell
+migrate_plan() {
+  jq -nc --argjson old "$1" --argjson tgt "$2" --argjson oi "$3" --argjson cur "$4" --argjson board "$BOARD" "$MIGRATE_DEFS"'
+    ([$oi[] | select(.key | IN($cur[].key) | not)] | length) as $add
+    | {create: [$old[] | custom | select(field($tgt; .name) == null)
+        | {name, kind: (if .options then "SINGLE_SELECT" else .dataType end),
+           options: [.options[]? | {name, color, description: (.description // "")}]}],
+       options: [$old[] | select(.options) | . as $f | field($tgt; .name) as $t | select($t != null)
+        | {field: $t.name, id: $t.id, current: $t.options,
+           missing: [$f.options[] | select(option($t; $f.name; .name) == null) | {name, color, description: (.description // "")}]}
+        | select(.missing | length > 0)],
+       mapped: [$old[] | select(.options) | . as $f | field($tgt; .name) as $t | select($t != null) | $f.options[]
+        | (option($t; $f.name; .name).name // empty) as $to | select($to != .name) | "\($f.name) \(.name) -> \($to)"],
+       skipped: [$old[] | select(.dataType == "ITERATION") | "\(.name) (ITERATION)"],
+       add: $add, present: (($oi | length) - $add)}'
+}
+
+# The mutations of a migration that remain: for each item of the old Project, its content when the new
+# one lacks it, and the values the new item still lacks, resolved against the new Project's fields.
+# shellcheck disable=SC2016 # a jq program, not shell
+migrate_ops() { # target-fields old-items new-items
+  jq -nc --argjson tgt "$1" --argjson oi "$2" --argjson cur "$3" --argjson board "$BOARD" "$MIGRATE_DEFS"'
+    $oi[] as $o | ([$cur[] | select(.key == $o.key)][0]) as $n
+    | ($n.values // [] | map(.field | lc)) as $have
+    | {key: $o.key, kind: $o.kind, id: $o.id, title: $o.title, body: $o.body, item: ($n.item // null),
+       sets: [$o.values[] | . as $v | field($tgt; $v.field) as $t | select($t != null)
+        | (if $v.name != null then (option($t; $v.field; $v.name) as $op | select($op != null) | {value: {singleSelectOptionId: $op.id}})
+           elif $v.text != null and $t.dataType == "TEXT" then {value: {text: $v.text}}
+           elif $v.number != null and $t.dataType == "NUMBER" then {value: {number: $v.number}}
+           elif $v.date != null and $t.dataType == "DATE" then {value: {date: $v.date}}
+           else empty end) + {field: $t.id, label: $t.name}
+        | select((.label | lc) | IN($have[]) | not)]}
+    | select(.item == null or (.sets | length > 0))'
+}
+
+# Creates in Project $1 the fields and options of the plan $2 (JSON) that the template lacks, as they are.
+# shellcheck disable=SC2016 # GraphQL mutations, not shell
+migrate_fields() { # project-id plan
+  local f
+  while IFS= read -r f; do
+    gql 'mutation($project: ID!, $name: String!, $type: ProjectV2CustomFieldType!, $options: [ProjectV2SingleSelectFieldOptionInput!]) {
+      createProjectV2Field(input: {projectId: $project, name: $name, dataType: $type, singleSelectOptions: $options}) { clientMutationId } }' \
+      "$(jq -c --arg p "$1" '{project: $p, name, type: .kind, options: (if .kind == "SINGLE_SELECT" then .options else null end)}' <<<"$f")" >/dev/null ||
+      die "cannot create the field $(jq -r .name <<<"$f") in the new Project"
+  done < <(jq -c '.create[]' <<<"$2")
+  while IFS= read -r f; do
+    gql 'mutation($field: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]!) {
+      updateProjectV2Field(input: {fieldId: $field, singleSelectOptions: $options}) { clientMutationId } }' \
+      "$(jq -c '{field: .id, options: (.current + .missing)}' <<<"$f")" >/dev/null ||
+      die "cannot add options to the field $(jq -r .field <<<"$f") in the new Project"
+  done < <(jq -c '.options[]' <<<"$2")
+}
+
+# Adds to Project $1 the items that $2 (migrate_ops lines) says are missing, and sets their values.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+migrate_items() { # project-id ops
+  local op item set
+  while IFS= read -r op; do
+    item=$(jq -r '.item // empty' <<<"$op")
+    if [ -z "$item" ]; then
+      if [ "$(jq -r .kind <<<"$op")" = DraftIssue ]; then
+        item=$(gql 'mutation($p: ID!, $t: String!, $b: String) { addProjectV2DraftIssue(input: {projectId: $p, title: $t, body: $b}) { projectItem { id } } }' \
+          "$(jq -c --arg p "$1" '{p: $p, t: .title, b: .body}' <<<"$op")" --jq .data.addProjectV2DraftIssue.projectItem.id)
+      else
+        item=$(gql 'mutation($p: ID!, $c: ID!) { addProjectV2ItemById(input: {projectId: $p, contentId: $c}) { item { id } } }' \
+          "$(jq -c --arg p "$1" '{p: $p, c: .id}' <<<"$op")" --jq .data.addProjectV2ItemById.item.id)
+      fi || die "cannot add $(jq -r .key <<<"$op") to the new Project"
+    fi
+    while IFS= read -r set; do
+      gql 'mutation($p: ID!, $i: ID!, $f: ID!, $v: ProjectV2FieldValue!) {
+        updateProjectV2ItemFieldValue(input: {projectId: $p, itemId: $i, fieldId: $f, value: $v}) { clientMutationId } }' \
+        "$(jq -c --arg p "$1" --arg i "$item" '{p: $p, i: $i, f: .field, v: .value}' <<<"$set")" >/dev/null ||
+        die "cannot set $(jq -r .label <<<"$set") of $(jq -r .key <<<"$op") in the new Project"
+    done < <(jq -c '.sets[]' <<<"$op")
+  done <<<"$2"
+}
+
+# Moves the board to a Project built from the template (#181): every item of the old Project with its field
+# values, the fields and single-select options the template lacks created as is, the new Project linked
+# and recorded, the old one closed (never deleted). The new Project is recorded in the config as soon as
+# it exists (project.migration), so that a rerun after an interruption goes on with it and adds
+# nothing twice. With dry set, prints the mapping and changes nothing.
+# Reads template, owner_node and private of setup_github.
+# shellcheck disable=SC2016 # jq programs, not shell
+setup_migrate() { # config-file dry-run
+  local file=$1 dry=$2 old_number old_id new_number new_id owner old oldf tgt tgtf cur plan ops title out
+  old_number=$(jq -r '.project.number // empty' "$file") old_id=$(jq -r '.project.id // empty' "$file")
+  owner=$(jq -r '.project.owner // empty' "$file")
+  [ -n "$old_number" ] && [ -n "$old_id" ] && [ -n "$owner" ] ||
+    die "no Project to migrate in .claude/senior-mode.json; run senior-mode setup github first"
+  new_number=$(jq -r '.project.migration.number // empty' "$file") new_id=$(jq -r '.project.migration.id // empty' "$file")
+  old=$(board_items "$old_id") || die "cannot read the items of Project #$old_number"
+  oldf=$(board_fields "$old_id") || die "cannot read the fields of Project #$old_number"
+  title=$(jq -r '.title' <<<"$old")
+  tgt=${new_id:-$template}
+  tgtf=$(board_fields "$tgt") || die "cannot read the fields of Project $tgt"
+  cur='[]'
+  if [ -n "$new_id" ]; then
+    cur=$(board_items "$new_id") || die "cannot read the items of Project #$new_number"
+    cur=$(jq -c .items <<<"$cur")
+    echo "migrate: Project #$new_number was already created from the template, going on with it"
+  fi
+  plan=$(migrate_plan "$oldf" "$tgtf" "$(jq -c .items <<<"$old")" "$cur")
+  jq -r --arg n "$old_number" --arg t "$title" --arg tpl "$template" '
+    "migrate: Project #\($n) \"\($t)\" -> a Project built from the template \($tpl)",
+    "migrate: items: \(.add) to add, \(.present) already in the new Project",
+    (if (.create | length) > 0 then "migrate: fields to create as is: " + (.create | map("\(.name) (\(.kind))") | join(", ")) else empty end),
+    (if (.options | length) > 0 then "migrate: options to create as is: " + ([.options[] | .field as $f | .missing[] | "\($f) \(.name)"] | join(", ")) else empty end),
+    (if (.mapped | length) > 0 then "migrate: values mapped: " + (.mapped | join(", ")) else empty end),
+    (if (.skipped | length) > 0 then "migrate: not migrated: " + (.skipped | join(", ")) else empty end)' <<<"$plan"
+  if [ "$dry" = true ]; then
+    echo "migrate: dry run, nothing changed; senior-mode setup github --migrate does it"
+    return 0
+  fi
+  if [ -z "$new_id" ]; then
+    out=$(copy_template "$title") || die "cannot copy the template Project $template (board.template)"
+    read -r new_number new_id <<<"$out"
+    json_update "$file" '.project.migration = {number: $n, id: $id}' --argjson n "$new_number" --arg id "$new_id" ||
+      [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
+    [ "$private" != false ] || project_update "$new_id" '{"public": true}' || die "cannot make Project #$new_number public"
+    echo "migrate: Project #$new_number $title: copied from the template"
+    tgtf=$(board_fields "$new_id") || die "cannot read the fields of Project #$new_number"
+    plan=$(migrate_plan "$oldf" "$tgtf" "$(jq -c .items <<<"$old")" "[]")
+  fi
+  setup_fields "$new_id"
+  migrate_fields "$new_id" "$plan"
+  tgtf=$(board_fields "$new_id") || die "cannot read the fields of Project #$new_number"
+  cur=$(board_items "$new_id") || die "cannot read the items of Project #$new_number"
+  ops=$(migrate_ops "$tgtf" "$(jq -c .items <<<"$old")" "$(jq -c .items <<<"$cur")")
+  [ -z "$ops" ] || migrate_items "$new_id" "$ops"
+  project_update "$old_id" '{"closed": true}' || die "cannot close Project #$old_number"
+  json_update "$file" '.project = {owner: $o, number: $n, id: $id}' --arg o "$owner" --argjson n "$new_number" --arg id "$new_id" ||
+    [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
+  echo "migrate: Project #$new_number is the board now, recorded in .claude/senior-mode.json"
+  echo "migrate: Project #$old_number closed, not deleted; reopen it with: gh project close $old_number --owner $owner --undo"
 }
 
 # Creates missing board fields with their colours, repairs the options of existing ones.
@@ -1388,13 +1572,22 @@ setup_security() { # root slug
 
 setup_github() {
   local root file slug owner name owner_type owner_node private template project number id how fields labels label color description err ci="" globs review=false codeowner codeowners_owns=false reason
-  case "$*" in "") ;; "--ci local" | "--ci actions") ci=$2 ;; *) usage ;; esac
+  local migrate=false dry=false
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --ci) [ "${2:-}" = local ] || [ "${2:-}" = actions ] || usage; ci=$2; shift 2 ;;
+      --migrate) migrate=true; shift ;;
+      --dry-run) dry=true; shift ;;
+      *) usage ;;
+    esac
+  done
+  [ "$dry" = false ] || [ "$migrate" = true ] || usage
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   mkdir -p "$root/.claude"
   [ -f "$file" ] || echo '{}' >"$file"
   jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; fix or remove it, then run setup again"
-  if [ -n "$ci" ]; then
+  if [ -n "$ci" ] && [ "$dry" = false ]; then
     { jq --arg m "$ci" '.ci.mode = $m' "$file" >"$file.tmp" && mv "$file.tmp" "$file"; } ||
       die "could not write .claude/senior-mode.json"
   fi
@@ -1403,6 +1596,10 @@ setup_github() {
     --jq '[.owner.type, .owner.node_id, (.private | tostring)] | join("|")') || die "cannot read $slug on GitHub"
   template=$(jq -r --argjson d "$DEFAULTS" '($d * .).board.template' "$file")
 
+  if [ "$migrate" = true ]; then
+    setup_migrate "$file" "$dry"
+    [ "$dry" = false ] || return 0
+  fi
   project=$(setup_project "$file" "$owner" "$name" "$slug") || die "could not find or copy the Project"
   read -r number id how <<<"$project"
   setup_fields "$id"

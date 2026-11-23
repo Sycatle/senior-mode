@@ -358,7 +358,8 @@ command, not a model, applies these bounds:
   protected zone of the default branch: `run` checks that itself, it does not rely on the reviewer.
   The merge names the head it checked (`--match-head-commit`), so a later push is refused.
   Everything else waits for a human, and the report says why. The ticket session itself never
-  merges: the Bash guard denies it any merge.
+  merges: the Bash guard denies it any merge. When the pull request merges but the ticket's Status
+  cannot be set Done, the report lists it under `Status not set to Done`, and `status` shows it as drift.
 - **Hygiene:** `run` calls `senior-mode clean` when it starts, before it looks at the board, and when it
   ends if it ran tickets (see [Hygiene](#hygiene)). A failing `clean` is reported on stderr and does not
   stop the run.

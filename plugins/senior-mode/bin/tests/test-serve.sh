@@ -76,6 +76,8 @@ case $(sed -n 3p "$fx") in
 esac
 outcome=$(sed -n 1p "$fx")
 [ -z "$outcome" ] || echo "$outcome" >"$SENIOR_MODE_RUN_OUTCOME"
+# A batch session (#263) writes one outcome line per ticket: $FIX/outcome-<lead> holds them.
+[ ! -f "$FIX/outcome-$n" ] || cp "$FIX/outcome-$n" "$SENIOR_MODE_RUN_OUTCOME"
 [ "$(sed -n 2p "$fx")" != pr ] ||
   echo "[{\"number\": $((n + 100)), \"head\": {\"sha\": \"sha$n\"}, \"labels\": []}]" >"$FIX/pulls-$n"
 echo '{"result": "ok"}'
@@ -501,6 +503,39 @@ touch "$FIX/no-systemd"
 (cd "$repo" && "$cli" serve --install) >"$work/out" 2>&1 && fail "H: installed without systemd"
 grep -q 'systemd user services' "$work/out" || fail "H: no systemd not explained: $(cat "$work/out")"
 rm -f "$FIX/no-systemd"
+
+# J: Ready S tickets whose Paths overlap are one session and one slot (#263); what runs next to it overlaps nothing.
+paths_of() { # <ticket> <globs>: Paths of a ticket of the board
+  jq -c --argjson n "$1" --arg p "$2" '(.data.node.items.nodes[] | select(.content.number == $n) | .fieldValues.nodes)
+    += [{text: $p, field: {name: "Paths"}}]' "$FIX/board.json" >"$work/b" && mv "$work/b" "$FIX/board.json"
+}
+saved_fields=$fields
+fields=$(jq '. + {Paths: {id: "F_PA"}}' <<<"$fields")
+config '{"parallel": 2}'
+board 21 22 23 24
+paths_of 21 'src/a/**'
+paths_of 22 'src/a/x.ts'
+paths_of 23 'docs/guide/**'
+paths_of 24 'docs/guide/y.md'
+jq -c '(.data.node.items.nodes[] | select(.content.number == 24) | .fieldValues.nodes[] | select(.field.name == "Size") | .name) = "M"' \
+  "$FIX/board.json" >"$work/b" && mv "$work/b" "$FIX/board.json"
+session 21-sonnet "" pr
+printf '#21 delivered\n#22 delivered\n' >"$FIX/outcome-21"
+session 23-sonnet delivered pr
+session 24-sonnet delivered pr
+fresh
+once || fail "J: serve failed: $(cat "$work/out")"
+started 21 || fail "J: no session for the batch of #21 and #22: $(cat "$CLAUDE_LOG")"
+started 22 && fail "J: a session of its own for #22, a ticket of the batch"
+started 23 || fail "J: the batch is one slot, #23 should have started: $(cat "$CLAUDE_LOG")"
+started 24 && fail "J: #24 overlaps #23 and started with it"
+grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 3 || fail "J: #21, #22 and #23 not all In progress"
+grep -q 'Waiting for a human.*#21.*pull request #121' "$work/out" && grep -q 'Waiting for a human.*#22.*pull request #121' "$work/out" ||
+  fail "J: the batch's tickets are not reported with their one pull request: $(cat "$work/out")"
+grep -c 'item-edit.*--single-select-option-id o3' "$GH_LOG" | grep -qx 3 || fail "J: the delivered tickets are not In review"
+outcome_of 21 delivered J
+outcome_of 22 delivered J
+fields=$saved_fields
 
 # I: options and config are checked.
 (cd "$repo" && "$cli" serve --bogus) >"$work/out" 2>&1 && fail "I: an unknown option was accepted"

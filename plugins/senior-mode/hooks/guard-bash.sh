@@ -10,14 +10,14 @@
 set -o pipefail
 input=$(cat)
 # Quoted text is data (commit messages, echo), never options: replace it before parsing. A quoted
-# single word (a URL, a ref) is unquoted instead, and so is a quoted variable (`"$EP"`, `--for"$x"ce`),
-# which the checks below must still see as one. An empty pair touching a word (`--for""ce`) is removed;
-# alone it is an argument (`core.hooksPath ""`) and stays, as `Q`. Outside quotes a backslash is dropped
-# as the shell does (`--for\ce`, `core.hooksPath\=x`); an escaped space or quote becomes `Q`, so it neither
-# splits a word nor opens a quote, and a value made only of them is still an argument. A backslash-newline
-# continues the line.
+# single word (a URL, a ref) is unquoted instead, and so is a quoted variable (`"$EP"`, `--for"$x"ce`)
+# or a quoted word with variables in it (`"core.hooks${x}Path"`), which the checks below must still see.
+# An empty pair touching a word (`--for""ce`) is removed; alone it is an argument (`core.hooksPath ""`)
+# and stays, as `Q`. Outside quotes a backslash is dropped as the shell does (`--for\ce`,
+# `core.hooksPath\=x`); an escaped space or quote becomes `Q`, so it neither splits a word nor opens a
+# quote, and a value made only of them is still an argument. A backslash-newline continues the line.
 command=$(jq -r '.tool_input.command // "" | gsub("\\\\\n"; " ")
-  | gsub("\"(?<x>(?:\\$(?:\\{[^}\"\\\\\\s]*\\}|[A-Za-z_][A-Za-z0-9_]*))+)\"|\"(?<w>[^\"\\\\\\s$`]+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'|(?<=\\S)(?:\"\"|'"'"''"'"')|(?:\"\"|'"'"''"'"')(?=\\S)|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')|\\\\(?<c>[^\\n \"'"'"'])|\\\\(?<e>[ \"'"'"'])"; .x // .w // .v // .g // .c // (if .e then "Q" else "" end))
+  | gsub("\"(?<x>(?:\\$(?:\\{[^}\"\\\\\\s]*\\}|[A-Za-z_][A-Za-z0-9_]*))+)\"|\"(?<w>[^\"\\\\\\s$`]+)\"|\"(?<y>(?:[^\"\\\\\\s$`;|&()<>]|\\$(?:\\{[^}\"\\\\\\s]*\\}|[A-Za-z_][A-Za-z0-9_]*))+)\"|'"'"'(?<v>[^'"'"'\\s]+)'"'"'|(?<=\\S)(?:\"\"|'"'"''"'"')|(?:\"\"|'"'"''"'"')(?=\\S)|(?<g>\"(\\\\.|[^\"\\\\])*\"|'"'"'[^'"'"']*'"'"')|\\\\(?<c>[^\\n \"'"'"'])|\\\\(?<e>[ \"'"'"'])"; .x // .w // .y // .v // .g // .c // (if .e then "Q" else "" end))
   | gsub("\"(\\\\.|[^\"\\\\])*\""; "Q") | gsub("'"'"'[^'"'"']*'"'"'"; "Q")' <<<"$input")
 cwd=$(jq -r '.cwd // empty' <<<"$input")
 raw=$(jq -r '.tool_input.command // ""' <<<"$input")
@@ -53,6 +53,7 @@ alias_bad() {
 check_kv() {
   [[ $1 == *=* ]] || return 0
   local k=${1%%=*}
+  split_key "$k" && deny_skip "a config key split by a variable"
   k=${k,,}
   case $k in
     core.hookspath) deny_skip "core.hooksPath" ;;
@@ -60,6 +61,16 @@ check_kv() {
     alias.*) alias_bad && deny_skip "an alias that runs a denied option" ;;
   esac
   return 0
+}
+# A variable inside a config key (`core.hooks${x}Path`) hides it: true when the key, with the variables left
+# open, can be core.hooksPath or include.path and a variable shares a dot-separated part with literal text.
+# A part that is only a variable (`core.$k`, `$s.hooksPath`, `"$key"`) is a value the guard does not follow.
+split_key() { # word
+  local p=${1,,}
+  [[ $p == *\$* ]] || return 1
+  p=$(sed -E 's/\$(\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)/*/g' <<<"$p")
+  [[ $p =~ (^|\.)[^.]*(\*[^.*]|[^.*]\*)[^.]*(\.|$) ]] || return 1
+  [[ core.hookspath == $p || include.path == $p ]]
 }
 # A word split by a variable (`--for${x}ce`, `pu${x}sh`) hides what it says from this guard; a variable
 # alone (`$sub`, `"$sub"`) is a value the guard does not follow, as documented.
@@ -97,6 +108,7 @@ is_shared() {
 # global or system config file, which can hold any of them.
 check_env() {
   [[ ${1,,} =~ ^git_config_(global|system)= ]] && deny_skip "${1%%=*}: another config file"
+  [[ ${1,,} =~ ^git_config_key_[0-9]+=(.*)$ ]] && split_key "${BASH_REMATCH[1]//[\"\']/}" && deny_skip "GIT_CONFIG_KEY split by a variable"
   [[ ${1,,} =~ ^git_config_key_[0-9]+=[\"\']?core\.hookspath ]] && deny_skip "GIT_CONFIG_KEY core.hooksPath"
   [[ ${1,,} =~ ^git_config_key_[0-9]+=[\"\']?(include\.path|includeif\.[^=]*\.path) ]] && deny_skip "GIT_CONFIG_KEY include.path"
   [[ ${1,,} =~ ^git_config_key_[0-9]+=[\"\']?alias\. ]] && alias_bad && deny_skip "GIT_CONFIG_KEY alias that runs a denied option"
@@ -273,16 +285,18 @@ while IFS= read -r segment; do
             core.hookspath) key=hooks ;;
             include.path | includeif.*.path) key=include ;;
             alias.*) key="alias" ;;
+            *) split_key "$k" && key=split ;;
           esac
         elif [[ $a != -* ]]; then
           case $key in
             hooks) deny_skip "core.hooksPath" ;;
+            split) deny_skip "a config key split by a variable" ;;
             include) deny_skip "include.path: it pulls in a file this guard cannot read" ;;
             alias) alias_bad && deny_skip "an alias that runs a denied option" ;;
           esac
         fi
       done
-      if [ "$key" = hooks ]; then
+      if [ "$key" = hooks ] || [ "$key" = split ]; then
         for a in ${args[@]+"${args[@]}"}; do
           abbr "$a" --unset-all 5 || abbr "$a" --replace-all 3 || abbr "$a" --add 1 || [ "$a" = unset ] && deny_skip "core.hooksPath"
         done

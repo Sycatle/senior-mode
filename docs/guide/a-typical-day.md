@@ -37,9 +37,10 @@ Claude to check the tickets: the [`ready`](skills.md#ready) skill moves each one
 Pick the top `Ready` ticket on the board and ask Claude to start it, for example "start #42", or let
 `/senior-mode:next` do it. `senior-mode start 42` makes a worktree and a branch named `<type>/<issue>-<slug>`, such as
 `feat/42-overdue-warning`, and moves the ticket to In progress. The worktree is
-`.git/senior-mode/worktrees/42` of your checkout, so it does not clutter the folder that holds your
-projects; `start` and `senior-mode status` print its path. Open it in an editor with
-`code .git/senior-mode/worktrees/42` (or `cd` into it and start Claude Code there).
+`~/.local/share/senior-mode/worktrees/<repo>/42` (`$XDG_DATA_HOME` when set; `<repo>` is the name of your
+checkout and a short hash of its path), so it does not clutter the folder that holds your projects;
+`start` and `senior-mode status` print its path. Open it in an editor with
+`code <that path>` (or `cd` into it and start Claude Code there).
 
 On that branch, each new Claude Code session starts with the ticket's title, status, spec and
 acceptance criteria (the `SessionStart` hook).

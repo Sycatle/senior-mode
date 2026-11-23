@@ -1077,6 +1077,47 @@ setup_board_template() { # project-id copied|found
   fi
 }
 
+# The short description and the README of the Project in the project language (#178): what each Status
+# means, the Definition of Ready, who moves what, a link to docs/specs. Only the block between the
+# senior-mode markers (templates/<language>/board-readme.md) is written; the rest of the README stays,
+# and so does a short description that is not ours.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+setup_board_readme() { # project-id slug language
+  local tpl lang=$3 block cur readme short new written=""
+  tpl=$(dirname "$SELF")/../templates
+  [ -d "$tpl/$lang" ] || lang=en
+  block=$(<"$tpl/$lang/board-readme.md")
+  block=${block//\{\{repo\}\}/$2}
+  cur=$(jq -nc --arg id "$1" '{variables: {id: $id}, query: "query($id: ID!) { node(id: $id) { ... on ProjectV2 { readme shortDescription } } }"}' |
+    gh_retry api graphql --input - --jq '.data.node') ||
+    { echo "board README: could not read the Project; skipped"; return 0; }
+  readme=$(jq -r '.readme // ""' <<<"$cur") short=$(jq -r '.shortDescription // ""' <<<"$cur")
+  if [ -z "$readme" ]; then new=$block
+  elif ! grep -qE '^<!-- senior-mode:(begin|end)' <<<"$readme"; then new=$readme$'\n\n'$block
+  # One opening marker, then one closing marker, else awk refuses and the README is left alone.
+  elif ! new=$(BLOCK=$block awk '
+      /^<!-- senior-mode:begin/ { if (seen++) bad = 1; print ENVIRON["BLOCK"]; skip = 1; next }
+      /^<!-- senior-mode:end -->/ { if (!skip) bad = 1; skip = 0; next }
+      !skip { print } END { exit (bad || skip) }' <<<"$readme"); then
+    echo "board README: senior-mode markers broken, README left untouched; restore one begin and one end marker"
+    return 0
+  fi
+  case $lang in
+    fr) desc="Tableau senior-mode : Backlog → Ready → In progress → In review → Done. Voir le README." ;;
+    *) desc="senior-mode board: Backlog → Ready → In progress → In review → Done. See the README." ;;
+  esac
+  [ "$new" = "$readme" ] || written="README"
+  if [ "$short" != "$desc" ] && { [ -z "$short" ] || [[ $short == "Tableau senior-mode"* ]] || [[ $short == "senior-mode board"* ]]; }; then
+    written+="${written:+ and }short description"
+  else
+    desc=$short
+  fi
+  [ -n "$written" ] || return 0
+  project_update "$1" "$(jq -nc --arg r "$new" --arg d "$desc" '{readme: $r, shortDescription: $d}')" ||
+    { echo "board README: could not write it; skipped"; return 0; }
+  echo "board README: written ($written, language $lang)"
+}
+
 # Creates missing board fields with their colours, repairs the options of existing ones.
 setup_fields() {
   local id=$1 fields field want current options
@@ -1373,6 +1414,7 @@ setup_github() {
   mv "$file.tmp" "$file"
   echo "Project #$number $name: linked, fields Status, Priority, Size, Severity, Paths; ids cached in .claude/senior-mode.json"
   setup_board_template "$id" "$how"
+  setup_board_readme "$id" "$slug" "$(jq -r '.language // "en"' "$file")"
   setup_board_workflows "$id"
 
   labels='needs-human|d93f0b|Waiting for a human decision or merge

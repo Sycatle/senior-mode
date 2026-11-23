@@ -15,6 +15,9 @@ fields and built-in workflows come with the copy. It then ensures the fields Sta
 Severity and Paths (text), keeping existing options. Relay `board: the copy lacks ...` (views to add
 by hand, workflows to turn on in the Project's Workflows tab: no API does either). An existing Project is
 never replaced: on `board: the Project lacks ...`, say what is missing and offer `--migrate`.
+It also writes the Project's short description and README in the project language; a rerun rewrites
+only the block between the `senior-mode:begin` and `senior-mode:end` markers (`board README: ... markers broken`:
+the README is left as it is, ask the user to restore the markers).
 
 ## Scanners
 

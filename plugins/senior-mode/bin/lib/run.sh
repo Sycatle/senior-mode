@@ -139,7 +139,7 @@ run_halt() {
   for n in $(run_members "$s"); do
     gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
       echo "#$n: could not label the ticket needs-human" >&2
-    gh api "repos/$RUN_SLUG/issues/$n/comments" -f body="$intro: $reason
+    gh_bound api "repos/$RUN_SLUG/issues/$n/comments" -f body="$intro: $reason
 
 $what \`$log\`. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the worktree \`${RUN_WT[$n]}\`; the Status is unchanged. A person decides what happens next." \
       >/dev/null || echo "#$n: could not comment on the ticket" >&2
@@ -155,7 +155,7 @@ $what \`$log\`. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the workt
 run_giveup() {
   local n=$1 reason=$2
   (item_set "$n" Status Backlog) >/dev/null || echo "#$n: could not set the Status Backlog" >&2
-  gh api "repos/$RUN_SLUG/issues/$n/comments" -f body="An autonomous senior-mode run stopped working on this ticket: $reason
+  gh_bound api "repos/$RUN_SLUG/issues/$n/comments" -f body="An autonomous senior-mode run stopped working on this ticket: $reason
 
 It is back in Backlog. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the worktree \`${RUN_WT[$n]}\`." \
     >/dev/null || echo "#$n: could not comment on the ticket" >&2
@@ -259,7 +259,7 @@ run_merge() {
   sha=$(jq -r '.[0].head.sha' <<<"$2")
   reason=$(run_blocker "$pr" "$sha" "$(jq -c '.[0]' <<<"$2")")
   if [ -z "$reason" ]; then
-    if gh pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
+    if gh_bound pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
       RUN_PRS+=("#$pr")
       for m in "${all[@]}"; do
         RUN_MERGED+=("#$m ${RUN_TITLE[$m]} (pull request #$pr)")
@@ -430,7 +430,7 @@ notify() {
     url="https://github.com/$RUN_SLUG/issues/$n"
     gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
       echo "#$n: could not label it needs-human" >&2
-    gh api "repos/$RUN_SLUG/issues/$n/comments" -f body="@${mention#@} this needs a human ($event): $reason" >/dev/null ||
+    gh_bound api "repos/$RUN_SLUG/issues/$n/comments" -f body="@${mention#@} this needs a human ($event): $reason" >/dev/null ||
       echo "#$n: could not mention $mention" >&2
   fi
   hook=$(config_get notify.webhook)
@@ -450,7 +450,7 @@ notify() {
 run_docs() {
   local wt branch=docs/run-$RUN_STAMP script=$RUN_DIR/docs.sh reason="" rc started=$SECONDS pid limit left stat
   wt=$(worktree_path "$RUN_ROOT" "run-docs-$RUN_STAMP")
-  git fetch -q origin 2>/dev/null || true
+  git_bound fetch -q origin 2>/dev/null || true
   git worktree add -q -b "$branch" "$wt" "$RUN_BASE" 2>/dev/null || {
     echo "docs: no worktree, skipped" >&2
     return 0
@@ -623,7 +623,7 @@ run_prepare() {
   RUN_SLUG=$(repo_slug)
   # The main checkout, even when run from a ticket worktree (they live in its .git, or beside it).
   RUN_ROOT=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
-  git fetch -q origin || echo "senior-mode: could not fetch origin; starting from the last fetched state" >&2
+  git_bound fetch -q origin || echo "senior-mode: could not fetch origin; starting from the last fetched state" >&2
   RUN_BASE=$(default_branch) || die "no default branch found"
   run_guards "$(git rev-parse --path-format=absolute --git-common-dir)"
   # Protected zones as the base branch has them; a branch cannot edit its own.

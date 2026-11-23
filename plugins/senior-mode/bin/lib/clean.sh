@@ -146,7 +146,7 @@ clean() {
   cutoff=$(iso_time $(($(date +%s) - days * 86400)))
   # A tracking ref of a branch deleted on origin would count its commits as pushed. Read-only for the
   # work tree and the branches, so a dry run does it too.
-  if ! git fetch -q --prune origin 2>/dev/null; then
+  if ! git_bound fetch -q --prune origin 2>/dev/null; then
     CLEAN_STALE=true
     echo "senior-mode: could not fetch origin; the tracking branches may be stale, so a branch is kept unless its commits are in the default branch or its pull request" >&2
   fi
@@ -216,7 +216,7 @@ clean() {
 
   # Remote branches whose pull request was merged or closed more than N days ago, and whose tip is still
   # the head of that pull request.
-  if f=$(git ls-remote --heads origin 2>/dev/null); then
+  if f=$(git_bound ls-remote --heads origin 2>/dev/null); then
     while read -r sha ref; do
       branch=${ref#refs/heads/}
       [ "$branch" != "$defname" ] || continue
@@ -237,7 +237,7 @@ clean() {
         continue
       fi
       clean_act "remote branch $branch (pull request #$n ${st,,} ${at%%T*})" \
-        git push -q --force-with-lease="refs/heads/$branch:$sha" origin ":refs/heads/$branch"
+        git_bound push -q --force-with-lease="refs/heads/$branch:$sha" origin ":refs/heads/$branch"
     done <<<"$f"
   else
     echo "senior-mode: could not list the branches of origin; remote branches left alone" >&2

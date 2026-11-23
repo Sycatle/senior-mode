@@ -132,7 +132,7 @@ serve_finish_integrator() {
     RUN_FAILS=0
     run_record "$n" delivered ""
     run_review "$n"
-    gh api "repos/$RUN_SLUG/issues/$old/comments" -f body="Superseded by #$new, which resolves the conflicts with $RUN_BASE." >/dev/null || true
+    gh_bound api "repos/$RUN_SLUG/issues/$old/comments" -f body="Superseded by #$new, which resolves the conflicts with $RUN_BASE." >/dev/null || true
     gh_retry api "repos/$RUN_SLUG/pulls/$old" -X PATCH -f state=closed >/dev/null || echo "#$n: could not close pull request #$old" >&2
     echo "#$n: pull request #$new supersedes #$old"
     return 0
@@ -333,7 +333,7 @@ serve_needs_human() {
   for t in "$pr" "$n"; do
     gh_retry api "repos/$RUN_SLUG/issues/$t/labels" -f 'labels[]=needs-human' >/dev/null || echo "#$n: could not label #$t needs-human" >&2
   done
-  gh api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve: $reason
+  gh_bound api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve: $reason
 
 It is labelled needs-human: a person decides what happens next." >/dev/null || echo "#$n: could not comment on #$pr" >&2
   serve_note "nh$pr" "#$n ${RUN_TITLE[$n]:-}: pull request #$pr, $reason"
@@ -415,9 +415,9 @@ serve_do_merge() {
   local t=$1 pr=$2 sha=$3 err="$SERVE_DIR/$1.merge" queued=false state
   : >"$err"
   if [ "$(serve_auto)" = true ] &&
-    gh pr merge "$pr" --auto --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$err"; then
+    gh_bound pr merge "$pr" --auto --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$err"; then
     queued=true
-  elif ! gh pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$err"; then
+  elif ! gh_bound pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$err"; then
     serve_note "w$pr" "#$t ${RUN_TITLE[$t]:-}: pull request #$pr, the merge failed: $(head -n 1 "$err")"
     return 0
   fi
@@ -437,7 +437,7 @@ serve_do_merge() {
 # when it finds any change (the head has no review status, so the next poll starts a reviewer).
 serve_requalify() {
   local t=$1 pr=$2 old=$3 new=$4 ref=$5 wt log="$SERVE_DIR/$1.check.log" same=false cmd ob nb ci review
-  git fetch -q origin 2>/dev/null || true
+  git_bound fetch -q origin 2>/dev/null || true
   if git cat-file -e "$old^{commit}" 2>/dev/null && git cat-file -e "$new^{commit}" 2>/dev/null &&
     ob=$(git merge-base "$old" "$new") && nb=$(git merge-base "$RUN_BASE" "$new") &&
     git range-diff --no-color "$ob..$old" "$nb..$new" >"$SERVE_DIR/$t.range-diff" 2>/dev/null &&
@@ -470,9 +470,9 @@ serve_requalify() {
     gh_retry api "repos/$RUN_SLUG/statuses/$new" -f state=success -f context=senior-mode/review \
       -f description="carried over from ${old:0:7}: git range-diff shows the same patches" >/dev/null ||
       echo "#$t: could not carry the review over to ${new:0:7}" >&2
-    gh api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve rebased this pull request on $RUN_BASE (\`${old:0:7}\` to \`${new:0:7}\`): \`git range-diff\` shows the same patches, so the review of \`${old:0:7}\` is carried over; check and publish ran again." >/dev/null || true
+    gh_bound api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve rebased this pull request on $RUN_BASE (\`${old:0:7}\` to \`${new:0:7}\`): \`git range-diff\` shows the same patches, so the review of \`${old:0:7}\` is carried over; check and publish ran again." >/dev/null || true
   else
-    gh api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve rebased this pull request on $RUN_BASE (\`${old:0:7}\` to \`${new:0:7}\`): \`git range-diff\` shows changes, so check and publish ran again and a new review is requested." >/dev/null || true
+    gh_bound api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve rebased this pull request on $RUN_BASE (\`${old:0:7}\` to \`${new:0:7}\`): \`git range-diff\` shows changes, so check and publish ran again and a new review is requested." >/dev/null || true
   fi
 }
 
@@ -481,9 +481,9 @@ serve_requalify() {
 # 1 when not, 2 for a conflict.
 serve_rebase() {
   local t=$1 pr=$2 old=$3 ref=$4 new="" i err="$SERVE_DIR/$1.rebase"
-  git fetch -q origin "$ref" 2>/dev/null || true
+  git_bound fetch -q origin "$ref" 2>/dev/null || true
   printf '%s\n' "$old" >"$SERVE_DIR/rebased-$pr"
-  if ! gh pr update-branch "$pr" --rebase -R "$RUN_SLUG" >/dev/null 2>"$err"; then
+  if ! gh_bound pr update-branch "$pr" --rebase -R "$RUN_SLUG" >/dev/null 2>"$err"; then
     rm -f "$SERVE_DIR/rebased-$pr"
     if grep -qi conflict "$err"; then return 2; fi
     serve_note "w$pr" "#$t ${RUN_TITLE[$t]:-}: pull request #$pr, it is behind $RUN_BASE and could not be updated: $(head -n 1 "$err")"
@@ -516,7 +516,7 @@ serve_conflict() {
   fi
   serve_can_launch || return 1
   new=$base-r$k
-  git fetch -q origin 2>/dev/null || true
+  git_bound fetch -q origin 2>/dev/null || true
   wt=$(worktree_path "$RUN_ROOT" "$t-r$k")
   git worktree remove --force "$wt" 2>/dev/null || true
   git branch -D -q "$new" 2>/dev/null || true
@@ -595,7 +595,7 @@ serve_changes() {
 serve_review() {
   local t=$1 pr=$2 sha=$3 ref=$4 wt
   serve_can_launch || return 0
-  git fetch -q origin "$ref" 2>/dev/null || true
+  git_bound fetch -q origin "$ref" 2>/dev/null || true
   wt=$(worktree_path "$RUN_ROOT" "review-$t")
   git worktree remove --force "$wt" 2>/dev/null || true
   if ! git worktree add -q --detach "$wt" "$sha" 2>/dev/null; then

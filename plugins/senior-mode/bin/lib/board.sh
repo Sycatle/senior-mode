@@ -456,7 +456,7 @@ ready() {
     else
       gh_retry api "repos/$slug/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
         echo "#$n: could not label the ticket needs-human" >&2
-      gh api "repos/$slug/issues/$n/comments" -f body="senior-mode: this ticket is not Ready by rule. Missing: $why. Fix it and remove the needs-human label; \`senior-mode ready\` checks it again." \
+      gh_bound api "repos/$slug/issues/$n/comments" -f body="senior-mode: this ticket is not Ready by rule. Missing: $why. Fix it and remove the needs-human label; \`senior-mode ready\` checks it again." \
         >/dev/null || echo "#$n: could not comment on the ticket" >&2
       echo "#$n needs-human: $why"
     fi

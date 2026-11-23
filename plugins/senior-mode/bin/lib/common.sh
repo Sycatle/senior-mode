@@ -54,13 +54,43 @@ repo_slug() {
   printf '%s\n' "${url#*github.com[:/]}"
 }
 
-# Runs gh, retrying up to 3 times with a growing pause when GitHub fails transiently (#21);
-# any other error fails at once. SENIOR_MODE_RETRY_DELAY scales the pause (seconds, default 1).
+# Runs the command $2... for at most $1 seconds (coreutils timeout, which signals the whole process group); without
+# timeout on the machine it runs unbounded. Exit code 124 when it was cut.
+net_bound() {
+  local secs=$1
+  shift
+  if command -v timeout >/dev/null; then timeout -k 5 "$secs" "$@"; else "$@"; fi
+}
+
+# Whether the exit code $1 is that of net_bound cutting a command (124, or 137 when it needed a KILL).
+net_cut() {
+  [ "$1" -eq 124 ] || [ "$1" -eq 137 ]
+}
+
+# gh for the calls of the daemon (#382): cut after SENIOR_MODE_GH_TIMEOUT seconds (default 60), so that a connection
+# that died half-way cannot stall serve. A cut is a transient failure: "timed out" on stderr, as gh_retry reads it.
+gh_bound() {
+  local rc=0 secs=${SENIOR_MODE_GH_TIMEOUT:-60}
+  net_bound "$secs" gh "$@" || rc=$?
+  ! net_cut "$rc" || echo "gh timed out after ${secs}s" >&2
+  return "$rc"
+}
+
+# git for the network calls of the daemon (fetch, push, ls-remote): cut after SENIOR_MODE_GIT_TIMEOUT seconds (default 120).
+git_bound() {
+  local rc=0 secs=${SENIOR_MODE_GIT_TIMEOUT:-120}
+  net_bound "$secs" git "$@" || rc=$?
+  ! net_cut "$rc" || echo "git timed out after ${secs}s" >&2
+  return "$rc"
+}
+
+# Runs gh (bounded, gh_bound), retrying up to 3 times with a growing pause when GitHub fails transiently (#21) or does
+# not answer in time (#382); any other error fails at once. SENIOR_MODE_RETRY_DELAY scales the pause (seconds, default 1).
 gh_retry() {
   local attempt err out
   err=$(mktemp)
   for attempt in 1 2 3 4; do
-    if out=$(gh "$@" 2>"$err"); then
+    if out=$(gh_bound "$@" 2>"$err"); then
       rm -f "$err"
       [ -z "$out" ] || printf '%s\n' "$out"
       return 0

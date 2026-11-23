@@ -224,7 +224,7 @@ ASSOC_QUERY='query($owner: String!, $name: String!, $sha: GitObjectID!) { reposi
 # the base branch, so a branch cannot lift its own zone.
 security_verdict() {
   local sha=$1 base globs files zones slug answer issues n size
-  GIT_TERMINAL_PROMPT=0 git fetch -q origin 2>/dev/null || true # the base as it is now; offline, the last fetch stands
+  GIT_TERMINAL_PROMPT=0 git_bound fetch -q origin 2>/dev/null || true # the base as it is now; offline, the last fetch stands
   base=$(default_branch) || { echo "pending required: no default branch to compare with"; return; }
   if git cat-file -e "$base:.claude/senior-mode.json" 2>/dev/null; then
     globs=$(git show "$base:.claude/senior-mode.json" | jq -c '.protected // []') || globs=null

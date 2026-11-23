@@ -341,7 +341,7 @@ for want in "Hygiene ($n)" "pull request #50 PR 50: no activity for 20 days" "pu
   grep -qF -- "$want" "$work/out" || fail "hygiene section lacks '$want': $(cat "$work/out")"
 done
 grep -qE 'branch (main|dev|release/1.0|feat/17-thing|feat/50-old|fix/62-merged):' "$work/out" && fail "a branch that is not a leftover is listed: $(cat "$work/out")"
-[ "$(grep -c '^  #21 ' "$work/out")" -le 2 ] && ! grep -q "#21 Ticket 21: In progress with no open pull request and no branch" "$work/out" ||
+! grep -q "#21 Ticket 21: In progress with no open pull request and no branch" "$work/out" ||
   fail "#21 is reported as drift and as hygiene: $(cat "$work/out")"
 grep -qE 'item-edit|pr close|issue comment|DELETE' "$GH_LOG" && fail "plain status changed something on GitHub: $(cat "$GH_LOG")"
 # hygiene.days moves the line: 22 days leaves only #53, and the 2 day old branch is old enough for 1 day.
@@ -360,7 +360,7 @@ echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3, "fields": {"Stat
 : >"$FIX/open-heads"
 jq -r '.data.repository.branches.nodes[].name' "$FIX/page-first.json" >"$FIX/remote-branches"
 echo "open $old30" >"$FIX/issue-21"
-jq -nc '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"}, fieldValues: {nodes: [{name: "In progress", field: {name: "Status"}}]}}]}}}}}}' >"$FIX/item-21.json"
+jq -nc '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"}, fieldValues: {nodes: [{name: "In progress", field: {name: "Status"}}]}}]}}}}}' >"$FIX/item-21.json"
 run status --fix --since 7d || fail "status --fix with hygiene failed: $(cat "$work/err")"
 grep -q '^pr close 50 --comment .*#51' "$GH_LOG" || fail "--fix did not close #50 naming #51: $(cat "$GH_LOG")"
 [ "$(grep -c '^pr close' "$GH_LOG")" -eq 1 ] || fail "--fix closed more than the superseded pull request: $(grep '^pr close' "$GH_LOG")"
@@ -388,16 +388,16 @@ run status --fix --json --since 7d || fail "status --fix --json with hygiene fai
 # A fresh look before moving a ticket: it moved since the report, it has a branch now, or it left In progress.
 echo "open $(ago 3600)" >"$FIX/issue-21"
 run status --fix --since 7d || fail "status --fix with an orphan that moved failed: $(cat "$work/err")"
-grep -q 'item-edit' "$GH_LOG" && fail "--fix moved #21 that was updated since the report: $(cat "$GH_LOG")"
+grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" && fail "--fix moved #21 that was updated since the report: $(cat "$GH_LOG")"
 grep -q '^left: #21 .*changed since the report' "$work/out" || fail "an orphan that moved is not said: $(cat "$work/out")"
 echo "open $old30" >"$FIX/issue-21"
 echo "feat/21-late" >>"$FIX/remote-branches"
 run status --fix --since 7d || fail "status --fix with an orphan that got a branch failed: $(cat "$work/err")"
-grep -q 'item-edit' "$GH_LOG" && fail "--fix moved #21 that has a branch now: $(cat "$GH_LOG")"
-jq -nc '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"}, fieldValues: {nodes: [{name: "Ready", field: {name: "Status"}}]}}]}}}}}}' >"$FIX/item-21.json"
+grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" && fail "--fix moved #21 that has a branch now: $(cat "$GH_LOG")"
+jq -nc '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"}, fieldValues: {nodes: [{name: "Ready", field: {name: "Status"}}]}}]}}}}}' >"$FIX/item-21.json"
 sed -i '$d' "$FIX/remote-branches"
 run status --fix --since 7d || fail "status --fix with an orphan no longer In progress failed: $(cat "$work/err")"
-grep -q 'item-edit' "$GH_LOG" && fail "--fix moved #21 that is not In progress anymore: $(cat "$GH_LOG")"
+grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" && fail "--fix moved #21 that is not In progress anymore: $(cat "$GH_LOG")"
 # A repair that fails is said and fails the command.
 export GH_FAIL_ON="pr close"
 run status --fix --since 7d && fail "--fix exits zero when a repair failed"

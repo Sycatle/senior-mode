@@ -1,0 +1,8 @@
+{
+  "$schema": "../schema/profile.schema.json",
+  "description": "The process of ADR 0016: no independent review, a pull request merges once check is green. Lifting the review needs an accepted ADR of the repository, named in process.lifts.",
+  "extends": "strict",
+  "gates": {
+    "review": false
+  }
+}

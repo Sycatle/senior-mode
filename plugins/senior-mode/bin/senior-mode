@@ -8,7 +8,7 @@ SELF=$(readlink -f "${BASH_SOURCE[0]}")
 LIB=$(dirname "$SELF")/lib
 
 usage() {
-  die "usage: senior-mode config get <key> | config validate [--json] | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish] | clean [--dry-run] [--days N] | statusline | retro [--since <dur> | --iteration [<name>]] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions] [--migrate|--upgrade] [--dry-run] | setup repo [--command <name>=<command>]... | setup remove [--apply] | setup statusline"
+  die "usage: senior-mode config get <key> | config explain <key> | config validate [--json] | override list | override show <file> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish] | clean [--dry-run] [--days N] | statusline | retro [--since <dur> | --iteration [<name>]] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions] [--migrate|--upgrade] [--dry-run] | setup repo [--command <name>=<command>]... | setup remove [--apply] | setup statusline"
 }
 
 # The modules hold definitions only: function bodies and constants, no statement runs at load time.
@@ -130,9 +130,14 @@ case "${1:-}" in
   config)
     case ${2:-} in
       get) [ $# -eq 3 ] || usage; config_get "$3" ;;
+      explain) [ $# -eq 3 ] || usage; config_explain "$3" ;;
       validate) shift 2; config_validate "$@" ;;
       *) usage ;;
     esac
+    ;;
+  override)
+    shift
+    override "$@"
     ;;
   item)
     case ${2:-} in

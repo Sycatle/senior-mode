@@ -298,7 +298,9 @@ pr_external() {
 # enforces protection, no needs-human, the three statuses green on the head, no protected zone among the files
 # GitHub would merge.
 run_blocker() {
-  local pr=$1 sha=$2 missing="" files zones
+  local pr=$1 sha=$2 missing="" files zones need='["senior-mode/ci", "senior-mode/review", "senior-mode/security"]'
+  # A profile that lifts the independent review (an accepted ADR, process.lifts) drops its status from the bounds.
+  [ "$(config_get process.gates.review 2>/dev/null)" != false ] || need='["senior-mode/ci", "senior-mode/security"]'
   if [ "$RUN_MERGE" != true ]; then
     echo "merging is off (autonomy.merge)"
   elif pr_external "$3"; then
@@ -308,7 +310,7 @@ run_blocker() {
   elif jq -e '[.labels[]?.name] | index("needs-human")' <<<"$3" >/dev/null; then
     echo "labelled needs-human"
   # github.requiredChecks false (ADR 0016): the ruleset requires no status, so none is waited for.
-  elif [ "$RUN_REQUIRED" = true ] && ! missing=$(gh_retry api "repos/$RUN_SLUG/commits/$sha/status" | jq -r '["senior-mode/ci", "senior-mode/review", "senior-mode/security"]
+  elif [ "$RUN_REQUIRED" = true ] && ! missing=$(gh_retry api "repos/$RUN_SLUG/commits/$sha/status" | jq -r --argjson need "$need" '$need
       - [.statuses[] | select(.state == "success") | .context] | join(" and ")'); then
     echo "its statuses could not be read"
   elif [ "$RUN_REQUIRED" = true ] && [ -n "$missing" ]; then

@@ -785,6 +785,8 @@ SENIOR_MODE_NOW=1800000000 once || fail "AC: serve failed: $(cat "$work/out")"
 (cd "$repo" && "$cli" serve --bogus) >"$work/out" 2>&1 && fail "I: an unknown option was accepted"
 grep -q 'usage:.*serve' "$work/out" || fail "I: usage does not name serve: $(cat "$work/out")"
 config '{}' '{"interval": 0}'
+# With a last valid config the daemon keeps it (test-config-layers.sh); with none, the keys stand and serve refuses.
+rm -f "$repo"/.git/senior-mode/config.valid.json "$repo"/.git/senior-mode/config.cache.json
 once && fail "I: serve.interval 0 accepted"
 grep -q 'serve.interval must be' "$work/out" || fail "I: bad interval not explained: $(cat "$work/out")"
 echo '{}' >"$repo/.claude/senior-mode.json"

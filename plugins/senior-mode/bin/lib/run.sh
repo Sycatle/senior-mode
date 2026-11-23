@@ -32,6 +32,41 @@ run_entry() {
   echo "${m// /+}"
 }
 
+# The flags every claude session of run and serve gets, for its directory $1, in SESSION_FLAGS (#348). By default a
+# session sees only the project's settings and MCP servers and the plugin's own hooks: not the owner's user CLAUDE.md,
+# plugins, MCP servers or settings, so it behaves the same on any machine. The plugin is then loaded with --plugin-dir,
+# as user settings no longer enable it. Login credentials are not settings and still work. autonomy.userSettings true
+# brings the user's configuration back. Another agent than claude gets only SENIOR_MODE_PLUGIN_DIR, as before.
+run_session_flags() {
+  local plugin=${SENIOR_MODE_PLUGIN_DIR:-}
+  SESSION_FLAGS=()
+  if [ "$(config_get agent.command)" = claude ] && [ "$(config_get autonomy.userSettings)" != true ]; then
+    SESSION_FLAGS+=(--setting-sources project,local --strict-mcp-config)
+    [ ! -f "$1/.mcp.json" ] || SESSION_FLAGS+=(--mcp-config "$1/.mcp.json")
+    plugin=${plugin:-$(dirname "$(dirname "$SELF")")}
+  fi
+  [ -z "$plugin" ] || SESSION_FLAGS+=(--plugin-dir "$plugin")
+}
+
+# Marks the directory $1 as trusted for Claude Code before a session starts there (#350): a headless session in an
+# untrusted workspace ignores the project's permissions.allow and says so in its log (its hooks and env do load).
+# Trust is kept per path in projects[<path>].hasTrustDialogAccepted of .claude.json (CLAUDE_CONFIG_DIR, else
+# ~/.claude.json) and is not inherited from a parent, so each worktree gets its own entry. Written only when missing,
+# atomically, under a lock of ours; a missing or unreadable file is left alone (nothing is signed in there).
+run_trust() {
+  local cfg
+  [ "$(config_get agent.command)" = claude ] || return 0
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then cfg=$CLAUDE_CONFIG_DIR/.claude.json; else cfg=$HOME/.claude.json; fi
+  [ -f "$cfg" ] || return 0
+  (
+    flock -w 10 9 || exit 0
+    jq -e --arg p "$1" '.projects[$p].hasTrustDialogAccepted == true' "$cfg" >/dev/null 2>&1 && exit 0
+    umask 077
+    jq --arg p "$1" '.projects[$p].hasTrustDialogAccepted = true' "$cfg" >"$cfg.senior-mode.tmp" 2>/dev/null &&
+      mv "$cfg.senior-mode.tmp" "$cfg" || rm -f "$cfg.senior-mode.tmp"
+  ) 9>"$cfg.senior-mode.lock" || true
+}
+
 # Can run give a background session a process group of its own? setsid (util-linux), else perl's
 # POSIX::setsid (always on macOS). Without either, a session that outlives the timeout cannot be stopped.
 run_can_detach() {
@@ -55,19 +90,23 @@ run_detach() {
 # leave <n>.exit, and run would wait for the whole timeout.
 # shellcheck disable=SC2016 # lines of the script, expanded when it runs
 run_launch() {
-  local n=$1 model=$2 script=$RUN_DIR/$1.sh cmd rc=0
+  local n=$1 model=$2 script=$RUN_DIR/$1.sh cmd rc=0 dir
+  local -a SESSION_FLAGS
   rm -f "$RUN_DIR/$n.outcome" "$RUN_DIR/$n.exit" "$RUN_DIR/$n.pgid"
   RUN_MODEL[$n]=$model
   RUN_STARTED[$n]=$SECONDS
+  dir=${RUN_CWD[$n]:-${RUN_WT[$n]}}
+  run_session_flags "$dir"
+  run_trust "$dir"
   {
     echo '#!/usr/bin/env bash'
     # Its process group, for run_timeout to kill the session with everything it started.
     printf 'ps -o pgid= -p $$ | tr -d " " >%q\n' "$RUN_DIR/$n.pgid"
-    printf 'cd %q || exit 1\n' "${RUN_CWD[$n]:-${RUN_WT[$n]}}"
+    printf 'cd %q || exit 1\n' "$dir"
     # Through `slot` (#153): a slot of its own, among the ${parallel:-autonomy.parallel} of the run.
     printf 'SENIOR_MODE_RUN=1 %sSENIOR_MODE_RUN_OUTCOME=%q SENIOR_MODE_SLOTS=%q %q slot -- %q -p --model %q --permission-mode bypassPermissions --output-format json' \
       "${RUN_ROLE[$n]:+SENIOR_MODE_ROLE=${RUN_ROLE[$n]} }" "$RUN_DIR/$n.outcome" "${parallel:-$(config_get autonomy.parallel)}" "$SELF" "$RUN_CLAUDE" "$model"
-    [ -z "${SENIOR_MODE_PLUGIN_DIR:-}" ] || printf ' --plugin-dir %q' "$SENIOR_MODE_PLUGIN_DIR"
+    [ ${#SESSION_FLAGS[@]} -eq 0 ] || printf ' %q' "${SESSION_FLAGS[@]}"
     printf ' "$(cat %q)" >%q 2>%q\n' "$RUN_DIR/$n.prompt" "$RUN_DIR/$n-$model.json" "$RUN_DIR/$n-$model.log"
     printf 'echo $? >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit"
   } >"$script"
@@ -466,12 +505,15 @@ notify() {
 # shellcheck disable=SC2016 # lines of the script, expanded when it runs
 run_docs() {
   local wt branch=docs/run-$RUN_STAMP script=$RUN_DIR/docs.sh reason="" rc started=$SECONDS pid limit left stat
+  local -a SESSION_FLAGS
   wt=$(worktree_path "$RUN_ROOT" "run-docs-$RUN_STAMP")
   git_bound fetch -q origin 2>/dev/null || true
   git worktree add -q -b "$branch" "$wt" "$RUN_BASE" 2>/dev/null || {
     echo "docs: no worktree, skipped" >&2
     return 0
   }
+  run_session_flags "$wt"
+  run_trust "$wt"
   printf "Pull requests %s were just merged on %s. Bring the living docs up to date with them (README, architecture, user-facing changelog), with the project's docs skill if it has one. If nothing needs to change, stop. Otherwise commit on branch %s, run senior-mode check, push and open a pull request; never merge it.\n" \
     "${RUN_PRS[*]}" "$RUN_SLUG" "$branch" >"$RUN_DIR/docs.prompt"
   {
@@ -479,7 +521,7 @@ run_docs() {
     printf 'ps -o pgid= -p $$ | tr -d " " >%q\n' "$RUN_DIR/docs.pgid"
     printf 'cd %q || exit 1\n' "$wt"
     printf 'SENIOR_MODE_RUN=1 %q -p --model sonnet --permission-mode bypassPermissions --output-format json' "$RUN_CLAUDE"
-    [ -z "${SENIOR_MODE_PLUGIN_DIR:-}" ] || printf ' --plugin-dir %q' "$SENIOR_MODE_PLUGIN_DIR"
+    [ ${#SESSION_FLAGS[@]} -eq 0 ] || printf ' %q' "${SESSION_FLAGS[@]}"
     printf ' "$(cat %q)" >%q 2>%q\n' "$RUN_DIR/docs.prompt" "$RUN_DIR/docs.json" "$RUN_DIR/docs.log"
     printf 'echo $? >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/docs.exit" "$RUN_DIR/docs.exit" "$RUN_DIR/docs.exit"
   } >"$script"
@@ -556,6 +598,7 @@ run_probe_stop() {
 # seconds (default 3600) have passed, so a cron tick does not start a session every time.
 run_probe() {
   local state=$1/senior-mode/probe failed=$1/senior-mode/probe-failed tmp why="" rc=0 pid="" dog="" ss="" last now
+  local -a SESSION_FLAGS
   [ "$(cat "$state" 2>/dev/null)" != "$(date +%F)" ] || return 0
   mkdir -p "$1/senior-mode"
   last=$(sed -n 1p "$failed" 2>/dev/null) || last=""
@@ -571,9 +614,11 @@ run_probe() {
   trap 'run_probe_cleanup; exit 130' INT
   trap 'run_probe_cleanup; exit 143' TERM
   ! command -v setsid >/dev/null || ss=setsid
+  # With the flags of a ticket session, so the probe proves the guards load the way the sessions load them.
+  run_session_flags "$tmp/probe"
   (cd "$tmp/probe" && SENIOR_MODE_RUN=1 exec ${ss:+"$ss"} "$RUN_CLAUDE" -p --model haiku \
     --permission-mode bypassPermissions --output-format stream-json --verbose \
-    ${SENIOR_MODE_PLUGIN_DIR:+--plugin-dir "$SENIOR_MODE_PLUGIN_DIR"} \
+    ${SESSION_FLAGS[@]+"${SESSION_FLAGS[@]}"} \
     "This is a guard probe. Run exactly this one Bash command and nothing else: \`git -c core.hooksPath=/dev/null init -q $tmp/ran\`. If a hook denies it, do not retry and do not work around it: answer with one line saying it was denied." \
     >"$tmp/out" 2>&1) &
   pid=$!
@@ -616,7 +661,8 @@ run_guards() {
   hooks=$root/hooks/hooks.json
   [ "$(config_get agent.command)" = claude ] || return 0
   [ -f "$hooks" ] || die "no hooks.json at $hooks: the guards would not run in the sessions; nothing was started."
-  [ -n "${SENIOR_MODE_PLUGIN_DIR:-}" ] || run_plugin_enabled ||
+  # Unless autonomy.userSettings brings the user's settings back, sessions load the plugin with --plugin-dir.
+  [ -n "${SENIOR_MODE_PLUGIN_DIR:-}" ] || [ "$(config_get autonomy.userSettings)" != true ] || run_plugin_enabled ||
     die "the senior-mode plugin is not enabled for ticket sessions (enabledPlugins in ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json or in .claude/settings.json committed on $RUN_BASE; an untracked settings.local.json is not in their worktrees): the guards would not run; nothing was started."
   run_probe "$1"
 }

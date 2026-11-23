@@ -30,7 +30,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] | clean [--dry-run] [--days N] | statusline | retro [--since <dur>] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] | clean [--dry-run] [--days N] | statusline | retro [--since <dur>] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -300,6 +300,15 @@ issue_create() {
     body=$(mktemp)
     printf '%s\n\nsecurity-id: %s\n' "$text" "$sid" >"$body"
   fi
+  # What an unattended session files ends with `filed-by: agent`: `ready` applies its stricter rule to it (#154).
+  if [ -n "${SENIOR_MODE_RUN:-}" ]; then
+    if [ -z "$sid" ]; then
+      text=$(cat "$body")
+      body=$(mktemp)
+      printf '%s\n' "$text" >"$body"
+    fi
+    printf '\nfiled-by: agent\n' >>"$body"
+  fi
 
   # The number of an open issue with this title, then its type labels other than the asked one.
   # With a fingerprint only the security-id matches: another issue of the same title is left alone.
@@ -328,7 +337,7 @@ issue_create() {
     echo "#$number $title (created)"
     status=${status:-Backlog}
   fi
-  [ -z "$sid" ] || rm -f "$body"
+  [ -z "$sid${SENIOR_MODE_RUN:-}" ] || rm -f "$body"
   [ -z "$status" ] || fields=(Status "$status" "${fields[@]}")
   item_set "$number" "${fields[@]}"
   for b in ${blockers[@]+"${blockers[@]}"}; do
@@ -1825,6 +1834,148 @@ protected_match() {
             else gsub("(?<c>[.+^$(){}|\\[\\]\\\\])"; "\\" + .c) end] | join("")) + "$";
     ($g | map(re)) as $res
     | inputs | select(. as $f | any($res[]; . as $r | $f | test($r)))'
+}
+
+# The open tickets of the Project with what the Definition of Ready reads (#154), as a JSON array: number,
+# status, priority, size, severity, labels, body, `agent` (the body ends with the `filed-by: agent` line that
+# `issue create` adds in an unattended session) and `paths`: the globs of the text field Paths, split on
+# commas and spaces, brackets and quotes ignored. Paths is read here, not from the board query of `pick`: a
+# Project without the field (not set up yet) gives no Paths, which the Definition of Ready counts as missing.
+# shellcheck disable=SC2016 # GraphQL and jq programs, not shell
+READY_QUERY='query($project: ID!, $after: String) { node(id: $project) { ... on ProjectV2 { items(first: 100, after: $after) {
+  pageInfo { hasNextPage endCursor }
+  nodes { fieldValues(first: 20) { nodes {
+      ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
+      ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } }
+    content { ... on Issue { number state body labels(first: 20) { nodes { name } } } } } } } } }'
+# shellcheck disable=SC2016 # a jq program, not shell
+READY_ITEMS='def single($f): [.fieldValues.nodes[]? | select(.field.name == $f and .name != null) | .name][0];
+  def text($f): [.fieldValues.nodes[]? | select(.field.name == $f and .text != null) | .text][0];
+  [.[].data.node.items.nodes[]? | select(.content.number != null) | .content as $c
+    | {number: $c.number, open: ($c.state == "OPEN"), body: ($c.body // ""), labels: [$c.labels.nodes[].name],
+       status: single("Status"), priority: single("Priority"), size: single("Size"), severity: single("Severity"),
+       agent: (($c.body // "") | test("(^|\n)filed-by: agent[ \t]*(\n|$)")),
+       paths: ((text("Paths") // "") | gsub("[\\[\\]\"\u0027]"; "") | [split("[,\\s]+"; null)[] | select(length > 0)])}]'
+ready_items() {
+  local file project slug page pages="[]" after="" more=true count=0 err
+  file=$(config_file)
+  project=$(jq -r '.project.id // empty' "$file")
+  [ -n "$project" ] || die "no Project in .claude/senior-mode.json; run /senior-mode:setup"
+  slug=$(repo_slug)
+  while [ "$more" = true ]; do
+    page=$(jq -nc --arg q "$READY_QUERY" --arg p "$project" --arg a "$after" \
+      '{query: $q, variables: ({project: $p} + (if $a == "" then {} else {after: $a} end))}' | gh_retry api graphql --input -) ||
+      die "cannot read the Project from GitHub"
+    err=$(jq -r '.errors[0].message // empty' <<<"$page" 2>/dev/null) || die "GitHub answered something that is not JSON"
+    [ -z "$err" ] || die "GitHub refused the Project query: $err"
+    pages=$(jq -c --argjson p "$page" '. + [$p]' <<<"$pages")
+    more=$(jq -r '.data.node.items.pageInfo.hasNextPage // false' <<<"$page")
+    after=$(jq -r '.data.node.items.pageInfo.endCursor // empty' <<<"$page")
+    count=$((count + 1))
+    [ "$count" -lt 20 ] || break
+  done
+  jq -c "$READY_ITEMS" <<<"$pages" || die "could not read the Project"
+}
+
+# The protected globs, JSON, as the default branch has them (a branch cannot lift its own zone), else as the
+# working tree has them.
+ready_zones() {
+  local base zones
+  if base=$(default_branch) && git cat-file -e "$base:.claude/senior-mode.json" 2>/dev/null; then
+    zones=$(git show "$base:.claude/senior-mode.json" | jq -c '.protected // []') || zones=null
+  else
+    zones=$(jq -c '.protected // []' "$(config_file)")
+  fi
+  jq -e 'type == "array" and all(type == "string")' <<<"$zones" >/dev/null ||
+    die "protected in .claude/senior-mode.json must be an array of globs"
+  printf '%s\n' "$zones"
+}
+
+# Whether the Paths glob $2 may reach a protected zone of the JSON list $1. An approximation, on the side of
+# caution: the glob, or a file name made of it (`*` as x, its fixed start plus a name), matches a protected
+# glob as `protected` reads them, or a protected glob anchored in a directory shares its fixed start with it.
+ready_in_zone() {
+  local zones=$1 path=${2#/} lit zone fixed
+  lit=${path%%[*?[]*}
+  [ -z "$(printf '%s\n' "$path" "${path//[*?]/x}" "${lit}x" | protected_match "$zones")" ] || return 0
+  [ -n "$lit" ] || return 1
+  while IFS= read -r zone; do
+    zone=${zone#/}
+    [[ $zone == */* ]] || continue
+    fixed=${zone%%[*?[]*}
+    [[ $fixed == "$lit"* || $lit == "$fixed"* ]] && return 0
+  done < <(jq -r '.[]' <<<"$zones")
+  return 1
+}
+
+# What stops the ticket $1 (an item of ready_items) from being Ready, as a JSON array of reasons, empty when
+# nothing does. The Definition of Ready for any ticket: acceptance criteria (a list under an "Acceptance
+# criteria" heading), Size, Priority, Paths. A ticket an agent filed, with $2 the protected globs: also size S,
+# no high or critical security severity, no Paths in a protected zone.
+# shellcheck disable=SC2016 # a jq program, not shell
+ready_missing() {
+  local it=$1 zones=$2 reasons hits="" p
+  reasons=$(jq -c '[(if (.body | test("(^|\n)#{1,6}[ \t]*acceptance criteria[ \t]*\n+[ \t]*([-*]|[0-9]+[.)])[ \t]+\\S"; "i")) then empty else "acceptance criteria" end),
+    (if .size == null then "Size" else empty end), (if .priority == null then "Priority" else empty end),
+    (if (.paths | length) == 0 then "Paths" else empty end),
+    (if .agent then
+      (if .size != null and .size != "S" then "size \(.size) (a ticket an agent filed is Ready only when S)" else empty end),
+      (if .severity == "high" or .severity == "critical" then "\(.severity) security severity (a ticket an agent filed is never Ready by rule)" else empty end)
+     else empty end)]' <<<"$it")
+  if jq -e .agent <<<"$it" >/dev/null; then
+    while IFS= read -r p; do
+      ! ready_in_zone "$zones" "$p" || hits+=${hits:+, }$p
+    done < <(jq -r '.paths[]' <<<"$it")
+    [ -z "$hits" ] || reasons=$(jq -c --arg h "$hits" '. + ["protected zone: \($h)"]' <<<"$reasons")
+  fi
+  printf '%s\n' "$reasons"
+}
+
+# senior-mode ready [--pr <n>] [--dry-run]: tickets become Ready by rule, with no human step (#154).
+# Candidates are the Backlog tickets without `needs-human` or `needs-info`: with --pr, those the merged
+# framing pull request n (branch docs/...) names; without it, those an agent filed. A ticket with nothing
+# missing (see ready_missing) is set Ready; any other gets `needs-human` and a comment that says what is
+# missing, and is left alone until a person removes the label. --dry-run only says what would happen.
+ready() {
+  local pr="" dry=false slug info items zones nums="null" it n why
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --pr)
+        [[ ${2:-} =~ ^[1-9][0-9]*$ ]] || usage
+        pr=$2
+        shift
+        ;;
+      --dry-run) dry=true ;;
+      *) usage ;;
+    esac
+    shift
+  done
+  slug=$(repo_slug)
+  if [ -n "$pr" ]; then
+    info=$(gh_retry pr view "$pr" --repo "$slug" --json state,headRefName,body) || die "cannot read pull request #$pr"
+    [ "$(jq -r '.state' <<<"$info")" = MERGED ] || die "pull request #$pr is not merged: its tickets are not Ready until it is"
+    [[ $(jq -r '.headRefName' <<<"$info") == docs/* ]] ||
+      die "pull request #$pr is not a framing pull request (its branch is not docs/...)"
+    nums=$(jq -c --argjson pr "$pr" '[(.body // "") | scan("#([0-9]+)") | .[0] | tonumber | select(. != $pr)] | unique' <<<"$info")
+  fi
+  items=$(ready_items) || exit 1
+  zones=$(ready_zones) || exit 1
+  while IFS= read -r it; do
+    n=$(jq -r '.number' <<<"$it")
+    why=$(ready_missing "$it" "$zones" | jq -r 'join(", ")')
+    if [ -z "$why" ]; then
+      if [ "$dry" = true ]; then echo "#$n would be Ready"; else item_set "$n" Status Ready || echo "#$n: could not set Ready" >&2; fi
+    elif [ "$dry" = true ]; then
+      echo "#$n would get needs-human: $why"
+    else
+      gh_retry api "repos/$slug/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
+        echo "#$n: could not label the ticket needs-human" >&2
+      gh api "repos/$slug/issues/$n/comments" -f body="senior-mode: this ticket is not Ready by rule. Missing: $why. Fix it and remove the needs-human label; \`senior-mode ready\` checks it again." \
+        >/dev/null || echo "#$n: could not comment on the ticket" >&2
+      echo "#$n needs-human: $why"
+    fi
+  done < <(jq -c --argjson nums "$nums" '.[] | select(.open and .status == "Backlog" and (.labels | index("needs-human") | not)
+    and (.labels | index("needs-info") | not)) | select(if $nums == null then .agent else (.number | IN($nums[])) end)' <<<"$items")
 }
 
 # What the hygiene report reads of a pull request and of a branch (the board query and its follow-up).
@@ -4243,6 +4394,10 @@ case "${1:-}" in
   slot)
     shift
     slot "$@"
+    ;;
+  ready)
+    shift
+    ready "$@"
     ;;
   secret-scan)
     [ $# -eq 1 ] || usage

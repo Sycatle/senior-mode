@@ -3,6 +3,7 @@
 # the REST calls from fixtures in $FIX; claude plays a ticket session from $FIX/claude-<n>-<model>
 # (line 1: the outcome to write, empty for none; line 2: "pr" to open a pull request; line 3: "hang" to
 # never end, with a child process, recorded in $FIX/pids-<n>, to check that a killed session leaves none;
+# "die": the session script is killed, so no exit file is ever written;
 # "decoy": the same, but the session's recorded process group is swapped for another group, whose leader is
 # not the session's script, to check that run kills nothing it does not recognise).
 # A claude session whose prompt says "guard probe" is the daily probe of #117: $FIX/probe says whether the
@@ -120,6 +121,7 @@ if [ "$(sed -n 3p "$fx")" = hang ]; then
   echo "$$ $!" >"$FIX/pids-$n"
   wait
 fi
+[ "$(sed -n 3p "$fx")" != die ] || { kill -9 "$PPID"; exit 0; }
 if [ "$(sed -n 3p "$fx")" = decoy ]; then
   setsid sleep 301 &
   decoy=$!
@@ -803,6 +805,36 @@ grep -q 'pr merge 147' "$GH_LOG" || fail "S: #47 not merged: $(cat "$GH_LOG")"
 grep -q 'Merged.*#47' "$work/out" || fail "S: report misses the merge of #47: $(cat "$work/out")"
 grep -q 'Status not set to Done.*#47' "$work/out" || fail "S: report misses #47 left off Done: $(cat "$work/out")"
 grep -q 'Status not set to Done.*#48' "$work/out" && fail "S: #48 was set Done, but is reported: $(cat "$work/out")"
+
+# T: a ticket session script that dies without leaving its exit file (#242) is noticed at once, not after the
+# timeout: needs-human, a comment with the log, a failed record, one failure for the breaker, not retried on
+# Opus, and not reported as a timeout. #151 is never started.
+config '{"maxConsecutiveFailures": 1, "sessionTimeout": 1}'
+board 150 '[]' 151 '[]'
+session 150-sonnet "" "" die
+session 151-sonnet delivered pr
+SECONDS=0
+SENIOR_MODE_TIMEOUT_UNIT=30 run || fail "T: run failed on a session script that died: $(cat "$work/out")"
+[ "$SECONDS" -lt 20 ] || fail "T: run waited for the timeout on a session script that died ($SECONDS s)"
+grep -q 'app-150 opus' "$CLAUDE_LOG" && fail "T: a dead session was retried on Opus"
+grep -q 'app-151' "$CLAUDE_LOG" && fail "T: the breaker did not count the dead session"
+grep -q 'issues/150/labels.*needs-human' "$GH_LOG" || fail "T: #150 not labelled needs-human: $(cat "$GH_LOG")"
+grep -q '150-sonnet.log' "$GH_LOG" || fail "T: no comment with the log path on #150"
+grep -q 'item-edit.*--single-select-option-id o0' "$GH_LOG" && fail "T: #150 was set back to Backlog"
+grep -q 'Failed.*#150.*ended without leaving its exit code' "$work/out" || fail "T: report misses the dead session: $(cat "$work/out")"
+grep -q 'timed out' "$work/out" && fail "T: a dead session is reported as a timeout: $(cat "$work/out")"
+jq -e '.outcome == "failed" and .escalated == false and (.reason | test("ended without leaving its exit code"))' \
+  "$repo/.git/senior-mode/runs/"*"/150.json" >/dev/null || fail "T: #150 not recorded as a dead session"
+# The poll never sleeps past the timeout: with a 10 s poll and a 2 s timeout the session is stopped after about 2 s.
+config '{"sessionTimeout": 1}'
+board 152 '[]'
+session 152-sonnet "" "" hang
+SECONDS=0
+SENIOR_MODE_POLL=10 SENIOR_MODE_TIMEOUT_UNIT=2 run || fail "T: run failed: $(cat "$work/out")"
+[ "$SECONDS" -lt 8 ] || fail "T: the ticket loop slept past the 2 s timeout ($SECONDS s)"
+grep -q 'Failed.*#152.*timed out after 1 minute' "$work/out" || fail "T: report misses the timeout of #152: $(cat "$work/out")"
+read -r -a pids <"$FIX/pids-152"
+for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
 
 # E: nothing Ready, bad arguments.
 config '{}'

@@ -320,7 +320,10 @@ command, not a model, applies these bounds:
   stops too, but not a process that left the group. The ticket gets the `needs-human` label and a
   comment with the log path, counts as a failure for the circuit breaker, and is not retried on Opus:
   a stuck session is not failed work ([ADR 0014](../adr/0014-model-escalation-in-runs.md)). Its Status
-  stays In progress; the label is the signal. Background sessions are started with `setsid`, or with
+  stays In progress; the label is the signal. A session script that dies without leaving its exit
+  file (killed from outside) is noticed at the next poll, not at the timeout, and handled the same
+  way with the reason `the session ended without leaving its exit code`; the poll never sleeps past
+  the timeout. Background sessions are started with `setsid`, or with
   perl's `POSIX::setsid` where `setsid` is missing (macOS). With neither, `run` starts nothing and says
   so, even when tmux is installed: the docs session below is always a background session, and `run`
   could not stop it if it got stuck. A process that left the group on its own is the one thing `run`

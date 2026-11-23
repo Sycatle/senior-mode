@@ -431,11 +431,12 @@ docs/changelog.md         plain-language entry per merged PR (what changed for u
                           by the `docs` skill; distinct from release-please's CHANGELOG.md
 ```
 
-Anti-chaos rules, enforced in CI by the `senior-mode` script shipped in `bin/`:
-- a PR touching the `paths` of an `accepted` or `implemented` spec must touch that spec, or say
-  `Spec-Unchanged: <reason>` in its body;
+Anti-chaos rules:
+- a PR touching the `paths` of an `accepted` spec must touch that spec, or say
+  `Spec-Unchanged: <reason>` in its body. `senior-mode check` and `status` warn about a drift; it is never a
+  gate, the reviewer judges it;
 - `INDEX.md` must be up to date; spec and ADR numbers unique; superseded documents point to their
-  successor; no other documentation folder is created by the plugin.
+  successor; no other documentation folder is created by the plugin. No script checks these; the reviewer does.
 
 ## 13. Project config
 

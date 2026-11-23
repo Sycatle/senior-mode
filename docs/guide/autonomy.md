@@ -143,14 +143,14 @@ labelled `needs-human` (a session that timed out, vanished or was stopped) or th
 `needs-human` label and a comment that mentions `notify.mention` (the repository owner when empty).
 A pull request that `serve` can never merge (see above) gets the same, once.
 When `notify.webhook` is set, each alert is also sent as a JSON `POST`
-`{"event", "repo", "number", "url", "reason"}`, where `event` is `needs-human`, `failed`, `breaker` or `environment` (the pause of an environment problem, also without a ticket).
+`{"event", "repo", "number", "url", "reason"}`, where `event` is `needs-human`, `failed`, `breaker`, `environment` (the hold of an environment problem, with its exact cause, also without a ticket; once per hold) or `recovered` (a hold lifted by a green probe, or a ticket that ran again after 10 transient ends).
 Under `serve`, the `needs-human` alerts are batched: the label and the comment are put at once, but the webhook gets one
 `POST` `{"event": "decisions", "repo", "number": null, "url": null, "reason", "count", "items": [{"at", "number", "url", "reason"}]}` for
 all the questions raised, once the oldest has waited `notify.batchMinutes` (default 60; `0` sends at each poll), so at most one per
 window. `reason` is plain text, control characters stripped and 300 characters at most. The queue is `.git/senior-mode/serve/questions`.
 `failed`, `breaker` and `environment` are never batched, nor is `run`. `status` lists the same questions under "Decisions".
 The circuit breaker's pause has no ticket: it is only sent to the webhook (`number` and `url` are
-`null`) and written on stderr. A webhook that does not answer is reported on stderr and never stops
+`null`) and written on stderr. Ten transient ends in a row of one ticket send one `environment` alert as well. A webhook that does not answer is reported on stderr and never stops
 `serve`.
 
 Once a day (`notify.digest`, default true) `serve` posts `senior-mode status --since 24h` as a
@@ -492,7 +492,10 @@ command, not a model, applies these bounds:
   (`autonomy.escalate`, default true).
 - **Circuit breaker:** after `autonomy.maxConsecutiveFailures` failed tickets in a row (default 2), or
   as soon as a ticket outgrows its size, no new ticket starts. A failed ticket goes back to Backlog
-  with a comment that says why; its branch and worktree are kept.
+  with a comment that says why; its branch and worktree are kept. Under `serve` the pause lasts
+  `serve.breakerCooldown` (15 minutes), doubled at each further pause up to `serve.breakerMax` (4 hours);
+  a merge, `serve --resume` or 24 hours without a pause start the count again. Only a ticket's own
+  failure counts: transient and environment ends never do.
 - **Session timeout:** a session still running after `autonomy.sessionTimeout` minutes (default 90,
   at most 1440) is killed: the signal reaches its process group, so what the session started in it
   stops too, but not a process that left the group. The ticket gets the `needs-human` label and a

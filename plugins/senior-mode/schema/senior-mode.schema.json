@@ -307,6 +307,8 @@
         "ticketsPerHour": { "type": "integer", "minimum": 1 },
         "sessionsPerHour": { "type": "integer", "minimum": 0 },
         "minMemoryMB": { "type": "integer", "minimum": 0 },
+        "minDiskMB": { "type": "integer", "minimum": 0 },
+        "startupSeconds": { "type": "integer", "minimum": 0, "description": "Seconds after which a session that died at once counts as a startup death." },
         "userSettings": { "type": "boolean", "description": "Whether run and serve sessions load the owner's user-level Claude Code configuration." }
       }
     },
@@ -316,7 +318,10 @@
       "properties": {
         "interval": { "type": "integer", "minimum": 1 },
         "grace": { "type": "integer", "minimum": 0 },
-        "breakerCooldown": { "type": "integer", "minimum": 0 }
+        "breakerCooldown": { "type": "integer", "minimum": 0 },
+        "breakerMax": { "type": "integer", "minimum": 1 },
+        "backoffBase": { "type": "integer", "minimum": 1 },
+        "backoffMax": { "type": "integer", "minimum": 1 }
       }
     },
     "notify": {

@@ -13,7 +13,7 @@ serve_int() {
 }
 
 # The time a usage limit lifts, read from the message of the session ($1) at time $2: "limit reached|<epoch>"
-# or "resets 3pm (Europe/Paris)"; one hour later when the message gives none.
+# or "resets 3pm (Europe/Paris)". Returns 1, printing nothing, when the message gives none.
 serve_reset() {
   local text=$1 now=$2 re t h m zone day
   re='[Ll]imit reached\|([0-9]{9,11})'
@@ -38,28 +38,74 @@ serve_reset() {
       return 0
     fi
   fi
-  echo $((now + 3600))
+  return 1
+}
+
+# The signals of a class of session end, as one extended regular expression, matched case-insensitively (spec 373,
+# section 1). A new message is a one-line change here, with a fixture in the tests.
+serve_patterns() {
+  case $1 in
+    limit) echo 'limit reached|hit your( [a-z-]+)? limit|usage limit' ;;
+    disk) echo 'ENOSPC|no space left on device|disk quota exceeded' ;;
+    gh-auth) echo 'gh auth login|HTTP 401|bad credentials|not logged in to (any )?github' ;;
+    claude-auth) echo 'invalid api key|please run /login|oauth token[^.]*expired|authentication_error|invalid bearer token|API Error: 401|credit balance is too low' ;;
+    deps) echo 'dependencies not installed|ERR_PNPM_(FETCH|NO_MATCHING|TARBALL)|npm (ERR!|error) code E(404|TARGET|RESOLVE|INTEGRITY)|No matching distribution found' ;;
+    main-red) echo 'main is red|red on main|base branch is red|fails on a clean checkout of main' ;;
+    startup) echo 'still loading your organization' ;;
+    transient) echo 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|getaddrinfo|socket hang up|could not resolve host|temporary failure in name resolution|network is unreachable|unable to connect|connection error|fetch failed|error connecting to api\.|API Error: (429|5[0-9][0-9])|HTTP 5[0-9][0-9]|overloaded_error|\boverloaded\b|"type": ?"api_error"|internal server error|bad gateway|service unavailable|gateway time-?out|still loading your organization|cannot allocate memory|ENOMEM|(connection|request|operation|gh|git|API) (call )?timed out' ;;
+  esac
+}
+
+# The delay before the $1-th transient end in a row is tried again: serve.backoffBase seconds doubled at each end in a
+# row, serve.backoffMax at most, plus 0 to 20 % of jitter (SENIOR_MODE_BACKOFF_JITTER stands in for the percentage).
+serve_backoff() {
+  local k=$1 delay=$SERVE_BACKOFF_BASE i jit
+  for ((i = 1; i < k && delay < SERVE_BACKOFF_MAX; i++)); do delay=$((delay * 2)); done
+  [ "$delay" -le "$SERVE_BACKOFF_MAX" ] || delay=$SERVE_BACKOFF_MAX
+  jit=${SENIOR_MODE_BACKOFF_JITTER:-$((RANDOM % 21))}
+  echo $((delay + delay * jit / 100))
 }
 
 # RUN_ON_EXIT of serve (see run_reap): a session that ended on the subscription usage limit and said nothing
-# of its ticket is not a failure. Nothing is launched until the reset time (limit-until), and the ticket of a
-# ticket or test-author session goes back to Ready, its worktree and branch kept, for the first poll after it.
+# of its ticket is not a failure. Nothing is launched until the reset time plus a minute (limit-until), and the ticket
+# of a ticket or test-author session goes back to Ready, its worktree and branch kept, for the first poll after it.
+# A message with no reset time waits 5, 10, 20, 40, then 60 minutes (limit-streak counts the ends in a row).
 serve_limit() {
-  local n=$1 text until now prev
+  local n=$1 text until now prev streak wait
   [ ! -s "$RUN_DIR/$n.outcome" ] || return 1
   text=$({
     head -c 20000 "$RUN_DIR/$n-${RUN_MODEL[$n]}.json" 2>/dev/null
     head -c 20000 "$RUN_DIR/$n-${RUN_MODEL[$n]}.log" 2>/dev/null
   } || true)
-  grep -qiE 'limit reached|hit your( [a-z-]+)? limit|usage limit' <<<"$text" || return 1
+  grep -qiE "$(serve_patterns limit)" <<<"$text" || return 1
   now=$(serve_now)
-  until=$(serve_reset "$text" "$now")
+  if until=$(serve_reset "$text" "$now"); then
+    until=$((until + 60))
+    rm -f "$SERVE_DIR/limit-streak"
+  else
+    streak=$(cat "$SERVE_DIR/limit-streak" 2>/dev/null) || streak=0
+    [[ $streak =~ ^[0-9]+$ ]] || streak=0
+    streak=$((streak + 1))
+    echo "$streak" >"$SERVE_DIR/limit-streak"
+    wait=$((5 << (streak < 5 ? streak - 1 : 4)))
+    [ "$wait" -le 60 ] || wait=60
+    until=$((now + wait * 60))
+  fi
   prev=$(cat "$SERVE_DIR/limit-until" 2>/dev/null) || prev=0
   [[ $prev =~ ^[0-9]+$ ]] || prev=0
   [ "$prev" -ge "$until" ] || echo "$until" >"$SERVE_DIR/limit-until"
   echo "#$n: the session hit the usage limit; nothing is launched until $(date -d "@$until" '+%F %T' 2>/dev/null || echo "$until")" >&2
+  # The ticket goes back to Ready: its start is not one against autonomy.ticketsPerHour (#355).
+  [ "${RUN_ROLE[$n]:-ticket}" != ticket ] || serve_start_back "$n"
   serve_give_back "$n"
   return 0
+}
+
+# The last start of the ticket $1 is taken back from ticket-starts.
+serve_start_back() {
+  [ -s "$SERVE_DIR/ticket-starts" ] || return 0
+  awk -v n="$1" '{ l[NR] = $0; if ($2 == n) last = NR } END { for (i = 1; i <= NR; i++) if (i != last) print l[i] }' \
+    "$SERVE_DIR/ticket-starts" >"$SERVE_DIR/ticket-starts.tmp" && mv "$SERVE_DIR/ticket-starts.tmp" "$SERVE_DIR/ticket-starts"
 }
 
 # A session that ended without a verdict on its ticket, for a reason that is not the ticket's (a usage limit, a
@@ -77,17 +123,26 @@ serve_give_back() {
   esac
 }
 
-# Why a session ended, the three classes of #377, from its outcome, its exit code and the end of its output. Prints
-# `class|cause|why`: `environment` (the machine, not the ticket: disk, gh or Claude auth, dependencies, main red; pause
-# everything), `transient` (network, API 5xx, a startup error: resume on the same model with a backoff, nothing counted)
-# or `ticket` (anything else: the retry, escalation and needs-human path). A session that says `delivered` or
-# `outgrown` is a ticket's; so is one that left no outcome and exited 0. Only a failure the session declares or an
-# output that goes with a non-zero exit is read, so a retried request in the log of a session that went on is not a cause.
+# Why a session ended, the classes of spec 373 section 1, from its outcome, its exit code and the end of its output.
+# Prints `class|cause|why`: `environment` (the machine, not the ticket: disk, gh or Claude auth, dependencies, main red;
+# hold every launch), `transient` (network, API 5xx, memory, a startup error: resume on the same model with a backoff,
+# nothing counted; the cause is `startup` for a session that died at once) or `ticket` (anything else: the retry,
+# escalation and needs-human path). The session's own verdict (`delivered`, `outgrown`, `failed`) is a ticket's, but
+# for `failed: environment:`, which is the session saying that the machine is the problem; a session that left no
+# verdict and exited 0 is a ticket's too. Only an output that goes with a non-zero exit is read, so a retried request
+# in the log of a session that went on is not a cause.
 serve_classify() {
-  local n=$1 outcome code text why
+  local n=$1 outcome code text why cause="" life re c
   outcome=$(cat "$RUN_DIR/$n.outcome" 2>/dev/null) || outcome=""
   code=$(cat "$RUN_DIR/$n.exit" 2>/dev/null) || code=0
-  if [ -z "$outcome" ]; then
+  if [ -n "$outcome" ]; then
+    if ! grep -qiE '(^|^#[0-9]+ )failed: environment:' <<<"$outcome"; then
+      echo "ticket||"
+      return 0
+    fi
+    text=$outcome
+    cause=unknown
+  else
     if [ "$code" = 0 ]; then
       echo "ticket||"
       return 0
@@ -96,77 +151,111 @@ serve_classify() {
       tail -c 8000 "$RUN_DIR/$n-${RUN_MODEL[$n]}.json" 2>/dev/null
       tail -c 8000 "$RUN_DIR/$n-${RUN_MODEL[$n]}.log" 2>/dev/null
     } || true)
-  elif grep -q 'failed:' <<<"$outcome"; then
-    text=$outcome
-  else
-    echo "ticket||"
+  fi
+  for c in disk gh-auth claude-auth deps main-red; do
+    re=$(serve_patterns "$c")
+    if grep -qiE "$re" <<<"$text"; then
+      why=$(grep -iE "$re" <<<"$text" | head -n 1 | cut -c1-200)
+      echo "environment|$c|$why"
+      return 0
+    fi
+  done
+  if [ -n "$cause" ]; then
+    why=$(grep -iE 'failed: environment:' <<<"$text" | head -n 1 | cut -c1-200)
+    echo "environment|$cause|$why"
     return 0
   fi
-  why=$(head -c 200 <<<"$text" | tr '\n' ' ')
-  local cause=""
-  if grep -qiE 'ENOSPC|no space left on device|disk quota exceeded' <<<"$text"; then
-    cause=disk
-  elif grep -qiE 'gh auth login|HTTP 401|bad credentials|not logged in to (any )?github' <<<"$text"; then
-    cause=gh-auth
-  elif grep -qiE 'invalid api key|please run /login|oauth token has expired|authentication_error|invalid bearer token|API Error: 401|credit balance is too low' <<<"$text"; then
-    cause=claude-auth
-  elif grep -qiE 'dependencies not installed|ERR_PNPM_(FETCH|NO_MATCHING|TARBALL)|npm (ERR!|error) code E(404|TARGET|RESOLVE|INTEGRITY)|No matching distribution found' <<<"$text"; then
-    cause=deps
-  elif grep -qiE 'main is red|red on main|base branch is red|fails on a clean checkout of main' <<<"$text"; then
-    cause=main-red
-  elif grep -qi 'failed: environment:' <<<"$text"; then
-    cause=unknown
+  life=$((SECONDS - ${RUN_STARTED[$n]:-$SECONDS}))
+  if [ "$code" = 1 ] && [ "$life" -lt "$SERVE_STARTUP" ] &&
+    { grep -qiE "$(serve_patterns startup)" <<<"$text" || [ -z "$(tr -d '[:space:]' <<<"$text")" ]; }; then
+    why=$(head -c 200 <<<"$text" | tr '\n' ' ')
+    echo "transient|startup|${why:-the session died at startup with no output}"
+    return 0
   fi
-  if [ -n "$cause" ]; then
-    why=$(grep -iE 'ENOSPC|no space left|disk quota|gh auth login|HTTP 401|bad credentials|not logged in|invalid api key|/login|oauth token|authentication_error|bearer token|API Error: 401|credit balance|dependencies not installed|ERR_PNPM|npm (ERR!|error)|No matching distribution|main is red|red on main|base branch is red|clean checkout of main|failed: environment:' <<<"$text" | head -n 1 | cut -c1-200)
-    echo "environment|$cause|$why"
-  elif grep -qiE 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|getaddrinfo|socket hang up|could not resolve host|temporary failure in name resolution|network is unreachable|unable to connect|connection error|fetch failed|error connecting to api\.|API Error: (5[0-9][0-9]|529)|overloaded_error|\boverloaded\b|"type": ?"api_error"|internal server error|bad gateway|service unavailable|gateway time-?out|still loading your organization|(connection|request|operation|gh|git|API) (call )?timed out' <<<"$text"; then
-    why=$(grep -iE 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|getaddrinfo|socket hang up|could not resolve host|name resolution|unreachable|unable to connect|connection error|fetch failed|error connecting|API Error|overloaded|api_error|internal server error|bad gateway|service unavailable|gateway time|still loading|timed out' <<<"$text" | head -n 1 | cut -c1-200)
-    echo "transient||$why"
-  else
-    echo "ticket||"
+  re=$(serve_patterns transient)
+  if grep -qiE "$re" <<<"$text"; then
+    echo "transient||$(grep -iE "$re" <<<"$text" | head -n 1 | cut -c1-200)"
+    return 0
   fi
+  echo "ticket||"
 }
 
 # RUN_ON_EXIT of serve (see run_reap): a session that ended on the usage limit is serve_limit's. Any other end is
 # classified (serve_classify): a transient one (#334, #377) is resumed on the same model after an exponential backoff,
-# an environment one pauses serve (serve_pause_env); neither is a failure for the breaker, nor an escalation, nor,
-# when the session died at once, a launch against autonomy.sessionsPerHour. A ticket's end goes on to RUN_FINISH, and
-# a delivery clears the backoffs. Returns 0 when it took care of the end.
+# an environment one holds every launch (serve_hold_set); neither is a failure for the breaker, nor an escalation, nor,
+# when the session died at once, a launch against autonomy.sessionsPerHour. A ticket's end goes on to RUN_FINISH, but
+# first the cheap probes run (serve_probe_cheap): "diagnose before blame". An end with no verdict on which one is red
+# is the environment's, not the ticket's; a session's own `failed:` verdict stands, the hold starts before the next
+# launch. A ticket's end clears the backoffs. Returns 0 when it took care of the end.
 serve_end() {
-  local n=$1 class cause why
+  local n=$1 class cause why diag
   serve_limit "$n" && return 0
   IFS='|' read -r class cause why < <(serve_classify "$n")
   case $class in
     environment)
-      serve_give_back "$n"
-      serve_pause_env "$cause" "#$n: ${why:-the session ended on an environment problem}"
+      serve_environment "$n" "$cause" "#$n: ${why:-the session ended on an environment problem}"
       return 0
       ;;
-    transient) serve_transient "$n" "$why" && return 0 ;;
+    transient)
+      serve_transient "$n" "$cause" "$why"
+      return 0
+      ;;
   esac
-  rm -f "$SERVE_DIR/$n.transient" "$SERVE_DIR/$n.retry" "$SERVE_DIR/$n.model"
-  if grep -qE 'delivered|^reviewed:' "$RUN_DIR/$n.outcome" 2>/dev/null; then rm -f "$SERVE_DIR/trips"; fi
+  serve_settled "$n"
+  if diag=$(serve_probe_cheap); then
+    IFS='|' read -r cause why <<<"$diag"
+    if [ ! -s "$RUN_DIR/$n.outcome" ]; then
+      serve_environment "$n" "$cause" "#$n ended with no verdict: $why"
+      return 0
+    fi
+    serve_hold_set "$cause" "after #$n: $why"
+  fi
   return 1
 }
 
-# A transient end of the session $1 (why $2): it goes back to Ready, its worktree kept, and is started again on the
-# same model (<n>.model) once its backoff (<n>.retry) is over: SENIOR_MODE_TRANSIENT_BACKOFF seconds (30) doubled at each
-# transient end in a row, 15 minutes at most. Nothing else launches meanwhile (transient-until). The sixth end in a
-# row is a ticket's (returns 1): a ticket whose own output looks like an outage must not loop for ever.
+# A session of the ticket $1 that ended for the ticket's own reasons: its transient backoff, the streak of sessions that
+# died at startup and the usage limit's streak are over. A ticket that was retried ten times in a row has recovered.
+serve_settled() {
+  local n=$1 count
+  count=$(cat "$SERVE_DIR/$n.transient" 2>/dev/null) || count=0
+  [[ $count =~ ^[0-9]+$ ]] || count=0
+  if [ "$count" -ge 10 ]; then
+    echo "#$n: the API answers again after $count transient ends"
+    notify recovered "" "#$n: the session ran again after $count transient ends in a row"
+  fi
+  rm -f "$SERVE_DIR/$n.transient" "$SERVE_DIR/$n.retry" "$SERVE_DIR/$n.model" "$SERVE_DIR/startup-streak" \
+    "$SERVE_DIR/launch-backoff-until" "$SERVE_DIR/limit-streak"
+}
+
+# A session of the ticket $1 ended on a problem of the environment ($2 the cause, $3 the diagnosis): the ticket goes back
+# to Ready, nothing is counted, and every launch is held (serve_hold_set) until a probe is green. A full disk is first
+# cleaned (serve_disk_clean); once there is room again the end is only a transient one.
+serve_environment() {
+  local n=$1 cause=$2 why=$3 detail
+  if [ "$cause" = disk ]; then
+    serve_disk_clean
+    if detail=$(serve_probe disk); then
+      serve_transient "$n" "" "$why"
+      return 0
+    fi
+    why="$why ($detail)"
+  fi
+  serve_give_back "$n"
+  serve_hold_set "$cause" "$why"
+}
+
+# A transient end of the session $1 (cause $2, `startup` for one that died at once; why $3): it goes back to Ready, its
+# worktree kept, and is started again on the same model (<n>.model) once its backoff (<n>.retry) is over, serve_backoff
+# seconds. Nothing else launches meanwhile (transient-until). A transient end never becomes a ticket's failure: after 10
+# in a row one environment alert goes out and the retries go on at the longest delay. The third session in a row, across
+# tickets, that died at startup holds every launch (launch-backoff-until: the time, then the streak).
 serve_transient() {
-  local n=$1 why=$2 count delay now until prev model=${RUN_MODEL[$1]} life i
+  local n=$1 cause=$2 why=$3 count delay now until prev model=${RUN_MODEL[$1]} life streak
   count=$(cat "$SERVE_DIR/$n.transient" 2>/dev/null) || count=0
   [[ $count =~ ^[0-9]+$ ]] || count=0
   count=$((count + 1))
-  if [ "$count" -gt 6 ]; then
-    echo "#$n: $((count - 1)) transient ends in a row ($why); counted as a failure of the ticket" >&2
-    return 1
-  fi
   echo "$count" >"$SERVE_DIR/$n.transient"
-  delay=${SENIOR_MODE_TRANSIENT_BACKOFF:-30}
-  for ((i = 1; i < count && delay < 900; i++)); do delay=$((delay * 2)); done
-  [ "$delay" -le 900 ] || delay=900
+  delay=$(serve_backoff "$count")
   now=$(serve_now)
   until=$((now + delay))
   echo "$until" >"$SERVE_DIR/$n.retry"
@@ -180,13 +269,22 @@ serve_transient() {
     sed -i '$d' "$RUN_LAUNCH_LOG" 2>/dev/null || true
   fi
   # Nor a ticket start against autonomy.ticketsPerHour (#355): its last start is taken back.
-  if [ "$life" -lt 60 ] && [ -s "$SERVE_DIR/ticket-starts" ]; then
-    awk -v n="$n" '{ l[NR] = $0; if ($2 == n) last = NR } END { for (i = 1; i <= NR; i++) if (i != last) print l[i] }' \
-      "$SERVE_DIR/ticket-starts" >"$SERVE_DIR/ticket-starts.tmp" && mv "$SERVE_DIR/ticket-starts.tmp" "$SERVE_DIR/ticket-starts"
-  fi
+  [ "$life" -ge 60 ] || serve_start_back "$n"
   echo "#$n: the session ended on a transient error ($why); it resumes on $model in ${delay}s (end $count in a row), not counted as a failure" >&2
-  if [ "$count" -ge 3 ]; then
-    echo "serve: $count transient ends in a row on #$n; nothing is launched for ${delay}s" >&2
+  if [ "$cause" = startup ]; then
+    streak=$(cut -d' ' -f1 "$SERVE_DIR/startup-streak" 2>/dev/null) || streak=0
+    [[ $streak =~ ^[0-9]+$ ]] || streak=0
+    streak=$((streak + 1))
+    echo "$streak" >"$SERVE_DIR/startup-streak"
+    if [ "$streak" -ge 3 ]; then
+      until=$((now + $(serve_backoff "$streak")))
+      echo "$until" >"$SERVE_DIR/launch-backoff-until"
+      echo "serve: $streak sessions in a row died at startup; not launching until $(date -d "@$until" '+%F %T' 2>/dev/null || echo "$until")" >&2
+    fi
+  fi
+  if [ "$count" -eq 10 ]; then
+    echo "serve: #$n: 10 transient ends in a row; retrying every ${SERVE_BACKOFF_MAX}s" >&2
+    notify environment "" "#$n: the API or the network has been unreachable for about an hour ($why); retrying every ${SERVE_BACKOFF_MAX}s"
   fi
   serve_give_back "$n"
 }
@@ -206,60 +304,137 @@ serve_model() {
   echo "${m:-sonnet}"
 }
 
-# serve stops launching, and polling anything else, until the environment is healthy (#377): the diagnosis $2 of the
-# cause $1 is on stderr, in <serve dir>/environment (next probe, cause, diagnosis, probes so far), in the webhook and in
-# a Project status update. serve_hold probes again, 60 seconds then twice as late each time (30 minutes at most), and
-# lifts the pause on its own when the probe is green; `serve --resume` lifts it by hand. The first diagnosis stands.
-serve_pause_env() {
-  local cause=$1 diag=$2 now
-  [ ! -f "$SERVE_DIR/environment" ] || return 0
+# Every launch is held, until the environment is healthy (#377): `held` in the serve dir is one JSON object, {cause, since,
+# probe (cheap or expensive), nextProbe, detail}. The diagnosis $2 of the cause $1 is on stderr, in the webhook (event
+# environment) and in a Project status update, once: the first diagnosis stands while the hold lasts. serve_hold probes
+# again (cheap probes at every poll, expensive ones, the Claude ping and the dependencies, every 5 minutes, then every 15
+# once the hold is an hour old) and lifts the hold on its own when the probe is green; `serve --resume` lifts it by hand.
+serve_hold_set() {
+  local cause=$1 detail=$2 now kind=cheap next
+  [ ! -s "$SERVE_DIR/held" ] || return 0
   now=$(serve_now)
-  printf '%s\n%s\n%s\n0\n' "$((now + 60))" "$cause" "$diag" >"$SERVE_DIR/environment"
-  echo "serve: paused, environment problem ($cause): $diag; probing again every minute or later, or senior-mode serve --resume" >&2
-  notify environment "" "serve is paused, environment problem ($cause): $diag"
-  project_post_update "senior-mode serve is paused: environment problem ($cause): $diag. It resumes by itself once the probe is green." AT_RISK >/dev/null 2>&1 ||
-    echo "serve: could not post the pause as a Project status update" >&2
+  case $cause in claude-auth | deps) kind=expensive ;; esac
+  next=$now
+  [ "$kind" = cheap ] || next=$((now + 300))
+  jq -nc --arg c "$cause" --argjson s "$now" --arg k "$kind" --argjson x "$next" --arg d "$detail" \
+    '{cause: $c, since: $s, probe: $k, nextProbe: $x, detail: $d}' >"$SERVE_DIR/held"
+  echo "serve: holding all launches, environment problem ($cause): $detail; probing again, or senior-mode serve --resume" >&2
+  notify environment "" "serve holds all launches, environment problem ($cause): $detail"
+  project_post_update "senior-mode serve holds all launches: environment problem ($cause): $detail. It resumes by itself once the probe is green." AT_RISK >/dev/null 2>&1 ||
+    echo "serve: could not post the hold as a Project status update" >&2
 }
 
-# Free megabytes where the worktrees and the repository are (SENIOR_MODE_DISK_FREE_MB stands in for the tests).
+# A field of the hold, empty when there is none (or when the file does not parse).
+serve_held() {
+  jq -r --arg k "$1" '.[$k] // empty' "$SERVE_DIR/held" 2>/dev/null || true
+}
+
+# Is the hold one that stops the board too (gh or Claude not signed in)? Any other hold stops launches only: a merge
+# needs no session, and the pull request that fixes a red main has to land.
+serve_held_auth() {
+  case $(serve_held cause) in gh-auth | claude-auth) return 0 ;; esac
+  return 1
+}
+
+# Free megabytes where $1 is (SENIOR_MODE_DISK_FREE_FILE, a file holding a number, and SENIOR_MODE_DISK_FREE_MB stand in
+# for the tests).
 serve_disk_free() {
+  [ -z "${SENIOR_MODE_DISK_FREE_FILE:-}" ] || [ ! -s "$SENIOR_MODE_DISK_FREE_FILE" ] || {
+    cat "$SENIOR_MODE_DISK_FREE_FILE"
+    return 0
+  }
   [ -z "${SENIOR_MODE_DISK_FREE_MB:-}" ] || {
     echo "$SENIOR_MODE_DISK_FREE_MB"
     return 0
   }
-  df -Pk "$RUN_ROOT" 2>/dev/null | awk 'NR == 2 { print int($4 / 1024) }'
+  df -Pk "$1" 2>/dev/null | awk 'NR == 2 { print int($4 / 1024) }'
 }
 
-# Runs `install` or `check` on a detached worktree of the base branch, as its sessions would find it.
-serve_probe_base() {
-  local what=$1 wt cmd rc=0
+# Makes room: `senior-mode clean`, the session logs and outputs over 7 days, dangling worktree registrations.
+serve_disk_clean() {
+  echo "serve: low on disk; cleaning merged branches and worktrees, session logs over 7 days" >&2
+  "$SELF" clean >/dev/null 2>&1 || true
+  find "$SERVE_DIR" -maxdepth 1 -type f \( -name '*.log' -o -name '*-*.json' \) -mtime +7 -delete 2>/dev/null || true
+  git worktree prune 2>/dev/null || true
+}
+
+# Probe: room for the worktrees (the repository's file system) and for the temporary files.
+serve_probe_disk() {
+  local path free
+  for path in "$RUN_ROOT" "${TMPDIR:-/tmp}"; do
+    free=$(serve_disk_free "$path")
+    [[ $free =~ ^[0-9]+$ ]] || continue
+    if [ "$free" -lt "$SERVE_MIN_DISK" ]; then
+      echo "disk full, $free MB free of autonomy.minDiskMB $SERVE_MIN_DISK on $(df -P "$path" 2>/dev/null | awk 'NR == 2 { print $6 }')"
+      return 1
+    fi
+  done
+}
+
+# Probe: `senior-mode/ci` of the base head is not red (a missing or pending status is not).
+serve_probe_main() {
+  local sha ci
+  git_bound fetch -q origin 2>/dev/null || true
+  sha=$(git rev-parse -q --verify "$RUN_BASE^{commit}") || return 0
+  ci=$(serve_states "$sha" | jq -r '.["senior-mode/ci"] // empty') || return 0
+  case $ci in
+    failure | error)
+      echo "senior-mode/ci is $ci on $RUN_BASE (${sha:0:7})"
+      return 1
+      ;;
+  esac
+}
+
+# Probe: the install command of the base branch passes on a detached worktree of it, as its sessions would find it.
+serve_probe_deps() {
+  local wt cmd rc=0
   git_bound fetch -q origin 2>/dev/null || true
   wt=$(worktree_path "$RUN_ROOT" "probe-env")
   git worktree remove --force "$wt" 2>/dev/null || true
-  git worktree add -q --detach "$wt" "$RUN_BASE" 2>/dev/null || return 1
+  git worktree add -q --detach "$wt" "$RUN_BASE" 2>/dev/null || return 0
   cmd=$(install_command "$wt")
   if [ -n "$cmd" ] && ! (cd "$wt" && net_bound 900 bash -c "$cmd" </dev/null) >/dev/null 2>&1; then rc=1; fi
-  if [ "$rc" -eq 0 ] && [ "$what" = check ]; then (cd "$wt" && net_bound 1800 "$SELF" check) >/dev/null 2>&1 || rc=1; fi
   git worktree remove --force "$wt" 2>/dev/null || true
+  [ "$rc" -eq 0 ] || echo "the install command fails on $RUN_BASE"
   return "$rc"
 }
 
-# Is the environment healthy for the cause $1? disk: room again; gh-auth: gh answers; claude-auth: a one-word haiku
-# session answers; deps: the install command of the base branch passes; main-red: and so does `senior-mode check`;
-# unknown: disk and gh.
+# Is the environment healthy for the cause $1? Prints the diagnosis and returns 1 when it is not. disk: room again;
+# gh-auth: gh answers; claude-auth: `claude auth status`, else a one-word haiku session answers; deps: the install
+# command of the base branch passes; main-red: senior-mode/ci is not red on the base head; unknown: disk and gh.
 serve_probe() {
   local out
   case $1 in
-    disk) [ "$(serve_disk_free)" -ge 512 ] ;;
-    gh-auth) gh_bound auth status >/dev/null 2>&1 ;;
+    disk) serve_probe_disk ;;
+    gh-auth) gh_bound auth status >/dev/null 2>&1 || {
+      echo "gh is not signed in, or does not answer (gh auth status)"
+      return 1
+    } ;;
     claude-auth)
+      net_bound 30 "$RUN_CLAUDE" auth status >/dev/null 2>&1 </dev/null && return 0
       out=$(cd "$RUN_ROOT" && net_bound 180 "$RUN_CLAUDE" -p --model haiku "Reply with the single word ok." 2>&1 </dev/null) &&
-        ! grep -qiE 'invalid api key|/login|oauth token|authentication_error|API Error: 401|credit balance' <<<"$out"
+        ! grep -qiE "$(serve_patterns claude-auth)|/login" <<<"$out" || {
+        echo "claude is not signed in, or does not answer"
+        return 1
+      }
       ;;
-    deps) serve_probe_base install ;;
-    main-red) serve_probe_base check ;;
-    *) [ "$(serve_disk_free)" -ge 512 ] && gh_bound auth status >/dev/null 2>&1 ;;
+    deps) serve_probe_deps ;;
+    main-red) serve_probe_main ;;
+    *) serve_probe_disk && serve_probe gh-auth ;;
   esac
+}
+
+# The cheap probes (disk, gh, main): prints `cause|diagnosis` of the first that is red and returns 0; returns 1 when all
+# are green. Run at each poll of a hold, and when a session ends with no verdict, before anyone is blamed.
+serve_probe_cheap() {
+  local c d
+  for c in disk gh-auth main-red; do
+    if ! d=$(serve_probe "$c"); then
+      echo "$c|$d"
+      return 0
+    fi
+  done
+  return 1
 }
 
 # RUN_FINISH of serve (see run_reap): reads how a finished session went, by its role. Returns 1 when the
@@ -345,7 +520,7 @@ serve_finish_integrator() {
 # cooldown or `serve --resume`, which removes the file), an environment pause (until a probe is green), a usage limit
 # (until its reset) or a transient backoff. A hold that is over is lifted here. $1 is the time.
 serve_hold() {
-  local now=$1 until cause diag tries next
+  local now=$1 until cause diag since next now_diag
   if [ -f "$SERVE_DIR/paused" ]; then
     until=$(sed -n 1p "$SERVE_DIR/paused")
     if [[ $until =~ ^[0-9]+$ ]] && [ "$now" -lt "$until" ]; then
@@ -355,30 +530,43 @@ serve_hold() {
     rm -f "$SERVE_DIR/paused"
     echo "serve: the breaker cooldown is over, launching again" >&2
   fi
-  if [ -f "$SERVE_DIR/environment" ]; then
-    next=$(sed -n 1p "$SERVE_DIR/environment")
-    cause=$(sed -n 2p "$SERVE_DIR/environment")
-    diag=$(sed -n 3p "$SERVE_DIR/environment")
-    tries=$(sed -n 4p "$SERVE_DIR/environment")
-    [[ $next =~ ^[0-9]+$ ]] || next=0
-    [[ $tries =~ ^[0-9]+$ ]] || tries=0
-    if [ "$now" -ge "$next" ]; then
-      if serve_probe "$cause"; then
-        rm -f "$SERVE_DIR/environment"
+  if [ -s "$SERVE_DIR/held" ]; then
+    cause=$(serve_held cause)
+    next=$(serve_held nextProbe)
+    diag=$(serve_held detail)
+    since=$(serve_held since)
+    [ -n "$cause" ] && [[ $next =~ ^[0-9]+$ ]] && [[ $since =~ ^[0-9]+$ ]] || {
+      echo "serve: the hold file is unreadable; removed" >&2
+      rm -f "$SERVE_DIR/held"
+      cause=""
+    }
+    if [ -n "$cause" ] && [ "$now" -ge "$next" ]; then
+      if now_diag=$(serve_probe "$cause"); then
+        rm -f "$SERVE_DIR/held"
         echo "serve: the environment is healthy again (probe for $cause is green), launching again" >&2
+        notify recovered "" "serve launches again: the probe for $cause is green"
         project_post_update "senior-mode serve resumed: the probe for $cause is green." ON_TRACK >/dev/null 2>&1 || true
+        cause=""
       else
-        tries=$((tries + 1))
-        next=$((now + 60 * (1 << (tries < 5 ? tries : 5))))
-        [ $((next - now)) -le 1800 ] || next=$((now + 1800))
-        printf '%s\n%s\n%s\n%s\n' "$next" "$cause" "$diag" "$tries" >"$SERVE_DIR/environment"
-        echo "serve: still paused, environment problem ($cause): the probe is red; next probe at $next" >&2
+        case $(serve_held probe) in
+          expensive) next=$((now + (now - since < 3600 ? 300 : 900))) ;;
+          *) next=$now ;;
+        esac
+        jq -c --argjson x "$next" --arg d "${now_diag:-$diag}" '.nextProbe = $x | .detail = $d' "$SERVE_DIR/held" >"$SERVE_DIR/held.tmp" &&
+          mv -f "$SERVE_DIR/held.tmp" "$SERVE_DIR/held"
+        diag=${now_diag:-$diag}
+        echo "serve: still holding all launches, environment problem ($cause): the probe is red" >&2
       fi
     fi
-    if [ -f "$SERVE_DIR/environment" ]; then
-      echo "paused, environment problem ($cause): $diag; next probe at $next"
+    if [ -n "$cause" ]; then
+      echo "held, environment problem ($cause): $diag; next probe at $next"
       return 0
     fi
+  fi
+  until=$(awk 'NR == 1 { print $1 }' "$SERVE_DIR/launch-backoff-until" 2>/dev/null) || until=""
+  if [[ $until =~ ^[0-9]+$ ]] && [ "$now" -lt "$until" ]; then
+    echo "sessions died at startup in a row, resumes at $until"
+    return 0
   fi
   until=$(cat "$SERVE_DIR/limit-until" 2>/dev/null) || until=""
   if [[ $until =~ ^[0-9]+$ ]]; then
@@ -400,25 +588,29 @@ serve_hold() {
 }
 
 # After `autonomy.maxConsecutiveFailures` ticket failures in a row (only those: a transient or an environment end is
-# no failure, #377) the breaker pauses serve for serve.breakerCooldown seconds, doubled at each pause that no delivery
-# separates from the last (a day at most; the count is <serve dir>/trips); it never exits. The count of failures starts
-# again, so a resume gets a fresh chance. The pause is alerted once (no ticket to mention: the webhook and the line on stderr).
+# no failure, #377) the breaker pauses serve for min(serve.breakerMax, serve.breakerCooldown * 2^(trips-1)) seconds: 15,
+# 30, 60, 120, then 240 minutes. `trips` is the first field of <serve dir>/breaker, the time of the last trip the
+# second; a merged ticket (serve_done), 24 hours without a trip or `serve --resume` set it back to 0. It never exits. The
+# count of failures starts again, so a resume gets a fresh chance. The pause is alerted once (no ticket to mention: the
+# webhook and the line on stderr).
 serve_breaker() {
-  local now trips cooldown i
+  local now trips last cooldown i
   [ "$RUN_FAILS" -ge "$RUN_MAXFAIL" ] || return 0
   RUN_FAILS=0
   RUN_STOP=""
   if [ ! -f "$SERVE_DIR/paused" ]; then
     now=$(serve_now)
-    trips=$(cat "$SERVE_DIR/trips" 2>/dev/null) || trips=0
-    [[ $trips =~ ^[0-9]+$ ]] || trips=0
+    read -r trips last <"$SERVE_DIR/breaker" 2>/dev/null || true
+    [[ ${trips:-} =~ ^[0-9]+$ ]] || trips=0
+    [[ ${last:-} =~ ^[0-9]+$ ]] || last=0
+    [ $((now - last)) -lt 86400 ] || trips=0
     trips=$((trips + 1))
-    echo "$trips" >"$SERVE_DIR/trips"
+    echo "$trips $now" >"$SERVE_DIR/breaker"
     cooldown=$SERVE_COOLDOWN
-    for ((i = 1; i < trips && cooldown < 86400; i++)); do cooldown=$((cooldown * 2)); done
-    [ "$cooldown" -le 86400 ] || cooldown=86400
+    for ((i = 1; i < trips && cooldown < SERVE_BREAKER_MAX; i++)); do cooldown=$((cooldown * 2)); done
+    [ "$cooldown" -le "$SERVE_BREAKER_MAX" ] || cooldown=$SERVE_BREAKER_MAX
     printf '%s\n%s\n' "$((now + cooldown))" "$RUN_MAXFAIL failed tickets in a row (autonomy.maxConsecutiveFailures)" >"$SERVE_DIR/paused"
-    echo "serve: paused, $RUN_MAXFAIL failed tickets in a row; it resumes in $cooldown seconds (pause $trips since the last delivery) or with: senior-mode serve --resume" >&2
+    echo "serve: paused, $RUN_MAXFAIL failed tickets in a row; it resumes in $cooldown seconds (pause $trips since the last merge) or with: senior-mode serve --resume" >&2
     notify breaker "" "$RUN_MAXFAIL failed tickets in a row (autonomy.maxConsecutiveFailures)"
   fi
 }
@@ -649,10 +841,10 @@ serve_backmerge() {
   rm -f "$file"
 }
 
-# A merged pull request: counted, its ticket Done.
+# A merged pull request: counted, its ticket Done, and the breaker's trips start again at 0.
 serve_done() {
   local t=$1 pr=$2 m
-  rm -f "$SERVE_DIR/queued-$pr" "$SERVE_DIR/rounds-$t"
+  rm -f "$SERVE_DIR/queued-$pr" "$SERVE_DIR/rounds-$t" "$SERVE_DIR/breaker"
   serve_backmerge "$t" "$pr"
   hotfix_release "$t" "$pr"
   # Every ticket of a batch is done with its one pull request (the lead's <n>.batch).
@@ -971,7 +1163,7 @@ serve_prs() {
 # ceiling, starts the Ready tickets in `pick` order while there is a free slot. A hold (breaker, usage limit)
 # stops every launch, reviewers and integrator sessions included; a merge needs no session and goes on.
 serve_poll() {
-  local now reason data prs n size title batch begins capped ticket_wait="" started_before
+  local now reason data prs n size title batch begins capped ticket_wait="" started_before diag cause why
   local -a queue=()
   now=$(serve_now)
   RUN_STOP=""
@@ -982,8 +1174,23 @@ serve_poll() {
   if SERVE_HELD=$(serve_hold "$now"); then
     echo "serve: not launching: $SERVE_HELD"
   fi
-  # An environment pause stops everything but the reading of the sessions that ended: no recovery, no merge, no launch.
-  if [ -f "$SERVE_DIR/environment" ]; then
+  # The cheap probes at every poll, unless a hold or a pause is already on: a machine that went bad while nothing ran
+  # (a full disk, gh signed out, a red main) holds the launches before a session fails on it.
+  if [ -z "$SERVE_HELD" ] && diag=$(serve_probe_cheap); then
+    IFS='|' read -r cause why <<<"$diag"
+    if [ "$cause" = disk ]; then
+      serve_disk_clean
+      if why=$(serve_probe disk); then diag=""; fi
+    fi
+  fi
+  if [ -z "$SERVE_HELD" ] && [ -n "${diag:-}" ]; then
+    serve_hold_set "$cause" "$why"
+    SERVE_HELD="held, environment problem ($cause): $why"
+    echo "serve: not launching: $SERVE_HELD"
+  fi
+  # A hold on gh or Claude auth stops everything but the reading of the sessions that ended: no recovery, no merge, no
+  # launch. Any other hold stops the launches only; the green pull requests still merge.
+  if [ -s "$SERVE_DIR/held" ] && serve_held_auth; then
     serve_report
     return 0
   fi
@@ -1169,6 +1376,7 @@ serve_loop() {
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP="" RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_REQUIRED RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP="" RUN_ON_EXIT=serve_end RUN_FINISH=serve_finish RUN_PROMPT=serve_prompt RUN_PROMPT_BATCH=serve_prompt_batch RUN_LAUNCH_LOG
   local SERVE_DIR SERVE_COMMON SERVE_TERM=false SERVE_PARALLEL SERVE_PER_HOUR SERVE_TICKETS_PER_HOUR SERVE_MIN_MEM SERVE_COOLDOWN SERVE_GRACE
+  local SERVE_BREAKER_MAX SERVE_BACKOFF_BASE SERVE_BACKOFF_MAX SERVE_MIN_DISK SERVE_STARTUP
   local SERVE_HELD="" SERVE_GUARDS="" SERVE_WAIT=""
   run_prepare serve
   # ADR 0018: under serve everything green merges, unless the repository sets autonomy.merge itself.
@@ -1177,6 +1385,11 @@ serve_loop() {
   SERVE_GRACE=$(serve_int serve.grace 0)
   SERVE_COOLDOWN=$(serve_int serve.breakerCooldown 0)
   SERVE_TICKETS_PER_HOUR=$(serve_int autonomy.ticketsPerHour 1)
+  SERVE_BREAKER_MAX=$(serve_int serve.breakerMax 1)
+  SERVE_BACKOFF_BASE=$(serve_int serve.backoffBase 1)
+  SERVE_BACKOFF_MAX=$(serve_int serve.backoffMax 1)
+  SERVE_MIN_DISK=$(serve_int autonomy.minDiskMB 0)
+  SERVE_STARTUP=$(serve_int autonomy.startupSeconds 0)
   SERVE_PER_HOUR=$(serve_int autonomy.sessionsPerHour 0)
   SERVE_MIN_MEM=$(serve_int autonomy.minMemoryMB 0)
   SERVE_PARALLEL=$(serve_int autonomy.parallel 1)
@@ -1234,10 +1447,11 @@ serve() {
       serve_loop
       ;;
     --resume)
-      if [ -f "$common/senior-mode/serve/paused" ] || [ -f "$common/senior-mode/serve/environment" ]; then
-        rm -f "$common/senior-mode/serve/paused" "$common/senior-mode/serve/environment" "$common/senior-mode/serve/trips" \
-          "$common/senior-mode/serve/transient-until"
-        echo "resumed: the circuit breaker's and the environment's pause are lifted"
+      if [ -f "$common/senior-mode/serve/paused" ] || [ -f "$common/senior-mode/serve/held" ]; then
+        rm -f "$common/senior-mode/serve/paused" "$common/senior-mode/serve/held" "$common/senior-mode/serve/breaker" \
+          "$common/senior-mode/serve/transient-until" "$common/senior-mode/serve/launch-backoff-until" \
+          "$common/senior-mode/serve/startup-streak"
+        echo "resumed: the circuit breaker's pause and the environment's hold are lifted"
       else
         echo "serve is not paused."
       fi

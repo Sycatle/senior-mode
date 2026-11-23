@@ -139,7 +139,7 @@ sed 's/CLAUDE_LOG/SYACODE_LOG/' "$work/stub/claude" >"$work/stub/syacode"
 chmod +x "$work/stub/"* "$work/tmux/tmux"
 export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" CLAUDE_LOG="$work/claude.log" SYACODE_LOG="$work/syacode.log" TMUX_LOG="$work/tmux.log" \
   FIX="$work/fix" SENIOR_MODE_RETRY_DELAY=0 XDG_DATA_HOME="$work/xdg" SENIOR_MODE_POLL=0.1 CLAUDE_CONFIG_DIR="$work/claude-home" \
-  SENIOR_MODE_PROBE_RETRY=0
+  SENIOR_MODE_PROBE_RETRY=0 SENIOR_MODE_MANAGED_SETTINGS="$work/managed-settings.json"
 mkdir -p "$CLAUDE_CONFIG_DIR"
 echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DIR/settings.json"
 
@@ -580,6 +580,19 @@ SENIOR_MODE_PROBE_RETRY=3600 run || fail "probe-backoff: run refused after the h
 grep -q 'haiku' "$CLAUDE_LOG" || fail "probe-backoff: no new probe after the hour"
 [ -e "$probe_failed" ] && fail "probe-backoff: a pass left the failure record"
 [ "$(cat "$probe" 2>/dev/null)" = "$(date +%F)" ] || fail "probe-backoff: probe date not recorded"
+
+# probe-managed (#209): the managed settings (SENIOR_MODE_MANAGED_SETTINGS stands for the platform's
+# managed-settings.json) count, and win over the user's, as they do for Claude Code.
+rm -f "$probe" "$probe_failed"
+echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$work/managed-settings.json"
+echo '{}' >"$CLAUDE_CONFIG_DIR/settings.json"
+run || fail "probe-managed: a plugin enabled by the managed settings was refused: $(cat "$work/out")"
+echo '{"enabledPlugins": {"senior-mode@senior-mode": false}}' >"$work/managed-settings.json"
+echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DIR/settings.json"
+run && fail "probe-managed: run started with the plugin disabled by the managed settings"
+grep -q 'enabled' "$work/out" || fail "probe-managed: the disabled plugin is not named: $(cat "$work/out")"
+rm -f "$work/managed-settings.json"
+run || fail "probe-managed: run failed with the user settings alone: $(cat "$work/out")"
 
 # Open alerts: a high Dependabot alert, a moderate and a low one (nothing to file), and an exposed secret
 # whose value must never reach an issue.

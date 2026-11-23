@@ -2660,11 +2660,17 @@ run_docs() {
 # ("<plugin>@<marketplace>": true) of the user settings (CLAUDE_CONFIG_DIR, else ~/.claude) and of the
 # project's tracked .claude/settings.json; the project's wins. Ticket sessions run in fresh worktrees of
 # the base branch, so the project's file is read from $RUN_BASE: an untracked settings.local.json is not in
-# their worktree and does not count.
+# their worktree and does not count. The managed settings (managed-settings.json of the platform, or the
+# colon-separated files of SENIOR_MODE_MANAGED_SETTINGS) are read last and win over both. `run` starts its
+# sessions without --settings, so no flag changes this.
 run_plugin_enabled() {
+  local f managed=${SENIOR_MODE_MANAGED_SETTINGS-"/etc/claude-code/managed-settings.json:/Library/Application Support/ClaudeCode/managed-settings.json"}
   {
     cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" 2>/dev/null || true
     git show "$RUN_BASE:.claude/settings.json" 2>/dev/null || true
+    while IFS= read -r f; do
+      [ -z "$f" ] || cat "$f" 2>/dev/null || true
+    done < <(tr ':' '\n' <<<"$managed")
   } | jq -es 'reduce .[] as $s ({}; . + ($s.enabledPlugins // {}))
     | to_entries | any(.[]; (.key | startswith("senior-mode@")) and .value == true)' >/dev/null 2>&1
 }

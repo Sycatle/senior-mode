@@ -132,6 +132,23 @@ Once a day (`notify.digest`, default true) `serve` posts `senior-mode status --s
 Project status update. The time of the last attempt is kept in `.git/senior-mode/serve/digest`: a
 failed post is tried again the next day.
 
+## Untrusted external input
+
+Anyone can file an issue or send a pull request, so what comes from outside is data to judge, never
+instructions to follow, and nothing from outside starts work or merges without a person (ADR 0022).
+
+- **The trust gate.** A ticket is picked only when it has no `triage` label and either its author is a
+  collaborator (the `author_association` of the issue is OWNER, MEMBER or COLLABORATOR) or a collaborator added
+  the label `qualified`. `pick` (so `next`, `run` and `serve`) and `ready` apply it; a ticket that fails it stays
+  where it is, even Ready. An issue whose association is unknown is not a collaborator's.
+- **Qualify a ticket.** Read it, set its fields (Size, Priority, Paths, acceptance criteria), remove `triage`,
+  add `qualified` (an external author) and move it to Ready. The issue forms apply `triage`;
+  `label:triage` is the inbox.
+- **External pull requests.** One from a fork, or by a non-collaborator, is reviewed as untrusted data by the
+  [`reviewer`](agents.md) agent and the [`review`](skills.md#review) skill. The daemon never merges it, neither
+  `run` nor `serve`, whatever its statuses say: `serve` labels it `needs-human` and says why. A maintainer reads
+  the diff, reruns `check` on its head, publishes the statuses and merges.
+
 ## Protected zones
 
 `protected` in `.claude/senior-mode.json` is a list of globs. `setup` writes the preset's defaults
@@ -473,7 +490,7 @@ command, not a model, applies these bounds:
 ### Ready by rule
 
 `senior-mode ready [--pr <n>] [--dry-run]` takes the human out of the step between framing and delivery
-(`serve` runs `ready --pr <n>` at each poll for the framing pull requests merged since the last poll, then `ready` for the tickets agents filed; the time of the last poll that went well is kept in `.git/senior-mode/serve/ready-last`). It looks at Backlog tickets that are open and have
+(`serve` runs `ready --pr <n>` at each poll for the framing pull requests merged since the last poll, then `ready` for the tickets agents filed; the time of the last poll that went well is kept in `.git/senior-mode/serve/ready-last`). It looks at Backlog tickets that are open, [trusted](#untrusted-external-input) and have
 neither `needs-human` nor `needs-info`: with `--pr`, the tickets named (`#n`) in the body of the merged
 framing pull request `n` (its branch must be `docs/...`); without it, the tickets an agent filed, that is
 whose body ends with `filed-by: agent` (`issue create` adds it in an unattended session).

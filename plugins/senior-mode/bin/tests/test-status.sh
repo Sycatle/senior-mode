@@ -17,6 +17,7 @@ echo "$*" >>"$GH_LOG"
 case "$*" in
   "project item-add"*) sed -E 's#.*/issues/([0-9]+).*#ITEM_\1#' <<<"$*"; exit 0 ;;
   "project item-edit"*) exit 0 ;;
+  "pr list"*) echo '[]'; exit 0 ;;
 esac
 [ "$*" = "api graphql --input -" ] || { echo "unexpected: $*" >&2; exit 1; }
 body=$(cat)
@@ -232,6 +233,7 @@ for want in "Board drift (4)" "#24 Ticket 24: closed but In review" "#26 Ticket 
   grep -qF -- "$want" "$work/out" || fail "drift section lacks '$want': $(cat "$work/out")"
 done
 grep -q 'item-edit' "$GH_LOG" && fail "status without --fix changed the board"
+grep -q 'pr list' "$GH_LOG" && fail "status without --fix cleaned the repository"
 # A local branch that was never pushed counts as a branch: #21 is not stale while one exists.
 git -C "$repo" branch feat/21-local-only
 run status --json --since 7d || fail "status --json with a local branch failed: $(cat "$work/err")"
@@ -248,8 +250,13 @@ grep -qE 'issues/2[15]' "$GH_LOG" && fail "--fix touched an open ticket: $(cat "
 grep -q '^fixed: #24 .*Done' "$work/out" || fail "--fix does not say what it fixed: $(cat "$work/out")"
 grep -q '^left: #25 .*human' "$work/out" || fail "--fix does not say why #25 is left: $(cat "$work/out")"
 grep -q '^left: #21 .*human' "$work/out" || fail "--fix does not say why #21 is left: $(cat "$work/out")"
+# --fix then cleans the repository (#225), after the report: its pull request query is the last call, and --json stays JSON.
+[ "$(grep -c '^pr list' "$GH_LOG")" -eq 1 ] || fail "--fix did not call clean once: $(cat "$GH_LOG")"
+[ "$(grep -n '^pr list' "$GH_LOG" | cut -d: -f1)" -gt "$(grep -n 'item-edit' "$GH_LOG" | tail -1 | cut -d: -f1)" ] ||
+  fail "--fix cleaned before it repaired: $(cat "$GH_LOG")"
 run status --fix --json --since 7d || fail "status --fix --json failed: $(cat "$work/err")"
 [ "$(json '.fixed | map(.number)')" = "[24,26]" ] || fail "--fix --json fixed: $(cat "$work/out")"
+grep -q '^pr list' "$GH_LOG" || fail "--fix --json did not clean"
 run status --fix --watch && fail "--fix --watch accepted"
 grep -q 'watch' "$work/err" || fail "--fix --watch refusal not explained: $(cat "$work/err")"
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"

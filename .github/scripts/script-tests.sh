@@ -4,7 +4,7 @@
 # run. On a push (SENIOR_MODE_CHANGED_FILES, set by the pre-push hook) only the files the changed paths touch
 # run: a changed test, a test whose text names the changed file. A path that cannot be mapped runs them all.
 set -u
-cd "$(git rev-parse --show-toplevel)"
+cd "$(git rev-parse --show-toplevel)" || exit 1
 mapfile -t tests < <(git ls-files '*/test-*.sh')
 
 # Milliseconds, and a duration since one as "1.2s".

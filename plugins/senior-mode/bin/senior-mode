@@ -3036,6 +3036,34 @@ run_kill() {
   fi
 }
 
+# Whether the session script of ticket $1 is gone: nothing alive (a zombie is not) is left in the process
+# group it recorded in <n>.pgid, and it left no exit file. The exit file is read again after the check: the
+# script may have ended between the two. Not gone while it has not recorded its group yet, or when ps fails.
+run_dead() {
+  local pgid live
+  pgid=$(cat "$RUN_DIR/$1.pgid" 2>/dev/null) || return 1
+  [[ $pgid =~ ^([2-9]|[1-9][0-9]+)$ ]] || return 1
+  live=$(ps -A -o pgid=,stat= 2>/dev/null) && [ -n "$live" ] || return 1
+  ! awk -v g="$pgid" '$1 == g && $2 !~ /^Z/ {found = 1} END {exit !found}' <<<"$live" || return 1
+  [ ! -f "$RUN_DIR/$1.exit" ]
+}
+
+# Sleeps one poll interval, never past $1 seconds (what is left of the timeout).
+run_nap() {
+  local poll=${SENIOR_MODE_POLL:-15}
+  [ "$1" -ge $((${poll%%.*})) ] || poll=$(($1 > 0 ? $1 : 0))
+  sleep "$poll"
+}
+
+# A session script that is gone without its exit file (killed, or its tmux window closed): the
+# ticket is labelled needs-human with the log path, recorded as failed and counted for the circuit breaker,
+# not retried on Opus, as for a timeout. Its Status stays In progress.
+run_vanished() {
+  local n=$1
+  run_halt "$n" "the session ended without leaving its exit code" "$RUN_DIR/$n-${RUN_MODEL[$n]}.log" \
+    "An autonomous senior-mode run found this ticket's session gone" "The session log is"
+}
+
 # A session that outlived autonomy.sessionTimeout: killed with its process group (the group of a tmux
 # window or of setsid; processes that left it by their own setsid are out of reach), then the ticket is
 # labelled needs-human with the log path, recorded as failed and counted for the circuit breaker. Not
@@ -3144,7 +3172,7 @@ run_finish() {
 # without its exit file is reported as that, not as a timeout.
 # shellcheck disable=SC2016 # lines of the script, expanded when it runs
 run_docs() {
-  local wt branch=docs/run-$RUN_STAMP script=$RUN_DIR/docs.sh reason="" rc started=$SECONDS pid limit left stat poll
+  local wt branch=docs/run-$RUN_STAMP script=$RUN_DIR/docs.sh reason="" rc started=$SECONDS pid limit left stat
   wt=$(worktree_path "$RUN_ROOT" "run-docs-$RUN_STAMP")
   git fetch -q origin 2>/dev/null || true
   git worktree add -q -b "$branch" "$wt" "$RUN_BASE" 2>/dev/null || {
@@ -3178,10 +3206,7 @@ run_docs() {
       reason="docs session ended without leaving its exit code (log in $RUN_DIR/docs.log)"
       break
     fi
-    # Never sleeps past the timeout.
-    poll=${SENIOR_MODE_POLL:-15}
-    [ "$left" -ge $((${poll%%.*})) ] || poll=$left
-    sleep "$poll"
+    run_nap "$left"
   done
   if [ -z "$reason" ]; then
     rc=$(cat "$RUN_DIR/docs.exit")
@@ -3306,7 +3331,7 @@ run_guards() {
 # senior-mode run [--max N] [--parallel P]: delivers up to N Ready tickets, P at a time, each in a
 # headless claude session in its own worktree (spec 0001 §10, ADR 0007), then reports in plain words.
 run() {
-  local max="" parallel="" n title t
+  local max="" parallel="" n title t left
   local -a queue=() running=() still=() RUN_MERGED=() RUN_NOT_DONE=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
   local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=()
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
@@ -3381,14 +3406,23 @@ run() {
       if run_start "$n"; then running+=("$n"); fi
     done
     [ ${#running[@]} -gt 0 ] || break
-    sleep "${SENIOR_MODE_POLL:-15}"
     # SENIOR_MODE_TIMEOUT_UNIT: seconds in a minute of autonomy.sessionTimeout (default 60), for the tests.
+    # The nap stops at the first timeout to come.
+    left=$((RUN_TIMEOUT * ${SENIOR_MODE_TIMEOUT_UNIT:-60}))
+    for n in "${running[@]}"; do
+      t=$((RUN_TIMEOUT * ${SENIOR_MODE_TIMEOUT_UNIT:-60} - (SECONDS - RUN_STARTED[$n])))
+      [ "$t" -ge "$left" ] || left=$t
+    done
+    run_nap "$left"
     still=()
     for n in "${running[@]}"; do
       if [ -f "$RUN_DIR/$n.exit" ]; then
         run_finish "$n" && continue
       elif [ $((SECONDS - RUN_STARTED[$n])) -ge $((RUN_TIMEOUT * ${SENIOR_MODE_TIMEOUT_UNIT:-60})) ]; then
         run_timeout "$n"
+        continue
+      elif run_dead "$n"; then
+        run_vanished "$n"
         continue
       fi
       still+=("$n")

@@ -18,7 +18,7 @@ cat >"$work/stub/gh" <<'STUB'
 echo "$*" >>"$GH_LOG"
 case "$*" in
   "pr list"*) [ -f "$FIX/prs.ndjson" ] && jq -s . "$FIX/prs.ndjson" || echo '[]' ;;
-  "api repos/acme/app/branches"*) cat "$FIX/protected" 2>/dev/null; true ;;
+  "api repos/"*"/branches?protected"*) cat "$FIX/protected" 2>/dev/null; true ;;
   "issue view "*)
     n=$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*")
     jq -nc --arg s "$(jq -r --arg n "$n" '.[$n] // "OPEN"' "$FIX/issues.json")" '{state: $s}' ;;

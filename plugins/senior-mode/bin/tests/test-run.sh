@@ -67,6 +67,7 @@ case "$*" in
   "api repos/acme/app/issues/"*"/labels"*) echo '[]' ;;
   "pr merge"*) ;;
   "pr list"*) echo '[]' ;;
+  "api repos/acme/app/branches?protected"*) ;;
   *) echo "unexpected: $*" >&2; exit 1 ;;
 esac
 STUB

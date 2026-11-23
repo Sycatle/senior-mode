@@ -366,10 +366,23 @@ GitHub, never from git ancestry, so squash and rebase merges are handled.
   (untracked files count); a branch whose commits are on no remote branch, not in the default branch
   and not in its pull request (a merged pull request whose branch GitHub deleted still holds them);
   a locked worktree; a branch or remote branch of a ticket In progress on the board.
+- **Never deleted, locally or on origin:** only the branches `start` and `frame start` make are
+  candidates (`feat/<n>-...`, `fix/<n>-...`, `chore/<n>-...`, `docs/...`). A `dev`, a `staging` or a
+  `release/*` whose pull request merged long ago is listed (`not a branch senior-mode makes`) and kept.
+  So is the base of any pull request, open, closed or merged (deleting it would close the pull
+  requests stacked on it), a protected branch (the list GitHub gives for the repository, rulesets
+  included) and the default branch.
 - **Never touched:** the main worktree, the current one and the branches they have checked out, a
   branch with an open pull request.
 - **`--dry-run`** prints each line as `would remove ...` and changes nothing. A real run prints
   `removed ...`. If GitHub or the board cannot be read, `clean` stops before removing anything.
+- **Before it decides, `clean` runs `git fetch --prune origin`**, also under `--dry-run`: it only moves
+  the remote-tracking refs, never a branch or a work tree, and without it a tracking ref of a branch
+  deleted on origin would make its commits look pushed.
+- **What is lost with a removed worktree:** its ignored files (`node_modules`, `.env`, build output)
+  go with it; `start` reinstalls the dependencies of a new one. Commits are not lost: a pull request
+  closed without merging keeps its commits on GitHub at `refs/pull/<N>/head`, and
+  `git fetch origin pull/<N>/head:<branch>` brings them back as a branch.
 
 ### Scheduled runs
 

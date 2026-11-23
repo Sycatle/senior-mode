@@ -1302,6 +1302,16 @@ setup_githooks() {
   fi
 }
 
+# The project memory of the agents (`memory: project`) is written in the checkout the session runs in,
+# never in a pull request: it stays on the machine, so git ignores it and the tree stays clean.
+setup_gitignore() {
+  local root=$1 ignore=$1/.gitignore
+  git -C "$root" check-ignore -q .claude/agent-memory/x.md && return 0
+  [ ! -s "$ignore" ] || [ -z "$(tail -c1 "$ignore")" ] || echo >>"$ignore"
+  echo ".claude/agent-memory/" >>"$ignore"
+  echo ".gitignore: .claude/agent-memory/ ignored (agent memory stays on the machine)"
+}
+
 # Adds the Principles block to CLAUDE.md, or refreshes it; a missing CLAUDE.md imports AGENTS.md when
 # there is one, else starts from the skeleton that the setup skill fills from the code.
 setup_claude_md() {
@@ -1567,6 +1577,7 @@ setup_repo() {
     | select(length > 0) | "missing: \(join(", ")) (no script; propose tools, never install without a yes)"' "$file"
 
   setup_claude_md "$root" "$tpl/$lang" "$name"
+  setup_gitignore "$root"
   if [ -n "$(find "$root" "$root/.github" "$root/docs" -maxdepth 1 -iname 'pull_request_template*' 2>/dev/null)" ]; then
     echo "pull request template: kept"
   else

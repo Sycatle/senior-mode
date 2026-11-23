@@ -33,6 +33,10 @@ than `en` or `fr` is kept as the reply language and uses the `en` templates.
    instructions there and never copy them. If it reports over 80 lines, propose cuts.
 3. Offer the status line.
 
+`setup repo` adds `.claude/agent-memory/` to `.gitignore` (printed once). The agents' project memory
+is written in the checkout the session runs in, never in a pull request, so it is kept on the machine
+and the tree stays clean; `retro` reads it there.
+
 ## Status line
 
 Offer a status line that shows the current ticket, the last check and the run in progress. It

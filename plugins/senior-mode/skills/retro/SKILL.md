@@ -16,7 +16,9 @@ anything until the user says yes.
    says there is no Project or config, tell the user to run `/senior-mode:setup`; if GitHub does not
    answer, say so and stop. It first files the open high or critical GitHub alerts as `security`
    issues; relay what it printed on stderr.
-3. Do not read more of the repository than a proposal needs.
+3. The reviewer's recurring findings are in `.claude/agent-memory/reviewer/` of the main checkout
+   (git-ignored, kept on this machine): read them, and cite one only if it recurs.
+4. Do not read more of the repository than a proposal needs.
 
 ## Present
 

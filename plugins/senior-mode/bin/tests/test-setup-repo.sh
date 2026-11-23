@@ -59,6 +59,10 @@ jq -e '.protected | index("**/migrations/**") and index(".github/workflows/**") 
 grep -q "CODEOWNERS: the protected zones are not owned yet; rerun senior-mode setup github" "$work/out" ||
   fail "no word that setup github must be rerun: $(cat "$work/out")"
 
+# The agents' project memory is git-ignored: written in the checkout, it must not leave it dirty.
+git -C "$new" check-ignore -q .claude/agent-memory/reviewer/MEMORY.md || fail "agent memory not ignored"
+grep -q '^.gitignore: .claude/agent-memory/ ignored' "$work/out" || fail "ignore not reported: $(cat "$work/out")"
+
 # Second run: nothing changes.
 before=$(snapshot "$new")
 setup "$new" --command test="true" --command lint="true"
@@ -112,6 +116,14 @@ jq '(.checks[] | select(.name == "test") | .run) = "echo changed --coverage" | (
 setup "$new"
 [ "$(jq -c '.checks[] | select(.name == "test") | [.run, .timeout]' "$new/.claude/senior-mode.json")" = '["echo changed --coverage",5]' ] ||
   fail "bare re-run reverted a check edited by hand"
+
+# A .gitignore of the project's own is extended, not replaced, and a rule that already covers the path is kept.
+printf 'node_modules' >"$new/.gitignore"
+setup "$new"
+[ "$(cat "$new/.gitignore")" = "$(printf 'node_modules\n.claude/agent-memory/')" ] || fail "existing .gitignore not extended: $(cat "$new/.gitignore")"
+printf '.claude/\n' >"$new/.gitignore"
+setup "$new"
+[ "$(cat "$new/.gitignore")" = ".claude/" ] || fail ".gitignore rewritten although .claude/ already covers the memory"
 
 # A hook that lost its exec bit is repaired.
 chmod -x "$new/.githooks/pre-push"

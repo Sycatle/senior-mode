@@ -20,6 +20,8 @@ usage() {
 . "$LIB/doctor.sh"
 # shellcheck source=lib/workflow.sh
 . "$LIB/workflow.sh"
+# shellcheck source=lib/state.sh
+. "$LIB/state.sh"
 # shellcheck source=lib/board.sh
 . "$LIB/board.sh"
 # shellcheck source=lib/release.sh

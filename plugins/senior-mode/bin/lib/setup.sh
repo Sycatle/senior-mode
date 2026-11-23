@@ -123,19 +123,23 @@ review_reason() { # root block-owns slug
 }
 
 # Creates the senior-mode ruleset of the repository, or updates it; $2 is whether it requires code
-# owner review (true when CODEOWNERS owns the protected zones).
+# owner review (true when CODEOWNERS owns the protected zones), $3 whether it requires the statuses
+# (github.requiredChecks, default true): false leaves the rule out, and an update removes the one it had.
 setup_ruleset() {
   local id body cur
   body=$(jq -c --argjson r "$2" '(.rules[] | select(.type == "pull_request") | .parameters.require_code_owner_review) = $r' \
     <<<"$RULESET")
+  [ "${3:-true}" = true ] || body=$(jq -c '.rules |= map(select(.type != "required_status_checks"))' <<<"$body")
   id=$(gh_retry api "repos/$1/rulesets" \
     --jq '[.[] | select(.name == "senior-mode" and .source_type == "Repository")][0].id // empty') || return 1
   if [ -n "$id" ]; then
     # Required checks someone added by hand stay: ours are merged into them.
-    cur=$(gh_retry api "repos/$1/rulesets/$id" \
-      --jq '[.rules[]? | select(.type == "required_status_checks") | .parameters.required_status_checks[]?]') || return 1
-    body=$(jq -c --argjson c "${cur:-[]}" '(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks) |=
-      (. as $ours | $ours + [$c[] | select(.context | IN($ours[].context) | not)])' <<<"$body")
+    if [ "${3:-true}" = true ]; then
+      cur=$(gh_retry api "repos/$1/rulesets/$id" \
+        --jq '[.rules[]? | select(.type == "required_status_checks") | .parameters.required_status_checks[]?]') || return 1
+      body=$(jq -c --argjson c "${cur:-[]}" '(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks) |=
+        (. as $ours | $ours + [$c[] | select(.context | IN($ours[].context) | not)])' <<<"$body")
+    fi
     gh_retry api -X PUT "repos/$1/rulesets/$id" --input - <<<"$body"
   else
     gh_retry api -X POST "repos/$1/rulesets" --input - <<<"$body"
@@ -222,7 +226,7 @@ setup_security() { # root slug
 }
 
 setup_github() {
-  local root file slug owner name owner_type owner_node private template project number id how fields labels label color description err ci="" globs review=false codeowner codeowners_owns=false reason
+  local root file slug owner name owner_type owner_node private template project number id how fields labels label color description err ci="" globs checks review=false codeowner codeowners_owns=false reason
   local migrate=false dry=false
   while [ $# -gt 0 ]; do
     case $1 in
@@ -246,6 +250,8 @@ setup_github() {
   IFS='|' read -r owner_type owner_node private < <(gh_retry api "repos/$slug" \
     --jq '[.owner.type, .owner.node_id, (.private | tostring)] | join("|")') || die "cannot read $slug on GitHub"
   template=$(jq -r --argjson d "$DEFAULTS" '($d * .).board.template' "$file")
+  checks=$(jq -r --argjson d "$DEFAULTS" '($d * .).github.requiredChecks | tojson' "$file")
+  [ "$checks" = true ] || [ "$checks" = false ] || die "github.requiredChecks in .claude/senior-mode.json must be true or false"
 
   if [ "$migrate" = true ]; then
     setup_migrate "$file" "$dry"
@@ -307,9 +313,13 @@ type:chore|ededed|Maintenance with no user-visible change'
   fi
 
   # Before the workflows: a refused ruleset forces ci.mode local, which decides what happens to them.
-  if err=$(setup_ruleset "$slug" "$review" 2>&1 >/dev/null); then
+  if err=$(setup_ruleset "$slug" "$review" "$checks" 2>&1 >/dev/null); then
     setup_protection "$file" ruleset
-    echo "default branch: ruleset senior-mode, pull requests only, rebase, senior-mode/ci, senior-mode/review and senior-mode/security on an up-to-date branch, linear history; admins may bypass with gh pr merge --admin; other protection untouched"
+    if [ "$checks" = true ]; then
+      echo "default branch: ruleset senior-mode, pull requests only, rebase, senior-mode/ci, senior-mode/review and senior-mode/security on an up-to-date branch, linear history; admins may bypass with gh pr merge --admin; other protection untouched"
+    else
+      echo "default branch: ruleset senior-mode, pull requests only, rebase, linear history; github.requiredChecks is false, so it requires no status check (senior-mode/ci, senior-mode/review and senior-mode/security are not required, and a required_status_checks rule it had is removed); admins may bypass with gh pr merge --admin; other protection untouched"
+    fi
     [ "$review" = false ] || echo "code owners: a pull request touching a protected zone needs the owner's approval, and GitHub never lets an author approve their own pull request; agents act as the owner (#175 gives them an identity of their own), so merging one is the owner's call by hand, with gh pr merge --admin"
   elif ruleset_refused <<<"$err"; then
     setup_protection "$file" none

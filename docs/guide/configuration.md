@@ -44,6 +44,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `security.minWeeklyDownloads` | `50` | A dependency the branch adds fails `check` when its package had fewer downloads last week; a whole number from 1 |
 | `secrets` | none | Extra globs the [secrets guard](autonomy.md#secrets-guard-guard-secretssh) denies, added to its defaults: `"*.token"` matches a file name anywhere, `"config/prod.*"` and `"**/vault/*"` match from the repository root. It never allows a default. Add it yourself; setup does not write it |
 | `github.protection` | written by setup | `ruleset` when the `senior-mode` ruleset protects the default branch, `none` when GitHub refused it (private repository on a Free plan): the branch is then not protected on the server |
+| `github.requiredChecks` | `true` | `false` keeps `setup github` from adding required status checks: the `senior-mode` ruleset then has no `required_status_checks` rule (one it already had is removed, a check added by hand included), and setup says so. `run` and `serve` then wait for no `senior-mode/*` status before merging (the other bounds hold: protection, `needs-human`, protected zones, external pull requests). For a repository that delivers as [ADR 0016](../adr/0016-this-repository-delivery.md) describes, with `senior-mode check` green as the only gate. Only `true` or `false` |
 | `review.sections` | none | Project review checklists, see [below](#project-review-sections) |
 | `project` | written by setup | Board owner, number, id, and field and option ids, so no agent looks them up again; the text field `Paths` has an id and no options |
 | `board.template` | the senior-mode template Project | Id of the Project that `setup github` copies (`copyProjectV2`, without draft issues) when the repository has none, and that `setup github --migrate` builds the new board from. Set the id of your own template, for instance an organization's; the copy brings its views, fields and built-in workflows |
@@ -74,7 +75,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 
 `senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`). The optional keys
 (`protected`, `secrets`, `envGuard.forbidden`, `review.sections`, `docs.extra`, `github.protection`, `slot`)
-print `[]` (an empty line for `github.protection` and `slot`) when absent; a key the plugin does not know is an error.
+print `[]` (an empty line for `github.protection` and `slot`) when absent (`github.requiredChecks` prints `true`); a key the plugin does not know is an error.
 
 ## Project review sections
 

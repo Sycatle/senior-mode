@@ -416,6 +416,9 @@ command, not a model, applies these bounds:
   Everything else waits for a human, and the report says why. The ticket session itself never
   merges: the Bash guard denies it any merge. When the pull request merges but the ticket's Status
   cannot be set Done, the report lists it under `Status not set to Done`, and `status` shows it as drift.
+  A delivered ticket that waits for a human is set `In review` by `run` itself, whatever its session did:
+  the report lists those it had to move under `Status set to In review`, and those it could not under
+  `Status not set to In review`.
 - **Hygiene:** `run` calls `senior-mode clean` when it starts, before it looks at the board, and when it
   ends if it ran tickets (see [Hygiene](#hygiene)). A failing `clean` is reported on stderr and does not
   stop the run.

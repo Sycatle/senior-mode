@@ -179,6 +179,11 @@ serve_transient() {
   if [ "$life" -lt 60 ] && [ -s "${RUN_LAUNCH_LOG:-/nonexistent}" ]; then
     sed -i '$d' "$RUN_LAUNCH_LOG" 2>/dev/null || true
   fi
+  # Nor a ticket start against autonomy.ticketsPerHour (#355): its last start is taken back.
+  if [ "$life" -lt 60 ] && [ -s "$SERVE_DIR/ticket-starts" ]; then
+    awk -v n="$n" '{ l[NR] = $0; if ($2 == n) last = NR } END { for (i = 1; i <= NR; i++) if (i != last) print l[i] }' \
+      "$SERVE_DIR/ticket-starts" >"$SERVE_DIR/ticket-starts.tmp" && mv "$SERVE_DIR/ticket-starts.tmp" "$SERVE_DIR/ticket-starts"
+  fi
   echo "#$n: the session ended on a transient error ($why); it resumes on $model in ${delay}s (end $count in a row), not counted as a failure" >&2
   if [ "$count" -ge 3 ]; then
     echo "serve: $count transient ends in a row on #$n; nothing is launched for ${delay}s" >&2
@@ -420,7 +425,7 @@ serve_ceiling() {
     awk -v c="$((now - 3600))" '$1 > c' "$RUN_LAUNCH_LOG" >"$RUN_LAUNCH_LOG.tmp" && mv "$RUN_LAUNCH_LOG.tmp" "$RUN_LAUNCH_LOG"
     count=$(awk 'END { print NR }' "$RUN_LAUNCH_LOG")
     if [ "$count" -ge "$SERVE_PER_HOUR" ]; then
-      echo "$count sessions launched in the last hour (autonomy.sessionsPerHour $SERVE_PER_HOUR)"
+      echo "$count sessions launched in the last hour (autonomy.sessionsPerHour $SERVE_PER_HOUR, the safety cap)"
       return 0
     fi
   fi
@@ -523,6 +528,18 @@ serve_note() {
   [ "${SERVE_NOTED[$1]:-}" != "$2" ] || return 0
   SERVE_NOTED[$1]=$2
   RUN_WAITING+=("$2")
+}
+
+# Is autonomy.ticketsPerHour reached? Prints the reason and returns 0 when it is. It counts ticket starts, not the
+# role sessions a ticket costs (#355): one line "<time> <ticket>" in ticket-starts per ticket begun.
+serve_ticket_cap() {
+  local now count f=$SERVE_DIR/ticket-starts
+  [ -f "$f" ] || return 1
+  now=$(serve_now)
+  awk -v c="$((now - 3600))" '$1 > c' "$f" >"$f.tmp" && mv "$f.tmp" "$f"
+  count=$(awk 'END { print NR }' "$f")
+  [ "$count" -ge "$SERVE_TICKETS_PER_HOUR" ] || return 1
+  echo "$count tickets started in the last hour (autonomy.ticketsPerHour $SERVE_TICKETS_PER_HOUR)"
 }
 
 # A ticket's session is the only one it has: the numbers of the tickets with a session running.
@@ -879,7 +896,7 @@ serve_prs() {
 # ceiling, starts the Ready tickets in `pick` order while there is a free slot. A hold (breaker, usage limit)
 # stops every launch, reviewers and integrator sessions included; a merge needs no session and goes on.
 serve_poll() {
-  local now reason data prs n size title batch
+  local now reason data prs n size title batch begins capped ticket_wait="" started_before
   local -a queue=()
   now=$(serve_now)
   RUN_STOP=""
@@ -927,6 +944,17 @@ serve_poll() {
     serve_can_launch || break
     # Its Paths overlap nothing running, and a ticket with no Paths runs alone (#152).
     [ -n "$(pick_free "$data" "$(run_busy)" "$(run_entry "$n")")" ] || continue
+    # A ticket begins with its first session: not a transient resume, nor an M ticket's implementer after its tests.
+    begins=true
+    if [ -s "$SERVE_DIR/$n.model" ] || { [ "${SERVE_SIZE[$n]}" = M ] && [ -f "$SERVE_COMMON/senior-mode/runs/$n/red-tests" ]; }; then
+      begins=false
+    fi
+    if [ "$begins" = true ] && capped=$(serve_ticket_cap); then
+      [ -n "$ticket_wait" ] || echo "serve: waiting for the next poll: $capped"
+      ticket_wait=$capped
+      continue
+    fi
+    started_before=${#running[@]}
     if [ "${SERVE_SIZE[$n]}" = M ] && [ ! -f "$SERVE_COMMON/senior-mode/runs/$n/red-tests" ]; then
       # An M ticket: its red tests come first, from a session of their own (#191).
       RUN_ROLE[$n]="test-author"
@@ -939,6 +967,9 @@ serve_poll() {
       RUN_ROLE[$n]=ticket
       unset 'RUN_CWD[$n]'
       if run_start "$n"; then running+=("$n"); fi
+    fi
+    if [ "$begins" = true ] && [ ${#running[@]} -gt "$started_before" ]; then
+      echo "$(serve_now) $n" >>"$SERVE_DIR/ticket-starts"
     fi
   done
   serve_report
@@ -1001,7 +1032,7 @@ serve_loop() {
   local -A SERVE_PR=() SERVE_SHA=() SERVE_SIZE=() SERVE_NOTED=()
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP="" RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP="" RUN_ON_EXIT=serve_end RUN_FINISH=serve_finish RUN_PROMPT=serve_prompt RUN_PROMPT_BATCH=serve_prompt_batch RUN_LAUNCH_LOG
-  local SERVE_DIR SERVE_COMMON SERVE_TERM=false SERVE_PARALLEL SERVE_PER_HOUR SERVE_MIN_MEM SERVE_COOLDOWN SERVE_GRACE
+  local SERVE_DIR SERVE_COMMON SERVE_TERM=false SERVE_PARALLEL SERVE_PER_HOUR SERVE_TICKETS_PER_HOUR SERVE_MIN_MEM SERVE_COOLDOWN SERVE_GRACE
   local SERVE_HELD="" SERVE_GUARDS="" SERVE_WAIT=""
   run_prepare serve
   # ADR 0018: under serve everything green merges, unless the repository sets autonomy.merge itself.
@@ -1009,9 +1040,12 @@ serve_loop() {
   interval=$(serve_int serve.interval 1)
   SERVE_GRACE=$(serve_int serve.grace 0)
   SERVE_COOLDOWN=$(serve_int serve.breakerCooldown 0)
-  SERVE_PER_HOUR=$(serve_int autonomy.sessionsPerHour 1)
+  SERVE_TICKETS_PER_HOUR=$(serve_int autonomy.ticketsPerHour 1)
+  SERVE_PER_HOUR=$(serve_int autonomy.sessionsPerHour 0)
   SERVE_MIN_MEM=$(serve_int autonomy.minMemoryMB 0)
   SERVE_PARALLEL=$(serve_int autonomy.parallel 1)
+  # A ticket costs several role sessions (#355): the safety cap is 6 per slot unless the repository sets one.
+  [ "$SERVE_PER_HOUR" -gt 0 ] || SERVE_PER_HOUR=$((6 * SERVE_PARALLEL))
   SERVE_COMMON=$(git rev-parse --path-format=absolute --git-common-dir)
   SERVE_DIR=$SERVE_COMMON/senior-mode/serve
   RUN_DIR=$SERVE_DIR

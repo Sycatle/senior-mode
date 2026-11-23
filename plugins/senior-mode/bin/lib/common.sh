@@ -2,7 +2,7 @@
 DEFAULTS='{
   "language": "en",
   "ci": { "mode": "local" },
-  "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "merge": false, "escalate": true, "sessionTimeout": 90, "schedule": "02:00", "sessionsPerHour": 6, "minMemoryMB": 1024 },
+  "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "merge": false, "escalate": true, "sessionTimeout": 90, "schedule": "02:00", "ticketsPerHour": 6, "sessionsPerHour": 0, "minMemoryMB": 1024 },
   "serve": { "interval": 60, "grace": 600, "breakerCooldown": 300 },
   "notify": { "mention": "", "webhook": "", "digest": true },
   "agent": { "command": "claude" },

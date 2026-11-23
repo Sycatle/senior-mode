@@ -87,7 +87,7 @@ run_launch() {
     run_detach "$script"
   fi
   echo "#$n: session started on $model${RUN_BATCH[$n]:+ (batch: $(run_members "$n"))}"
-  # serve counts its launches for autonomy.sessionsPerHour: one line, the time, per session started.
+  # serve counts its launches for autonomy.sessionsPerHour, the safety cap: one line, the time, per session started.
   [ -z "${RUN_LAUNCH_LOG:-}" ] || serve_now >>"$RUN_LAUNCH_LOG"
 }
 

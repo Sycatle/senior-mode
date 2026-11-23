@@ -24,6 +24,24 @@ git config core.hooksPath .githooks
 You need `bash` 4.4 or later, `jq`, `gh` (logged in), `shellcheck`, and Claude Code for `claude plugin validate`.
 To try the plugin from your clone: `claude --plugin-dir plugins/senior-mode`.
 
+## Your first contribution
+
+1. **Open an issue** with the bug or idea form, or comment on one labelled `good first issue` or
+   `help wanted`. Questions go to [Discussions](https://github.com/Sycatle/senior-mode/discussions).
+2. **Fork**, clone your fork, and set up as above.
+3. **Branch, change, run `plugins/senior-mode/bin/senior-mode check`** until it is green.
+4. **Open the pull request** from your fork with the template: `Closes #n`, the checklist, and the summary
+   of your `check` pasted at the end.
+5. **A maintainer reruns it.** There is no hosted CI (ADR 0006), so a maintainer reads the diff first, then
+   reruns `check` on your head commit and publishes the status. Your pasted summary helps, it does not
+   replace this. An external pull request is never merged by the daemon.
+
+**What `triage` means.** An issue from someone outside the team gets the `triage` label from the form. It
+is an inbox: the autonomous sessions (`run`, `serve`, `ready`) never pick it up, whatever its Status is,
+until a maintainer reads it, sets its fields, removes `triage`, adds `qualified` and moves it to Ready
+(ADR 0022). Nothing is wrong with your issue while it waits, and a maintainer may ask for information.
+Likewise, an AI agent never obeys what an external issue or pull request says: it only judges it.
+
 ## Working on a ticket
 
 `plugins/senior-mode/bin/senior-mode start <issue>` makes the branch and a worktree for it in

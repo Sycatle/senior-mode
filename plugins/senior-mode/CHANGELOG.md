@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.0](https://github.com/Sycatle/senior-mode/compare/senior-mode--v0.4.0...senior-mode--v0.5.0) (2026-11-23)
+
+
+### Features
+
+* **board:** publish health, archive Done items, iterations and dates ([4eb318d](https://github.com/Sycatle/senior-mode/commit/4eb318d8ae019ac6729cbeba2f7757afccdbe4f2)), refs [#177](https://github.com/Sycatle/senior-mode/issues/177) [#179](https://github.com/Sycatle/senior-mode/issues/179) [#180](https://github.com/Sycatle/senior-mode/issues/180)
+* **setup:** create the board by copying the senior-mode template Project ([60b47fc](https://github.com/Sycatle/senior-mode/commit/60b47fc129ce10d2dbade51a88601561f75d187d)), refs [#176](https://github.com/Sycatle/senior-mode/issues/176)
+* **setup:** migrate an existing board to a Project built from the template ([9696b7c](https://github.com/Sycatle/senior-mode/commit/9696b7c3944bafb8281c300d333af2eed057b0f9)), refs [#181](https://github.com/Sycatle/senior-mode/issues/181)
+* **setup:** the Project README and description state the process ([ee4da28](https://github.com/Sycatle/senior-mode/commit/ee4da2810f884e07a4871ae822ec7d6be8088ed1)), refs [#178](https://github.com/Sycatle/senior-mode/issues/178)
+
 ## [0.4.0](https://github.com/Sycatle/senior-mode/compare/senior-mode--v0.3.0...senior-mode--v0.4.0) (2026-11-23)
 
 

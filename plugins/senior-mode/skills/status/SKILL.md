@@ -30,6 +30,8 @@ Summarise in the configured language, in this order, skipping empty sections:
    information. Say what to do for each ("review and merge #20", "answer the question on #19").
    A "Board drift" section: closed tickets not Done can be repaired by the user with `senior-mode
    status --fix`; the others need their decision (close it, resume it or move it back).
+   A "Spec drift" section: an accepted spec whose code changed with no `Spec-Unchanged:`; suggest
+   updating the spec or adding the line to the pull request.
 3. Done since last time, in progress, in review, blocked.
 4. Next ticket and the release state.
 

@@ -11,6 +11,7 @@ DEFAULTS='{
   "e2e": { "slots": 2 },
   "limits": { "prLines": 400 },
   "wip": 1,
+  "slot": "",
   "hygiene": { "days": 14 },
   "protected": [],
   "secrets": [],
@@ -28,7 +29,7 @@ die() {
 }
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] [--fix] | clean [--dry-run] [--days N] | statusline | retro [--since <dur>] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | status [--json] [--since <dur>] [--watch [secs]] [--fix] | clean [--dry-run] [--days N] | statusline | retro [--since <dur>] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | context | setup github [--ci local|actions] | setup repo [--command <name>=<command>]... | setup statusline"
 }
 
 config_file() {
@@ -736,6 +737,23 @@ audit_cap() {
 file_owner() { stat -c %u "$1" 2>/dev/null || stat -f %u "$1"; }
 file_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 
+# The machine-wide directory of the lock files `$1` (flock), made on first use: under XDG_RUNTIME_DIR, else
+# a private senior-mode-$1-<uid> directory of TMPDIR. Other users share /tmp, so a directory that is a link,
+# not ours or open to others is refused.
+lock_dir() {
+  local dir
+  if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+    dir=$XDG_RUNTIME_DIR/senior-mode-$1
+  else
+    dir=${TMPDIR:-/tmp}/senior-mode-$1-$(id -u)
+  fi
+  [ -L "$dir" ] || [ -d "$dir" ] || mkdir -m 700 "$dir" 2>/dev/null || [ -d "$dir" ] ||
+    die "cannot create the $1 lock directory $dir"
+  { [ ! -L "$dir" ] && [ "$(file_owner "$dir")" = "$(id -u)" ] && [ "$(file_mode "$dir")" = 700 ]; } ||
+    die "$1 lock directory $dir must be a real directory owned by you with mode 0700; remove it or fix it"
+  printf '%s\n' "$dir"
+}
+
 # senior-mode e2e-lock -- <command>...: runs the command once one of `e2e.slots` machine-wide slots
 # is free (flock), so parallel tickets never run more end-to-end suites at once than the machine
 # holds. The command sees its slot number in SENIOR_MODE_E2E_SLOT (for example to pick a port).
@@ -746,16 +764,7 @@ e2e_lock() {
   slots=$(config_get e2e.slots 2>/dev/null) || slots=2
   [[ $slots =~ ^[1-9][0-9]*$ ]] || die "e2e.slots must be a positive number, not $slots"
   command -v flock >/dev/null || die "e2e-lock needs flock (util-linux)"
-  if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
-    dir=$XDG_RUNTIME_DIR/senior-mode-e2e
-  else
-    dir=${TMPDIR:-/tmp}/senior-mode-e2e-$(id -u)
-  fi
-  [ -L "$dir" ] || [ -d "$dir" ] || mkdir -m 700 "$dir" 2>/dev/null || [ -d "$dir" ] ||
-    die "cannot create the e2e lock directory $dir"
-  # Other users share /tmp: never use a directory that is a link, not ours or open to others.
-  { [ ! -L "$dir" ] && [ "$(file_owner "$dir")" = "$(id -u)" ] && [ "$(file_mode "$dir")" = 700 ]; } ||
-    die "e2e lock directory $dir must be a real directory owned by you with mode 0700; remove it or fix it"
+  dir=$(lock_dir e2e) || exit 1
   while :; do
     for ((i = 1; i <= slots; i++)); do
       exec {fd}>>"$dir/slot-$i"
@@ -771,6 +780,71 @@ e2e_lock() {
     waited=true
     sleep "${SENIOR_MODE_LOCK_POLL:-2}"
   done
+}
+
+# Takes the lowest free slot of 1..$1 for this repository, waiting when all are taken (#153): sets SLOT and
+# holds its flock on a descriptor of this shell, so the slot stays taken while this process or anything that
+# inherited the descriptor lives, and is free the moment they are gone, whatever way they end. The lock
+# files are per repository (its name and the checksum of its path, as `worktree_path`), machine-wide.
+slot_acquire() {
+  local slots=$1 dir key i fd waited=false common main
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
+  main=$(dirname "$common")
+  key=$(basename "$main")-$(printf '%08x' "$(printf '%s' "$main" | cksum | cut -d' ' -f1)")
+  dir=$(lock_dir slots) || exit 1
+  while :; do
+    for ((i = 1; i <= slots; i++)); do
+      exec {fd}>>"$dir/$key-$i"
+      if flock -n "$fd"; then
+        SLOT=$i
+        return 0
+      fi
+      exec {fd}>&-
+    done
+    [ "$waited" = true ] || echo "senior-mode: waiting for a free slot ($slots in use)" >&2
+    waited=true
+    sleep "${SENIOR_MODE_LOCK_POLL:-2}"
+  done
+}
+
+# The environment the project's `slot` command derives for slot $1, as KEY=VALUE lines: the command runs in
+# the current directory with SENIOR_MODE_SLOT set; blank lines and `#` comments are skipped. A command that
+# fails, a line that is not KEY=VALUE and a SENIOR_MODE_ name (the guards read those) are refused.
+slot_env() {
+  local cmd out line key
+  cmd=$(config_get slot)
+  [ -n "$cmd" ] || return 0
+  out=$(SENIOR_MODE_SLOT=$1 bash -c "$cmd" </dev/null) || die "the slot command failed: $cmd"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in "" | "#"*) continue ;; esac
+    key=${line%%=*}
+    [[ $line == *=* && $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "the slot command must print KEY=VALUE lines, not: $line"
+    [[ $key != SENIOR_MODE_* ]] || die "the slot command cannot set $key: SENIOR_MODE_ names are reserved"
+    printf '%s\n' "$line"
+  done <<<"$out"
+}
+
+# senior-mode slot -- <command>...: runs the command in a slot of its own, of `autonomy.parallel` per
+# repository (SENIOR_MODE_SLOTS when a run has more): SENIOR_MODE_SLOT=N, plus the KEY=VALUE lines of the
+# project's `slot` command (a port, a database, a cache directory) exported. `run` starts every session
+# through it, so two sessions never share a slot. It takes the process over (exec), the slot stays
+# taken with the descriptor until the command and its children are gone.
+slot() {
+  [ "${1:-}" = -- ] && [ $# -ge 2 ] || usage
+  shift
+  local slots=${SENIOR_MODE_SLOTS:-} SLOT env line
+  unset SENIOR_MODE_SLOTS
+  [ -n "$slots" ] || slots=$(config_get autonomy.parallel)
+  [[ $slots =~ ^[1-9][0-9]*$ ]] || die "the number of slots (autonomy.parallel) must be a positive number, not $slots"
+  command -v flock >/dev/null || die "slot needs flock (util-linux)"
+  slot_acquire "$slots"
+  env=$(slot_env "$SLOT") || exit 1
+  while IFS= read -r line; do
+    # shellcheck disable=SC2163 # $line is the whole assignment, NAME=VALUE
+    [ -z "$line" ] || export "$line"
+  done <<<"$env"
+  export SENIOR_MODE_SLOT=$SLOT
+  exec "$@"
 }
 
 # Open pull requests that contain a commit, with the issues each closes (for the security status).
@@ -2981,8 +3055,9 @@ run_launch() {
     # Its process group, for run_timeout to kill the session with everything it started.
     printf 'ps -o pgid= -p $$ | tr -d " " >%q\n' "$RUN_DIR/$n.pgid"
     printf 'cd %q || exit 1\n' "${RUN_WT[$n]}"
-    printf 'SENIOR_MODE_RUN=1 SENIOR_MODE_RUN_OUTCOME=%q %q -p --model %q --permission-mode bypassPermissions --output-format json' \
-      "$RUN_DIR/$n.outcome" "$RUN_CLAUDE" "$model"
+    # Through `slot` (#153): a slot of its own, among the ${parallel:-autonomy.parallel} of the run.
+    printf 'SENIOR_MODE_RUN=1 SENIOR_MODE_RUN_OUTCOME=%q SENIOR_MODE_SLOTS=%q %q slot -- %q -p --model %q --permission-mode bypassPermissions --output-format json' \
+      "$RUN_DIR/$n.outcome" "${parallel:-$(config_get autonomy.parallel)}" "$SELF" "$RUN_CLAUDE" "$model"
     [ -z "${SENIOR_MODE_PLUGIN_DIR:-}" ] || printf ' --plugin-dir %q' "$SENIOR_MODE_PLUGIN_DIR"
     printf ' "$(cat %q)" >%q 2>%q\n' "$RUN_DIR/$n.prompt" "$RUN_DIR/$n-$model.json" "$RUN_DIR/$n-$model.log"
     printf 'echo $? >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit"
@@ -3381,6 +3456,7 @@ run() {
   done
   [ "$(id -u)" != 0 ] || die "run cannot work as root: claude refuses to skip permission prompts for root; use a normal user"
   run_can_detach || die "run needs setsid or perl to stop a session that outlives autonomy.sessionTimeout, and has neither (install util-linux for setsid); nothing was started."
+  command -v flock >/dev/null || die "run needs flock to give each session a slot of its own, and has none (install util-linux); nothing was started."
   file=$(config_file)
   max=${max:-$(config_get autonomy.maxTickets)}
   parallel=${parallel:-$(config_get autonomy.parallel)}
@@ -3705,6 +3781,10 @@ case "${1:-}" in
   e2e-lock)
     shift
     e2e_lock "$@"
+    ;;
+  slot)
+    shift
+    slot "$@"
     ;;
   secret-scan)
     [ $# -eq 1 ] || usage

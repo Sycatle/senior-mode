@@ -92,7 +92,8 @@ option_id() {
 }
 
 # Sets single-select fields of an issue's Project item (pairs of field and option), using the ids
-# cached in the config. Every pair is checked before the item is touched.
+# cached in the config. Every pair is checked before the item is touched. Fails when gh does, even
+# where `set -e` is off (a caller's `||`), so `(item_set ...) || ...` sees it.
 item_set() {
   [ $# -ge 3 ] && [ $(($# % 2)) -eq 1 ] || usage
   local issue=$1 file project owner number item field option i
@@ -110,10 +111,10 @@ item_set() {
     ids+=("$(jq -r --arg f "$field" '.project.fields[$f].id' "$file")" "$option")
   done
   item=$(gh_retry project item-add "$number" --owner "$owner" \
-    --url "https://github.com/$(repo_slug)/issues/$issue" --format json --jq .id)
+    --url "https://github.com/$(repo_slug)/issues/$issue" --format json --jq .id) || return 1
   for ((i = 0; i < ${#ids[@]}; i += 2)); do
     gh_retry project item-edit --project-id "$project" --id "$item" \
-      --field-id "${ids[i]}" --single-select-option-id "${ids[i + 1]}" >/dev/null
+      --field-id "${ids[i]}" --single-select-option-id "${ids[i + 1]}" >/dev/null || return 1
     echo "#$issue ${*:i+1:1} = ${*:i+2:1}"
   done
 }
@@ -2827,7 +2828,10 @@ run_merge() {
   elif gh pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
     RUN_MERGED+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
     RUN_PRS+=("#$pr")
-    (item_set "$n" Status Done) >/dev/null || echo "#$n: merged, but could not set the Status Done" >&2
+    (item_set "$n" Status Done) >/dev/null || {
+      echo "#$n: merged, but could not set the Status Done" >&2
+      RUN_NOT_DONE+=("#$n ${RUN_TITLE[$n]} (pull request #$pr)")
+    }
     return 0
   else
     reason="the merge failed: $(head -n 1 "$RUN_DIR/$n.merge")"
@@ -3053,7 +3057,7 @@ run_guards() {
 # headless claude session in its own worktree (spec 0001 §10, ADR 0007), then reports in plain words.
 run() {
   local max="" parallel="" n title t
-  local -a queue=() running=() still=() RUN_MERGED=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
+  local -a queue=() running=() still=() RUN_MERGED=() RUN_NOT_DONE=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
   local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=()
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP=""
@@ -3147,6 +3151,7 @@ run() {
   echo
   [ -z "$RUN_STOP" ] || echo "The run stopped early: $RUN_STOP."
   for t in "${RUN_MERGED[@]}"; do echo "Merged: $t"; done
+  for t in "${RUN_NOT_DONE[@]}"; do echo "Status not set to Done: $t"; done
   for t in "${RUN_WAITING[@]}"; do echo "Waiting for a human: $t"; done
   for t in "${RUN_FAILED[@]}"; do echo "Failed: $t"; done
   for n in "${queue[@]}"; do echo "Not started: #$n ${RUN_TITLE[$n]}"; done

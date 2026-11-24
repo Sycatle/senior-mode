@@ -320,13 +320,20 @@ status_hygiene_fix() {
 # completed iterations too, by start date; nothing when the Project has no Iteration field.
 # shellcheck disable=SC2016 # a GraphQL query, not shell
 iteration_field() {
-  local project res
+  local project res err
   project=$(jq -r '.project.id // empty' "$(config_file)")
   [ -n "$project" ] || die "no Project in .claude/senior-mode.json; run /senior-mode:setup"
-  res=$(jq -nc --arg id "$project" '{variables: {id: $id}, query: "query($id: ID!) { node(id: $id) { ... on ProjectV2 {
+  err=$(mktemp)
+  # GitHub answers a missing field with an error, not null (#536).
+  if ! res=$(jq -nc --arg id "$project" '{variables: {id: $id}, query: "query($id: ID!) { node(id: $id) { ... on ProjectV2 {
     field(name: \"Iteration\") { ... on ProjectV2IterationField { id configuration { duration
     iterations { id title startDate duration } completedIterations { id title startDate duration } } } } } } }"}' |
-    gh_retry api graphql --input -) || return 1
+    gh_retry api graphql --input - 2>"$err"); then
+    grep -q 'Could not resolve to a .* with the name Iteration' "$err" && { rm -f "$err"; return 0; }
+    cat "$err" >&2; rm -f "$err"
+    return 1
+  fi
+  rm -f "$err"
   jq -c '.data.node.field // empty | select(.id) | {id, duration: .configuration.duration,
     iterations: ((.configuration.completedIterations + .configuration.iterations) | sort_by(.startDate))}' <<<"$res"
 }

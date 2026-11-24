@@ -187,10 +187,17 @@ setup_protection() { # config-file ruleset|none
 # (files kept) and spend no Actions budget. GitHub's built-in ones (dynamic/: Dependabot, Pages)
 # are left alone. ci.mode actions: our workflow is turned back on if an earlier local run disabled it.
 setup_workflows() { # slug mode
-  local list id wname path state disabled=""
-  list=$(gh_retry workflow list --all --limit 1000 --repo "$1" --json id,name,path,state \
-    --jq '.[] | select(.path | startswith(".github/workflows/")) | "\(.id)\t\(.path)\t\(.state)\t\(.name)"') ||
-    die "cannot list the workflows of $1"
+  local list id wname path state disabled="" err
+  if ! list=$(gh_retry workflow list --all --limit 1000 --repo "$1" --json id,name,path,state \
+    --jq '.[] | select(.path | startswith(".github/workflows/")) | "\(.id)\t\(.path)\t\(.state)\t\(.name)"'); then
+    # A token without the Actions permission (#536): nothing is lost when the default branch has no workflow.
+    err=$(gh api "repos/$1/contents/.github/workflows" 2>&1 >/dev/null) || true
+    if [ "$2" = local ] && [[ $err == *"HTTP 404"* ]]; then
+      echo "workflows: none on the default branch, nothing to disable (the token cannot read Actions)"
+      return 0
+    fi
+    die "cannot list the workflows of $1: the token needs the Actions permission (read and write)"
+  fi
   while IFS=$'\t' read -r id path state wname; do
     [ -n "$id" ] || continue
     if [ "$2" = local ] && [ "$state" = active ]; then

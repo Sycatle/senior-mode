@@ -647,6 +647,30 @@ assertion_free_tests() {
   done < <(git diff -z --no-renames --name-only --diff-filter=AM "$base...HEAD" 2>/dev/null)
 }
 
+# The files the branch changes against the default branch, committed or not (new files included, deleted ones left
+# out), one per line from the repository root. Fails when there is no default branch to compare with.
+changed_files() {
+  local base mb
+  base=$(default_branch) && mb=$(git -C "$1" merge-base "$base" HEAD) || return 1
+  {
+    git -C "$1" -c core.quotePath=false diff --name-only --no-renames --diff-filter=d "$mb" || return 1
+    git -C "$1" -c core.quotePath=false ls-files --others --exclude-standard
+  } | LC_ALL=C sort -u
+}
+
+# The command $1 with each {files} replaced by the paths $2..., quoted for the shell.
+files_subst() {
+  local cmd=$1 out="" rest q
+  shift
+  q=$(printf '%q ' "$@")
+  rest=$cmd
+  while [[ $rest == *'{files}'* ]]; do
+    out+=${rest%%'{files}'*}${q% }
+    rest=${rest#*'{files}'}
+  done
+  printf '%s\n' "$out$rest"
+}
+
 # The jobs of the project's own CI that cover a check, as JSON ([{context, covers}]): those of workflow.ci.jobs when
 # ci.mode is existing (ADR 0022), none otherwise. $1 is the config file.
 ci_jobs() {
@@ -681,21 +705,35 @@ ci_job_states() {
 # can narrow itself to them does; that run is not recorded, because publish needs a full one. With --ci-only (ADR 0022,
 # ci.mode existing) the checks that a job of the project's CI covers are not run again: the state of that job on HEAD
 # is read instead (ok, `wait <context>` with status 2 while it runs or has not started, FAIL with the URL of its run);
-# the result recorded for publish is that of the checks run here, publish reads the jobs again. With --update-baseline
-# only the architecture baseline is rewritten (see architecture_check).
+# the result recorded for publish is that of the checks run here, publish reads the jobs again. With --changed (#339)
+# each check that has a `changed` variant (`checks[].changed`, or the preset's) runs on the files the branch changed
+# against the default branch, committed or not; the others run in full, and each line says which; that run is not
+# recorded either, and the push gate (--pre-push, publish) refuses it. With --update-baseline only the architecture
+# baseline is rewritten (see architecture_check).
 check() {
   local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp ci_only=false jobs="[]" job
-  local waiting="" ci_failed="" st url free
-  if [ "${1:-}" = --update-baseline ]; then
+  local waiting="" ci_failed="" st url free pre_push=false changed=false update=false a label vext vcmd preset nbuiltin vc
+  local changed_list="" sel
+  local -A variant=()
+  for a in "$@"; do
+    case $a in
+      --pre-push) pre_push=true ;;
+      --ci-only) ci_only=true ;;
+      --changed) changed=true ;;
+      --update-baseline) update=true ;;
+      *) usage ;;
+    esac
+  done
+  [ "$pre_push" = false ] || [ "$changed" = false ] || die "check --changed is not for the push gate: --pre-push runs the full check"
+  if [ "$update" = true ]; then
     [ $# -eq 1 ] || usage
     architecture_check --update-baseline
     return
   fi
   file=$(config_file)
   unset SENIOR_MODE_CHANGED_FILES
-  [ "${1:-}" != --ci-only ] || ci_only=true
   [ "$ci_only" = false ] || jobs=$(ci_jobs "$file")
-  if [ "${1:-}" = --pre-push ]; then
+  if [ "$pre_push" = true ]; then
     scope=$(mktemp)
     if pushed_paths >"$scope"; then
       export SENIOR_MODE_CHANGED_FILES=$scope
@@ -733,9 +771,28 @@ check() {
     names+=("architecture")
     cmds+=("$(printf '%q' "$SELF") architecture-check")
   fi
+  nbuiltin=${#names[@]}
+  if [ "$changed" = true ]; then
+    if changed_list=$(changed_files "$root"); then
+      preset=$(project_preset "$root")
+    else
+      echo "note: --changed: the changed files cannot be told (no default branch to compare with), every check runs in full"
+      changed=false
+    fi
+  fi
   for ((i = 0; i < count; i++)); do
-    names+=("$(jq -r ".checks[$i].name" "$file")")
+    name=$(jq -r ".checks[$i].name" "$file")
+    names+=("$name")
     cmds+=("$(jq -r ".checks[$i].run" "$file")")
+    [ "$changed" = true ] || continue
+    vc=$(jq -r ".checks[$i].changed // empty" "$file")
+    if [ -n "$vc" ]; then
+      [[ $vc == *'{files}'* ]] || die "checks[$i].changed ($name) must hold the {files} placeholder"
+      variant[$((nbuiltin + i))]=$'.\t'$vc
+    elif [[ $name =~ ^(lint|test)$ ]]; then
+      vc=$(preset_changed "$root" "$preset" "$name" "$(jq -r ".checks[$i].run" "$file")") || vc=""
+      [ -z "$vc" ] || variant[$((nbuiltin + i))]=$vc
+    fi
   done
   count=${#names[@]}
   # Parallel sessions run `check` at the same time (#295): this run has a directory of its own, mktemp's name
@@ -751,6 +808,21 @@ check() {
       passed=$((passed + 1))
       echo "skip  $name: covered by $job (ci-only)"
       continue
+    fi
+    label=$name
+    if [ -n "${variant[$i]:-}" ]; then
+      vext=${variant[$i]%%$'\t'*}
+      vcmd=${variant[$i]#*$'\t'}
+      mapfile -t sel < <(grep -E "$vext" <<<"$changed_list" || true)
+      if [ "${#sel[@]}" -eq 0 ]; then
+        passed=$((passed + 1))
+        echo "skip  $name [changed]: no changed file to check"
+        continue
+      fi
+      cmd=$(files_subst "$vcmd" "${sel[@]}")
+      label="$name [changed: ${#sel[@]} file$([ "${#sel[@]}" -eq 1 ] || echo s)]"
+    elif [ "$changed" = true ]; then
+      label="$name [full]"
     fi
     started=$(now_ms)
     runtmp=$rundir/tmp
@@ -768,16 +840,16 @@ check() {
       passed=$((passed + 1))
       # A check with nothing to do says so on its first line; show why instead of a bare ok.
       if [[ $(head -n 1 "$output") == "skipped: "* ]]; then
-        echo "skip  $name: $(head -n 1 "$output" | cut -c10-) ($took)"
+        echo "skip  $label: $(head -n 1 "$output" | cut -c10-) ($took)"
       else
-        echo "ok    $name ($took)"
+        echo "ok    $label ($took)"
       fi
       # A warning of a passing check (an advisory with no severity) is shown, not lost.
       { grep '^warning: ' "$output" || true; } | sed 's/^/      /'
     else
       took=$(since_ms "$started")
       failed="${failed:+$failed, }$name"
-      echo "FAIL  $name ($took)"
+      echo "FAIL  $label ($took)"
       # The audit lists every blocking advisory (it caps them itself); another check shows its last lines.
       tail -n "$([ "$name" = "dependency audit" ] && echo 300 || echo 20)" "$output" | sed 's/^/      /'
       log=$(check_log_keep "$name" "$output")
@@ -821,6 +893,8 @@ check() {
   fi
   if [ -n "$scope" ]; then
     echo "note: narrowed to the pushed paths, result not recorded for publishing"
+  elif [ "$changed" = true ]; then
+    echo "note: --changed run, result not recorded for publishing"
   elif [ -z "$(git status --porcelain)" ]; then
     mkdir -p "$(dirname "$(check_record x)")"
     printf '%s\n%s\n' "$state" "$description" >"$(check_record "$(git rev-parse HEAD)")"

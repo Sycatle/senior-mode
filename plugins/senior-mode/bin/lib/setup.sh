@@ -519,10 +519,9 @@ setup_claude_md() {
 # dependency (npx would otherwise fetch the unrelated "tsc" package), run without ever downloading;
 # npm's placeholder test script is no test. Its install command is the lockfile's, frozen (npm install
 # without one). Prints {commands, framework, typescript}.
-# shellcheck disable=SC2016 # jq program, not shell
-node_detect() {
-  # exec runs an installed binary only: npx and bunx would download a missing one.
-  local root=$1 pm=npm exec="npx --no --" install="npm install" tsconfig=false
+# The package manager of the node project at $1, its binary runner and its install command, tab separated.
+node_pm() {
+  local root=$1 pm=npm exec="npx --no --" install="npm install"
   if [ -f "$root/pnpm-lock.yaml" ]; then pm=pnpm exec="pnpm exec" install="pnpm install --frozen-lockfile"
   elif [ -f "$root/yarn.lock" ]; then
     pm=yarn exec=yarn install="yarn install --frozen-lockfile"
@@ -531,6 +530,14 @@ node_detect() {
   elif [ -f "$root/bun.lock" ] || [ -f "$root/bun.lockb" ]; then pm=bun exec="bun run" install="bun install --frozen-lockfile"
   elif [ -f "$root/package-lock.json" ]; then install="npm ci"
   fi
+  printf '%s\t%s\t%s\n' "$pm" "$exec" "$install"
+}
+
+# shellcheck disable=SC2016 # jq program, not shell
+node_detect() {
+  # exec runs an installed binary only: npx and bunx would download a missing one.
+  local root=$1 pm exec install tsconfig=false
+  IFS=$'\t' read -r pm exec install < <(node_pm "$root")
   [ ! -f "$root/tsconfig.json" ] || tsconfig=true
   jq -c --arg pm "$pm" --arg exec "$exec" --arg install "$install" --argjson tsconfig "$tsconfig" '(.scripts // {}) as $s
     | def run($n): if $s[$n] then "\($pm) run \($n)" else null end;
@@ -648,6 +655,59 @@ preset_detect() {
     go) go_detect "$1" ;;
     rust) rust_detect ;;
     *) echo '{}' ;;
+  esac
+}
+
+# The changed variant (#339) a preset gives the check $3 (lint or test) of the project at $1 when its command $4 is
+# the one the preset detected: `<regex of the files it takes><TAB><command with {files}>`, nothing when the preset
+# has none for it (the check then runs in full). node narrows to the files through the linter and the test runner
+# its dependencies name (eslint or biome; vitest or jest, which find the tests that import the files), python
+# through ruff or flake8 and pytest (a run that collects nothing is not a failure), go and rust through the
+# packages and the crates the files belong to.
+# shellcheck disable=SC2016 # commands for a shell, not this one
+preset_changed() {
+  local root=$1 preset=$2 name=$3 run=$4 pm exec deps pkgs crates
+  pkgs='P=$(printf '"'"'%s\n'"'"' {files} | xargs -n1 dirname | sort -u | sed '"'"'s|^|./|'"'"'); '
+  crates='for d in $(for f in {files}; do d=$(dirname "$f"); while [ ! -f "$d/Cargo.toml" ] && [ "$d" != . ]; do d=$(dirname "$d"); done; echo "$d"; done | sort -u); do '
+  case $preset in
+    node)
+      IFS=$'\t' read -r pm exec _ < <(node_pm "$root")
+      [ "$run" = "$pm run $name" ] && [ -f "$root/package.json" ] || return 0
+      deps=" $(jq -r '[(.dependencies // {}), (.devDependencies // {}) | keys[]] | join(" ")' "$root/package.json") "
+      case $name in
+        lint)
+          if [[ $deps == *" @biomejs/biome "* ]]; then printf '%s\t%s\n' '\.[cm]?[jt]sx?$' "$exec biome check {files}"
+          elif [[ $deps == *" eslint "* ]]; then printf '%s\t%s\n' '\.[cm]?[jt]sx?$' "$exec eslint {files}"
+          fi
+          ;;
+        test)
+          if [[ $deps == *" vitest "* ]]; then printf '%s\t%s\n' '\.[cm]?[jt]sx?$' "$exec vitest related --run {files}"
+          elif [[ $deps == *" jest "* ]]; then printf '%s\t%s\n' '\.[cm]?[jt]sx?$' "$exec jest --findRelatedTests {files}"
+          fi
+          ;;
+      esac
+      ;;
+    python)
+      case $name:$run in
+        lint:*"ruff check .") printf '%s\t%s\n' '\.pyi?$' "${run% .} {files}" ;;
+        lint:*flake8) printf '%s\t%s\n' '\.pyi?$' "$run {files}" ;;
+        test:*pytest) printf '%s\t%s\n' '\.pyi?$' "$run {files} || [ \$? -eq 5 ]" ;;
+      esac
+      ;;
+    go)
+      case $name:$run in
+        lint:"go vet ./...") printf '%s\t%s\n' '\.go$' "${pkgs}go vet \$P" ;;
+        lint:"go vet ./... && golangci-lint run") printf '%s\t%s\n' '\.go$' "${pkgs}go vet \$P && golangci-lint run \$P" ;;
+        test:"go test ./...") printf '%s\t%s\n' '\.go$' "${pkgs}go test \$P" ;;
+      esac
+      ;;
+    rust)
+      case $name:$run in
+        lint:"cargo clippy --all-targets -- -D warnings")
+          printf '%s\t%s\n' '\.(rs|toml)$' "${crates}cargo clippy --manifest-path \"\$d/Cargo.toml\" --all-targets -- -D warnings || exit 1; done" ;;
+        test:"cargo test") printf '%s\t%s\n' '\.(rs|toml)$' "${crates}cargo test --manifest-path \"\$d/Cargo.toml\" || exit 1; done" ;;
+      esac
+      ;;
   esac
 }
 

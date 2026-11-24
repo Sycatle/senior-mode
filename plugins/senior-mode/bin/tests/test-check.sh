@@ -578,5 +578,127 @@ run check || fail "check fails: $(cat "$work/out")"
 grep -qF "warn  test case with no assertion: tests/c.rs:3: fn b()" "$work/out" || fail "rust case not listed: $(cat "$work/out")"
 grep -q "tests/c.rs:1:" "$work/out" && fail "a rust case that asserts is listed: $(cat "$work/out")"
 
+# check --changed (#339): a check with a changed variant (checks[].changed, or the preset's) runs on the files of the
+# diff against the default branch, committed or not; the others run in full and each line says which.
+r2=$work/r2
+git init -q -b main "$r2"
+mkdir -p "$r2/.claude" "$r2/src" "$r2/docs"
+c2() { printf '%s\n' "$1" >"$r2/.claude/senior-mode.json"; }
+run2() { (cd "$r2" && "$cli" "$@") >"$work/out" 2>&1; }
+g2() { git -C "$r2" -c user.name=t -c user.email=t@t "$@"; }
+c2 "$(jq -nc --arg o "$work/changed.txt" '{audit: false, checks: [
+  {name: "lint", run: "echo full > /dev/null", changed: ("printf \"%s\\n\" {files} > " + $o)},
+  {name: "tests", run: "true"}]}')"
+echo a >"$r2/a.txt"; echo b >"$r2/b.txt"; echo c >"$r2/c.txt"; echo d >"$r2/docs/d.md"
+g2 add -A && g2 commit -q -m "chore: base"
+g2 checkout -q -b feat/1-x
+echo a2 >>"$r2/a.txt" && g2 commit -qam "feat: a"
+echo b2 >>"$r2/b.txt"
+rm "$r2/c.txt"
+echo n >"$r2/new.txt"; echo s >"$r2/sp ace.txt"
+run2 check --changed || fail "check --changed fails: $(cat "$work/out")"
+grep -q '^ok    lint \[changed: 4 files\] (' "$work/out" || fail "changed check not told: $(cat "$work/out")"
+grep -q '^ok    tests \[full\] (' "$work/out" || fail "full check not told: $(cat "$work/out")"
+grep -q '^ok    secret scan \[full\] (' "$work/out" || fail "built-in check not told as full: $(cat "$work/out")"
+[ "$(paste -sd' ' "$work/changed.txt")" = "a.txt b.txt new.txt sp ace.txt" ] || fail "changed files (committed, uncommitted, new; not deleted): $(cat "$work/changed.txt")"
+run2 check
+grep -q '\[full\]\|\[changed' "$work/out" && fail "a plain check labels its lines: $(cat "$work/out")"
+c2 "$(jq -nc '{audit: false, checks: [{name: "lint", run: "true", changed: "printf \"<%s>\" {files}; exit 4"}]}')"
+run2 check --changed && fail "a failing changed variant passes"
+grep -q '^FAIL  lint \[changed: 5 files\] (' "$work/out" || fail "failing changed check not named: $(cat "$work/out")"
+grep -q "<new.txt><sp ace.txt>" "$work/out" || fail "files not quoted for the shell: $(cat "$work/out")"
+c2 "$(jq -nc '{audit: false, checks: [{name: "lint", run: "true", changed: "echo no placeholder"}]}')"
+run2 check --changed && fail "a changed variant with no {files} passes"
+grep -q "must hold the {files} placeholder" "$work/out" || fail "placeholder not asked for: $(cat "$work/out")"
+# Nothing changed: the variant is skipped, not failed.
+g2 stash -q -u
+c2 "$(jq -nc '{audit: false, checks: [{name: "lint", run: "false", changed: "exit 9 # {files}"}, {name: "tests", run: "true"}]}')"
+g2 add -A && g2 commit -q -m "chore: base config"
+g2 update-ref refs/heads/main HEAD
+run2 check --changed || fail "check --changed with nothing changed: $(cat "$work/out")"
+grep -q '^skip  lint \[changed\]: no changed file to check' "$work/out" || fail "an empty diff does not skip the variant: $(cat "$work/out")"
+grep -q '^ok    tests \[full\] (' "$work/out" || fail "the full check is not run: $(cat "$work/out")"
+run2 check && fail "the full lint (false) is not run by a plain check"
+# The push gate runs everything: --changed is refused with --pre-push and with publish, and a changed run is not recorded.
+run2 check --changed --pre-push </dev/null && fail "check --changed --pre-push is accepted"
+grep -q "runs the full check" "$work/out" || fail "refusal not explained: $(cat "$work/out")"
+run2 publish --changed && fail "publish --changed is accepted"
+grep -q "full check" "$work/out" || fail "publish refusal not explained: $(cat "$work/out")"
+c2 "$(jq -nc '{audit: false, checks: [{name: "lint", run: "true", changed: "true # {files}"}]}')"
+g2 add -A && g2 commit -q -m "chore: lint"
+run2 check --changed || fail "check --changed: $(cat "$work/out")"
+grep -q "result not recorded for publishing" "$work/out" || fail "an unrecorded run is not said: $(cat "$work/out")"
+run2 publish && fail "a --changed run was recorded for publishing"
+run2 check --bogus && fail "an unknown flag is accepted"
+# No default branch to compare with: everything runs in full, and it is said.
+git init -q -b trunk "$work/r3"
+mkdir -p "$work/r3/.claude" && cp "$r2/.claude/senior-mode.json" "$work/r3/.claude/"
+git -C "$work/r3" add -A && git -C "$work/r3" -c user.name=t -c user.email=t@t commit -q -m "chore: base"
+(cd "$work/r3" && "$cli" check --changed) >"$work/out" 2>&1 || fail "check --changed with no default branch: $(cat "$work/out")"
+grep -q "cannot be told" "$work/out" || fail "missing default branch not said: $(cat "$work/out")"
+
+# The presets give a changed variant for lint and tests: node (the linter and test runner of its dependencies),
+# python (ruff or flake8, pytest), go (packages), rust (crates). A tool that is not named runs in full.
+mkdir -p "$work/tools"
+for t in npx ruff pytest go cargo; do
+  # shellcheck disable=SC2016 # the stub expands $* and $TOOL_LOG when it runs
+  printf '#!/usr/bin/env bash\necho "%s $*" >>"$TOOL_LOG"\n[ "%s" != pytest ] || exit 5\n' "$t" "$t" >"$work/tools/$t"
+  chmod +x "$work/tools/$t"
+done
+export TOOL_LOG="$work/tools.log"
+preset_repo() { # name preset checks-json; then the files to commit on main (stdin: path per line), the branch changes the rest
+  local d=$work/p-$1
+  git init -q -b main "$d"
+  mkdir -p "$d/.claude"
+  printf '%s\n' "$3" >"$d/.claude/senior-mode.json"
+  git -C "$d" add -A && git -C "$d" -c user.name=t -c user.email=t@t commit -q -m "chore: base"
+  git -C "$d" checkout -q -b feat/2-y
+  printf '%s' "$d"
+}
+changed_in() { # repo, then the files to create
+  local d=$1 f
+  shift
+  for f in "$@"; do mkdir -p "$d/$(dirname "$f")"; echo x >"$d/$f"; done
+}
+prun() { (cd "$1" && PATH="$work/tools:$PATH" "$cli" check --changed) >"$work/out" 2>&1; }
+d=$(preset_repo node node '{"preset":"node","audit":false,"checks":[{"name":"lint","run":"npm run lint"},{"name":"test","run":"npm run test"},{"name":"build","run":"true"}]}')
+echo '{"name":"app","devDependencies":{"eslint":"9","vitest":"1"}}' >"$d/package.json"; mkdir "$d/node_modules"
+git -C "$d" add -A && git -C "$d" -c user.name=t -c user.email=t@t commit -q -m "chore: deps"
+git -C "$d" update-ref refs/heads/main HEAD
+changed_in "$d" src/a.ts README.md
+: >"$TOOL_LOG"
+prun "$d" || fail "node: check --changed fails: $(cat "$work/out")"
+grep -q '^ok    lint \[changed: 1 file\]' "$work/out" || fail "node lint not narrowed: $(cat "$work/out")"
+grep -q '^ok    test \[changed: 1 file\]' "$work/out" || fail "node test not narrowed: $(cat "$work/out")"
+grep -q '^ok    build \[full\]' "$work/out" || fail "node build not full: $(cat "$work/out")"
+[ "$(cat "$TOOL_LOG")" = "$(printf 'npx --no -- eslint src/a.ts\nnpx --no -- vitest related --run src/a.ts')" ] || fail "node commands: $(cat "$TOOL_LOG")"
+rm "$d/src/a.ts"; changed_in "$d" README.md
+prun "$d" || fail "node: $(cat "$work/out")"
+grep -q '^skip  lint \[changed\]: no changed file to check' "$work/out" || fail "node: no source file, lint not skipped: $(cat "$work/out")"
+d=$(preset_repo python python '{"preset":"python","audit":false,"checks":[{"name":"lint","run":"ruff check ."},{"name":"test","run":"pytest"}]}')
+git -C "$d" update-ref refs/heads/main HEAD
+changed_in "$d" pkg/m.py notes.txt
+: >"$TOOL_LOG"
+prun "$d" || fail "python: check --changed fails (pytest exit 5 is not a failure): $(cat "$work/out")"
+[ "$(cat "$TOOL_LOG")" = "$(printf 'ruff check pkg/m.py\npytest pkg/m.py')" ] || fail "python commands: $(cat "$TOOL_LOG")"
+d=$(preset_repo go go '{"preset":"go","audit":false,"checks":[{"name":"lint","run":"go vet ./..."},{"name":"test","run":"go test ./..."}]}')
+git -C "$d" update-ref refs/heads/main HEAD
+changed_in "$d" main.go pkg/a/x.go pkg/a/y.go pkg/b/z.txt
+: >"$TOOL_LOG"
+prun "$d" || fail "go: check --changed fails: $(cat "$work/out")"
+[ "$(cat "$TOOL_LOG")" = "$(printf 'go vet ./. ./pkg/a\ngo test ./. ./pkg/a')" ] || fail "go commands: $(cat "$TOOL_LOG")"
+d=$(preset_repo rust rust '{"preset":"rust","audit":false,"checks":[{"name":"lint","run":"cargo clippy --all-targets -- -D warnings"},{"name":"test","run":"cargo test"}]}')
+git -C "$d" update-ref refs/heads/main HEAD
+changed_in "$d" crates/a/Cargo.toml crates/a/src/lib.rs crates/b/Cargo.toml
+: >"$TOOL_LOG"
+prun "$d" || fail "rust: check --changed fails: $(cat "$work/out")"
+[ "$(cat "$TOOL_LOG")" = "$(printf 'cargo clippy --manifest-path crates/a/Cargo.toml --all-targets -- -D warnings\ncargo clippy --manifest-path crates/b/Cargo.toml --all-targets -- -D warnings\ncargo test --manifest-path crates/a/Cargo.toml\ncargo test --manifest-path crates/b/Cargo.toml')" ] || fail "rust commands: $(cat "$TOOL_LOG")"
+# A customised command is not replaced by the preset's variant: it runs in full.
+d=$(preset_repo custom node '{"preset":"node","audit":false,"checks":[{"name":"lint","run":"make lint"}]}')
+git -C "$d" update-ref refs/heads/main HEAD
+changed_in "$d" src/a.ts
+prun "$d"
+grep -q '^FAIL  lint \[full\]' "$work/out" || fail "a customised lint is not run in full: $(cat "$work/out")"
+
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

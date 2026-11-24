@@ -298,10 +298,17 @@ serve_finish_tests() {
 # A reviewer session is over: it must have left senior-mode/review on the head it reviewed; else the pull
 # request is a person's (a reviewer that ends without a verdict would be started again at every poll).
 serve_finish_review() {
-  local n=$1 pr=${SERVE_PR[$1]} sha=${SERVE_SHA[$1]} review
+  local n=$1 pr=${SERVE_PR[$1]} sha=${SERVE_SHA[$1]} review desc model=${RUN_MODEL[$1]}
   [ -z "${RUN_CWD[$n]:-}" ] || git worktree remove --force "${RUN_CWD[$n]}" 2>/dev/null || true
   review=$(serve_states "$sha" | jq -r '.["senior-mode/review"] // empty') || review=""
   if [ -n "$review" ]; then
+    # The model that reviewed is in the description of the status (#304), whoever wrote it.
+    desc=$(gh_retry api "repos/$RUN_SLUG/commits/$sha/status" --jq '[.statuses[] | select(.context == "senior-mode/review") | .description // ""][0] // ""') || desc=""
+    case $desc in
+      "reviewed on $model"*) ;;
+      *) gh_retry api "repos/$RUN_SLUG/statuses/$sha" -f state="$review" -f context=senior-mode/review \
+        -f description="reviewed on $model${desc:+: ${desc:0:100}}" >/dev/null || echo "#$n: could not record the reviewer model on ${sha:0:7}" >&2 ;;
+    esac
     RUN_FAILS=0
     echo "#$n: pull request #$pr reviewed: senior-mode/review is $review"
     return 0
@@ -866,11 +873,25 @@ serve_changes() {
   if run_launch "$t" sonnet; then running+=("$t"); fi
 }
 
-# A pull request In review whose head has senior-mode/ci and no review status: a reviewer session on Opus, in a
-# detached worktree of that head (ADR 0017, 0019: no reviewer, no review; the status stays unset and the next
-# poll after a usage limit's reset tries again).
+# The model of the reviewer session of ticket $1 (#304): Opus, unless review.crossModel is on and the ticket's last
+# implementer session ran on Opus (escalated): then review.otherModel, so that the reviewer is never the model that
+# wrote the code. The implementer is read from the ticket's outcome file; a ticket with none was not Opus's.
+serve_review_model() {
+  local impl
+  [ "$(config_get review.crossModel)" = false ] && {
+    echo opus
+    return 0
+  }
+  impl=$(jq -r '.model // empty' "$RUN_DIR/$1.json" 2>/dev/null) || impl=""
+  if [ "$impl" = opus ]; then config_get review.otherModel; else echo opus; fi
+}
+
+# A pull request In review whose head has senior-mode/ci and no review status: a reviewer session on another model
+# than the implementer's (serve_review_model), in a detached worktree of that head (ADR 0017, 0019: no reviewer, no
+# review; the status stays unset and the next poll after a usage limit's reset tries again).
 serve_review() {
-  local t=$1 pr=$2 sha=$3 ref=$4 wt
+  local t=$1 pr=$2 sha=$3 ref=$4 wt model
+  model=$(serve_review_model "$t")
   serve_can_launch || return 0
   git_bound fetch -q origin "$ref" 2>/dev/null || true
   wt=$(worktree_path "$RUN_ROOT" "review-$t")
@@ -885,9 +906,9 @@ serve_review() {
   RUN_BRANCH[$t]=$ref
   SERVE_PR[$t]=$pr
   SERVE_SHA[$t]=$sha
-  serve_review_prompt "$t" "${RUN_TITLE[$t]:-}" "$pr" "$sha" >"$RUN_DIR/$t.prompt"
-  echo "#$t: reviewing pull request #$pr"
-  if run_launch "$t" opus; then running+=("$t"); else git worktree remove --force "$wt" 2>/dev/null || true; fi
+  serve_review_prompt "$t" "${RUN_TITLE[$t]:-}" "$pr" "$sha" "$model" >"$RUN_DIR/$t.prompt"
+  echo "#$t: reviewing pull request #$pr on $model"
+  if run_launch "$t" "$model"; then running+=("$t"); else git worktree remove --force "$wt" 2>/dev/null || true; fi
 }
 
 # Every pull request of a ticket In review, in `pick` order: its head decides. CI success and no review

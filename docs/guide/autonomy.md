@@ -345,7 +345,8 @@ of the separate session.
 
 **What `serve` does at each poll** ([spec 131](../specs/131-autonomy.md), ADRs 0017 to 0019). First it settles the
 pull requests queued for auto-merge. Then, for the tickets In review (not `needs-human`, not draft), in `pick` order:
-a pull request with `senior-mode/ci` success and no `senior-mode/review` gets a `reviewer` session (Opus, a detached
+a pull request with `senior-mode/ci` success and no `senior-mode/review` gets a `reviewer` session (Opus, or `review.otherModel` when
+the ticket ended on Opus: [`review.crossModel`](configuration.md), a detached
 worktree of the head, removed afterwards); a review of changes requested resumes the ticket session on the same
 branch, 2 rounds at most, then `needs-human` on the pull request and the ticket; a reviewer that ends without a
 status is `needs-human` too. Then the integrator pass merges one pull request per poll: when `autonomy.merge` is on

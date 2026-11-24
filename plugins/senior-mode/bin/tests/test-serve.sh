@@ -1357,5 +1357,40 @@ once || fail "LP: serve failed: $(cat "$work/out")"
 grep -q '^pr merge' "$GH_LOG" && fail "LP: merged with senior-mode/security missing: $(grep '^pr ' "$GH_LOG")"
 grep -q 'Waiting for a human.*#74.*senior-mode/security not green' "$work/out" || fail "LP: the missing status is not said: $(cat "$work/out")"
 
+# AC: the reviewer runs on another model than the implementer (#304). Sonnet implemented: Opus reviews. A ticket that
+# ended on Opus (escalated) is reviewed on review.otherModel. review.crossModel false keeps Opus. The model is
+# written in the description of senior-mode/review.
+config '{}'
+sha=$(mkbranch feat/95-x f95.txt)
+boardx "95:In review:S:P1 next"
+prs_reset
+pr 195 feat/95-x "$sha" clean
+st "$sha" "senior-mode/ci success"
+session 95-opus-reviewer "reviewed: success" "" "" review:success
+fresh
+once || fail "AC: serve failed: $(cat "$work/out")"
+grep -q '^app-review-95 opus run=1 role=reviewer$' "$CLAUDE_LOG" || fail "AC: not reviewed on Opus after Sonnet: $(cat "$CLAUDE_LOG")"
+grep -q 'reviewed on opus' "$state/95.prompt" || fail "AC: the prompt does not say the model: $(cat "$state/95.prompt")"
+grep -q 'statuses/.* -f state=success -f context=senior-mode/review -f description=reviewed on opus' "$GH_LOG" ||
+  fail "AC: the model is not recorded in the status description: $(grep statuses "$GH_LOG")"
+st "$sha" "senior-mode/ci success"
+session 95-sonnet-reviewer "reviewed: success" "" "" review:success
+fresh
+mkdir -p "$state"
+echo '{"ticket": 95, "outcome": "delivered", "escalated": true, "model": "opus"}' >"$state/95.json"
+once || fail "AC: serve failed: $(cat "$work/out")"
+grep -q '^app-review-95 sonnet run=1 role=reviewer$' "$CLAUDE_LOG" || fail "AC: an Opus ticket is reviewed on Opus: $(cat "$CLAUDE_LOG")"
+grep -q 'description=reviewed on sonnet' "$GH_LOG" || fail "AC: the Sonnet review is not recorded: $(grep statuses "$GH_LOG")"
+config '{}'
+jq '.review = {crossModel: false}' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -am "chore: cross model off"
+git -C "$repo" push -q origin main
+st "$sha" "senior-mode/ci success"
+fresh
+mkdir -p "$state"
+echo '{"ticket": 95, "outcome": "delivered", "escalated": true, "model": "opus"}' >"$state/95.json"
+once || fail "AC: serve failed: $(cat "$work/out")"
+grep -q '^app-review-95 opus run=1 role=reviewer$' "$CLAUDE_LOG" || fail "AC: crossModel false does not keep Opus: $(cat "$CLAUDE_LOG")"
+
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

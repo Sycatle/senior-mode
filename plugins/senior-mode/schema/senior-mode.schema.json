@@ -207,7 +207,11 @@
     "review": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "sections": { "type": "array", "items": { "type": "string" } } }
+      "properties": {
+        "sections": { "type": "array", "items": { "type": "string" } },
+        "crossModel": { "type": "boolean" },
+        "otherModel": { "type": "string", "minLength": 1 }
+      }
     },
     "docs": {
       "type": "object",

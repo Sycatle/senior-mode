@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # The briefing of a session (SessionStart hook, spec 0001 §15, spec 325 §3), from stable to variable so the start
 # is the same for every ticket: the router, the overrides, the vision, then what governs the ticket's Paths (ADRs,
-# specs, knowledge notes), then the ticket with its spec and criteria last. Never fails.
+# specs, knowledge notes), then the ticket with its spec and criteria last. It fits `context.budget` tokens
+# (bytes / 4): the router and the ticket are never dropped, the lowest ranked items go first. Never fails.
 
 # The router: what a session is told whatever the repository.
 context_router() {
@@ -44,49 +45,57 @@ context_rows() {
     body && !head && /^# / { head = 1; print FILENAME "\theading\t" substr($0, 3) }' "${files[@]}")
 }
 
-# What governs the Paths of a ticket, ranked (spec 325 §3). It reads the `file<TAB>key<TAB>value`
-# rows of context_rows on its input and prints the sections (ADRs, then specs, then notes, each from the best ranked).
+# What governs the Paths of a ticket, ranked and cut to a size (spec 325 §3). It reads the `file<TAB>key<TAB>value`
+# rows of context_rows on its input and prints {omit, block} as JSON: `block` the sections (ADRs, then specs, then
+# notes, each from the best ranked), `omit` the line that says how many items the size left out (empty when none).
 # The candidates: the accepted ADRs and specs whose `paths` overlap the ticket's Paths (ADR 0017 collision rule, the
 # static part of a glob), the accepted ADRs of the `adrs` of the ticket's spec whatever their `paths`, and the
 # notes whose `paths` overlap. Ranked ADRs and specs first, then notes; inside a class by the length of the literal
-# prefix of the overlap (longest first), `kind: pitfall` first, the newest `verified`, then the file name.
-# Arguments: tp (the ticket's Paths, array), spec (its spec file).
+# prefix of the overlap (longest first), `kind: pitfall` first, the newest `verified`, then the file name. Items are
+# taken in that order until $limit bytes (the room the router and the ticket leave) is full.
+# Arguments: tp (the ticket's Paths, array), spec (its spec file), now (epoch), cutoff (date a note is stale
+# before), limit (bytes), budget (tokens, for the omission line).
 # shellcheck disable=SC2016 # a jq program, not shell
 CONTEXT_PICK=$PATHS_DEF'
   def unq: gsub("^[\"\u0027]|[\"\u0027]$"; "");
   def arr: (fromjson? // []) | if type == "array" then map(select(type == "string")) else [] end;
   def plen($t; $g): [$t[] as $a | $g[] as $b | ($a | gstatic) as $sa | ($b | gstatic) as $sb
       | select(pclash($sa; $sb)) | ([$sa, $sb] | map(length) | max)] | if length == 0 then null else max end;
+  def ago($v): try (($now - (($v + "T00:00:00Z") | fromdateiso8601)) / 86400 | floor) catch null;
   def clip: .[:200];
   [inputs | split("\t") | select(length >= 3) | {f: .[0], k: .[1], v: (.[2:] | join("\t"))}]
   | group_by(.f) | map({key: .[0].f, value: (map({key: .k, value: .v}) | from_entries)}) | from_entries as $files
   | ($files[$spec] // {}) as $sp
   | (if ($tp | length) > 0 then $tp else ($sp.paths // "[]" | arr) end) as $tpaths
   | (($sp.adrs // "[]") | arr | map(tonumber? // empty)) as $linked
-  | if ($tpaths | length) == 0 then "" else
+  | if ($tpaths | length) == 0 then {omit: "", block: ""} else
     [$files | to_entries[] | .key as $f | .value as $v
       | (if ($f | startswith("docs/adr/")) then "adr" elif ($f | startswith("docs/specs/")) then "spec" else "note" end) as $type
       | select($f != $spec)
       | plen($tpaths; ($v.paths // "[]" | arr)) as $pl
       | ($v.verified // "" | unq) as $ver
       | (($f | capture("^docs/adr/(?<n>[0-9]+)-")? | .n | tonumber) // null) as $num
-      | select(if $type == "note" then $pl != null and ($ver | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
+      | select(if $type == "note" then $pl != null and ago($ver) != null
           else ($v.status // "" | unq) == "accepted" and ($pl != null or ($num != null and any($linked[]; . == $num))) end)
       | ($v.kind // "" | unq) as $kind
       | {file: $f, cls: (if $type == "note" then 1 else 0 end), type: $type, plen: ($pl // 0), pit: ($kind == "pitfall"), verified: $ver,
          line: (if $type == "note" then
-             "- \($f) [\($kind)] verified \($ver)\(if ($v.heading // "") != "" then ": \($v.heading)" else "" end)"
+             "- \($f) [\($kind)] verified \($ver) (\(ago($ver) | if . == 1 then "1 day ago" else "\(.) days ago" end))\(if $ver < $cutoff then ", stale" else "" end)\(if ($v.heading // "") != "" then ": \($v.heading)" else "" end)"
            else "- \($f) (accepted)\(if ($v.title // "") != "" then ": \($v.title | unq)" else "" end)" end | clip)}]
     | sort_by([.cls, -.plen, (if .pit then 0 else 1 end), (.verified | explode | map(-.)), .file]) as $c
     | def heads: [{t: "adr", h: "ADRs that govern these Paths (accepted):"}, {t: "spec", h: "Specs that govern these Paths (accepted):"},
-        {t: "note", h: "Knowledge notes on these Paths (the date says when one was last checked):"}];
-      [heads[] | . as $s | [$c[] | select(.type == $s.t) | .line] | select(length > 0) | $s.h + "\n" + join("\n")]
-      | if length == 0 then "" else "\n" + join("\n\n") end
+        {t: "note", h: "Knowledge notes on these Paths (the date says how far to trust one):"}];
+      def block($n): [heads[] | . as $s | [$c[:$n][] | select(.type == $s.t) | .line] | select(length > 0) | $s.h + "\n" + join("\n")]
+        | if length == 0 then "" else "\n" + join("\n\n") end;
+      def omit($n): ($c | length) - $n | if . == 0 then "" else "\(.) item\(if . == 1 then "" else "s" end) omitted to fit context.budget (\($budget) tokens); the scout agent has the rest." end;
+      def cost($n): (block($n) | if . == "" then 0 else utf8bytelength + 1 end) + (omit($n) | if . == "" then 0 else utf8bytelength + 1 end);
+      ([range($c | length; -1; -1) | select(cost(.) <= $limit)] | first // 0) as $n
+      | {omit: omit($n), block: block($n)}
     end'
 
 # `senior-mode context`: the briefing, on the output.
 context() {
-  local root branch issue json spec status criteria head ticket="" tpaths="[]" block
+  local root branch issue json spec status criteria head ticket="" tpaths="[]" budget months cutoff fixed res block omit
   head=$(context_router)
   root=$(git rev-parse --show-toplevel 2>/dev/null) || { printf '%s\n' "$head"; return 0; }
   if [ ! -f "$root/.claude/senior-mode.json" ]; then
@@ -115,11 +124,23 @@ context() {
       [ -n "$tpaths" ] || tpaths="[]"
     fi
   fi
-  block=""
+  block="" omit=""
   if [ -n "$ticket" ]; then
-    block=$(context_rows "$root" | jq -Rnr --argjson tp "$tpaths" --arg spec "$spec" "$CONTEXT_PICK" 2>/dev/null) || block=""
+    budget=$(config_get context.budget 2>/dev/null) || budget=""
+    [[ $budget =~ ^[1-9][0-9]*$ ]] || budget=2000
+    months=$(config_get knowledge.staleMonths 2>/dev/null) || months=""
+    [[ $months =~ ^[1-9][0-9]*$ ]] || months=6
+    cutoff=$(date -u -d "$months months ago" +%F)
+    fixed=$(printf '%s\n\n%s\n' "$head" "$ticket" | LC_ALL=C wc -c)
+    res=$(context_rows "$root" | jq -Rnc --argjson tp "$tpaths" --arg spec "$spec" --argjson now "$(date -u +%s)" --arg cutoff "$cutoff" \
+      --argjson limit "$((budget * 4 - fixed))" --argjson budget "$budget" "$CONTEXT_PICK" 2>/dev/null) || res=""
+    if [ -n "$res" ]; then
+      block=$(jq -r .block <<<"$res")
+      omit=$(jq -r .omit <<<"$res")
+    fi
   fi
   printf '%s\n' "$head"
   [ -z "$block" ] || printf '%s\n' "$block"
   [ -z "$ticket" ] || printf '\n%s\n' "$ticket"
+  [ -z "$omit" ] || printf '%s\n' "$omit"
 }

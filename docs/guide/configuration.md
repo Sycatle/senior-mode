@@ -60,10 +60,12 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `board.template` | the senior-mode template Project | Id of the Project that `setup github` copies (`copyProjectV2`, without draft issues) when the repository has none, and that `setup github --migrate` builds the new board from. Set the id of your own template, for instance an organization's; the copy brings its views, fields and built-in workflows. A fine-grained token bound to another owner cannot read the default one: setup says what to do, and `--upgrade` then uses a built-in list of its fields |
 | `vision.maxLines` | `100` | Lines `docs/vision.md` may have; `check` fails above it (a positive whole number). See [`docs/vision.md`](commands.md#frame) |
 | `knowledge.maxLines` | `40` | Lines the body of a [knowledge note](#knowledge-notes) may have; `check` fails above it (a positive whole number) |
+| `knowledge.staleMonths` | `6` | Months after which the [briefing](commands.md#the-senior-mode-script) marks a note `stale` (a positive whole number) |
 | `retro.repeat` | `3` | Tickets with the same `cause:<x>` label on the same paths or skill, in the period, that make [`retro`](commands.md#retro) open one improvement ticket aimed at that cause (a positive whole number) |
 | `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |
 | `docs.extra` | none | Extra living documents the `docs` skill keeps current after a merge: a list of `{ "path", "purpose" }`; its changes are flagged for human review. Add it yourself |
 | `context.claudeMdLines` | `80` | Most lines a tracked `CLAUDE.md` may have before `check` fails (context hygiene); a whole number from 1 |
+| `context.budget` | `2000` | Tokens (estimated as bytes / 4) the session briefing of [`senior-mode context`](commands.md#the-senior-mode-script) may take; the router and the ticket with its criteria are never dropped, the lowest ranked ADRs, specs and notes go first (a positive whole number) |
 | `wip` | `1` | Open tickets In progress at once: `senior-mode start` refuses another and names the one to finish first; `status` shows the count when it is over. A [run](autonomy.md#run) is bounded by `autonomy.parallel` instead, and is the only caller that skips `wip`: it proves itself with a token, so setting `SENIOR_MODE_RUN=1` by hand does not |
 | `hygiene.days` | `14` | Age in days (a positive whole number). [`senior-mode clean`](autonomy.md#hygiene) removes the remote branch of a merged or closed pull request and the run files under `.git/senior-mode` older than that (`--days` overrides it). The hygiene report of `senior-mode status` and `retro` ([commands](commands.md)) calls an open pull request with no activity for that long stale (reported, never acted on), and `status --fix` only deletes a branch whose last commit, or moves a ticket whose last activity, is older |
 | `autonomy.maxTickets` | `3` | Tickets per [run](autonomy.md#run) |
@@ -429,6 +431,9 @@ kind: pitfall
 - `origin`: `#<n>` (the ticket or pull request that taught it), `retro` or a path under `docs/spikes/`.
 - `kind`: `pitfall`, `convention`, `howto` or `context`.
 - The body (after the front matter) has at most `knowledge.maxLines` lines (default 40): a longer subject is split in notes, or becomes an ADR or a spec.
+
+The session briefing lists the notes whose `paths` overlap the ticket's Paths, each with its age: `verified 2026-09-01 (83 days ago)`,
+and `stale` after `knowledge.staleMonths` (default 6) months.
 
 `senior-mode check` runs a `knowledge` step when `docs/knowledge/` exists and fails, naming the file and the key, on a note
 that breaks one of these rules; a repository with no such directory sees nothing.

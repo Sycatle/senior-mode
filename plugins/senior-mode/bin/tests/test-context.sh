@@ -129,6 +129,37 @@ first=$out
 context "$repo"
 [ "$out" = "$first" ] || fail "two runs differ"
 
+# The age of a note, and `stale` past knowledge.staleMonths.
+grep -qF "verified $(date -u -d '83 days ago' +%F) (83 days ago)" <<<"$out" || fail "age of the 83 days old note: $out"
+grep -F "aa-conv" <<<"$out" | grep -q stale && fail "a fresh note is stale: $out"
+grep -F "ff-old" <<<"$out" | grep -q ", stale" || fail "an 8 months old note is not stale: $out"
+echo '{"knowledge":{"staleMonths":12}}' >"$repo/.claude/senior-mode.json"
+context "$repo"
+grep -F "ff-old" <<<"$out" | grep -q stale && fail "knowledge.staleMonths is not read: $out"
+
+# The budget: the router and the ticket stay, the lowest ranked items go first, the last line says so.
+echo '{}' >"$repo/.claude/senior-mode.json"
+context "$repo"
+full=$(wc -c <<<"$out")
+[ "$full" -le 8000 ] || fail "default budget (2000 tokens) exceeded: $full bytes"
+grep -q "omitted" <<<"$out" && fail "an omission line when everything fits: $out"
+echo "{\"context\":{\"budget\":$(((full - 250) / 4))}}" >"$repo/.claude/senior-mode.json"
+context "$repo"
+[ "$(wc -c <<<"$out")" -le "$(((full - 250) / 4 * 4))" ] || fail "the briefing is over its budget: $(wc -c <<<"$out") bytes"
+for want in "senior-mode is active" "#12 Let people log in" "Given a user with an account" "Given a wrong password" "docs/adr/0010-sessions.md" "docs/knowledge/cc-deep.md"; do
+  grep -qF "$want" <<<"$out" || fail "'$want' dropped by the budget: $out"
+done
+grep -qF "docs/knowledge/ff-old.md" <<<"$out" && fail "the lowest ranked note is kept: $out"
+tail -n 1 <<<"$out" | grep -Eq '^[0-9]+ items? omitted .*the scout agent has the rest\.$' || fail "no omission line last: $out"
+echo '{"context":{"budget":1}}' >"$repo/.claude/senior-mode.json"
+context "$repo"
+for want in "senior-mode is active" "#12 Let people log in" "Given a wrong password"; do
+  grep -qF "$want" <<<"$out" || fail "'$want' dropped by a tiny budget: $out"
+done
+grep -qE "docs/(adr|knowledge)/|docs/specs/0100" <<<"$out" && fail "items kept under a tiny budget: $out"
+tail -n 1 <<<"$out" | grep -Eq '^8 items omitted ' || fail "tiny budget: $(tail -n 1 <<<"$out")"
+echo '{}' >"$repo/.claude/senior-mode.json"
+
 # With no Paths, the briefing holds the router, the ticket and its spec (the spec's adrs are not listed either).
 GH_PATHS='' context "$repo"
 grep -qF "docs/adr/" <<<"$out" && fail "an ADR with no Paths: $out"
@@ -141,6 +172,21 @@ grep -qF "docs/knowledge/ee-billing.md" <<<"$out" || fail "the spec's paths are 
 grep -qF "docs/adr/0013-billing.md" <<<"$out" || fail "the ADR of the spec's paths is missing: $out"
 grep -qF "aa-conv" <<<"$out" && fail "a note outside the spec's paths: $out"
 
+# Two tickets of one repository share the start of the briefing, up to the first section that depends on Paths.
+printf '%s\n' '# Vision' '' '## Goals' '' '- G1: people log in' '' '## Non-goals' '' '- No mobile app' >"$repo/docs/vision.md"
+git -C "$repo" switch -q -c feat/13-billing
+# shellcheck disable=SC2016 # backticks are Markdown in the issue body
+GH_ISSUE='{"number":13,"title":"Round money","state":"OPEN","projectItems":[],"body":"Spec: `docs/specs/0003-login.md`.\n\n## Acceptance criteria\n- Given a total, then it is rounded."}'
+GH_PATHS='{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"project":{"id":"P"},"fieldValueByName":{"text":"src/billing/**"}}]}}}}}' context "$repo"
+start() { sed -n '1,/^\(ADRs\|Specs\|Knowledge notes\|Current ticket\)/p' <<<"$1" | sed '$d'; }
+billing=$out
+git -C "$repo" switch -q feat/12-login
+context "$repo"
+[ "$(start "$out")" = "$(start "$billing")" ] || fail "the start of two briefings differs"
+grep -qF "No mobile app" <<<"$(start "$out")" || fail "the vision is not in the stable start: $(start "$out")"
+grep -qF "ee-billing" <<<"$billing" || fail "the billing ticket lacks its note: $billing"
+grep -qF "ee-billing" <<<"$out" && fail "the login briefing has the billing note: $out"
+rm -f "$repo/docs/vision.md"
 printf -- '---\nid: 0003\nstatus: accepted\n---\n' >"$repo/docs/specs/0003-login.md"
 unset GH_PATHS
 

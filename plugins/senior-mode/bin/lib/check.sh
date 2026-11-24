@@ -170,14 +170,48 @@ suppressions_warn() {
     }' || true
 }
 
+# The jobs of the project's own CI that cover a check, as JSON ([{context, covers}]): those of workflow.ci.jobs when
+# ci.mode is existing (ADR 0022), none otherwise. $1 is the config file.
+ci_jobs() {
+  [ "$(jq -r '.ci.mode // "local"' "$1")" = existing ] || { echo '[]'; return 0; }
+  jq -c '.workflow.ci.jobs // []' "$1"
+}
+
+# What the project's CI says of the jobs $2 on the commit $1, one line per job: state (success, pending or failure),
+# the job's context and the URL of the run that decided it. A job with no run on the commit yet is pending with no URL.
+# A context matches a check run or a status named like it or like its job (`ci / lint`, `lint`). A matrix of runs is
+# as bad as its worst.
+ci_job_states() {
+  local sha=$1 jobs=$2 slug runs="[]" statuses="[]"
+  if slug=$(repo_slug 2>/dev/null); then
+    runs=$(gh_retry api "repos/$slug/commits/$sha/check-runs" --jq '[.check_runs[] | {name, status, conclusion, url: .html_url}]' 2>/dev/null) || runs="[]"
+    statuses=$(gh_retry api "repos/$slug/commits/$sha/status" --jq '[.statuses[] | {name: .context, state, url: .target_url}]' 2>/dev/null) || statuses="[]"
+  fi
+  jq -nr --argjson jobs "$jobs" --argjson runs "$runs" --argjson st "$statuses" '
+    ($runs | map({name, url, s: (if .status != "completed" then "pending"
+        elif (.conclusion | IN("success", "neutral", "skipped")) then "success" else "failure" end)})
+      + ($st | map({name, url, s: (if .state == "success" then "success" elif .state == "pending" then "pending" else "failure" end)}))) as $all
+    | $jobs[] | .context as $c | ($c | split(" / ") | last) as $j
+    | [$all[] | select(.name == $c or .name == $j or (.name | endswith(" / \($j)")))] as $m
+    | (if ($m | length) == 0 then "pending" elif any($m[]; .s == "failure") then "failure"
+        elif any($m[]; .s == "pending") then "pending" else "success" end) as $s
+    | "\($s)\t\($c)\t\(([$m[] | select(.s == $s)] | first | .url) // "")"'
+}
+
 # Runs the built-in secret scan and dependency audit, then the configured checks, from the repository
 # root, each with the time it took. On a clean tree, records the result for HEAD. With --pre-push (the
 # hook's stdin is the pushed refs) the checks get the changed paths in SENIOR_MODE_CHANGED_FILES, so one that
-# can narrow itself to them does; that run is not recorded, because publish needs a full one.
+# can narrow itself to them does; that run is not recorded, because publish needs a full one. With --ci-only (ADR 0022,
+# ci.mode existing) the checks that a job of the project's CI covers are not run again: the state of that job on HEAD
+# is read instead (ok, `wait <context>` with status 2 while it runs or has not started, FAIL with the URL of its run);
+# the result recorded for publish is that of the checks run here, publish reads the jobs again.
 check() {
-  local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp
+  local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp ci_only=false jobs="[]" job
+  local waiting="" ci_failed="" st url
   file=$(config_file)
   unset SENIOR_MODE_CHANGED_FILES
+  [ "${1:-}" != --ci-only ] || ci_only=true
+  [ "$ci_only" = false ] || jobs=$(ci_jobs "$file")
   if [ "${1:-}" = --pre-push ]; then
     scope=$(mktemp)
     if pushed_paths >"$scope"; then
@@ -213,6 +247,12 @@ check() {
   for ((i = 0; i < count; i++)); do
     name=${names[i]}
     cmd=${cmds[i]}
+    job=$(jq -r --arg n "$name" '[.[] | select(.covers | index($n))][0].context // empty' <<<"$jobs")
+    if [ -n "$job" ]; then
+      passed=$((passed + 1))
+      echo "skip  $name: covered by $job (ci-only)"
+      continue
+    fi
     started=$(now_ms)
     runtmp=$rundir/tmp
     # End-to-end suites are heavy: parallel tickets share e2e.slots of them per machine. Their lock is
@@ -255,6 +295,22 @@ check() {
     state=failure description="failed: $failed"
   fi
   description=${description:0:140}
+  # The jobs of the project's CI that cover checks, on this commit.
+  if [ "$jobs" != "[]" ]; then
+    while IFS=$'\t' read -r st job url; do
+      case $st in
+        success) echo "ok    $job (CI)" ;;
+        pending)
+          echo "wait  $job"
+          waiting+="${waiting:+, }$job"
+          ;;
+        *)
+          echo "FAIL  $job${url:+: $url}"
+          ci_failed+="${ci_failed:+, }$job"
+          ;;
+      esac
+    done < <(ci_job_states "$(git rev-parse HEAD)" "$jobs")
+  fi
   if [ -n "$scope" ]; then
     echo "note: narrowed to the pushed paths, result not recorded for publishing"
   elif [ -z "$(git status --porcelain)" ]; then
@@ -264,7 +320,9 @@ check() {
     echo "note: uncommitted changes, result not recorded for publishing"
   fi
   echo "$description"
-  [ "$state" = success ]
+  [ -z "$ci_failed" ] || return 1
+  [ "$state" = success ] || return 1
+  [ -z "$waiting" ] || return 2
 }
 
 # Open pull requests that contain a commit, with the issues each closes (for the security status).
@@ -313,13 +371,30 @@ security_verdict() {
 # when the pull request does not need the security pass. A due pass is left pending, and a status the
 # security agent already set on the commit is never overwritten.
 publish() {
-  local sha record state description slug verdict current
+  local sha record state description slug verdict current jobs st job url pending="" failed=""
   sha=$(git rev-parse --verify "${1:-HEAD}^{commit}" 2>/dev/null) || die "unknown commit: ${1:-HEAD}"
   record=$(check_record "$sha")
   [ -f "$record" ] || die "no check result for ${sha:0:7}; run senior-mode check on a clean tree first"
   state=$(sed -n 1p "$record")
   description=$(sed -n 2p "$record")
   slug=$(repo_slug)
+  # With the project's own CI (ci.mode existing), the status also holds its jobs as they are now: a failed one fails it
+  # with the URL of its run, one still running or not started leaves it pending (never failed).
+  jobs=$(ci_jobs "$(config_file)")
+  if [ "$jobs" != "[]" ]; then
+    while IFS=$'\t' read -r st job url; do
+      case $st in
+        pending) pending+="${pending:+, }$job" ;;
+        failure) failed+="${failed:+, }$job${url:+ ($url)}" ;;
+      esac
+    done < <(ci_job_states "$sha" "$jobs")
+    if [ "$state" != failure ] && [ -n "$failed" ]; then
+      state=failure description="failed: $failed"
+    elif [ "$state" = success ] && [ -n "$pending" ]; then
+      state=pending description="wait $pending"
+    fi
+    description=${description:0:140}
+  fi
   gh_retry api "repos/$slug/statuses/$sha" -f state="$state" -f context=senior-mode/ci \
     -f description="$description" >/dev/null ||
     die "could not publish the status of ${sha:0:7}; push the commit first"

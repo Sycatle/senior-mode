@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0](https://github.com/Sycatle/senior-mode/compare/senior-mode--v0.6.0...senior-mode--v0.7.0) (2026-11-24)
+
+
+### Features
+
+* **adr:** paths in the ADR template, derived or asked ([2826b78](https://github.com/Sycatle/senior-mode/commit/2826b789613e511d1e6b9d3fa8750b01ba7881e5)), refs [#335](https://github.com/Sycatle/senior-mode/issues/335)
+* **check:** context hygiene for CLAUDE.md, skills and ADR paths ([c329a28](https://github.com/Sycatle/senior-mode/commit/c329a28dfa9f2ac55794c411a9f5d18da41f5c60)), refs [#314](https://github.com/Sycatle/senior-mode/issues/314)
+* **merge:** local protection so serve merges on GitHub Free, with a push audit ([483278a](https://github.com/Sycatle/senior-mode/commit/483278a8c9c60eecd7c8b8261e56d7ba3f5ef09d)), refs [#523](https://github.com/Sycatle/senior-mode/issues/523)
+* **review:** the reviewer runs on a different model than the implementer by default ([0b90c7a](https://github.com/Sycatle/senior-mode/commit/0b90c7a23ef8ab46b18f80656a133cf8f0bcb13a)), refs [#304](https://github.com/Sycatle/senior-mode/issues/304)
+* **serve:** added tests must fail without the change, and assertion-free tests are refused ([bb853bb](https://github.com/Sycatle/senior-mode/commit/bb853bb288e8bc97a3eb8c817b1b153b5b42c3c4)), refs [#306](https://github.com/Sycatle/senior-mode/issues/306)
+
+
+### Bug Fixes
+
+* **run:** no --strict-mcp-config under a managed MCP config; schema accepts cached Iteration and date fields ([b9646a1](https://github.com/Sycatle/senior-mode/commit/b9646a134084822d1c386bfc1a3c32736c573d77)), refs [#540](https://github.com/Sycatle/senior-mode/issues/540)
+* **setup:** fresh Project without Iteration, workflows unreadable with nothing to disable ([33e396f](https://github.com/Sycatle/senior-mode/commit/33e396fe7599261fbb06f448f5c5b754cce46ddf)), refs [#536](https://github.com/Sycatle/senior-mode/issues/536)
+
 ## [0.6.0](https://github.com/Sycatle/senior-mode/compare/senior-mode--v0.5.0...senior-mode--v0.6.0) (2026-11-24)
 
 

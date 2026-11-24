@@ -1,9 +1,10 @@
 # shellcheck shell=bash
 # The briefing of a session (SessionStart hook, spec 0001 §15, spec 325 §3), from stable to variable so the start
 # is the same for every ticket: the router, the overrides, the vision, then what governs the ticket's Paths (ADRs,
-# specs, knowledge notes), then the history of those Paths (recurring findings, reverts, merged commits), then the
-# ticket with its spec and criteria last. It fits `context.budget` tokens (bytes / 4): the router and the ticket are
-# never dropped, the lowest ranked items go first. Never fails.
+# specs, knowledge notes), then the history of those Paths (recurring findings, reverts, merged commits), the related
+# work (open tickets, framing decisions), then the ticket with its spec and criteria last. It fits `context.budget`
+# tokens (bytes / 4): the router and the ticket are never dropped, the lowest ranked items go first. Without GitHub it
+# is built from files, git and the ticket cache, and says so. Never fails.
 
 # The router: what a session is told whatever the repository.
 context_router() {
@@ -16,19 +17,38 @@ ROUTER
   [ -z "${SENIOR_MODE_RUN:-}" ] || echo "Unattended run: nobody answers questions. Take the recommended option for reversible choices; never accept an L spec or an ADR, never touch a protected zone: label needs-human and stop with a report."
 }
 
-# The Paths of the ticket $2 on the board (the text field Paths of its Project item), as a JSON array of globs;
-# nothing when GitHub or the field is not there. $1 the repository root.
-context_board_paths() {
+# What the board says of the ticket $2: {paths, parent}, the text field Paths of its Project item as a JSON array of
+# globs and its parent epic ({number, title} or null). Nothing when the field is not there or the repository has no
+# remote; fails when GitHub does not answer. $1 the repository root.
+context_board() {
   local project slug res
   project=$(jq -r '.project.id // empty' "$1/.claude/senior-mode.json" 2>/dev/null) || project=""
   slug=$(repo_slug 2>/dev/null) || return 0
   # shellcheck disable=SC2016 # a GraphQL query, not shell
   res=$(gh_bound api graphql -f owner="${slug%%/*}" -f name="${slug#*/}" -F n="$2" -f query='query($owner: String!, $name: String!, $n: Int!) {
-    repository(owner: $owner, name: $name) { issue(number: $n) { projectItems(first: 10) { nodes { project { id }
-      fieldValueByName(name: "Paths") { ... on ProjectV2ItemFieldTextValue { text } } } } } } }' 2>/dev/null) || return 0
+    repository(owner: $owner, name: $name) { issue(number: $n) { parent { number title } projectItems(first: 10) { nodes { project { id }
+      fieldValueByName(name: "Paths") { ... on ProjectV2ItemFieldTextValue { text } } } } } } }' 2>/dev/null) || return 1
   # shellcheck disable=SC2016 # a jq program, not shell
-  jq -c --arg p "$project" '[.data.repository.issue.projectItems.nodes[]? | select($p == "" or .project.id == $p)
-      | .fieldValueByName.text? // empty][0] // "" | gsub("[\\[\\]\"\u0027]"; "") | [split("[,\\s]+"; null)[] | select(length > 0)]' <<<"$res" 2>/dev/null || true
+  jq -c --arg p "$project" '([.data.repository.issue.projectItems.nodes[]? | select($p == "" or .project.id == $p)
+      | .fieldValueByName.text? // empty][0] // "" | gsub("[\\[\\]\"\u0027]"; "") | [split("[,\\s]+"; null)[] | select(length > 0)]) as $paths
+    | {paths: $paths, parent: (.data.repository.issue.parent // null | if . then {number, title} else null end)}' <<<"$res" 2>/dev/null || true
+}
+
+# The ticket $2 as the briefing reads it: the JSON of `gh issue view` plus its `paths` and `parent` (context_board),
+# written to `senior-mode/ticket/<n>.json` of the git directory at each successful load. Exit status 0 when GitHub
+# answered; 1 with the cached JSON when it did not; 2 when it did not and there is no cache. $1 the repository root.
+context_load() {
+  local json board dir
+  dir=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || dir=""
+  dir=$dir/senior-mode/ticket
+  if json=$(gh_bound issue view "$2" --json number,title,state,body,projectItems 2>/dev/null) && board=$(context_board "$1" "$2") &&
+    json=$(jq -c --argjson b "${board:-null}" '. + {paths: ($b.paths // []), parent: ($b.parent // null)}' <<<"$json" 2>/dev/null); then
+    { mkdir -p "$dir" && printf '%s\n' "$json" >"$dir/$2.json.tmp" && mv -f "$dir/$2.json.tmp" "$dir/$2.json"; } 2>/dev/null || true
+    printf '%s\n' "$json"
+    return 0
+  fi
+  if [ -f "$dir/$2.json" ] && jq -c 'select(.number != null)' "$dir/$2.json" 2>/dev/null; then return 1; fi
+  return 2
 }
 
 # The front matter of the specs, ADRs and notes under $1, as `file<TAB>key<TAB>value` rows (the keys the briefing
@@ -54,32 +74,38 @@ CONTEXT_DECISION='def decision: (. // "" | gsub("\r"; "") | split("\n")) as $l
   | if $i == null then "" else ([$l[$i + 1:][] | select(test("\\S"))][0] // "")
       | if test("^\\s*#") then "" else sub("^\\s*([-*]\\s+)?"; "") | sub("\\s+$"; "") end end;'
 
-# What happened on the Paths $2 (a JSON array of globs), spec 325 §3 input 4, as the JSON array of candidates
-# {cls, type, line} that follows the notes in the ranking: class 2 the recurring review findings then the reverts of
-# the last 90 days, class 3 the last 5 merged commits that carry a `(#n)`. When GitHub does not answer, the history
-# comes from git alone (no decision of a pull request, no finding) and the status is 1. $1 the repository root. A
-# finding is a marker `<!-- finding: <slug> -->` in a comment or a review of 2 or more merged pull requests whose
-# files overlap the Paths, that no knowledge note mentions.
+# What happened on the Paths $2 (a JSON array of globs) and what else is open or decided around them (spec 325 §3,
+# inputs 4 and 5), as the JSON array of candidates {cls, type, line} that follows the notes in the ranking: class 2 the
+# recurring review findings then the reverts, class 3 the merged commits, class 4 the open tickets that overlap and the
+# framing decisions. $3 the ticket, $4 its epic (or nothing), $5 `live` when GitHub answered for the ticket (without it,
+# or when it stops answering, the history comes from git alone: no decision of a pull request, no finding, no related
+# ticket) and the status is 1. $1 the repository root. A finding is a marker `<!-- finding: <slug> -->` in a comment or
+# a review of 2 or more merged pull requests whose files overlap the Paths, that no knowledge note mentions.
 context_extras() {
-  local root=$1 tp=$2 base day subject n slug prs info dec
+  local root=$1 tp=$2 issue=$3 epic=$4 live=$5 base day subject n slug prs info board prlist dec file project
   local -a ps=() rows=() nums=() days=() subs=()
-  local ok=1
+  local ok=0
   mapfile -t ps < <(jq -r "$PATHS_DEF"'.[] | gstatic | if . == "" then "." else . end' <<<"$tp")
   [ "${#ps[@]}" -gt 0 ] || return 0
   base=$(default_branch 2>/dev/null) || base=HEAD
-  if prs=$(gh_bound pr list --state merged --limit 50 --json number,body,files,comments,reviews 2>/dev/null); then
-    # shellcheck disable=SC2016 # a jq program, not shell
-    info=$(jq -c --argjson tp "$tp" "$PATHS_DEF$CONTEXT_DECISION"'
-      def touches: [.files[]?.path] as $f | any($f[]; . as $p | any($tp[] | gstatic; . as $s | $s == "" or $p == $s or ($p | startswith($s + "/"))));
-      {decisions: ([.[] | {key: (.number | tostring), value: (.body | decision)}] | from_entries),
-       findings: ([.[] | select(touches) | .number as $n
-          | [(.comments[]?.body), (.reviews[]?.body)] | map(. // "" | scan("<!-- finding: ([A-Za-z0-9._:-]+) -->") | .[0]) | unique[] | {slug: ., pr: $n}]
-         | group_by(.slug) | map({slug: .[0].slug, prs: (map(.pr) | sort)}) | map(select(.prs | length >= 2))
-         | sort_by([-(.prs | length), .slug]))}' <<<"$prs" 2>/dev/null) || info=""
+  if [ "$live" = live ]; then
+    ok=1
+    if prs=$(gh_bound pr list --state merged --limit 50 --json number,body,files,comments,reviews 2>/dev/null); then
+      # shellcheck disable=SC2016 # a jq program, not shell
+      info=$(jq -c --argjson tp "$tp" "$PATHS_DEF$CONTEXT_DECISION"'
+        def touches: [.files[]?.path] as $f | any($f[]; . as $p | any($tp[] | gstatic; . as $s | $s == "" or $p == $s or ($p | startswith($s + "/"))));
+        {decisions: ([.[] | {key: (.number | tostring), value: (.body | decision)}] | from_entries),
+         findings: ([.[] | select(touches) | .number as $n
+            | [(.comments[]?.body), (.reviews[]?.body)] | map(. // "" | scan("<!-- finding: ([A-Za-z0-9._:-]+) -->") | .[0]) | unique[] | {slug: ., pr: $n}]
+           | group_by(.slug) | map({slug: .[0].slug, prs: (map(.pr) | sort)}) | map(select(.prs | length >= 2))
+           | sort_by([-(.prs | length), .slug]))}' <<<"$prs" 2>/dev/null) || info=""
+    else
+      info=""
+    fi
+    [ -n "$info" ] || { info='{"decisions":{},"findings":[]}'; ok=0; }
   else
-    info=""
+    info='{"decisions":{},"findings":[]}'
   fi
-  [ -n "$info" ] || { info='{"decisions":{},"findings":[]}'; ok=0; }
   # Recurring findings: no note under docs/knowledge mentions the slug, by name or in its text.
   while IFS= read -r slug; do
     [ -n "$slug" ] || continue
@@ -100,13 +126,38 @@ context_extras() {
   done < <(git -C "$root" log "$base" -n 200 --format='%cs%x09%s' -- "${ps[@]}" 2>/dev/null || true)
   for n in "${!nums[@]}"; do
     dec=$(jq -r --arg n "${nums[n]}" '.decisions[$n] // empty' <<<"$info")
-    if [ "$ok" = 1 ] && ! jq -e --arg n "${nums[n]}" '.decisions | has($n)' <<<"$info" >/dev/null; then
+    if [ "$live" = live ] && [ "$ok" = 1 ] && ! jq -e --arg n "${nums[n]}" '.decisions | has($n)' <<<"$info" >/dev/null; then
       dec=$(gh_bound pr view "${nums[n]}" --json body 2>/dev/null | jq -r "$CONTEXT_DECISION"'.body | decision' 2>/dev/null) || dec=""
     fi
     rows+=("3	history	- #${nums[n]} ${days[n]} ${subs[n]}${dec:+ | decision: $dec}")
   done
+  if [ "$ok" = 1 ]; then
+    project=$(jq -r '.project.id // empty' "$root/.claude/senior-mode.json" 2>/dev/null) || project=""
+    if [ -n "$project" ]; then
+      # shellcheck disable=SC2016 # a jq program, not shell
+      if board=$(board_data false 2>/dev/null) && prlist=$(jq -r --argjson tp "$tp" --argjson me "$issue" "$PATHS_DEF"'
+          def plen($b): [$tp[] as $a | $b[] as $c | ($a | gstatic) as $sa | ($c | gstatic) as $sc
+            | select(pclash($sa; $sc)) | ([$sa, $sc] | map(length) | max)] | max;
+          [.items[] | select(.open and (.archived | not) and .number != $me) | . as $i | ($i | globs) as $g
+            | select(($g | length) > 0 and overlap($tp; $g))
+            | {n: .number, t: .title, s: (.status // ""), l: plen($g)}]
+          | sort_by([-.l, .n])[:5][] | "4\trelated\t- #\(.n) \(.t)\(if .s != "" then " (\(.s))" else "" end)"' <<<"$board" 2>/dev/null); then
+        while IFS= read -r file; do
+          [ -z "$file" ] || rows+=("$file")
+        done <<<"$prlist"
+      else
+        ok=0
+      fi
+    fi
+  fi
+  if [ -f "$root/docs/decisions.md" ]; then
+    # The log is oldest first: the 3 newest by date (a stable sort keeps the file order of a day), newest first.
+    while IFS= read -r file; do
+      rows+=("4	decision	$file")
+    done < <(grep -E "^- [0-9]{4}-[0-9]{2}-[0-9]{2} #(${issue}${epic:+|$epic}):" "$root/docs/decisions.md" | sort -s -t' ' -k2,2 | tail -n 3 | tac || true)
+  fi
   printf '%s\n' "${rows[@]}" | jq -Rnc '[inputs | split("\t") | select(length >= 3) | {cls: (.[0] | tonumber), type: .[1], line: (.[2:] | join("\t") | .[:200])}]'
-  [ "$ok" = 1 ] || return 1
+  [ "$ok" = 1 ] || [ "$live" != live ] || return 1
 }
 
 # What governs the Paths of a ticket, ranked and cut to a size (spec 325 §3). It reads the `file<TAB>key<TAB>value`
@@ -151,7 +202,8 @@ CONTEXT_PICK=$PATHS_DEF'
     | def heads: [{t: "adr", h: "ADRs that govern these Paths (accepted):"}, {t: "spec", h: "Specs that govern these Paths (accepted):"},
         {t: "note", h: "Knowledge notes on these Paths (the date says how far to trust one):"},
         {t: "finding", h: "Recurring review findings on these Paths (no knowledge note covers them):"},
-        {t: "revert", h: "Reverted in the last 90 days:"}, {t: "history", h: "History of these Paths (merged, most recent first):"}];
+        {t: "revert", h: "Reverted in the last 90 days:"}, {t: "history", h: "History of these Paths (merged, most recent first):"},
+        {t: "related", h: "Open tickets on these Paths:"}, {t: "decision", h: "Framing decisions of this ticket or its epic (newest first):"}];
       def block($n): [heads[] | . as $s | [$c[:$n][] | select(.type == $s.t) | .line] | select(length > 0) | $s.h + "\n" + join("\n")]
         | if length == 0 then "" else "\n" + join("\n\n") end;
       def omit($n): ($c | length) - $n | if . == 0 then "" else "\(.) item\(if . == 1 then "" else "s" end) omitted to fit context.budget (\($budget) tokens); the scout agent has the rest." end;
@@ -163,7 +215,7 @@ CONTEXT_PICK=$PATHS_DEF'
 # `senior-mode context`: the briefing, on the output.
 context() {
   local root branch issue json spec status criteria head ticket="" tpaths="[]" budget months cutoff fixed res block omit
-  local rows extras="[]"
+  local rc rows epic epic_text extras="[]" offline=0
   head=$(context_router)
   root=$(git rev-parse --show-toplevel 2>/dev/null) || { printf '%s\n' "$head"; return 0; }
   if [ ! -f "$root/.claude/senior-mode.json" ]; then
@@ -174,9 +226,11 @@ context() {
   branch=$(git symbolic-ref --short -q HEAD) || branch=""
   issue=""
   [ -z "$branch" ] || issue=$(workflow_branch_issue "$branch") || issue=""
-  spec=""
+  spec="" epic="" rc=0
   if [ -n "$issue" ]; then
-    if ! json=$(gh issue view "$issue" --json number,title,state,body,projectItems 2>/dev/null); then
+    json=$(context_load "$root" "$issue") || rc=$?
+    [ "$rc" -eq 0 ] || offline=1
+    if [ "$rc" -eq 2 ]; then
       ticket="Current ticket: #$issue, branch $branch; details not loaded (GitHub unreachable)."
     else
       ticket=$(jq -r --arg b "$branch" '"Current ticket: #\(.number) \(.title) (\(.state | ascii_downcase), Status: \(.projectItems[0].status.name // "not on the board")), branch \($b)"' <<<"$json")
@@ -185,11 +239,13 @@ context() {
         status=$(sed -nE 's/^status: *//p' "$root/$spec" 2>/dev/null | head -1) || true
         ticket+=$'\n'"Spec: $spec (${status:-file not found})"
       fi
+      epic_text=$(jq -r '.parent | if . then "#\(.number) \(.title)" else empty end' <<<"$json")
+      [ -z "$epic_text" ] || ticket+=$'\n'"Epic: $epic_text"
+      epic=$(jq -r '.parent.number // empty' <<<"$json")
       criteria=$(jq -r .body <<<"$json" | awk '/^## / { on = /Acceptance criteria/; next } on && /^- /' |
         head -6 | cut -c1-200)
       [ -z "$criteria" ] || ticket+=$'\n'"Acceptance criteria:"$'\n'"$criteria"
-      tpaths=$(context_board_paths "$root" "$issue") || tpaths=""
-      [ -n "$tpaths" ] || tpaths="[]"
+      tpaths=$(jq -c '.paths // []' <<<"$json")
     fi
   fi
   block="" omit=""
@@ -200,10 +256,11 @@ context() {
         jq -Rc 'fromjson? // [] | if type == "array" then map(select(type == "string")) else [] end' 2>/dev/null) || tpaths="[]"
       [ -n "$tpaths" ] || tpaths="[]"
     fi
-    if [ "$tpaths" != "[]" ]; then
-      extras=$(context_extras "$root" "$tpaths") || ticket+=$'\n'"GitHub unreachable: review findings omitted"
+    if [ "$tpaths" != "[]" ] && [ -n "$issue" ]; then
+      extras=$(context_extras "$root" "$tpaths" "$issue" "$epic" "$([ "$rc" -eq 0 ] && echo live || echo cache)") || offline=1
       [ -n "$extras" ] || extras="[]"
     fi
+    [ "$offline" -eq 0 ] || ticket+=$'\n'"GitHub unreachable: related tickets and review findings omitted"
     budget=$(config_get context.budget 2>/dev/null) || budget=""
     [[ $budget =~ ^[1-9][0-9]*$ ]] || budget=2000
     months=$(config_get knowledge.staleMonths 2>/dev/null) || months=""

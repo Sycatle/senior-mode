@@ -200,7 +200,7 @@ sed 's/CLAUDE_LOG/SYACODE_LOG/' "$work/stub/claude" >"$work/stub/syacode"
 chmod +x "$work/stub/"* "$work/tmux/tmux"
 export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" CLAUDE_LOG="$work/claude.log" SYACODE_LOG="$work/syacode.log" TMUX_LOG="$work/tmux.log" \
   FIX="$work/fix" SENIOR_MODE_RETRY_DELAY=0 XDG_DATA_HOME="$work/xdg" SENIOR_MODE_POLL=0.1 CLAUDE_CONFIG_DIR="$work/claude-home" \
-  SENIOR_MODE_PROBE_RETRY=0 SENIOR_MODE_MANAGED_SETTINGS="$work/managed-settings.json"
+  SENIOR_MODE_PROBE_RETRY=0 SENIOR_MODE_MANAGED_SETTINGS="$work/managed-settings.json" SENIOR_MODE_MANAGED_MCP="$work/managed-mcp.json"
 mkdir -p "$CLAUDE_CONFIG_DIR"
 echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DIR/settings.json"
 
@@ -669,6 +669,17 @@ board 171 '[]'
 session 171-sonnet delivered pr
 run || fail "M2: run failed with userSettings: $(cat "$work/out")"
 grep '^app-171 ' "$CLAUDE_LOG" | grep -q -- '--setting-sources' && fail "M2: userSettings true still isolates the session: $(grep '^app-171 ' "$CLAUDE_LOG")"
+# #540: a managed MCP config makes claude refuse --strict-mcp-config; the session keeps the rest of its isolation.
+config '{"userSettings": false}'
+echo '{"mcpServers": {}}' >"$work/managed-mcp.json"
+board 172 '[]'
+session 172-sonnet delivered pr
+run || fail "M2: run failed under a managed MCP config: $(cat "$work/out")"
+line=$(grep '^app-172 ' "$CLAUDE_LOG")
+[[ $line == *"--setting-sources project,local"* && $line != *--strict-mcp-config* ]] ||
+  fail "M2: --strict-mcp-config passed under a managed MCP config: $line"
+rm -f "$work/managed-mcp.json"
+config '{"userSettings": true}'
 git -C "$repo" rm -q .mcp.json && git -C "$repo" -c user.name=t -c user.email=t@t commit -qm "chore: no mcp" && git -C "$repo" push -q origin main
 rm -f "$CLAUDE_CONFIG_DIR/.claude.json"
 

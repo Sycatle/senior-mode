@@ -152,7 +152,9 @@
             "additionalProperties": false,
             "properties": {
               "id": { "type": "string" },
-              "options": { "type": "object", "additionalProperties": { "type": "string" } }
+              "options": { "type": "object", "additionalProperties": { "type": "string" } },
+              "iteration": { "type": "boolean", "enum": [true], "description": "An Iteration field, cached by setup github." },
+              "date": { "type": "boolean", "enum": [true], "description": "A date field (Start, End), cached by setup github." }
             }
           }
         },

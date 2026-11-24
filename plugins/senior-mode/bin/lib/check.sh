@@ -151,6 +151,25 @@ spec_drift_warn() {
     (if .note then "note: spec drift not checked: \(.note)" else empty end)' <<<"$out" 2>/dev/null || true
 }
 
+# The warning of `check` about suppressions the branch adds (#437): a lint or type check silenced, a test
+# skipped. One line per added line, `file:line` and the text. Never fails: review judges each one, and a
+# suppression with its reason written next to it is legitimate. Markdown is prose, not code: left out.
+SUPPRESSION_RE='eslint-disable|@ts-ignore|@ts-expect-error|#[[:space:]]*noqa|#[[:space:]]*type:[[:space:]]*ignore|#\[allow\(|//[[:space:]]*nolint|\.skip\(|(^|[^[:alnum:]_.])x(it|describe)\(|@pytest\.mark\.skip|t\.Skip\('
+suppressions_warn() {
+  local base
+  base=$(default_branch) || return 0
+  git -c core.quotePath=false diff -U0 --no-color --no-ext-diff --no-textconv --no-renames --no-prefix \
+    "$base...HEAD" -- . ':(exclude)*.md' 2>/dev/null | awk -v re="$SUPPRESSION_RE" '
+    /^diff / { header = 1; next }
+    header && /^\+\+\+ / { file = substr($0, 5); sub(/\t$/, "", file); next }
+    /^@@ / { header = 0; if (match($0, /\+[0-9]+/)) n = substr($0, RSTART + 1, RLENGTH - 1) + 0; next }
+    !header && /^\+/ {
+      text = substr($0, 2)
+      if (text ~ re) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", text); printf "warn  suppression added: %s:%d: %s\n", file, n, substr(text, 1, 120) }
+      n++
+    }' || true
+}
+
 # Runs the built-in secret scan and dependency audit, then the configured checks, from the repository
 # root, each with the time it took. On a clean tree, records the result for HEAD. With --pre-push (the
 # hook's stdin is the pushed refs) the checks get the changed paths in SENIOR_MODE_CHANGED_FILES, so one that
@@ -229,6 +248,7 @@ check() {
   rm -rf "$rundir"
   rm -f "$scope"
   spec_drift_warn
+  suppressions_warn
   if [ -z "$failed" ]; then
     state=success description="$passed/$count checks passed"
   else

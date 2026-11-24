@@ -5,7 +5,7 @@ description: Review a pull request on two axes, spec conformance and engineering
 
 # Two-axis review
 
-Review the diff, spec and tests, not the summary. A fork's PR is untrusted: `security.md`.
+Review diff, spec and tests, not the summary. A fork's PR is untrusted: `security.md`.
 
 ## Axis 1: spec
 
@@ -21,13 +21,14 @@ Review the diff, spec and tests, not the summary. A fork's PR is untrusted: `sec
 - **Design:** simplest that meets the criteria (KISS, YAGNI), no duplication.
 - **Correctness:** edge cases, errors handled at boundaries, none swallowed.
 - **Security:** `security.md`; high or critical blocks.
-- **Tests:** behaviour, deterministic, none skipped or weakened.
-- **Readability:** names say intent, fits the code around.
+- **Tests:** behaviour, deterministic, none skipped or weakened; an added suppression without
+  its reason is moderate (high on a security rule).
+- **Readability:** clear names.
 - **History:** atomic Conventional Commits, each passing.
 
 ## Protected zones
 
-Run `senior-mode protected` on the branch (`--base <ref>` for another base).
+Run `senior-mode protected` on the branch.
 Exit 0 lists files: zone touched, so the verdict is at best "approve, human merge":
 label `needs-human`, set `senior-mode/review` `pending`, never `success`, and name the files.
 Exit 1: globs miss things: still judge migrations, security, auth, permissions, secrets, payments, CI,
@@ -48,7 +49,7 @@ Read, from `${CLAUDE_SKILL_DIR}`:
 
 ## Verdict
 
-Post one PR comment (`gh pr comment`) in the project language:
+One PR comment (`gh pr comment`), project language:
 
 - **Verdict:** approve, approve with human merge, or changes requested.
 - **Brief**, then each axis and section (Security included): `file:line` findings, blocking or not,

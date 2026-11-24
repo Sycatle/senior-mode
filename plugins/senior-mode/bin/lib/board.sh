@@ -345,12 +345,17 @@ READY_QUERY='query($project: ID!, $after: String) { node(id: $project) { ... on 
       ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
       ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } }
     content { ... on Issue { number state body labels(first: 20) { nodes { name } } } } } } } } }'
+# The Status of an item, GitHub's default Todo read as Backlog (#556): on some organisations an option named Backlog
+# makes GitHub put every issue back to it after each move, so the board keeps Todo. Needs a def single($f).
+# shellcheck disable=SC2016 # a jq program, not shell
+STATUS_DEF='def status: single("Status") | if . != null and ascii_downcase == "todo" then "Backlog" else . end;'
 # shellcheck disable=SC2016 # a jq program, not shell
 READY_ITEMS='def single($f): [.fieldValues.nodes[]? | select(.field.name == $f and .name != null) | .name][0];
   def text($f): [.fieldValues.nodes[]? | select(.field.name == $f and .text != null) | .text][0];
+  '$STATUS_DEF'
   [.[].data.node.items.nodes[]? | select(.content.number != null) | .content as $c
     | {number: $c.number, open: ($c.state == "OPEN"), body: ($c.body // ""), labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation,
-       status: single("Status"), priority: single("Priority"), size: single("Size"), severity: single("Severity"),
+       status: status, priority: single("Priority"), size: single("Size"), severity: single("Severity"),
        agent: (($c.body // "") | test("(^|\n)filed-by: agent[ \t]*(\n|$)")),
        paths: ((text("Paths") // "") | gsub("[\\[\\]\"\u0027]"; "") | [split("[,\\s]+"; null)[] | select(length > 0)])}]'
 ready_items() {
@@ -766,6 +771,7 @@ board_data() {
   done
   data=$(jq -c "$HYGIENE_NODES"'def single($f): [.fieldValues.nodes[] | select(.field.name == $f) | .name][0];
     def text($f): [.fieldValues.nodes[] | select(.field.name == $f) | .text][0];
+    '"$STATUS_DEF"'
     def failing: [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
       | select((.state // "") | IN("FAILURE", "ERROR")) // select((.conclusion // "") | IN("FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE"))
       | .context // .name];
@@ -773,7 +779,7 @@ board_data() {
     (.[0].data.repository // {}) as $r
     | {items: [.[].data.node.items.nodes[] | select(.content.number != null) | .updatedAt as $moved | .id as $iid | (.isArchived // false) as $arch | .content as $c
         | {number: $c.number, title: $c.title, url: $c.url, open: ($c.state == "OPEN"), itemId: $iid, archived: $arch, closedAt: $c.closedAt,
-           status: single("Status"), priority: single("Priority"), size: single("Size"), severity: single("Severity"), paths: (text("Paths") // ""),
+           status: status, priority: single("Priority"), size: single("Size"), severity: single("Severity"), paths: (text("Paths") // ""),
            labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation, milestone: $c.milestone.title, due: $c.milestone.dueOn,
            updated: ([$c.updatedAt, $moved] | map(select(. != null)) | max),
            blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number], last: lastc($c)}],

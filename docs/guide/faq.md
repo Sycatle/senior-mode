@@ -58,12 +58,18 @@ Yes. Setup extends and never replaces:
 
 - your files are kept: `CLAUDE.md` gets a Principles block appended, existing PR templates, issue
   forms, git hooks and release-please files stay as they are;
-- your board fields keep their options and values, and GitHub's default `Todo` status becomes
-  `Backlog`;
+- your board fields keep their options and values; GitHub's default `Todo` status keeps its name
+  and senior-mode reads it as `Backlog`;
 - your branch protection is untouched: the `senior-mode` ruleset adds to it;
 - in `local` mode, your workflows are disabled, not deleted.
 
 Run `/senior-mode:setup` and read the table of changes before you say yes.
+
+## My tickets jump back to Backlog after every move. Why?
+
+On some organisations, GitHub's project automation puts an issue back to the status named `Backlog`
+about a second after any change, even with every built-in workflow off. Rename that option back to
+`Todo` (keep its id): senior-mode reads and writes `Todo` as `Backlog`, and setup no longer renames it.
 
 ## How do I turn it off, or leave senior-mode?
 

@@ -19,7 +19,10 @@ MERGE_OPTIONS='.options as $cur
       (map(.id)) as $taken
       | ([$cur[] | select((.id | IN($taken[]) | not) and (.name | ascii_downcase) == ($w.name | ascii_downcase))][0]
          // [$cur[] | select((.id | IN($taken[]) | not) and ((.name | ascii_downcase) | IN(($w.aliases // [])[])))][0]) as $m
-      | . + [{name: $w.name, color: ($m.color // $w.color), description: ($m.description // "")}
+      # An option found by an alias keeps its name (#556): with the default Todo renamed Backlog, some organisations
+      # put every issue back to Backlog after each move. Todo reads as Backlog.
+      | . + [{name: (if $m and (($m.name | ascii_downcase) != ($w.name | ascii_downcase)) then $m.name else $w.name end),
+              color: ($m.color // $w.color), description: ($m.description // "")}
              + (if $m then {id: $m.id} else {} end)])) as $ours
   | $ours + [$cur[] | select(.id | IN($ours[].id) | not) | {id, name, color, description}]'
 
@@ -483,7 +486,11 @@ cache_project() { # config-file owner number id fields keep-migration
   jq --arg o "$2" --argjson n "$3" --arg id "$4" --argjson f "$5" --argjson keep "$6" \
     '((if $keep then (.project // {} | with_entries(select(.key == "migration"))) else {} end)
       + {owner: $o, number: $n, id: $id, fields: ($f | map(select(.name | IN("Status", "Priority", "Size", "Severity", "Paths")))
-      | map({key: .name, value: (if .options then {id, options: (.options | map({key: .name, value: .id}) | from_entries)} else {id} end)}) | from_entries)}) as $p
+      | map({key: .name, value: (if .options then {id, options: (.options | map({key: .name, value: .id}) | from_entries)} else {id} end)}) | from_entries
+      # A Status that keeps Todo and has no Backlog (#556): Backlog is written as Todo.
+      | if .Status.options and (.Status.options | has("Backlog") | not) then
+          .Status.options += ([.Status.options | to_entries[] | select(.key | ascii_downcase == "todo") | {key: "Backlog", value}] | from_entries)
+        else . end)}) as $p
       | .project = $p' \
     "$1" >"$1.tmp" || die "could not write .claude/senior-mode.json"
   mv "$1.tmp" "$1"

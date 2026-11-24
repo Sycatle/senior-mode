@@ -34,6 +34,8 @@ usage() {
 . "$LIB/setup-board.sh"
 # shellcheck source=lib/setup.sh
 . "$LIB/setup.sh"
+# shellcheck source=lib/packages.sh
+. "$LIB/packages.sh"
 # shellcheck source=lib/setup-workflow.sh
 . "$LIB/setup-workflow.sh"
 # shellcheck source=lib/setup-answers.sh

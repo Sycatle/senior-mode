@@ -21,6 +21,19 @@
       "additionalProperties": { "type": "string" },
       "description": "Commands of the preset (lint, typecheck, test, build, e2e, format, install)."
     },
+    "packages": {
+      "type": "object",
+      "description": "The packages of a monorepo, by directory, written by `setup repo` from the manifests (npm, pnpm and yarn workspaces, Cargo workspace, Go modules). Their commands run in their directory; `install` runs once at the root, except for Go, once per module.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "preset": { "type": "string", "description": "The preset of the package (node, go, rust)." },
+          "commands": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Commands of the package, as `commands`." },
+          "deps": { "type": "array", "items": { "type": "string" }, "description": "Directories of the packages it depends on." }
+        }
+      }
+    },
     "checks": {
       "type": "array",
       "description": "The check list, run in order.",

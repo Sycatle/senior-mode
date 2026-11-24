@@ -534,10 +534,10 @@ node_pm() {
 }
 
 # shellcheck disable=SC2016 # jq program, not shell
-node_detect() {
+node_detect() { # root [workspace-root]: the package manager is the one of the workspace root, its lockfile lives there
   # exec runs an installed binary only: npx and bunx would download a missing one.
   local root=$1 pm exec install tsconfig=false
-  IFS=$'\t' read -r pm exec install < <(node_pm "$root")
+  IFS=$'\t' read -r pm exec install < <(node_pm "${2:-$root}")
   [ ! -f "$root/tsconfig.json" ] || tsconfig=true
   jq -c --arg pm "$pm" --arg exec "$exec" --arg install "$install" --argjson tsconfig "$tsconfig" '(.scripts // {}) as $s
     | def run($n): if $s[$n] then "\($pm) run \($n)" else null end;
@@ -766,7 +766,7 @@ toml_version() {
 # installs the dependencies of a new worktree, which has no check.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_repo() {
-  local root file tpl pname preset lang name commands='{}' detected out ours guard owner subjects="" cmdmap dry=false adopt=false fwd=() fmt
+  local root file tpl pname preset lang name commands='{}' detected pkgs out ours guard owner subjects="" cmdmap dry=false adopt=false fwd=() fmt
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   tpl=$(cd "$(dirname "$SELF")/.." && pwd)
@@ -775,6 +775,7 @@ setup_repo() {
   preset=$tpl/presets/$pname/preset.json
   [ -f "$preset" ] || die "unknown preset $pname in .claude/senior-mode.json"
   detected=$(preset_detect "$root" "$pname") || die "could not read package.json"
+  pkgs=$(packages_detect "$root")
   tpl=$tpl/templates
   while [ $# -gt 0 ]; do
     case $1 in
@@ -836,7 +837,12 @@ setup_repo() {
   out=0
   json_update "$file" '(if has("$schema") then . else {"$schema": $sch} + . end)
     | .preset = $pn | .commands = ($d.commands // {}) + (.commands // {}) + $c
-    | if $d.framework then .framework = $d.framework else . end | .commands as $all
+    | if $d.framework then .framework = $d.framework else . end
+    | if ($pk | length) > 0 then .packages = ((.packages // {}) as $e
+        | reduce ($pk | keys[]) as $k ($e; .[$k] = (($e[$k] // {}) + {preset: ($e[$k].preset // $pk[$k].preset),
+            commands: ($pk[$k].commands + ($e[$k].commands // {})), deps: $pk[$k].deps})))
+      else . end
+    | .commands as $all
     | ($p[0].commands | map(select($all[.] != null) | {name: ., run: $all[.]})) as $derived
     | ($derived + (if $ours then $p[0].checks else [] end)
         + (if $guard then [{name: "env guard", run: ".githooks/env-guard.sh"}] else [] end)) as $want
@@ -847,12 +853,13 @@ setup_repo() {
       else (($p[0].protected // []) + ($p[0].frameworks[.framework // ""].protected // [])) as $g
         | if ($g | length) > 0 then .protected = $g else . end end' \
     --argjson c "$commands" --argjson ours "$ours" --arg sub "$subjects" --argjson guard "$guard" --slurpfile p "$preset" --arg pn "$pname" \
-    --argjson d "$detected" --arg sch "$CONFIG_SCHEMA_URL" || out=$?
+    --argjson d "$detected" --argjson pk "$pkgs" --arg sch "$CONFIG_SCHEMA_URL" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
   echo "preset: $pname$(jq -r --argjson d "$detected" '[if $d.typescript == true then "TypeScript"
     elif $d.typescript == false then "JavaScript" else empty end, .framework // empty]
     | select(length > 0) | " (\(join(", ")))"' "$file")"
   echo "checks: $(jq -r '[.checks[].name] | join(", ")' "$file")"
+  [ "$pkgs" = '{}' ] || echo "packages: $(jq -r 'keys | join(", ")' <<<"$pkgs")"
   if [ -z "${WF_DONE:-}" ] || [ -n "${WF_ADOPTING:-}" ]; then
     workflow_settle "$file"
     workflow_write "$file"

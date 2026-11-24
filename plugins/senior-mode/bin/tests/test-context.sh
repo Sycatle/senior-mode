@@ -17,6 +17,7 @@ case "$*" in
   *"issue view"*) printf '%s\n' "$GH_ISSUE" ;;
   *"pr list"*) [ -z "${GH_PRS_FAIL:-}" ] || exit 1; printf '%s\n' "${GH_PRS:-[]}" ;;
   *"pr view"*) cat "$GH_DIR/pr-$(sed -E 's/.*pr view ([0-9]+).*/\1/' <<<"$*").json" 2>/dev/null || exit 1 ;;
+  *"api graphql"*"--input"*) printf '%s\n' "${GH_BOARD:-}" ;;
   *"api graphql"*) printf '%s\n' "${GH_PATHS:-}" ;;
 esac
 STUB
@@ -64,8 +65,23 @@ done
 grep -q "setup" <<<"$out" && fail "setup hint with a config: $out"
 [ "$(wc -l <<<"$out")" -le 16 ] || fail "more than 16 lines: $(wc -l <<<"$out")"
 
+# Every successful load writes the ticket to the git directory (#354); without it, GitHub down says the details are not loaded.
+cache=$repo/.git/senior-mode/ticket/12.json
+[ -f "$cache" ] || fail "no ticket cache after a load"
+jq -e '.number == 12 and .title == "Let people log in"' "$cache" >/dev/null || fail "ticket cache is not the ticket: $(cat "$cache")"
+mv "$cache" "$work/12.json"
 GH_FAIL=1 context "$repo"
 if ! grep -q "#12" <<<"$out" || ! grep -qi "not loaded" <<<"$out"; then fail "GitHub down: $out"; fi
+grep -qF "GitHub unreachable: related tickets and review findings omitted" <<<"$out" || fail "GitHub down, no cache, no notice: $out"
+grep -qF "Given a wrong password" <<<"$out" && fail "criteria without a cache: $out"
+mv "$work/12.json" "$cache"
+GH_FAIL=1 context "$repo"
+for want in "#12 Let people log in" "In progress" "docs/specs/0003-login.md (accepted)" "Given a wrong password" "GitHub unreachable: related tickets and review findings omitted"; do
+  grep -qF "$want" <<<"$out" || fail "GitHub down, from the cache: missing '$want' in: $out"
+done
+grep -qi "not loaded" <<<"$out" && fail "details not loaded though cached: $out"
+context "$repo"
+grep -qF "GitHub unreachable" <<<"$out" && fail "unreachable notice with GitHub up: $out"
 
 # The vision (#342): its goal ids and non-goals come right after the router, before the ticket, so the start of
 # the briefing is the same for every ticket; without the file nothing is added.
@@ -194,7 +210,7 @@ rm -f "$repo/docs/vision.md"
 printf -- '---\nid: 0003\nstatus: accepted\n---\n' >"$repo/docs/specs/0003-login.md"
 unset GH_PATHS
 
-# The history of the Paths and the related work (#349).
+# The history of the Paths and the related work (#349, #354).
 gc() { # file subject [date]: commits a change of the file on the current branch
   local d=${3:-$(date -u +%FT%TZ)}
   mkdir -p "$(dirname "$repo/$1")"
@@ -211,7 +227,11 @@ gc src/auth/cookie.ts 'Revert "feat(auth): opaque cookie (#39)"'
 git -C "$repo" switch -q feat/12-login
 today=$(date -u +%F)
 export GH_ISSUE=$issue12
+echo '{"project":{"id":"P"}}' >"$repo/.claude/senior-mode.json"
 printf 'The slug covered-slug is explained here.\n' >"$repo/docs/knowledge/zz-covered.md"
+mkdir -p "$repo/docs"
+printf '%s\n' '# Decision log' '' '- 2026-11-01 #12: Q1 -> A1' '- 2026-11-02 #325: Q2 -> A2' '- 2026-11-03 #99: Other -> X' \
+  '- 2026-11-04 #12: Q3 -> A3' '- 2026-11-05 #325: Q4 -> A4' '- 2026-11-06 #120: Near miss -> no' >"$repo/docs/decisions.md"
 pr() { # number body files-json comments-json reviews-json
   jq -nc --argjson n "$1" --arg b "$2" --argjson f "$3" --argjson c "$4" --argjson r "$5" \
     '{number: $n, body: $b, files: ($f | map({path: .})), comments: ($c | map({body: .})), reviews: ($r | map({body: .}))}'
@@ -226,60 +246,83 @@ GH_PRS=$(jq -sc '.' < <(
 ))
 export GH_PRS
 jq -nc '{body: "## Decision\nFetched by number"}' >"$work/prs/pr-35.json"
-export GH_PATHS='{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"project":{"id":"P"},"fieldValueByName":{"text":"src/auth/**"}}]}}}}}'
+board() { # number state status paths
+  jq -nc --argjson n "$1" --arg st "$2" --arg s "$3" --arg p "$4" '{id: "I\($n)", updatedAt: "2026-11-01T00:00:00Z", isArchived: false,
+    fieldValues: {nodes: ([{}, {name: $s, field: {name: "Status"}}] + (if $p == "" then [] else [{text: $p, field: {name: "Paths"}}] end))},
+    content: {number: $n, title: "Ticket \($n)", state: $st, labels: {nodes: []}, blockedBy: {nodes: []}, authorAssociation: "OWNER"}}'
+}
+GH_BOARD=$(jq -sc '{data: {node: {items: {pageInfo: {hasNextPage: false}, nodes: .}}, repository: {}}}' < <(
+  board 12 OPEN "In progress" "src/auth/**"
+  board 50 OPEN Ready "src/auth/session/**"
+  board 51 OPEN Backlog "src/auth/**"
+  board 52 OPEN Ready "src/billing/**"
+  board 53 CLOSED Done "src/auth/**"
+  board 54 OPEN Backlog ""
+  board 55 OPEN Backlog "src/auth/**"
+  board 56 OPEN Backlog "src/auth/**"
+  board 57 OPEN Backlog "src/auth/**"
+  board 58 OPEN Backlog "src/auth/**"
+  board 59 OPEN Backlog "src/auth/**"
+))
+export GH_BOARD
+export GH_PATHS='{"data":{"repository":{"issue":{"parent":{"number":325,"title":"Long-lived projects"},"projectItems":{"nodes":[{"project":{"id":"P"},"fieldValueByName":{"text":"src/auth/**"}}]}}}}}'
 
 context "$repo"
-for want in "Recurring review findings" "- unchecked-input (on pull requests #36, #37)" "Reverted in the last 90 days:" \
+for want in "Epic: #325 Long-lived projects" "Recurring review findings" "- unchecked-input (on pull requests #36, #37)" "Reverted in the last 90 days:" \
   "- $today feat(auth): opaque cookie (#39)" "History of these Paths" "- #37 $today feat(auth): change 37 | decision: Tokens stay opaque" \
   "- #36 $today feat(auth): change 36 | decision: Keep cookies httpOnly" "- #35 $today feat(auth): change 35 | decision: Fetched by number" \
-  "- #34 $today feat(auth): change 34" "- #33 $today feat(auth): change 33"; do
+  "- #34 $today feat(auth): change 34" "- #33 $today feat(auth): change 33" "Open tickets on these Paths:" "- #50 Ticket 50 (Ready)" "- #51 Ticket 51 (Backlog)" \
+  "- #57 Ticket 57" "Framing decisions of this ticket or its epic" "- 2026-11-05 #325: Q4 -> A4" "- 2026-11-04 #12: Q3 -> A3" "- 2026-11-02 #325: Q2 -> A2"; do
   grep -qF -- "$want" <<<"$out" || fail "history: missing '$want' in: $out"
 done
-for not in "covered-slug" "single-slug" "billing-slug" "ancient login" "change 32" "change 31" "rounding" "tidy up" "#38" "GitHub unreachable"; do
+for not in "covered-slug" "single-slug" "billing-slug" "ancient login" "change 32" "change 31" "rounding" "tidy up" "#38" "#52" "#53" "#54" "#58" "#59" "#12 Ticket" \
+  "Q1 ->" "Other -> X" "Near miss" "GitHub unreachable"; do
   grep -qF -- "$not" <<<"$out" && fail "history: '$not' should not be in: $out"
 done
 grep -F -- "#34 $today" <<<"$out" | grep -q "decision:" && fail "a decision for a pull request with no Decision heading: $out"
 grep -F -- "#33 $today" <<<"$out" | grep -q "decision:" && fail "a decision for an empty Decision heading: $out"
 [ "$(grep -c -- '^- #[0-9]* 20' <<<"$out")" -eq 5 ] || fail "history is not 5 commits: $out"
 prev=Knowledge
-for next in "Recurring review" "Reverted in" "History of" "Current ticket"; do
+for next in "Recurring review" "Reverted in" "History of" "Open tickets" "Framing decisions" "Current ticket"; do
   [ "$(pos "$prev")" -lt "$(pos "$next")" ] || fail "'$prev' should come before '$next': $out"
   prev=$next
 done
+[ "$(pos "Epic: #325")" -gt "$(pos "Current ticket")" ] || fail "the epic is not part of the ticket: $out"
 first=$out
 context "$repo"
 [ "$out" = "$first" ] || fail "two runs with history differ"
 
-# The budget drops the history first, before the notes and the ADRs.
+# The budget drops the related work first, then the history, before the notes and the ADRs.
 full=$(wc -c <<<"$out")
-echo "{\"context\":{\"budget\":$(((full - 330) / 4))}}" >"$repo/.claude/senior-mode.json"
+echo "{\"project\":{\"id\":\"P\"},\"context\":{\"budget\":$(((full - 330) / 4))}}" >"$repo/.claude/senior-mode.json"
 context "$repo"
 [ "$(wc -c <<<"$out")" -le "$(((full - 330) / 4 * 4))" ] || fail "history: the briefing is over its budget: $(wc -c <<<"$out") bytes"
-grep -qF -- "- #33 $today" <<<"$out" && fail "the lowest class is kept first: $out"
-for want in "docs/adr/0010-sessions.md" "docs/knowledge/cc-deep.md" "Recurring review findings" "Given a wrong password"; do
+grep -qF -- "Framing decisions" <<<"$out" && fail "the lowest class is kept first: $out"
+for want in "docs/adr/0010-sessions.md" "- #37 $today" "Recurring review findings" "Given a wrong password" "Epic: #325"; do
   grep -qF -- "$want" <<<"$out" || fail "history: '$want' dropped before the lowest class: $out"
 done
 tail -n 1 <<<"$out" | grep -Eq '^[0-9]+ items? omitted ' || fail "history: no omission line last: $out"
-echo '{}' >"$repo/.claude/senior-mode.json"
+echo '{"project":{"id":"P"}}' >"$repo/.claude/senior-mode.json"
 
-# GitHub down: the history comes from git alone and one line says the review findings are omitted.
-GH_PRS_FAIL=1 context "$repo"
-for want in "- #37 $today feat(auth): change 37" "- #33 $today feat(auth): change 33" "- $today feat(auth): opaque cookie (#39)" \
-  "GitHub unreachable: review findings omitted"; do
+# GitHub down: git and files only, from the cache, one line says what is missing, exit 0.
+GH_FAIL=1 context "$repo"
+for want in "#12 Let people log in" "Epic: #325 Long-lived projects" "Given a wrong password" "- #37 $today feat(auth): change 37" "- #33 $today feat(auth): change 33" \
+  "- $today feat(auth): opaque cookie (#39)" "- 2026-11-05 #325: Q4 -> A4" "GitHub unreachable: related tickets and review findings omitted"; do
   grep -qF -- "$want" <<<"$out" || fail "offline history: missing '$want' in: $out"
 done
-for not in "decision: " "unchecked-input"; do
+for not in "decision: " "unchecked-input" "Open tickets on these Paths" "not loaded"; do
   grep -qF -- "$not" <<<"$out" && fail "offline history: '$not' should not be in: $out"
 done
+[ "$(grep -c "GitHub unreachable" <<<"$out")" -eq 1 ] || fail "offline: not exactly one notice: $out"
 # A failure of the pull requests alone is GitHub failing too.
 GH_PRS='' context "$repo"
 grep -qF -- "- #37 $today" <<<"$out" || fail "an empty answer loses the history: $out"
 # No Paths, no history.
 GH_PATHS='' context "$repo"
 grep -qF "History of these Paths" <<<"$out" && fail "history without Paths: $out"
-rm -f "$repo/docs/knowledge/zz-covered.md"
+rm -f "$repo/docs/decisions.md" "$repo/docs/knowledge/zz-covered.md"
 echo '{}' >"$repo/.claude/senior-mode.json"
-unset GH_PRS GH_PATHS
+unset GH_PRS GH_BOARD GH_PATHS
 
 git -C "$repo" switch -q -c spike-oauth
 context "$repo"

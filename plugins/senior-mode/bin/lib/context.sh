@@ -1,8 +1,9 @@
 # shellcheck shell=bash
 # The briefing of a session (SessionStart hook, spec 0001 §15, spec 325 §3), from stable to variable so the start
 # is the same for every ticket: the router, the overrides, the vision, then what governs the ticket's Paths (ADRs,
-# specs, knowledge notes), then the ticket with its spec and criteria last. It fits `context.budget` tokens
-# (bytes / 4): the router and the ticket are never dropped, the lowest ranked items go first. Never fails.
+# specs, knowledge notes), then the history of those Paths (recurring findings, reverts, merged commits), then the
+# ticket with its spec and criteria last. It fits `context.budget` tokens (bytes / 4): the router and the ticket are
+# never dropped, the lowest ranked items go first. Never fails.
 
 # The router: what a session is told whatever the repository.
 context_router() {
@@ -45,6 +46,69 @@ context_rows() {
     body && !head && /^# / { head = 1; print FILENAME "\theading\t" substr($0, 3) }' "${files[@]}")
 }
 
+# The key decision of a pull request body: the first line under its `Decision` or `Decisions` heading, a list marker
+# dropped; none when there is no such heading or another heading follows at once.
+# shellcheck disable=SC2016 # a jq program, not shell
+CONTEXT_DECISION='def decision: (. // "" | gsub("\r"; "") | split("\n")) as $l
+  | ([range(0; $l | length) | select($l[.] | test("^#{1,6}[ \t]+Decisions?[ \t]*$"; "i"))][0]) as $i
+  | if $i == null then "" else ([$l[$i + 1:][] | select(test("\\S"))][0] // "")
+      | if test("^\\s*#") then "" else sub("^\\s*([-*]\\s+)?"; "") | sub("\\s+$"; "") end end;'
+
+# What happened on the Paths $2 (a JSON array of globs), spec 325 §3 input 4, as the JSON array of candidates
+# {cls, type, line} that follows the notes in the ranking: class 2 the recurring review findings then the reverts of
+# the last 90 days, class 3 the last 5 merged commits that carry a `(#n)`. When GitHub does not answer, the history
+# comes from git alone (no decision of a pull request, no finding) and the status is 1. $1 the repository root. A
+# finding is a marker `<!-- finding: <slug> -->` in a comment or a review of 2 or more merged pull requests whose
+# files overlap the Paths, that no knowledge note mentions.
+context_extras() {
+  local root=$1 tp=$2 base day subject n slug prs info dec
+  local -a ps=() rows=() nums=() days=() subs=()
+  local ok=1
+  mapfile -t ps < <(jq -r "$PATHS_DEF"'.[] | gstatic | if . == "" then "." else . end' <<<"$tp")
+  [ "${#ps[@]}" -gt 0 ] || return 0
+  base=$(default_branch 2>/dev/null) || base=HEAD
+  if prs=$(gh_bound pr list --state merged --limit 50 --json number,body,files,comments,reviews 2>/dev/null); then
+    # shellcheck disable=SC2016 # a jq program, not shell
+    info=$(jq -c --argjson tp "$tp" "$PATHS_DEF$CONTEXT_DECISION"'
+      def touches: [.files[]?.path] as $f | any($f[]; . as $p | any($tp[] | gstatic; . as $s | $s == "" or $p == $s or ($p | startswith($s + "/"))));
+      {decisions: ([.[] | {key: (.number | tostring), value: (.body | decision)}] | from_entries),
+       findings: ([.[] | select(touches) | .number as $n
+          | [(.comments[]?.body), (.reviews[]?.body)] | map(. // "" | scan("<!-- finding: ([A-Za-z0-9._:-]+) -->") | .[0]) | unique[] | {slug: ., pr: $n}]
+         | group_by(.slug) | map({slug: .[0].slug, prs: (map(.pr) | sort)}) | map(select(.prs | length >= 2))
+         | sort_by([-(.prs | length), .slug]))}' <<<"$prs" 2>/dev/null) || info=""
+  else
+    info=""
+  fi
+  [ -n "$info" ] || { info='{"decisions":{},"findings":[]}'; ok=0; }
+  # Recurring findings: no note under docs/knowledge mentions the slug, by name or in its text.
+  while IFS= read -r slug; do
+    [ -n "$slug" ] || continue
+    [ ! -e "$root/docs/knowledge/$slug.md" ] || continue
+    ! grep -rqF -- "$slug" "$root/docs/knowledge" 2>/dev/null || continue
+    rows+=("2	finding	- $slug (on pull requests $(jq -r --arg s "$slug" '.findings[] | select(.slug == $s) | .prs | map("#\(.)") | join(", ")' <<<"$info"))")
+  done < <(jq -r '.findings[].slug' <<<"$info")
+  while IFS=$'\t' read -r day subject; do
+    [[ $subject =~ ^Revert\ \"(.*)\"$ ]] || continue
+    rows+=("2	revert	- $day ${BASH_REMATCH[1]}")
+  done < <(git -C "$root" log "$base" --since='90 days ago' -n 5 --format='%cs%x09%s' -- "${ps[@]}" 2>/dev/null || true)
+  while IFS=$'\t' read -r day subject; do
+    [[ $subject != 'Revert "'* ]] || continue
+    [[ $subject =~ ^.*\(#([0-9]+)\) ]] || continue
+    n=${BASH_REMATCH[1]}
+    nums+=("$n") days+=("$day") subs+=("${subject% \(#$n\)}")
+    [ "${#nums[@]}" -lt 5 ] || break
+  done < <(git -C "$root" log "$base" -n 200 --format='%cs%x09%s' -- "${ps[@]}" 2>/dev/null || true)
+  for n in "${!nums[@]}"; do
+    dec=$(jq -r --arg n "${nums[n]}" '.decisions[$n] // empty' <<<"$info")
+    if [ "$ok" = 1 ] && ! jq -e --arg n "${nums[n]}" '.decisions | has($n)' <<<"$info" >/dev/null; then
+      dec=$(gh_bound pr view "${nums[n]}" --json body 2>/dev/null | jq -r "$CONTEXT_DECISION"'.body | decision' 2>/dev/null) || dec=""
+    fi
+    rows+=("3	history	- #${nums[n]} ${days[n]} ${subs[n]}${dec:+ | decision: $dec}")
+  done
+  printf '%s\n' "${rows[@]}" | jq -Rnc '[inputs | split("\t") | select(length >= 3) | {cls: (.[0] | tonumber), type: .[1], line: (.[2:] | join("\t") | .[:200])}]'
+  [ "$ok" = 1 ] || return 1
+}
+
 # What governs the Paths of a ticket, ranked and cut to a size (spec 325 §3). It reads the `file<TAB>key<TAB>value`
 # rows of context_rows on its input and prints {omit, block} as JSON: `block` the sections (ADRs, then specs, then
 # notes, each from the best ranked), `omit` the line that says how many items the size left out (empty when none).
@@ -53,8 +117,9 @@ context_rows() {
 # notes whose `paths` overlap. Ranked ADRs and specs first, then notes; inside a class by the length of the literal
 # prefix of the overlap (longest first), `kind: pitfall` first, the newest `verified`, then the file name. Items are
 # taken in that order until $limit bytes (the room the router and the ticket leave) is full.
-# Arguments: tp (the ticket's Paths, array), spec (its spec file), now (epoch), cutoff (date a note is stale
-# before), limit (bytes), budget (tokens, for the omission line).
+# The candidates of context_extras (extra, already ranked) come after the notes, in their order, and go first when the
+# size is short. Arguments: tp (the ticket's Paths, array), spec (its spec file), extra, now (epoch), cutoff (date a
+# note is stale before), limit (bytes), budget (tokens, for the omission line).
 # shellcheck disable=SC2016 # a jq program, not shell
 CONTEXT_PICK=$PATHS_DEF'
   def unq: gsub("^[\"\u0027]|[\"\u0027]$"; "");
@@ -82,9 +147,11 @@ CONTEXT_PICK=$PATHS_DEF'
          line: (if $type == "note" then
              "- \($f) [\($kind)] verified \($ver) (\(ago($ver) | if . == 1 then "1 day ago" else "\(.) days ago" end))\(if $ver < $cutoff then ", stale" else "" end)\(if ($v.heading // "") != "" then ": \($v.heading)" else "" end)"
            else "- \($f) (accepted)\(if ($v.title // "") != "" then ": \($v.title | unq)" else "" end)" end | clip)}]
-    | sort_by([.cls, -.plen, (if .pit then 0 else 1 end), (.verified | explode | map(-.)), .file]) as $c
+    | (sort_by([.cls, -.plen, (if .pit then 0 else 1 end), (.verified | explode | map(-.)), .file]) + $extra) as $c
     | def heads: [{t: "adr", h: "ADRs that govern these Paths (accepted):"}, {t: "spec", h: "Specs that govern these Paths (accepted):"},
-        {t: "note", h: "Knowledge notes on these Paths (the date says how far to trust one):"}];
+        {t: "note", h: "Knowledge notes on these Paths (the date says how far to trust one):"},
+        {t: "finding", h: "Recurring review findings on these Paths (no knowledge note covers them):"},
+        {t: "revert", h: "Reverted in the last 90 days:"}, {t: "history", h: "History of these Paths (merged, most recent first):"}];
       def block($n): [heads[] | . as $s | [$c[:$n][] | select(.type == $s.t) | .line] | select(length > 0) | $s.h + "\n" + join("\n")]
         | if length == 0 then "" else "\n" + join("\n\n") end;
       def omit($n): ($c | length) - $n | if . == 0 then "" else "\(.) item\(if . == 1 then "" else "s" end) omitted to fit context.budget (\($budget) tokens); the scout agent has the rest." end;
@@ -96,6 +163,7 @@ CONTEXT_PICK=$PATHS_DEF'
 # `senior-mode context`: the briefing, on the output.
 context() {
   local root branch issue json spec status criteria head ticket="" tpaths="[]" budget months cutoff fixed res block omit
+  local rows extras="[]"
   head=$(context_router)
   root=$(git rev-parse --show-toplevel 2>/dev/null) || { printf '%s\n' "$head"; return 0; }
   if [ ! -f "$root/.claude/senior-mode.json" ]; then
@@ -126,14 +194,24 @@ context() {
   fi
   block="" omit=""
   if [ -n "$ticket" ]; then
+    rows=$(context_rows "$root")
+    if [ "$tpaths" = "[]" ] && [ -n "$spec" ]; then
+      tpaths=$(awk -F'\t' -v f="$spec" '$1 == f && $2 == "paths" { print $3; exit }' <<<"$rows" |
+        jq -Rc 'fromjson? // [] | if type == "array" then map(select(type == "string")) else [] end' 2>/dev/null) || tpaths="[]"
+      [ -n "$tpaths" ] || tpaths="[]"
+    fi
+    if [ "$tpaths" != "[]" ]; then
+      extras=$(context_extras "$root" "$tpaths") || ticket+=$'\n'"GitHub unreachable: review findings omitted"
+      [ -n "$extras" ] || extras="[]"
+    fi
     budget=$(config_get context.budget 2>/dev/null) || budget=""
     [[ $budget =~ ^[1-9][0-9]*$ ]] || budget=2000
     months=$(config_get knowledge.staleMonths 2>/dev/null) || months=""
     [[ $months =~ ^[1-9][0-9]*$ ]] || months=6
     cutoff=$(date -u -d "$months months ago" +%F)
     fixed=$(printf '%s\n\n%s\n' "$head" "$ticket" | LC_ALL=C wc -c)
-    res=$(context_rows "$root" | jq -Rnc --argjson tp "$tpaths" --arg spec "$spec" --argjson now "$(date -u +%s)" --arg cutoff "$cutoff" \
-      --argjson limit "$((budget * 4 - fixed))" --argjson budget "$budget" "$CONTEXT_PICK" 2>/dev/null) || res=""
+    res=$(jq -Rnc --argjson tp "$tpaths" --arg spec "$spec" --argjson extra "$extras" --argjson now "$(date -u +%s)" --arg cutoff "$cutoff" \
+      --argjson limit "$((budget * 4 - fixed))" --argjson budget "$budget" "$CONTEXT_PICK" <<<"$rows" 2>/dev/null) || res=""
     if [ -n "$res" ]; then
       block=$(jq -r .block <<<"$res")
       omit=$(jq -r .omit <<<"$res")

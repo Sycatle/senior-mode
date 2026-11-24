@@ -39,6 +39,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `prompts.sh`: prompts of the run and serve sessions.
 - `schedule.sh`: `schedule install` (cron, systemd).
 - `serve.sh`: `serve` (poll loop, requalify, rebase, merge, digest).
+- `watchdog.sh`: serve's watchdog (hung sessions, orphan processes, stale `index.lock`).
 
 ## Pitfalls
 

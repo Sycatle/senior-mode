@@ -142,11 +142,8 @@ usage='{"result": "ok", "modelUsage": {"claude-'$model'": {"inputTokens": 3, "ou
 echo "$n ${SENIOR_MODE_SLOT:-none} ${PORT:-none}" >>"$FIX/slot-seen"
 fx=$FIX/claude-$n-$model
 [ -f "$fx" ] || exit 1
-echo "start $n" >>"$FIX/trace"
-# #145: the token file of the run, as the session sees it: its mode, never its content.
-for t in "$(git rev-parse --path-format=absolute --git-common-dir)"/senior-mode/runs/*/token; do
-  [ ! -f "$t" ] || echo "$n $(stat -c %a "$t" 2>/dev/null || stat -f %Lp "$t")" >>"$FIX/token-seen"
-done
+# A hanging session records its processes first: under load, the steps below can outlast a one-second
+# timeout and the session would be killed before the test can read what to check.
 # A spike's note, left in its worktree before the session hangs (#321).
 [ ! -f "$FIX/note-$n" ] || { mkdir -p docs/spikes && cp "$FIX/note-$n" docs/spikes/note.md; }
 if [ "$(sed -n 3p "$fx")" = hang ]; then
@@ -163,6 +160,11 @@ if [ "$(sed -n 3p "$fx")" = decoy ]; then
   echo "$$ $! $decoy" >"$FIX/pids-$n"
   wait
 fi
+echo "start $n" >>"$FIX/trace"
+# #145: the token file of the run, as the session sees it: its mode, never its content.
+for t in "$(git rev-parse --path-format=absolute --git-common-dir)"/senior-mode/runs/*/token; do
+  [ ! -f "$t" ] || echo "$n $(stat -c %a "$t" 2>/dev/null || stat -f %Lp "$t")" >>"$FIX/token-seen"
+done
 outcome=$(sed -n 1p "$fx")
 [ -z "$outcome" ] || echo "$outcome" >"$SENIOR_MODE_RUN_OUTCOME"
 # A batch session (#263) writes one outcome line per ticket: $FIX/outcome-<lead> holds them.
@@ -460,14 +462,15 @@ grep -q 'pr merge' "$GH_LOG" && fail "J: merged without the base branch's protec
 grep -q 'Waiting for a human.*#80.*protected zones could not be read' "$work/out" ||
   fail "J: report misses why #80 waits: $(cat "$work/out")"
 
-# Q: a session that outlives autonomy.sessionTimeout (1 minute, scaled to a second) is killed with its
+# Q: a session that outlives autonomy.sessionTimeout (1 minute, scaled to 3 seconds: run counts in whole
+# seconds of $SECONDS, so a scale of 1 can fire at once, before the session stub has started) is killed with its
 # processes, the ticket gets needs-human and a comment with the log path, stays In progress, is not retried
 # on Opus and counts for the breaker (#115). #91 is never started.
 config '{"maxConsecutiveFailures": 1, "sessionTimeout": 1}'
 board 90 '[]' 91 '[]'
 session 90-sonnet "" "" hang
 session 91-sonnet delivered pr
-SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "Q: run failed: $(cat "$work/out")"
+SENIOR_MODE_TIMEOUT_UNIT=3 run || fail "Q: run failed: $(cat "$work/out")"
 grep -q 'app-90 opus' "$CLAUDE_LOG" && fail "Q: a timed out session was retried on Opus"
 grep -q 'app-91' "$CLAUDE_LOG" && fail "Q: the breaker did not count the timeout"
 grep -q 'issues/90/labels.*needs-human' "$GH_LOG" || fail "Q: #90 not labelled needs-human: $(cat "$GH_LOG")"
@@ -492,7 +495,7 @@ grep -q 'sessionTimeout' "$work/out" || fail "Q: too long a sessionTimeout not n
 config '{"sessionTimeout": 1}'
 board 92 '[]'
 session 92-sonnet "" "" decoy
-SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "L: run failed: $(cat "$work/out")"
+SENIOR_MODE_TIMEOUT_UNIT=3 run || fail "L: run failed: $(cat "$work/out")"
 read -r -a pids <"$FIX/pids-92"
 kill -0 "${pids[2]}" 2>/dev/null || fail "L: run killed a process group that is not the session's"
 for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
@@ -510,7 +513,7 @@ printf 'Timebox: 2m\n' >"$FIX/body-140"
 printf '# OAuth\nUse the device flow.\n' >"$FIX/note-140"
 session 140-sonnet "" "" hang
 SECONDS=0
-SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "SP: run failed: $(cat "$work/out")"
+SENIOR_MODE_TIMEOUT_UNIT=3 run || fail "SP: run failed: $(cat "$work/out")"
 [ "$SECONDS" -lt 30 ] || fail "SP: the spike ran past its timebox ($SECONDS s)"
 read -r -a pids <"$FIX/pids-140"
 for pid in "${pids[@]}"; do alive "$pid" && fail "SP: process $pid of the spike is still alive"; done
@@ -843,7 +846,7 @@ session 120-sonnet delivered pr
 session 121-sonnet delivered pr
 echo 0 >"$FIX/tmux-fail"
 : >"$TMUX_LOG"
-SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "O: run failed: $(cat "$work/out")"
+SENIOR_MODE_TIMEOUT_UNIT=3 run || fail "O: run failed: $(cat "$work/out")"
 grep -q 'app-12[01]' "$CLAUDE_LOG" && fail "O: a session ran although its window did not start: $(cat "$CLAUDE_LOG")"
 grep -q 'Failed.*#120.*window did not start.*server exited unexpectedly' "$work/out" || fail "O: report misses why #120 failed: $(cat "$work/out")"
 grep -q 'timed out' "$work/out" && fail "O: the report talks of a timeout: $(cat "$work/out")"
@@ -867,7 +870,7 @@ session 122-sonnet "failed: tests do not pass"
 session 122-opus delivered pr
 echo 1 >"$FIX/tmux-fail"
 : >"$TMUX_LOG"
-SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "O: run failed: $(cat "$work/out")"
+SENIOR_MODE_TIMEOUT_UNIT=3 run || fail "O: run failed: $(cat "$work/out")"
 grep -q '^app-122 sonnet' "$CLAUDE_LOG" || fail "O: the first window did not run: $(cat "$CLAUDE_LOG")"
 grep -q '^app-122 opus' "$CLAUDE_LOG" && fail "O: an Opus session ran although its window did not start"
 grep -q 'Failed.*#122.*window did not start' "$work/out" || fail "O: report misses the Opus window: $(cat "$work/out")"
@@ -894,7 +897,7 @@ grep -q 'setsid' "$work/out" || fail "P: the missing setsid is not named: $(cat 
 grep -q 'app-130' "$CLAUDE_LOG" && fail "P: a session started without a way to stop it"
 grep -q 'item-edit' "$GH_LOG" && fail "P: a ticket was touched although nothing could start"
 PATH="$work/stub:$work/nosetsid"
-SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "P: run failed with perl as the fallback: $(cat "$work/out")"
+SENIOR_MODE_TIMEOUT_UNIT=3 run || fail "P: run failed with perl as the fallback: $(cat "$work/out")"
 grep -q 'Failed.*#130.*timed out after 1 minute' "$work/out" || fail "P: report misses the timeout: $(cat "$work/out")"
 grep -q 'not stopped' "$work/out" && fail "P: a session was not stopped with perl: $(cat "$work/out")"
 read -r -a pids <"$FIX/pids-130"

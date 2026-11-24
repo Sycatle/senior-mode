@@ -442,8 +442,33 @@ diff_countable() {
 #   (limits.diffLines) of the Size of the tickets it closes.
 # A pull request that closes no ticket, or one, with a commit of its own, is only held to the second rule.
 # Other phrases say what could not be read.
+# The acceptance criteria of the tickets $3... that the "Self-review" table of the pull request body $2 lacks
+# or leaves without evidence (#356), as "#<n>.<k>" words. A criterion is a top-level bullet under the
+# "Acceptance criteria" heading of the issue; its row starts with `#<n>.<k>` (or `<k>` when the pull request
+# closes one ticket) and its last cell is the evidence. Exit 1 when an issue cannot be read.
+self_review_gaps() {
+  local slug=$1 body=$2 n issue gaps=""
+  shift 2
+  for n in "$@"; do
+    issue=$(gh_retry issue view "$n" --repo "$slug" --json body 2>/dev/null) || return 1
+    gaps+=$(jq -r --arg n "$n" --arg pr "$body" --argjson one "$([ $# -eq 1 ] && echo true || echo false)" '
+      [(.body // "") | split("\n") | foreach .[] as $l ({in: false};
+          if ($l | test("^#{1,6}\\s")) then .in = ($l | test("^#{1,6}\\s+acceptance criteria"; "i")) else . end;
+          select(.in and ($l | test("^[-*]\\s"))) | 1)] | length as $count
+      | [$pr | split("\n") | foreach .[] as $l ({in: false};
+          if ($l | test("^#{1,6}\\s")) then .in = ($l | test("^#{1,6}\\s+self-review"; "i")) else . end;
+          select(.in and ($l | test("^\\s*\\|"))) | $l)] as $rows
+      | [$rows[] | [split("|")[1:-1][] | gsub("^\\s+|\\s+$"; "")]] as $cells
+      | [range(1; $count + 1) as $k | select([$cells[] | select(length >= 2
+            and (.[0] | test("^(#?\($n)\\.\($k)" + (if $one then "|\($k)" else "" end) + ")(\\b|[^0-9]|$)"))
+            and (.[-1] | test("^(-+|todo|n/a|tbd)?$"; "i") | not))] | length == 0) | "#\($n).\($k)"] | join(" ")' <<<"$issue" 2>/dev/null) || return 1
+    gaps+=" "
+  done
+  printf '%s\n' "$gaps" | tr -s ' ' | sed 's/^ //; s/ $//'
+}
+
 delivery_blocker() {
-  local slug=$1 pr=$2 pull=$3 files=$4 tickets=() n missing="" msgs size cfg budget total=0 lines=0 path changed sizes=""
+  local slug=$1 pr=$2 pull=$3 files=$4 tickets=() n missing="" msgs size cfg budget total=0 lines=0 path changed sizes="" gaps
   mapfile -t tickets < <(pr_closed_tickets "$(jq -r '.body // ""' <<<"$pull")")
   [ "${#tickets[@]}" -gt 0 ] || return 0
   if [ "${#tickets[@]}" -gt 1 ]; then
@@ -483,8 +508,16 @@ delivery_blocker() {
     [[ ${changed:-} =~ ^[0-9]+$ ]] || continue
     ! diff_countable "$path" || lines=$((lines + changed))
   done <<<"$files"
-  [ "$lines" -le "$total" ] ||
+  [ "$lines" -le "$total" ] || {
     echo "not ready: $lines changed lines, $((lines - total)) over the size budget of $total (limits.diffLines: $sizes)"
+    return 0
+  }
+  gaps=$(self_review_gaps "$slug" "$(jq -r '.body // ""' <<<"$pull")" "${tickets[@]}") || {
+    echo "the acceptance criteria of its tickets could not be read"
+    return 0
+  }
+  [ -z "$gaps" ] ||
+    echo "not ready: the Self-review table has no row with evidence for ${gaps// /, } (one row per acceptance criterion: | #<ticket>.<k> criterion | evidence |)"
 }
 
 # senior-mode ready --pr <n> on an open pull request that is no framing one: whether it is ready to merge on

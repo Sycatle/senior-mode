@@ -28,6 +28,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `setup-answers.sh`: `setup detect` and `setup answers` (the three questions: detection, profile, config layers).
 - `setup-remove.sh`: `setup remove` (files through a pull request, ruleset, labels, workflows).
 - `status.sh`: `context`, `status`, hygiene, health, `retro`, `statusline`.
+- `skeleton.sh`: red test skeletons of `start` and their `ready` check.
 - `clean.sh`: `clean` (branches, worktrees).
 - `run.sh`: `run` (ticket sessions, review, merge, report) and its helpers.
 - `prompts.sh`: prompts of the run and serve sessions.

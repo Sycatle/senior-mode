@@ -538,6 +538,11 @@ delivery_blocker() {
     echo "not ready: $lines changed lines, $((lines - total)) over the size budget of $total (limits.diffLines: $sizes)"
     return 0
   }
+  gaps=$(skeleton_blocker "$slug" "$pr" "$pull" "$files")
+  [ -z "$gaps" ] || {
+    echo "$gaps"
+    return 0
+  }
   gaps=$(self_review_gaps "$slug" "$(jq -r '.body // ""' <<<"$pull")" "${tickets[@]}") || {
     echo "the acceptance criteria of its tickets could not be read"
     return 0
@@ -928,6 +933,7 @@ frame_start() {
       git -C "$main" worktree add -q "$path" "$branch" >/dev/null || die "cannot create the worktree"
     else
       git -C "$main" worktree add -q --no-track -b "$branch" "$path" "$base" >/dev/null || die "cannot create the worktree"
+      fresh=true
     fi
   fi
   echo "branch $branch"
@@ -1001,7 +1007,7 @@ wip_check() {
 start() {
   [ $# -eq 1 ] && [[ $1 =~ ^[1-9][0-9]*$ ]] || usage
   local issue=$1 slug info state title labels type common main name base branch path existing created=false cmd
-  local body target kind="ticket" key="" pat wf=false
+  local body target kind="ticket" key="" pat wf=false fresh=false
   slug=$(repo_slug)
   info=$(gh_retry issue view "$issue" --repo "$slug" --json title,labels,state,body) || die "cannot read issue #$issue"
   state=$(jq -r '.state' <<<"$info")
@@ -1062,6 +1068,7 @@ start() {
         base=$(start_base "$main") || die "no default branch to start $branch from"
       fi
       git -C "$main" worktree add -q --no-track -b "$branch" "$path" "$base" >/dev/null || die "cannot create the worktree"
+      fresh=true
     else
       git -C "$main" worktree add -q "$path" "$branch" >/dev/null || die "cannot create the worktree"
     fi
@@ -1077,6 +1084,14 @@ start() {
       (cd "$path" && bash -c "$cmd" </dev/null >&2) ||
         echo "senior-mode: could not install dependencies in $path; run: $cmd" >&2
     fi
+  fi
+  # The criteria of a feature or a fix become failing tests, the first commit of its new branch (#311). A project
+  # with its own commit format (a detected workflow) writes its own commits.
+  if [ "$fresh" = true ] && [ "$wf" != true ]; then
+    case $(sed -n 's/^type://p' <<<"$labels" | head -1) in
+      task | chore | spike | docs) ;;
+      *) skeleton_commit "$issue" "$(jq -r '.body // ""' <<<"$info")" "$path" ;;
+    esac
   fi
   item_set "$issue" Status "In progress"
   cycle_start "$issue"

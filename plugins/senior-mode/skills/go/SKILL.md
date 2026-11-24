@@ -25,8 +25,9 @@ Argument: $ARGUMENTS (a ticket number, `auto`, or empty). Answer in the project 
 5. **Red.** `test-author` agent (skill `tdd`); keep the failing output. Wait for a background agent.
 6. **Green.** `implementer` agent, atomic commits (skill `commit`); once it returned, `senior-mode
    check` (skill `verify`). Show the diff summary; the user can redirect at any point.
-7. **Pull request.** Push, template, `Closes #<n>`, the red run, what was verified, the spec change
-   or `Spec-Unchanged:`. `senior-mode item set <n> Status "In review"`, `senior-mode publish`.
+7. **Pull request.** Run the review checklist on your diff. Push, template, `Closes #<n>`, the red run,
+   the Self-review table (a row `#<n>.<k>` with evidence per criterion; `senior-mode ready --pr <pr>`
+   checks it), the spec change or `Spec-Unchanged:`. `senior-mode item set <n> Status "In review"`, `senior-mode publish`.
 8. **Review.** `reviewer` agent, fresh context; two fix rounds at most. `senior-mode/security`
    pending (protected zone, L ticket): the `security` agent too.
 9. **Merge.** Verdict and link, then ask. Only on a clear yes, with ci, review and security green and

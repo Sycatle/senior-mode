@@ -26,6 +26,8 @@ case "$*" in
   "api repos/acme/app/pulls/"*"/files"*) respond <"$FIX/files-$(sed -E 's#.*/pulls/([0-9]+)/files.*#\1#' <<<"$*").json" ;;
   "api repos/acme/app/pulls/"*"/commits"*) respond <"$FIX/commits-$(sed -E 's#.*/pulls/([0-9]+)/commits.*#\1#' <<<"$*").json" ;;
   "api repos/acme/app/pulls/"*) respond <"$FIX/pull-${2##*/}.json" ;;
+  "issue view "*) n=$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*")
+    if [ -f "$FIX/issue-$n.json" ]; then respond <"$FIX/issue-$n.json"; else echo '{"body": ""}'; fi ;;
   "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
   "project item-edit"*) ;;
   "api repos/acme/app/issues/"*"/labels"*) echo '[]' ;;
@@ -275,6 +277,28 @@ said 'cannot be checked: the Size of #301 is unknown' || fail "H: unknown Size n
 pr 314 OPEN docs/wave "#10"
 ready --pr 314 && fail "H: an open framing pull request accepted"
 grep -q 'not merged' "$work/err" || fail "H: open framing pull request not explained: $(cat "$work/err")"
+
+# I: the Self-review table (#356). Each acceptance criterion of a closed ticket needs a row with evidence;
+# a missing row or an empty evidence is named. A ticket without criteria needs none.
+size 401 S
+size 402 S
+printf '{"body": "## Why\\nx\\n\\n## Acceptance criteria\\n- Given a, then b.\\n- Given c, then d.\\n  more of d\\n\\n## Out of scope\\n- not this\\n"}' >"$FIX/issue-401.json"
+printf '{"body": "## Acceptance criteria\\n\\n- Given e, then f.\\n"}' >"$FIX/issue-402.json"
+delivery 400 "Closes #401" "feat: a"
+changes 400 src/a.sh:10
+ready --pr 400 && fail "I: a pull request without a Self-review table is ready"
+said 'pull request #400 is not ready: the Self-review table has no row with evidence for #401.1, #401.2 ' || fail "I: the gaps are not named: $(cat "$work/out")"
+delivery 400 $'Closes #401\n\n## Self-review\n\n| Criterion | Evidence |\n|---|---|\n| 1 Given a | test_a passes |\n| 2 Given c | - |\n' "feat: a"
+ready --pr 400 && fail "I: an empty evidence is accepted"
+said 'for #401.2 ' || fail "I: the criterion without evidence is not named: $(cat "$work/out")"
+said '#401.1' && fail "I: a criterion with evidence is named: $(cat "$work/out")"
+delivery 400 $'Closes #401\n\n## Self-review\n\n| Criterion | Evidence |\n|---|---|\n| #401.1 Given a | test_a passes |\n| #401.2 Given c | `make test`: 12 passed |\n' "feat: a"
+ready --pr 400 || fail "I: a full Self-review table is not ready: $(cat "$work/out")"
+# A batch: rows are #<ticket>.<k>; a bare number is ambiguous and does not count.
+delivery 410 $'Closes #401\nCloses #402\n\n## Self-review\n| # | Evidence |\n|---|---|\n| #401.1 | t1 |\n| #401.2 | t2 |\n| 1 | t3 |\n' 'Refs #401' 'Refs #402'
+changes 410 src/a.sh:10
+ready --pr 410 && fail "I: a batch with a missing ticket row is ready"
+said 'for #402.1 ' || fail "I: the batch gap is not named: $(cat "$work/out")"
 
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

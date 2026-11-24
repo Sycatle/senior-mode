@@ -552,7 +552,7 @@ questions, test seams).
 
 `senior-mode ready --pr <n>` on an open pull request that is no framing one (its branch is not `docs/...`)
 says whether it is ready to merge on account of the tickets it closes (`Closes #n`, `Fixes #n`, `Resolves #n`
-in its body), and exits 1 when it is not. `run` and `serve` apply the same two rules before they merge. A pull
+in its body), and exits 1 when it is not. `run` and `serve` apply the same rules before they merge. A pull
 request that closes no ticket is held to neither.
 
 - **One commit per ticket** (#297): a pull request that closes several tickets (a batch) needs each of them
@@ -562,6 +562,12 @@ request that closes no ticket is held to neither.
   files and fixtures are left out) must not exceed the budget of the Size of its ticket,
   [`limits.diffLines`](configuration.md#keys-the-plugin-reads-today) (S 300, M 800, L 2000); a batch sums the budgets of its tickets.
   The answer says by how much it is over.
+- **Self-review** (#356): before asking for review, the session runs the review checklist on its own diff and
+  fills the "Self-review" table of the pull request template: one row per acceptance criterion of each ticket
+  closed (the top-level bullets under the issue's "Acceptance criteria" heading, numbered from 1), its first
+  cell starting with `#<ticket>.<k>` (`<k>` alone for a single ticket), its last cell the evidence: a test name,
+  or a command and its result. A missing row or an empty evidence (`-`, `TODO`, `n/a`) is named. A ticket with
+  no acceptance criteria needs no row. It adds to the independent review, never replaces it (ADR 0019).
 
 Under `serve` a pull request that is not ready is not merged: it gets `needs-human` with the numbers, like any
 blocker that no later poll lifts. A ticket whose Size cannot be read is only logged and retried.

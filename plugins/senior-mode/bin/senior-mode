@@ -8,7 +8,7 @@ SELF=$(readlink -f "${BASH_SOURCE[0]}")
 LIB=$(dirname "$SELF")/lib
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish] | clean [--dry-run] [--days N] | statusline | retro [--since <dur> | --iteration [<name>]] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions] [--migrate|--upgrade] [--dry-run] | setup repo [--command <name>=<command>]... | setup remove [--apply] | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish] | clean [--dry-run] [--days N] | statusline | retro [--since <dur> | --iteration [<name>]] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame decide <issue> <question> <answer> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions] [--migrate|--upgrade] [--dry-run] | setup repo [--command <name>=<command>]... | setup remove [--apply] | setup statusline"
 }
 
 # The modules hold definitions only: function bodies and constants, no statement runs at load time.
@@ -157,6 +157,10 @@ case "${1:-}" in
     # Lifts the docs/-only guard of every frame session in this repository (hooks/frame-guard.sh).
     if [ "${2:-}" = start ] && [ $# -eq 3 ]; then
       frame_start "$3"
+      exit
+    fi
+    if [ "${2:-}" = decide ] && [ $# -eq 5 ]; then
+      frame_decide "$3" "$4" "$5"
       exit
     fi
     [ $# -eq 2 ] && [ "$2" = end ] || usage

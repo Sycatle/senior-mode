@@ -37,6 +37,20 @@ in the issue as assumed), then:
    red test, green, pull request, review, merge only on a clear yes. Headless: stop at Ready, the daemon or `go`
    delivers it.
 
+## Decisions
+
+Each question of the round and the option chosen go to `docs/decisions.md` (#310), one line each, once
+the anchor issue exists (step 5; an S ticket: right after `senior-mode start`, in its worktree):
+
+```
+senior-mode frame decide <anchor> "<question>" "<answer>"
+```
+
+Nobody to ask: the recommended option, its answer ending with `(assumed)`. A rerun adds nothing. M and L:
+run it in the framing worktree, so the file ships with the spec in the step 8 pull request; S: it ships with
+the ticket's pull request. Never write it on the default branch. The body of each ticket created gets a final
+`## Framing` section: the answers that shaped it, one line each, and "Logged in docs/decisions.md".
+
 ## Headless
 
 No question is asked. The recommended options are recorded as assumed in the issue or the spec. An L

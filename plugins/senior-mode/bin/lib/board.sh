@@ -862,6 +862,33 @@ frame_start() {
   echo "worktree $path"
 }
 
+# senior-mode frame decide <issue> <question> <answer> (#310): appends the line `- <date> #<issue>: <question> ->
+# <answer>` to docs/decisions.md of the repository it runs in (created with its title), the log of what the owner
+# chose while framing. A line already there is not added again, so a rerun is safe; the file is committed with the
+# framing, never written to the default branch from here.
+frame_decide() {
+  local root file q a line
+  [[ ${1:-} =~ ^[1-9][0-9]*$ ]] || usage
+  q=$(tr -s '[:space:]' ' ' <<<"${2:-}" | sed 's/^ //; s/ $//')
+  a=$(tr -s '[:space:]' ' ' <<<"${3:-}" | sed 's/^ //; s/ $//')
+  [ -n "$q" ] && [ -n "$a" ] || die "frame decide needs a question and an answer"
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  file=$root/docs/decisions.md
+  line="- $(date -u +%F) #$1: $q -> $a"
+  if [ ! -f "$file" ]; then
+    mkdir -p "$root/docs"
+    printf '%s\n' '# Decision log' '' \
+      'What the owner chose when a request was framed, one line per question, oldest first: date, ticket, question, answer.' \
+      'Written by `senior-mode frame decide`; an answer taken without the owner ends with "(assumed)".' '' >"$file"
+  fi
+  if grep -qxF -- "$line" "$file"; then
+    echo "decision already logged: #$1"
+  else
+    printf '%s\n' "$line" >>"$file"
+    echo "decision logged: #$1"
+  fi
+}
+
 # Whether `start` is called by a live `run` (#145): `run` keeps a random token in the shell variable
 # RUN_TOKEN, which is never exported (and cleared at startup, so a variable set by hand does not survive),
 # and writes the same token to a 0600 file of its own, whose path it gives `start` in

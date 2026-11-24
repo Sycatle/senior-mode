@@ -1,6 +1,6 @@
 {
   "name": "senior-mode",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Makes AI-assisted coding work like a senior engineering team: framing, specs and ADRs, TDD, atomic commits, a GitHub Projects roadmap, required reviews and bounded autonomous agents.",
   "author": {
     "name": "sycatle"

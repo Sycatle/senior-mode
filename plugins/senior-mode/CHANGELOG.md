@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.6.0](https://github.com/Sycatle/senior-mode/compare/senior-mode--v0.5.0...senior-mode--v0.6.0) (2026-11-24)
+
+
+### Features
+
+* **check:** keep the full log of a failed check and print its path ([4359e09](https://github.com/Sycatle/senior-mode/commit/4359e0938e25047f9224c3396e434f99db1c4fe9)), refs [#294](https://github.com/Sycatle/senior-mode/issues/294)
+* **check:** look up the dependencies a branch adds on their registries ([5a1b3cf](https://github.com/Sycatle/senior-mode/commit/5a1b3cfbc757056a145fcd9f9eda3a6e8cb5fed0)), refs [#302](https://github.com/Sycatle/senior-mode/issues/302)
+* **check:** report added check suppressions ([0b5acfa](https://github.com/Sycatle/senior-mode/commit/0b5acfa040adf5196e4d67891bf4db87d72394f3)), refs [#437](https://github.com/Sycatle/senior-mode/issues/437)
+* **check:** reuse the project's CI with ci.mode existing ([a973f3e](https://github.com/Sycatle/senior-mode/commit/a973f3edcf39adc6fa9c76277cc7a0ea3896084e)), refs [#417](https://github.com/Sycatle/senior-mode/issues/417)
+* **cli:** never pick or merge what comes from outside the team ([19f7ad4](https://github.com/Sycatle/senior-mode/commit/19f7ad4e57b0431c4bfb5519430da151f1ece101))
+* **config:** layers, overrides and process profiles ([b3ee9f3](https://github.com/Sycatle/senior-mode/commit/b3ee9f3878d3676263a2526cbd70a550aae08800)), refs [#307](https://github.com/Sycatle/senior-mode/issues/307)
+* **config:** validate the configuration and publish its JSON schema ([f3db043](https://github.com/Sycatle/senior-mode/commit/f3db043e5bf04e84eff54fbcb0d5b4d3be250695)), refs [#317](https://github.com/Sycatle/senior-mode/issues/317)
+* **doctor:** diagnose the installation and summarize the customization ([cb80f28](https://github.com/Sycatle/senior-mode/commit/cb80f28584ffb611b9532eb542f9f4a492f70340)), refs [#316](https://github.com/Sycatle/senior-mode/issues/316)
+* **frame:** docs/vision.md holds goals and non-goals and framing consults it ([1b91a39](https://github.com/Sycatle/senior-mode/commit/1b91a394b9994b3d2368bb3a3d1206a02e79f533)), refs [#342](https://github.com/Sycatle/senior-mode/issues/342)
+* **frame:** log framing answers in a dated decision log ([76977fc](https://github.com/Sycatle/senior-mode/commit/76977fc863fb5ff8404e7ddeeceee5262064c644)), refs [#310](https://github.com/Sycatle/senior-mode/issues/310)
+* **frame:** size and frame a plain request without a command ([f923880](https://github.com/Sycatle/senior-mode/commit/f923880e9a0e2a1da0e3adfdc87b273249041712)), refs [#517](https://github.com/Sycatle/senior-mode/issues/517)
+* **frame:** spike tickets are timeboxed research that produce a note ([2e0d0cd](https://github.com/Sycatle/senior-mode/commit/2e0d0cda90f1769720e71c9d70e722618194e461)), refs [#321](https://github.com/Sycatle/senior-mode/issues/321)
+* **guard:** cover more credential files and credentialed git URLs ([7044cdb](https://github.com/Sycatle/senior-mode/commit/7044cdb76ef7806736c3cce27b29e30ec7be38c7)), refs [#434](https://github.com/Sycatle/senior-mode/issues/434)
+* **guard:** deny reading business and production data, like secrets ([ef87b4d](https://github.com/Sycatle/senior-mode/commit/ef87b4d02c179569e1e2aa28bc20c7fbbb03fe40)), refs [#433](https://github.com/Sycatle/senior-mode/issues/433)
+* **guard:** deny sending local files and content to third-party endpoints ([1f6296b](https://github.com/Sycatle/senior-mode/commit/1f6296bf56496227212e1fe9567d6bfd39dfbf54)), refs [#435](https://github.com/Sycatle/senior-mode/issues/435)
+* **notify:** webhook from SENIOR_MODE_NOTIFY_WEBHOOK, out of the tracked config ([1ddb5c4](https://github.com/Sycatle/senior-mode/commit/1ddb5c4cd48cec01b0fd0787a2f5b2bbc3df01f4)), refs [#522](https://github.com/Sycatle/senior-mode/issues/522)
+* **ready:** a pull request bigger than its ticket's size budget is not ready ([bdb4969](https://github.com/Sycatle/senior-mode/commit/bdb4969fe2f5cd1a449962a177e683ab543d0410)), refs [#303](https://github.com/Sycatle/senior-mode/issues/303)
+* **ready:** a pull request closing several tickets needs one commit per ticket ([1811122](https://github.com/Sycatle/senior-mode/commit/1811122c6e0b85b9f00ca30ddc86bfc50a6946f7)), refs [#297](https://github.com/Sycatle/senior-mode/issues/297)
+* **ready:** self-review of the diff with evidence per acceptance criterion ([41db2ee](https://github.com/Sycatle/senior-mode/commit/41db2eeaa2cf1c4baf1544555eb25b8d0f9cf414)), refs [#356](https://github.com/Sycatle/senior-mode/issues/356)
+* **retro:** compare announced sizes with actual effort ([bb51e08](https://github.com/Sycatle/senior-mode/commit/bb51e081b1e42b3396a20aade0468f8621e59b3e)), refs [#313](https://github.com/Sycatle/senior-mode/issues/313)
+* **retro:** token use and estimated USD per ticket and role ([7f431b4](https://github.com/Sycatle/senior-mode/commit/7f431b4984df1297f445fcd8bb47a2df957c960f)), refs [#299](https://github.com/Sycatle/senior-mode/issues/299)
+* **review:** check hashing, cryptography, randomness, headers, CORS, scopes and errors ([b8f1fb0](https://github.com/Sycatle/senior-mode/commit/b8f1fb0c8d0386d2eecede84ed5265e342243673)), refs [#440](https://github.com/Sycatle/senior-mode/issues/440)
+* **review:** treat a fork or non-collaborator pull request as untrusted data ([20b26f2](https://github.com/Sycatle/senior-mode/commit/20b26f2a22b3b8f5f8f9b2a673eda0b864953c57))
+* **run:** follow the project's branch, base and merge method ([13fbd80](https://github.com/Sycatle/senior-mode/commit/13fbd80878151b081fc7e79a52ec0966a0ad9ea2)), refs [#415](https://github.com/Sycatle/senior-mode/issues/415)
+* **serve:** classify session ends as transient, environment or ticket failures ([0b829fb](https://github.com/Sycatle/senior-mode/commit/0b829fb988c54505e8b8975abbad0178aaf8d9f1)), refs [#377](https://github.com/Sycatle/senior-mode/issues/377) [#334](https://github.com/Sycatle/senior-mode/issues/334)
+* **setup:** detect the workflow of an existing project ([823d842](https://github.com/Sycatle/senior-mode/commit/823d842e38c4df49ba07befec6deeec3130dcd8b)), refs [#413](https://github.com/Sycatle/senior-mode/issues/413)
+* **setup:** github.requiredChecks false keeps setup from adding required status checks ([e2bac0e](https://github.com/Sycatle/senior-mode/commit/e2bac0e2ae26f475e05ed3a010d8b194f50bb745)), refs [#296](https://github.com/Sycatle/senior-mode/issues/296)
+* **setup:** setup asks three questions and detects the rest ([80be5d3](https://github.com/Sycatle/senior-mode/commit/80be5d3bac3294f6d7070f966ab1e159c6c4345c)), refs [#320](https://github.com/Sycatle/senior-mode/issues/320)
+* **setup:** setup github --upgrade adds missing fields and options to an existing board ([098ddb1](https://github.com/Sycatle/senior-mode/commit/098ddb1769f12e4c645a4ed6cd38caea417c4dc0)), refs [#298](https://github.com/Sycatle/senior-mode/issues/298)
+* **setup:** setup remove takes senior-mode out of a repository ([94d3256](https://github.com/Sycatle/senior-mode/commit/94d3256f73128d4a26d70baf88a04d22e26bcf70)), refs [#300](https://github.com/Sycatle/senior-mode/issues/300)
+* **skills:** three verbs for the human - frame, go, status ([152269b](https://github.com/Sycatle/senior-mode/commit/152269bac8b4ec6b1d33642d0101cb3c09c045cf)), refs [#319](https://github.com/Sycatle/senior-mode/issues/319)
+* **spec:** Security section filled by the architect and checked by review ([8b4dfe1](https://github.com/Sycatle/senior-mode/commit/8b4dfe1230b97d0fbfc970091518c6971d071b9d)), refs [#438](https://github.com/Sycatle/senior-mode/issues/438)
+* **status:** find the pull request of a commit through GitHub for the spec drift ([aaf873e](https://github.com/Sycatle/senior-mode/commit/aaf873ee7badb71303e2bb26ccccb94bb55708de)), refs [#331](https://github.com/Sycatle/senior-mode/issues/331)
+* **status:** report drift between accepted specs and the code ([bdce124](https://github.com/Sycatle/senior-mode/commit/bdce1249f8624941c12b5472769b3b40dbbb9854)), refs [#169](https://github.com/Sycatle/senior-mode/issues/169)
+* **tdd:** abuse tests first for security-relevant code ([83cf300](https://github.com/Sycatle/senior-mode/commit/83cf3003988271dcca37e39c078ed752b33669fc)), refs [#439](https://github.com/Sycatle/senior-mode/issues/439)
+
+
+### Bug Fixes
+
+* **check:** give each concurrent check run its own temp and lock paths ([2e58022](https://github.com/Sycatle/senior-mode/commit/2e580221744d5f3f4eca4021505ee8a18c3b7828)), refs [#295](https://github.com/Sycatle/senior-mode/issues/295)
+* **frame:** vision.maxLines is in the config schema ([1cb8979](https://github.com/Sycatle/senior-mode/commit/1cb89799a7a3fe0f39acbe43d82858820a715bc3)), refs [#342](https://github.com/Sycatle/senior-mode/issues/342)
+* **run:** sessions see the project's settings only, in a trusted worktree ([2cbda8f](https://github.com/Sycatle/senior-mode/commit/2cbda8f989e8e1843626acfa24b284bfb26fce51)), refs [#348](https://github.com/Sycatle/senior-mode/issues/348) [#350](https://github.com/Sycatle/senior-mode/issues/350)
+* **serve:** an integrator session holds back tickets whose Paths overlap its own ([4421239](https://github.com/Sycatle/senior-mode/commit/44212397a81c71bc3708d9f881ddc2633f25f7f7)), refs [#426](https://github.com/Sycatle/senior-mode/issues/426)
+* **serve:** cap ticket starts per hour, not role sessions ([6ea993e](https://github.com/Sycatle/senior-mode/commit/6ea993eb6e03fc880efecb6218a99b052d5604b3)), refs [#355](https://github.com/Sycatle/senior-mode/issues/355)
+* **serve:** compare the Paths of the board, not the config, before starting a ticket ([419ab89](https://github.com/Sycatle/senior-mode/commit/419ab89fad901c334c035b7e140f76ea57ab8066)), refs [#344](https://github.com/Sycatle/senior-mode/issues/344)
+* **serve:** cut a gh or git call that does not answer, as a transient failure ([9ecca3d](https://github.com/Sycatle/senior-mode/commit/9ecca3d1639f67ea425b1473d8a9d400daf5268e)), refs [#382](https://github.com/Sycatle/senior-mode/issues/382)
+* **serve:** give a batch session the serve prompt, which never sets senior-mode/review ([85c1fa3](https://github.com/Sycatle/senior-mode/commit/85c1fa33f330f8e3f45d9a99a85725a20ab9c489)), refs [#305](https://github.com/Sycatle/senior-mode/issues/305)
+* **serve:** leave a ticket In review after its integrator supersedes the pull request ([6ac2e02](https://github.com/Sycatle/senior-mode/commit/6ac2e0219cf12bb2dc79888ead4b13c7cf4d6ea6)), refs [#285](https://github.com/Sycatle/senior-mode/issues/285)
+* **setup:** say what to do when the board template is unreadable ([dc476af](https://github.com/Sycatle/senior-mode/commit/dc476afe53def74bb213d2be1f47c5df224f5ce8)), refs [#527](https://github.com/Sycatle/senior-mode/issues/527)
+
 ## [0.5.0](https://github.com/Sycatle/senior-mode/compare/senior-mode--v0.4.0...senior-mode--v0.5.0) (2026-11-23)
 
 

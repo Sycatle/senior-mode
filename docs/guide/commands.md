@@ -55,6 +55,8 @@ State: **Available.**
   what stays open and what the repository and GitHub cannot answer. For M and L, then whether you
   accept the spec and ADRs. With nobody to ask (headless), the recommended options are taken and
   recorded as assumed; an L spec and any ADR stay `draft` / `proposed`, with `needs-human`.
+  Each question and the option chosen are appended with the date to `docs/decisions.md` (the decision
+  log, written with `senior-mode frame decide`) and cited in a `## Framing` section of the ticket body.
 - **Produces.** A spec in `docs/specs/` (light for M, full for L), ADRs in `docs/adr/`, tickets on
   the board as vertical slices (size, priority, milestone, Given/When/Then criteria, test seams,
   blockers; an epic with sub-issues for L), and a pull request with the documents. It works in its
@@ -221,6 +223,7 @@ too, with `!` at the Claude Code prompt. All of it is available today.
 | `senior-mode red-tests record <issue>` | Records the files the `test-author` session committed on the ticket branch since the default branch, in `.git/senior-mode/runs/<issue>/red-tests` (one path per line), for the [guard](autonomy.md#session-roles) to keep read-only for the ticket session. Written once, so run it between the test-author and the implementer sessions; fails when the branch holds no commit yet |
 | `senior-mode context` | Prints the session greeting and the current ticket (used by the `SessionStart` hook) |
 | `senior-mode frame start <idea>` | Makes the worktree `~/.local/share/senior-mode/worktrees/<repo>/frame-<slug>` (a framing opened elsewhere earlier is reused) and the branch `docs/<slug>` from `origin/main`; refuses when the default branch is ahead of origin |
+| `senior-mode frame decide <issue> <question> <answer>` | Appends `- <date> #<issue>: <question> -> <answer>` to `docs/decisions.md` of the repository it runs in (the file is created with its title); a line already there is not added again; `frame` and `grill` call it for each answer, an assumed one ending with `(assumed)` |
 | `senior-mode frame end` | Ends every framing session in the repository, so edits outside `docs/` are allowed again |
 
 GitHub calls that fail for a passing reason (timeouts, server errors, rate limits) are retried up to

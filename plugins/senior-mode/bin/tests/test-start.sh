@@ -324,5 +324,28 @@ grep -q "ahead of origin" "$work/err" || fail "main ahead not explained: $(cat "
 [ -e "$wt/frame-ahead-idea" ] && fail "worktree created despite main ahead of origin"
 git -C "$repo" show-ref -q --verify refs/heads/docs/ahead-idea && fail "branch created despite main ahead of origin"
 
+# frame decide <issue> <question> <answer> (#310): one dated line per framing answer in docs/decisions.md of the
+# repository it runs in, linked to its ticket; a rerun adds nothing.
+decide() {
+  (cd "$wt/frame-login-flow" && "$cli" frame decide "$@") >"$work/out" 2>"$work/err"
+}
+log=$wt/frame-login-flow/docs/decisions.md
+today=$(date -u +%F)
+decide 310 "Where do answers go?" "docs/decisions.md" || fail "frame decide failed: $(cat "$work/err")"
+[ -f "$log" ] || fail "frame decide wrote no docs/decisions.md"
+head -n 1 "$log" | grep -qx "# Decision log" || fail "decision log has no title: $(cat "$log")"
+grep -qxF -- "- $today #310: Where do answers go? -> docs/decisions.md" "$log" || fail "decision line missing: $(cat "$log")"
+decide 310 "Where do answers go?" "docs/decisions.md" || fail "frame decide rerun failed: $(cat "$work/err")"
+[ "$(grep -c '^- ' "$log")" -eq 1 ] || fail "rerun duplicated the decision: $(cat "$log")"
+decide 311 $'One question\nover two lines?' "the recommended one (assumed)" || fail "second decide failed: $(cat "$work/err")"
+grep -qxF -- "- $today #311: One question over two lines? -> the recommended one (assumed)" "$log" || fail "newline not folded or line not appended: $(cat "$log")"
+[ "$(grep -c '^- ' "$log")" -eq 2 ] || fail "decisions not appended: $(cat "$log")"
+[ "$(sed -n 's/^- [0-9-]* #310.*/x/p' "$log" | head -n 1)" = x ] || fail "oldest decision not first: $(cat "$log")"
+for bad in "abc|q|a" "310||a" "310|q|" "0|q|a"; do
+  IFS='|' read -r i q a <<<"$bad"
+  decide "$i" "$q" "$a" && fail "frame decide accepted '$bad'"
+done
+(cd "$work" && "$cli" frame decide 310 q a) >"$work/out" 2>"$work/err" && fail "frame decide ran outside a repository"
+
 [ "$failures" -eq 0 ] && echo "start: all cases pass"
 exit "$failures"

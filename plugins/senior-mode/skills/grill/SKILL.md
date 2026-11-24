@@ -37,7 +37,8 @@ recommendation, or a one-line note when no decision is needed.
 ## Stop
 
 Stop when no open decision blocks writing the spec. Record answers where they belong: the spec
-(skill `spec`), ADRs for hard-to-reverse choices (skill `adr`). Summarise the decisions in at most
+(skill `spec`), ADRs for hard-to-reverse choices (skill `adr`); each answer of a known ticket is also logged with `senior-mode frame decide <issue>
+"<question>" "<answer>"` (`docs/decisions.md`). Summarise the decisions in at most
 five lines, in the project language.
 
 For a non-technical user: no jargon in questions, compare alternatives in a short table, and ask

@@ -14,7 +14,7 @@ language (`senior-mode config get language`). Commands, formats, S and headless:
    accepted.
 2. **Questions.** Always one round, even for S: one batch of 3 to 4 questions, recommended option
    first, then only what stays open (skill `grill`). Nobody to ask: take the recommended options and
-   record them as assumed. Facts the files settle (`scout` agent) or the web (`researcher`) are never asked.
+   record them as assumed. Facts the files settle (`scout` agent) or the web (`researcher`) are never asked. Log each answer (reference "Decisions").
 3. **S.** No spec: create its issue with the expected behaviour, then deliver it in this session
    through the `go` steps 4-9 (reference "Size S").
 4. **Workspace (M, L).** `senior-mode frame start <slug>` makes a worktree and a branch `docs/<slug>`

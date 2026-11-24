@@ -15,6 +15,9 @@ production code: tests written apart from the code are not bent to fit it.
 - Read the ticket and its spec. One or more tests per acceptance criterion, named after it, through
   the test seam the spec names.
 - Follow the project's existing test style, framework and folders.
+- Security-relevant code (authentication, authorisation, input boundaries, data access, file paths):
+  write the abuse tests first, each seen failing: access without the right, malicious input, another
+  user's record.
 - Write fixtures by hand with synthetic values; never copy them from a real export, dump or database.
 - Run the tests. Each must fail for the expected reason (missing behaviour), not for a syntax error,
   a missing import you could add, or a broken fixture.

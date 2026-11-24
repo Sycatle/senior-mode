@@ -42,6 +42,8 @@ usage() {
 . "$LIB/setup-remove.sh"
 # shellcheck source=lib/status.sh
 . "$LIB/status.sh"
+# shellcheck source=lib/retro-learn.sh
+. "$LIB/retro-learn.sh"
 # shellcheck source=lib/clean.sh
 . "$LIB/clean.sh"
 # shellcheck source=lib/run.sh

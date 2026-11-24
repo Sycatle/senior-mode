@@ -42,6 +42,8 @@ case "$*" in
     [ -z "${ALERTS_ERR:-}" ] || { echo "$ALERTS_ERR" >&2; exit 1; }
     f=${2#repos/acme/app/}; f=$FIX/${f%%/*}.json
     if [ -f "$f" ]; then respond <"$f"; else echo '[]' | respond; fi ;;
+  "api repos/acme/app/issues/"*"/labels "*)
+    n=${2#repos/acme/app/issues/}; echo "${n%%/*} $4" >>"$FIX/cause-labels"; echo '[]' ;;
   "issue list"*) respond <"$FIX/issues.json" ;;
   "issue create"*)
     f=$(FLAG=--body-file arg "$@")
@@ -158,11 +160,11 @@ touch -d "20 days ago" "$checks/ccccccc3333333333333333333333333333333333"
   usage 12 ticket claude-opus-5-5 "$(ago $((20 * DAY)))" '{"input": 1, "output": 1, "cacheRead": 0, "cacheWrite5m": 0, "cacheWrite1h": 0}'
 } >"$repo/.git/senior-mode/usage.jsonl"
 
-run() { : >"$GH_LOG"; : >"$FIX/board-bodies"; : >"$FIX/history-bodies"; : >"$FIX/status-updates"; (cd "$repo" && "$cli" "$@") >"$work/out" 2>"$work/err"; }
+run() { : >"$GH_LOG"; rm -f "$FIX/cause-labels"; : >"$FIX/board-bodies"; : >"$FIX/history-bodies"; : >"$FIX/status-updates"; (cd "$repo" && "$cli" "$@") >"$work/out" 2>"$work/err"; }
 json() { jq -c "$1" "$work/out"; }
 
 run retro --json || fail "retro --json failed: $(cat "$work/err")"
-[ "$(grep -c '^api ' "$GH_LOG")" -eq 5 ] || fail "retro makes $(grep -c '^api ' "$GH_LOG") gh calls, wanted 5 (the two alert lists, board, history, the status update)"
+[ "$(grep -c '^api ' "$GH_LOG")" -eq 8 ] || fail "retro makes $(grep -c '^api ' "$GH_LOG") gh calls, wanted 8 (the two alert lists, board, history, the status update, three cause labels)"
 [ "$(jq -r '.variables.repo' "$FIX/board-bodies")" = true ] || fail "retro does not reuse the board with repository facts"
 [ "$(jq -r '.variables.owner + "/" + .variables.name' "$FIX/history-bodies")" = acme/app ] || fail "history repository: $(cat "$FIX/history-bodies")"
 since_sent=$(jq -r '.variables.since' "$FIX/history-bodies")
@@ -318,6 +320,72 @@ for want in "Repository hygiene" "pull request #50 Old work: no activity for 20 
   grep -qF -- "$want" "$work/out" || fail "retro hygiene lacks '$want': $(cat "$work/out")"
 done
 grep -qE 'pr close|issue comment|DELETE|item-edit' "$GH_LOG" && fail "retro changed something on GitHub: $(cat "$GH_LOG")"
+cp "$FIX/board.keep" "$FIX/board.json"
+
+# #364: each ticket that needed a second review round, an escalation, a stuck stop or a revert gets one cause label,
+# with its evidence quoted; a cause seen retro.repeat times on the same paths opens one improvement ticket, once.
+run retro --json || fail "retro --json failed: $(cat "$work/err")"
+[ "$(json '.failures | map([.number, .cause, (.signals | join("+"))] | join("|"))')" = '["8|fuzzy-criterion|revert","11|weak-model|escalated","20|weak-model|stuck"]' ] ||
+  fail "failure causes: $(json '.failures')"
+[ "$(json '.failures[] | select(.number == 11) | .evidence')" = '["escalated to a stronger model: \"tests do not pass\""]' ] || fail "evidence of #11: $(json '.failures')"
+[ "$(sort "$FIX/cause-labels" | tr '\n' ',')" = '11 labels[]=cause:weak-model,20 labels[]=cause:weak-model,8 labels[]=cause:fuzzy-criterion,' ] ||
+  fail "labels written: $(cat "$FIX/cause-labels")"
+[ "$(json '.learning.labelled')" = "[8,11,20]" ] || fail "labelled now: $(json .learning)"
+[ "$(json '.learning.improvements')" = "[]" ] || fail "an improvement ticket without a repeat: $(json .learning)"
+run retro || fail "plain retro failed: $(cat "$work/err")"
+for want in "Failure causes (3)" "#8 Ticket 8: cause:fuzzy-criterion (revert)" "    reopened at " "#11: cause:weak-model (escalated)" \
+  '    escalated to a stronger model: "tests do not pass"' "#20: cause:weak-model (stuck)"; do
+  grep -qF -- "$want" "$work/out" || fail "plain retro lacks '$want': $(cat "$work/out")"
+done
+# A second review round, the evidence read for the cause; a label a human put on a ticket stays.
+cp "$FIX/history.json" "$FIX/history.keep"
+cp "$FIX/board.json" "$FIX/board.keep"
+jq -c --arg m "$(ago $DAY)" '.data.repository.pullRequests.nodes += [{number: 44, title: "PR 44", headRefName: "feat/9-slice", additions: 5, deletions: 5, mergedAt: $m,
+  labels: {nodes: []}, reviews: {nodes: [{state: "CHANGES_REQUESTED", bodyText: "The criterion is unclear:\nwhat is a valid user?", author: {login: "alice"}}, {state: "APPROVED", bodyText: "", author: {login: "alice"}}]}},
+  {number: 45, title: "PR 45", headRefName: "feat/10-slice", additions: 5, deletions: 5, mergedAt: $m,
+  labels: {nodes: []}, reviews: {nodes: [{state: "CHANGES_REQUESTED", bodyText: "no", author: {login: "alice"}}]}}]' "$FIX/history.keep" >"$FIX/history.json"
+jq -c '(.data.node.items.nodes[] | select(.content.number == 8) | .content.labels.nodes) += [{name: "cause:tool"}]' "$FIX/board.keep" >"$FIX/board.json"
+run retro --json || fail "retro with a review round failed: $(cat "$work/err")"
+[ "$(json '.failures[] | select(.number == 9) | [.cause, .signals[0], .evidence[0]] | join("|")')" = '"fuzzy-criterion|second-review|pull request #44 needed a second review round after changes requested by alice: \"The criterion is unclear: what is a valid user?\""' ] ||
+  fail "second review round: $(json '.failures')"
+json '.failures[].number' | grep -qx 10 && fail "one changes-requested review with no later round counted: $(json '.failures')"
+[ "$(json '.failures[] | select(.number == 8) | [.cause, .labelled] | map(tostring) | join("|")')" = '"tool|true"' ] || fail "an existing cause label is not kept: $(json '.failures')"
+grep -q '^8 ' "$FIX/cause-labels" && fail "a second cause label was written to #8: $(cat "$FIX/cause-labels")"
+grep -qx '9 labels\[\]=cause:fuzzy-criterion' "$FIX/cause-labels" || fail "#9 not labelled: $(cat "$FIX/cause-labels")"
+# Three tickets on the same paths with the same cause: one improvement ticket aimed at it, linking them, filed once
+# (they share two globs, and the one ticket is for the first, not one per glob).
+echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3, "fields": {
+  "Status": {"id": "F_S", "options": {"Backlog": "o0"}}, "Priority": {"id": "F_P", "options": {"P0 now": "p0", "P1 next": "p1"}},
+  "Size": {"id": "F_Z", "options": {"S": "z1"}}}}}' >"$repo/.claude/senior-mode.json"
+echo '[]' >"$FIX/issues.json"
+jq -c '(.data.repository.issues.nodes[] | select(.number == 5 or .number == 6) | .timelineItems.nodes) += [{__typename: "ReopenedEvent", createdAt: "'"$(ago $HOUR)"'"}]' \
+  "$FIX/history.keep" >"$FIX/history.json"
+jq -c '.data.node.items.nodes |= map(if (.content.number | IN(5, 6, 8)) then .fieldValues.nodes += [{text: "src/billing/**, docs/**", field: {name: "Paths"}}] else . end)' "$FIX/board.keep" >"$FIX/board.json"
+run retro --json || fail "retro with a repeated cause failed: $(cat "$work/err")"
+[ "$(jq 'length' "$FIX/issues.json")" -eq 1 ] || fail "improvement tickets filed: $(jq -c 'map(.title)' "$FIX/issues.json")"
+[ "$(jq -r '.[0].title' "$FIX/issues.json")" = 'chore(retro): fix repeated cause:fuzzy-criterion on docs/**' ] || fail "improvement title: $(jq -c 'map(.title)' "$FIX/issues.json")"
+jq -r '.[0].body' "$FIX/issues.json" >"$work/body"
+for want in "#5, #6, #8" "- #5 Ticket 5: reopened at " "stricter" "- Given a new ticket on \`docs/**\`" "retro-cause: fuzzy-criterion docs/**"; do
+  grep -qF -- "$want" "$work/body" || fail "improvement body lacks '$want': $(cat "$work/body")"
+done
+[ "$(json '.learning.improvements | map([.cause, .area, .created, (.tickets | join(","))] | join("|"))')" = '["fuzzy-criterion|docs/**|true|5,6,8"]' ] ||
+  fail "improvements: $(json .learning)"
+grep -q 'cause:tool' "$FIX/issues.json" && fail "the corrected #8 counted for its old cause"
+grep -qE -- '--label type:task' "$GH_LOG" || fail "improvement ticket is no task: $(grep 'issue create' "$GH_LOG")"
+# Run again: the improvement ticket is open, no second one, and the report says so.
+run retro || fail "second retro failed: $(cat "$work/err")"
+[ "$(jq 'length' "$FIX/issues.json")" -eq 1 ] || fail "a second improvement ticket was filed: $(jq -c 'map(.title)' "$FIX/issues.json")"
+grep -qF 'improvement: #42 already open for cause:fuzzy-criterion on docs/** (#5, #6, #8)' "$work/out" || fail "already-open improvement not reported: $(cat "$work/out")"
+# retro.repeat: 4 asks for more; 2 makes two tickets enough, 1 does too.
+jq -c '. + {retro: {repeat: 4}}' "$repo/.claude/senior-mode.json" >"$work/cfg" && cp "$work/cfg" "$repo/.claude/senior-mode.json"
+echo '[]' >"$FIX/issues.json"
+run retro --json || fail "retro with retro.repeat 4 failed: $(cat "$work/err")"
+[ "$(jq 'length' "$FIX/issues.json")" -eq 0 ] || fail "retro.repeat 4 ignored: $(jq -c 'map(.title)' "$FIX/issues.json")"
+jq -c '.retro.repeat = 0' "$repo/.claude/senior-mode.json" >"$work/cfg" && cp "$work/cfg" "$repo/.claude/senior-mode.json"
+run retro --json && fail "retro.repeat 0 accepted"
+jq -c 'del(.retro)' "$repo/.claude/senior-mode.json" >"$work/cfg" && cp "$work/cfg" "$repo/.claude/senior-mode.json"
+echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
+cp "$FIX/history.keep" "$FIX/history.json"
 cp "$FIX/board.keep" "$FIX/board.json"
 
 # From a linked worktree, retro reads the same outcomes: they live in the git common directory.

@@ -44,8 +44,14 @@ Before changing anything, setup:
 
 1. checks that the folder is a git repository with a GitHub `origin`, and that `gh` is logged in
    with the `project` scope;
-2. asks one question: where the checks run (see below);
-3. shows a short table of what will change on GitHub, and waits for your yes.
+2. detects your stack, whether the repository is public or private and its plan, and the language of your
+   `CLAUDE.md` (`senior-mode setup detect`);
+3. asks three questions, the recommended answer first, each saying what it changes: how strict the process is
+   (`strict`, an independent review before every merge, or `fast`, which needs an accepted ADR to lift the
+   review), which language, and whether agents may work alone (merge what passed check and review);
+4. shows one summary: what it detected, your answers, and the defaults that apply to the rest (risky changes
+   are yours to decide, checks run `local`, the work limits), and waits for your yes. `senior-mode setup
+   answers --dry-run` prints that summary and writes nothing.
 
 ### What changes on GitHub
 

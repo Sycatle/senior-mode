@@ -442,6 +442,40 @@ rm "$repo/docs/knowledge/long-note.md"
 note Bad_Name.md '---' 'paths: ["a/**"]' "verified: $today" 'origin: retro' 'kind: context' '---' 'Body.'
 run check && fail "a file name that is no slug passes"
 grep -q "Bad_Name.md: file name is not a kebab-case slug" "$work/out" || fail "slug not named: $(cat "$work/out")"
+rm "$repo/docs/knowledge/Bad_Name.md"
+# Freshness (#345): a glob that matches no file and a note older than knowledge.staleMonths are warnings that never
+# fail; a branch that deletes or renames a file a note cites, with the note untouched, fails naming both.
+rm "$repo/docs/knowledge/money-rounding.md"
+note ghost-note.md '---' 'paths: ["nowhere/**", "src/s.ts"]' "verified: $today" 'origin: retro' 'kind: context' '---' 'Body.'
+run check || fail "a glob that matches nothing fails the check: $(cat "$work/out")"
+grep -q "warning: docs/knowledge/ghost-note.md: paths glob nowhere/\*\* matches no file" "$work/out" || fail "empty glob not warned: $(cat "$work/out")"
+grep -q "src/s.ts matches no file" "$work/out" && fail "a glob that matches a file is warned: $(cat "$work/out")"
+note ghost-note.md '---' 'paths: ["src/**"]' 'verified: 2020-01-31' 'origin: retro' 'kind: context' '---' 'Body.'
+run check || fail "an old note fails the check: $(cat "$work/out")"
+grep -q "warning: docs/knowledge/ghost-note.md: verified 2020-01-31, more than 6 months ago" "$work/out" || fail "age not warned: $(cat "$work/out")"
+config '{"audit":false,"knowledge":{"staleMonths":9999},"checks":[{"name":"lint","run":"true"}]}'
+run check || fail "knowledge.staleMonths 9999 fails: $(cat "$work/out")"
+grep -q "months ago" "$work/out" && fail "knowledge.staleMonths is not read: $(cat "$work/out")"
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
+note ghost-note.md '---' 'paths: ["src/gone/**"]' "verified: $today" 'origin: retro' 'kind: context' '---' 'Body.'
+mkdir -p "$repo/src/gone"
+echo x >"$repo/src/gone/a.txt"
+echo y >"$repo/src/gone/b.txt"
+commit -m "docs(knowledge): ghost"
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+git -C "$repo" checkout -q -b feat/345-x
+git -C "$repo" rm -q src/gone/a.txt
+mkdir -p "$repo/src/moved"
+git -C "$repo" mv src/gone/b.txt src/moved/b.txt
+commit -m "refactor: move"
+run check && fail "a deleted file a note cites passes"
+for f in src/gone/a.txt src/gone/b.txt; do
+  grep -q "docs/knowledge/ghost-note.md: $f is deleted or renamed" "$work/out" || fail "$f not named: $(cat "$work/out")"
+done
+note ghost-note.md '---' 'paths: ["src/gone/**", "src/moved/**"]' "verified: $today" 'origin: retro' 'kind: context' '---' 'Body, re-read.'
+commit -m "docs(knowledge): re-read ghost"
+run check || fail "a note touched by the branch still fails: $(cat "$work/out")"
+git -C "$repo" checkout -q -
 rm -rf "$repo/docs/knowledge"
 run check || fail "check fails once the notes are gone: $(cat "$work/out")"
 

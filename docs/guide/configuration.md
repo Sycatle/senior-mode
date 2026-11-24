@@ -60,7 +60,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `board.template` | the senior-mode template Project | Id of the Project that `setup github` copies (`copyProjectV2`, without draft issues) when the repository has none, and that `setup github --migrate` builds the new board from. Set the id of your own template, for instance an organization's; the copy brings its views, fields and built-in workflows. A fine-grained token bound to another owner cannot read the default one: setup says what to do, and `--upgrade` then uses a built-in list of its fields |
 | `vision.maxLines` | `100` | Lines `docs/vision.md` may have; `check` fails above it (a positive whole number). See [`docs/vision.md`](commands.md#frame) |
 | `knowledge.maxLines` | `40` | Lines the body of a [knowledge note](#knowledge-notes) may have; `check` fails above it (a positive whole number) |
-| `knowledge.staleMonths` | `6` | Months after which the [briefing](commands.md#the-senior-mode-script) marks a note `stale` (a positive whole number) |
+| `knowledge.staleMonths` | `6` | Months after which the [briefing](commands.md#the-senior-mode-script) marks a note `stale` and `check` warns about it (a positive whole number) |
 | `retro.repeat` | `3` | Tickets with the same `cause:<x>` label on the same paths or skill, in the period, that make [`retro`](commands.md#retro) open one improvement ticket aimed at that cause (a positive whole number) |
 | `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |
 | `docs.extra` | none | Extra living documents the `docs` skill keeps current after a merge: a list of `{ "path", "purpose" }`; its changes are flagged for human review. Add it yourself |
@@ -449,6 +449,11 @@ that breaks one of these rules; a repository with no such directory sees nothing
 Notes enter through pull requests only. The [`implementer`](agents.md#implementer) adds or re-verifies one in
 its own pull request when it hit a pitfall; the [`reviewer`](agents.md#reviewer) opens a separate
 `docs(knowledge): <slug>` pull request for a finding seen on two pull requests.
+
+The step also keeps notes true. It warns, and still passes, on a `paths` glob that matches no file of the tree and on a note
+whose `verified` is older than `knowledge.staleMonths`. It fails, naming the file and the note, when the branch deletes or
+renames a file that a note's `paths` match and the note is not in the diff: re-read the note against the code, bump `verified`
+(or edit or delete the note) in the same branch.
 
 ## Architecture rules
 

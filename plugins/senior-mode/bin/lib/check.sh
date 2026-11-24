@@ -197,18 +197,31 @@ vision_brief() {
 # front matter with `paths` (a non-empty list of globs), `verified` (YYYY-MM-DD, not in the future), `origin` (`#n`,
 # `#n, #m`, `retro` or a docs/spikes/ path) and `kind` (pitfall, convention, howto or context), and a body of at most
 # `knowledge.maxLines` lines (default 40). With no docs/knowledge directory there is nothing to check. Prints
-# every problem, one per line with the file and the key, and fails when there is one.
+# every problem, one per line with the file and the key, and fails when there is one. Freshness (#345, spec 325 §5): a
+# glob that matches no file of the tree and a `verified` older than `knowledge.staleMonths` (default 6) are
+# `warning:` lines that never fail; a file the branch deletes or renames that a note's `paths` match, while the note
+# is not in the diff, is a problem.
 knowledge_check() {
-  local root dir max f name file fm body n today key raw val problems="" slug_re='^[a-z0-9]+(-[a-z0-9]+)*\.md$'
+  local root dir max f name file fm body n today key raw val problems="" warns="" slug_re='^[a-z0-9]+(-[a-z0-9]+)*\.md$'
+  local months cutoff tree base mb deleted="" touched="" globs vdate g gone d
   root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
   dir=$root/docs/knowledge
   [ -d "$dir" ] || { echo "skipped: no docs/knowledge"; return 0; }
   max=$(config_get knowledge.maxLines)
   [[ $max =~ ^[1-9][0-9]*$ ]] || die "knowledge.maxLines must be a positive whole number, not $max"
+  months=$(config_get knowledge.staleMonths)
+  [[ $months =~ ^[1-9][0-9]*$ ]] || die "knowledge.staleMonths must be a positive whole number, not $months"
   today=$(date -u +%Y-%m-%d)
+  cutoff=$(date -u -d "$months months ago" +%Y-%m-%d)
+  tree=$(git -C "$root" ls-files -co --exclude-standard)
+  if base=$(default_branch) && mb=$(git -C "$root" merge-base "$base" HEAD 2>/dev/null); then
+    deleted=$(git -C "$root" -c core.quotePath=false diff --name-only --no-renames --diff-filter=D "$mb")
+    touched=$(changed_files "$root" deleted) || touched=""
+  fi
   while IFS= read -r f; do
     name=docs/knowledge/$f
     file=$dir/$f
+    globs="" vdate=""
     [[ $f =~ $slug_re ]] || problems+="$name: file name is not a kebab-case slug (lowercase words joined by dashes)"$'\n'
     fm=$(awk 'NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { exit } NR > 1 { print }' "$file")
     body=$(awk 'NR == 1 && $0 == "---" { fm = 1; next } fm && $0 == "---" { fm = 0; next } !fm' "$file" | sed '/./,$!d')
@@ -228,6 +241,8 @@ knowledge_check() {
             problems+="$name: paths must be a list of globs, like [\"src/billing/**\"], not $raw"$'\n'
           elif [ "$(jq 'length' <<<"$raw")" -eq 0 ]; then
             problems+="$name: paths is empty, a note is about some files"$'\n'
+          else
+            globs=$raw
           fi
           ;;
         verified)
@@ -235,6 +250,8 @@ knowledge_check() {
             problems+="$name: verified must be a date, YYYY-MM-DD, not $raw"$'\n'
           elif [[ $val > $today ]]; then
             problems+="$name: verified $val is in the future"$'\n'
+          else
+            vdate=$val
           fi
           ;;
         origin)
@@ -247,7 +264,23 @@ knowledge_check() {
           ;;
       esac
     done
+    if [ -n "$vdate" ] && [[ $vdate < $cutoff ]]; then
+      warns+="warning: $name: verified $vdate, more than $months months ago (knowledge.staleMonths): re-read it against its paths"$'\n'
+    fi
+    [ -n "$globs" ] || continue
+    while IFS= read -r g; do
+      [ -n "$(protected_match "$(jq -nc --arg g "$g" '[$g]')" <<<"$tree")" ] ||
+        warns+="warning: $name: paths glob $g matches no file"$'\n'
+    done < <(jq -r '.[]' <<<"$globs")
+    [ -n "$deleted" ] || continue
+    gone=$(protected_match "$globs" <<<"$deleted")
+    if [ -n "$gone" ] && ! grep -qxF "$name" <<<"$touched"; then
+      while IFS= read -r d; do
+        problems+="$name: $d is deleted or renamed by this branch but matches its paths, and the note is not updated"$'\n'
+      done <<<"$gone"
+    fi
   done < <(find "$dir" -maxdepth 1 -type f -name '*.md' -printf '%f\n' | LC_ALL=C sort)
+  printf '%s' "$warns"
   [ -z "$problems" ] || { printf '%s' "$problems"; return 1; }
 }
 

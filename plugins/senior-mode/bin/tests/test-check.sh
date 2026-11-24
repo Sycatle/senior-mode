@@ -326,6 +326,25 @@ for f in "$plugin/skills/spec/SKILL.md" "$plugin/../../docs/adr/0002-sources-of-
   [ -f "$f" ] || { fail "$f is missing"; continue; }
   grep -qiE 'CI (check )?enforces|enforced in CI|check enforces' "$f" && fail "$f claims the spec drift is enforced in CI: $(grep -iE 'CI (check )?enforces|enforced in CI|check enforces' "$f")"
 done
+# Added suppressions (#437): each added line that silences a check or skips a test is a warning line with
+# file and line; the exit code does not change, and Markdown or a lookalike (`exit(`) is not listed.
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
+run check || fail "check fails: $(cat "$work/out")"
+grep -q "suppression added" "$work/out" && fail "suppression reported with none added: $(cat "$work/out")"
+printf 'const a = 1;\n// eslint-disable-next-line no-console\nconsole.log(a); // @ts-ignore\nit.skip("x", () => {});\nxit("y");\nprocess.exit(1);\n' >"$repo/src/s.ts"
+printf 'import os  # noqa: F401\nx: int = "a"  # type: ignore\n@pytest.mark.skip\ndef test_a(): pass\n' >"$repo/src/t.py"
+printf 'package a\n//nolint:errcheck\nfunc TestA(t *testing.T) { t.Skip("later") }\n' >"$repo/src/a_test.go"
+printf '#[allow(dead_code)]\nfn f() {}\n' >"$repo/src/lib.rs"
+printf 'Use it.skip( sparingly.\n' >"$repo/src/notes.md"
+commit -m "feat: suppressions"
+run check || fail "a suppression changes the exit code: $(cat "$work/out")"
+for want in "src/s.ts:2: // eslint-disable-next-line" "src/s.ts:3: console.log(a); // @ts-ignore" 'src/s.ts:4: it.skip(' 'src/s.ts:5: xit(' \
+  "src/t.py:1: import os  # noqa" "src/t.py:2: " "src/t.py:3: @pytest.mark.skip" "src/a_test.go:2: //nolint" \
+  'src/a_test.go:3: ' "src/lib.rs:1: #[allow(dead_code)]"; do
+  grep -qF "warn  suppression added: $want" "$work/out" || fail "suppression not listed: $want: $(cat "$work/out")"
+done
+grep -q "suppression added: src/s.ts:[16]:" "$work/out" && fail "a line without suppression is listed: $(cat "$work/out")"
+grep -q "suppression added: src/notes.md" "$work/out" && fail "Markdown is listed: $(cat "$work/out")"
 
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

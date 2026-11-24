@@ -28,11 +28,11 @@ publish base
 
 # A: explain names the winning layer and the shadowed values.
 run config explain wip || fail "A: explain failed: $(cat "$work/err")"
-grep -q '^wip = 4$' "$work/out" && grep -q '^winner: repository' "$work/out" || fail "A: wrong winner: $(cat "$work/out")"
+{ grep -q '^wip = 4$' "$work/out" && grep -q '^winner: repository' "$work/out"; } || fail "A: wrong winner: $(cat "$work/out")"
 grep -q 'defaults .*1 .*shadowed by repository' "$work/out" || fail "A: the default is not shown as shadowed: $(cat "$work/out")"
 echo '{"wip": 7}' >"$repo/.claude/senior-mode.local.json"
 run config explain wip
-grep -q '^winner: local' "$work/out" && grep -q 'repository .*4 .*shadowed by local' "$work/out" || fail "A: the local file does not win: $(cat "$work/out")"
+{ grep -q '^winner: local' "$work/out" && grep -q 'repository .*4 .*shadowed by local' "$work/out"; } || fail "A: the local file does not win: $(cat "$work/out")"
 [ "$(cd "$repo" && "$cli" config get wip)" = 7 ] || fail "A: config get ignores the local layer"
 mkdir -p "$repo/.git/senior-mode"
 echo '{"wip": 2, "language": "fr"}' >"$repo/.git/senior-mode/organization.json"
@@ -89,7 +89,7 @@ run config validate || fail "C: a custom profile is refused: $(cat "$work/out")"
 [ "$(cd "$repo" && "$cli" config get process.gates.review)" = true ] || fail "C: a profile derived from strict opens the review"
 config '{"wip": 6, "process": {"profile": "team"}}'
 run config explain wip
-grep -q '^winner: repository' "$work/out" && grep -q 'profile .*2 .*shadowed by repository' "$work/out" || fail "C: the repository does not win over the profile: $(cat "$work/out")"
+{ grep -q '^winner: repository' "$work/out" && grep -q 'profile .*2 .*shadowed by repository' "$work/out"; } || fail "C: the repository does not win over the profile: $(cat "$work/out")"
 echo '{"extends": "team", "config": {"wopp": 1}}' >"$repo/.claude/senior-mode/profiles/team.json"
 run config validate && fail "C: an unknown key in a profile was accepted"
 echo '{"extends": "team"}' >"$repo/.claude/senior-mode/profiles/team.json"
@@ -102,14 +102,14 @@ mkdir -p "$repo/.claude/senior-mode/overrides/skills/review" "$repo/.claude/seni
 echo "PROJECT-APPEND-RULE" >"$repo/.claude/senior-mode/overrides/skills/review/SKILL.append.md"
 echo "PROJECT-REPLACED-REVIEWER" >"$repo/.claude/senior-mode/overrides/agents/reviewer.md"
 run override list || fail "D: override list failed: $(cat "$work/err")"
-grep -q 'skills/review/SKILL.md .*append' "$work/out" && grep -q 'agents/reviewer.md .*replace' "$work/out" || fail "D: list is wrong: $(cat "$work/out")"
+{ grep -q 'skills/review/SKILL.md .*append' "$work/out" && grep -q 'agents/reviewer.md .*replace' "$work/out"; } || fail "D: list is wrong: $(cat "$work/out")"
 run override show skills/review/SKILL.md
-grep -q 'PROJECT-APPEND-RULE' "$work/out" && grep -q '^name: review' "$work/out" || fail "D: append lost the plugin text or the addition: $(head -5 "$work/out")"
+{ grep -q 'PROJECT-APPEND-RULE' "$work/out" && grep -q '^name: review' "$work/out"; } || fail "D: append lost the plugin text or the addition: $(head -5 "$work/out")"
 run override show agents/reviewer.md
-grep -q 'PROJECT-REPLACED-REVIEWER' "$work/out" && ! grep -q '^name: reviewer' "$work/out" || fail "D: replace kept the plugin text: $(head -5 "$work/out")"
+{ grep -q 'PROJECT-REPLACED-REVIEWER' "$work/out" && ! grep -q '^name: reviewer' "$work/out"; } || fail "D: replace kept the plugin text: $(head -5 "$work/out")"
 run override show hooks/hooks.json && fail "D: a hook was shown as overridable"
 run context
-grep -q 'PROJECT-APPEND-RULE' "$work/out" && grep -q 'PROJECT-REPLACED-REVIEWER' "$work/out" || fail "D: the session context lacks the overrides: $(cat "$work/out")"
+{ grep -q 'PROJECT-APPEND-RULE' "$work/out" && grep -q 'PROJECT-REPLACED-REVIEWER' "$work/out"; } || fail "D: the session context lacks the overrides: $(cat "$work/out")"
 run config validate || fail "D: valid overrides are refused: $(cat "$work/out")"
 echo x >"$repo/.claude/senior-mode/overrides/skills/reveiw.md"
 echo x >"$repo/.claude/senior-mode/overrides/hooks/guard.sh"
@@ -143,7 +143,7 @@ base_run config get wip
 config '{"wip": 5}'
 publish "fixed"
 base_run config get wip
-[ "$(cat "$work/out")" = 5 ] && grep -q 'valid again' "$work/err" || fail "E: the new config is not taken: $(cat "$work/out") $(cat "$work/err")"
+{ [ "$(cat "$work/out")" = 5 ] && grep -q 'valid again' "$work/err"; } || fail "E: the new config is not taken: $(cat "$work/out") $(cat "$work/err")"
 reset_layers
 
 # F: status carries one line on a customized process; a lift is flagged.

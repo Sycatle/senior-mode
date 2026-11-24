@@ -182,6 +182,13 @@ keeps the last valid config). A lift in another layer is ignored. In this versio
 lifted: a profile that opens another gate is refused. `status` shows the profile and one `WARNING locked gate
 lifted` line per lift.
 
+### Diagnosing the configuration
+
+`senior-mode doctor` reads the configuration like `config validate` does and adds the rest of the installation
+(tools, logins, hooks, board, ruleset). Each finding names its layer and the command that fixes it. Its
+"Customization" section answers "what did we change?": the profile, the lifted gates with their ADR, the overrides and
+the values each layer sets. See [`senior-mode doctor`](commands.md).
+
 ## Project review sections
 
 `review.sections` is a list of Markdown checklist files, relative to the repository root. The

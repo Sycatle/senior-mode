@@ -16,6 +16,7 @@ ROUTER
     return 0
   fi
   overrides_context || true
+  vision_brief "$root" || true
   branch=$(git symbolic-ref --short -q HEAD) || return 0
   issue=$(workflow_branch_issue "$branch")
   [ -n "$issue" ] || return 0

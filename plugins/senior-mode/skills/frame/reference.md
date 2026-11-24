@@ -37,6 +37,14 @@ in the issue as assumed), then:
    red test, green, pull request, review, merge only on a clear yes. Headless: stop at Ready, the daemon or `go`
    delivers it.
 
+## Vision
+
+`docs/vision.md` (goals `G1`..., `## Non-goals`; a human's file, never edited here) is read before the
+questions, when it exists. An idea that contradicts a non-goal is not framed: quote the non-goal word for word
+and ask it as the first framing question (keep the idea, drop it, or the owner changes the vision himself).
+Nobody to ask: label the idea's issue `needs-human` (created first when it has none) with a comment quoting the
+non-goal, and stop with no spec and no ticket. No file: skip.
+
 ## Decisions
 
 Each question of the round and the option chosen go to `docs/decisions.md` (#310), one line each, once

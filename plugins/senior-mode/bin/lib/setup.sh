@@ -754,6 +754,9 @@ setup_repo() {
   # On a first setup `setup github` ran before `protected` existed: no block was written yet.
   ! jq -e '(.protected // []) | length > 0' "$file" >/dev/null || grep -qs '^# senior-mode:begin' "$root/.github/CODEOWNERS" ||
     echo "CODEOWNERS: the protected zones are not owned yet; rerun senior-mode setup github to write .github/CODEOWNERS"
+  # The vision is the owner's (#342): a glob of `protected` keeps agent sessions from editing it.
+  [ -n "$(protected_match "$(jq -c '.protected // []' "$file")" <<<"docs/vision.md")" ] ||
+    echo "docs/vision.md: add it to protected in .claude/senior-mode.json, so that agent sessions cannot edit the goals and non-goals"
   [ "$pname" != node ] || jq -r --argjson d "$detected" '["lint", "typecheck", "test", "build"] - (.commands | keys)
     - (if $d.typescript then [] else ["typecheck"] end)
     | select(length > 0) | "missing: \(join(", ")) (no script; propose tools, never install without a yes)"' "$file"

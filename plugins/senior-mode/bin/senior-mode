@@ -141,6 +141,10 @@ case "${1:-}" in
     [ $# -eq 1 ] || usage
     deps_scan
     ;;
+  vision-check)
+    [ $# -eq 1 ] || usage
+    vision_check
+    ;;
   publish)
     [ $# -le 2 ] || usage
     publish "${2:-}"

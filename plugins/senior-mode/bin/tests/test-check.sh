@@ -72,6 +72,40 @@ grep -q "^skip  lint db: tool not installed ([0-9.]*s)$" "$work/out" || fail "sk
 grep -q "^ok    tests ([0-9.]*s)$" "$work/out" || fail "the other check lost its ok: $(cat "$work/out")"
 grep -q "6/6 checks passed" "$work/out" || fail "a skipped check is not counted as passed: $(cat "$work/out")"
 
+# docs/vision.md (#342): no file, nothing reported; with one, `## Goals` with entries G1, G2... and `## Non-goals`
+# are required and the file stays within vision.maxLines (default 100).
+vision() { mkdir -p "$repo/docs" && printf '%s\n' "$@" >"$repo/docs/vision.md"; }
+config '{"checks":[{"name":"tests","run":"true"}]}'
+run check || fail "check fails with no vision file: $(cat "$work/out")"
+grep -q "vision" "$work/out" && fail "vision reported with no file: $(cat "$work/out")"
+vision '# Vision' '' '## Goals' '' '- G1: people can log in' '- **G2** people can pay' '' '## Non-goals' '' '- No mobile app' '' '## Constraints' '' '- EU hosting'
+run check || fail "check fails on a valid vision: $(cat "$work/out")"
+grep -q "^ok    vision" "$work/out" || fail "valid vision not reported ok: $(cat "$work/out")"
+grep -q "5/5 checks passed" "$work/out" || fail "vision not counted: $(cat "$work/out")"
+vision '# Vision' '' '## Goals' '' '- G1: people can log in'
+run check && fail "check passes without ## Non-goals"
+grep -q "FAIL  vision" "$work/out" || fail "vision failure not reported: $(cat "$work/out")"
+grep -q "## Non-goals" "$work/out" || fail "missing Non-goals not named: $(cat "$work/out")"
+vision '# Vision' '' '## Non-goals' '' '- No mobile app'
+run check && fail "check passes without ## Goals"
+grep -q "## Goals" "$work/out" || fail "missing Goals not named: $(cat "$work/out")"
+vision '# Vision' '' '## Goals' '' '- people can log in' '' '## Non-goals' '' '- No mobile app'
+run check && fail "check passes with a goal that has no id"
+grep -q "G1" "$work/out" || fail "goal ids not asked for: $(cat "$work/out")"
+vision '# Vision' '' '## Goals' '' '- G1: a' '- G1: b' '' '## Non-goals' '' '- No mobile app'
+run check && fail "check passes with a duplicate goal id"
+grep -q "G1.*twice\|twice.*G1" "$work/out" || fail "duplicate id not named: $(cat "$work/out")"
+vision '# Vision' '' '## Goals' '' '- G1: a' '' '## Non-goals' '' '- b' '' '' '' '' '' '' ''
+config '{"checks":[{"name":"tests","run":"true"}],"vision":{"maxLines":10}}'
+run check && fail "check passes with a vision over vision.maxLines"
+grep -q "16 lines.*(10)" "$work/out" || fail "line limit not reported: $(cat "$work/out")"
+config '{"checks":[{"name":"tests","run":"true"}],"vision":{"maxLines":16}}'
+run check || fail "a vision of exactly vision.maxLines fails: $(cat "$work/out")"
+config '{"checks":[{"name":"tests","run":"true"}],"vision":{"maxLines":"many"}}'
+run check && fail "check passes with a vision.maxLines that is no number"
+rm -rf "$repo/docs"
+config '{"checks":[{"name":"tests","run":"true"}]}'
+
 # Git exports GIT_DIR to hooks, absolute in a linked worktree: a check must not inherit it, or a
 # test that runs git on a fixture writes into this repository.
 config '{"checks":[{"name":"env","run":"env | grep -E \"^GIT_(DIR|WORK_TREE|INDEX_FILE)=\" && exit 1; true"}]}'

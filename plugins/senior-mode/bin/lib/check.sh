@@ -151,6 +151,48 @@ spec_drift_warn() {
     (if .note then "note: spec drift not checked: \(.note)" else empty end)' <<<"$out" 2>/dev/null || true
 }
 
+# The lines of the section `## <heading>` of the Markdown file $1, up to the next `## ` heading.
+md_section() {
+  awk -v h="$2" '/^## / { on = ($0 ~ ("^## " h "[[:space:]]*$")); next } on' "$1"
+}
+
+# The check of docs/vision.md (#342, spec 325 §6.3): `## Goals` with entries G1, G2... (a list item that starts
+# with the id, bold or not, each id once), `## Non-goals`, at most `vision.maxLines` lines. With no file there is
+# nothing to check. Prints every problem, one per line, and fails when there is one.
+vision_check() {
+  local root file max lines ids dup problems=""
+  root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
+  file=$root/docs/vision.md
+  [ -f "$file" ] || { echo "skipped: no docs/vision.md"; return 0; }
+  max=$(config_get vision.maxLines)
+  [[ $max =~ ^[1-9][0-9]*$ ]] || die "vision.maxLines must be a positive whole number, not $max"
+  lines=$(wc -l <"$file")
+  [ "$lines" -le "$max" ] || problems+="docs/vision.md has $lines lines, more than vision.maxLines ($max)"$'\n'
+  if ! grep -qE '^## Goals[[:space:]]*$' "$file"; then
+    problems+="docs/vision.md has no '## Goals' section"$'\n'
+  else
+    ids=$(md_section "$file" Goals | sed -nE 's/^[-*][[:space:]]+\**(G[0-9]+)([^0-9].*)?$/\1/p')
+    [ -n "$ids" ] || problems+="docs/vision.md: '## Goals' has no entry G1, G2... (a list item that starts with its id, such as '- G1: ...')"$'\n'
+    dup=$(sort <<<"$ids" | uniq -d | head -n 1)
+    [ -z "$dup" ] || problems+="docs/vision.md: goal $dup is listed twice"$'\n'
+  fi
+  grep -qE '^## Non-goals[[:space:]]*$' "$file" || problems+="docs/vision.md has no '## Non-goals' section"$'\n'
+  [ -z "$problems" ] || { printf '%s' "$problems"; return 1; }
+}
+
+# What the briefing says of docs/vision.md (#342): its goal entries and its non-goals, each line cut at 200
+# characters and at most 20 of each. Nothing when the file is not there.
+vision_brief() {
+  local file=$1/docs/vision.md goals nongoals
+  [ -f "$file" ] || return 0
+  goals=$(md_section "$file" Goals | grep -E '^[-*][[:space:]]+\**G[0-9]+' | cut -c1-200 | head -n 20) || true
+  nongoals=$(md_section "$file" Non-goals | grep -vE '^[[:space:]]*$' | cut -c1-200 | head -n 20) || true
+  echo
+  echo "Vision (docs/vision.md), owned by a human:"
+  [ -z "$goals" ] || printf 'Goals:\n%s\n' "$goals"
+  [ -z "$nongoals" ] || printf 'Non-goals (an idea that contradicts one is quoted and asked, never framed):\n%s\n' "$nongoals"
+}
+
 # The warning of `check` about suppressions the branch adds (#437): a lint or type check silenced, a test
 # skipped. One line per added line, `file:line` and the text. Never fails: review judges each one, and a
 # suppression with its reason written next to it is legitimate. Markdown is prose, not code: left out.
@@ -235,6 +277,11 @@ check() {
   # `config` step reads the configuration against its schema (#317).
   names=("secret scan" "dependency audit" "new dependencies" "config")
   cmds=("$(printf '%q' "$SELF") secret-scan" "$(printf '%q' "$SELF") audit" "$(printf '%q' "$SELF") deps" "$(printf '%q' "$SELF") config validate")
+  # docs/vision.md is checked when it exists (#342).
+  if [ -f "$root/docs/vision.md" ]; then
+    names+=("vision")
+    cmds+=("$(printf '%q' "$SELF") vision-check")
+  fi
   for ((i = 0; i < count; i++)); do
     names+=("$(jq -r ".checks[$i].name" "$file")")
     cmds+=("$(jq -r ".checks[$i].run" "$file")")

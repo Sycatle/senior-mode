@@ -189,6 +189,19 @@ since_sent=$(jq -r '.variables.since' "$FIX/history-bodies")
 [ "$(json '.checkFailures[0].commit')" = '"aaaaaaa"' ] || fail "check failure commit: $(json .checkFailures)"
 [ "$(json '.sizes | map([.number, .size, .lines, .limit, .over])')" = '[[5,"S",40,50,false],[6,"M",900,400,true],[7,"S",10,50,false]]' ] ||
   fail "sizes: $(json .sizes)"
+# #313: per size, median and spread of hours, lines and tokens, the tickets far outside it, a recalibration hint.
+[ "$(json '.calibration | map([.size, .count, .hours, .lines, .tokens])')" = \
+  '[["M",1,{"median":96,"min":96,"max":96},{"median":900,"min":900,"max":900},null],["S",2,{"median":30,"min":30,"max":30},{"median":25,"min":10,"max":40},null]]' ] ||
+  fail "calibration: $(json .calibration)"
+[ "$(json '.calibration | map([.size, .outliers, .recalibrate])')" = '[["M",[{"number":6,"title":"Ticket 6","why":["900 lines"]}],null],["S",[],null]]' ] ||
+  fail "calibration outliers: $(json .calibration)"
+# Three S tickets, two of them over the budget, and one that took far longer than the others: a hint and an outlier.
+cal=$(bash -c 'source "$1/lib/status.sh"; printf %s "$CALIBRATION_JQ"' _ "$(dirname "$cli")")
+[ "$(jq -c "$cal | map(select(.size == \"S\") | [.recalibrate, (.outliers | map([.number, .why]))])" <<<'{"usage": {"tickets": [{"ticket": 1, "input": 5, "output": 5, "cacheRead": 0, "cacheWrite5m": 0, "cacheWrite1h": 0}]},
+  "done": [{"number": 1, "title": "a", "size": "S", "cycleHours": 1, "lines": 120}, {"number": 2, "title": "b", "size": "S", "cycleHours": 2, "lines": 90},
+    {"number": 3, "title": "c", "size": "S", "cycleHours": 30, "lines": 20}]}')" = \
+  '[["most S tickets exceed about 50 lines: size such work up, or split it",[[1,["120 lines"]],[2,["90 lines"]],[3,["30h"]]]]]' ] ||
+  fail "recalibration: $(jq -c "$cal" <<<'{"usage":{"tickets":[]},"done":[]}')"
 [ "$(json '.usage.prices.date')" = "\"$(jq -r .date "$(dirname "$cli")/lib/prices.json")\"" ] || fail "usage prices date: $(json .usage.prices)"
 [ "$(json '.usage.tickets | map([.ticket, .usd])')" = '[[null,0.01],[10,1.644],[11,null]]' ] || fail "usage per ticket: $(json .usage.tickets)"
 [ "$(json '.usage.tickets[1].roles | map([.role, .usd, .output, .cacheWrite5m, .cacheWrite1h])')" = '[["reviewer",0.6,10000,200000,0],["ticket",1.044,2000,0,100000]]' ] ||
@@ -223,6 +236,7 @@ for want in "Done in the last 7d (3)" "#5 Ticket 5" "Cycle time" "median 63h" "w
   "Needed a human" "pull request #41 PR 41: needs-human label; changes requested by alice: Split this in two" \
   "Failed or escalated runs" "#20: failed: the session said delivered but there is no open pull request" "#11: escalated: tests do not pass" \
   "Reopened" "#8 Ticket 8" "Check failures" "aaaaaaa: failed: lint" "Estimates against reality" "#6 M: 900 lines" \
+  "S: 2 tickets, median hours 30h (30-30), lines 25 (10-40), tokens n/a" "far outside M: #6 Ticket 6: 900 lines" \
   "Token use (estimated at the API prices of" "#10 ticket: input 1k, output 2k, cache read 1M, cache write 100k · \$1.04" \
   "#10 reviewer: input 0, output 10k, cache read 0, cache write 200k · \$0.6" "#11 ticket: input 500, output 500, cache read 0, cache write 0 · no price" \
   "run docs: input 0, output 1k" "total: input 1.5k, output 13.5k, cache read 1M, cache write 300k · \$1.65 (no price for claude-mystery-1)"; do

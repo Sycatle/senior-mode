@@ -47,6 +47,16 @@ tests or hooks. Set `pending`, never `success`: a maintainer decides the merge.
   field serialised that should not be (whole model instead of a chosen set); weak or missing
   encryption, hashing or randomness for what is stored or signed (`md5`, `Math.random` for tokens); a
   test fixture copied from real data (an export, a dump, a customer record) instead of written by hand.
+- **Cryptography:** passwords hashed with argon2id, bcrypt or scrypt, never md5, sha1 or a plain fast
+  hash; no home-made cryptography (own cipher, own signature, own token format); tokens, nonces and
+  identifiers that must not be guessed come from a cryptographic source (`crypto.randomBytes`,
+  `secrets`, `crypto/rand`), never `Math.random` or `random`.
+- **Headers and CORS:** CSP and HSTS are not removed or loosened; CORS is never `*` with credentials,
+  nor `*` in production.
+- **Least privilege:** a new token, service account, database role or cloud permission is scoped to
+  what the code needs, not an admin or wildcard grant.
+- **Errors:** what the client sees is generic; the detail (stack, query, internal identifier) goes to
+  the server logs.
 
 ## Severity
 

@@ -321,7 +321,8 @@
         "breakerCooldown": { "type": "integer", "minimum": 0 },
         "breakerMax": { "type": "integer", "minimum": 1 },
         "backoffBase": { "type": "integer", "minimum": 1 },
-        "backoffMax": { "type": "integer", "minimum": 1 }
+        "backoffMax": { "type": "integer", "minimum": 1 },
+        "callTimeout": { "type": "integer", "minimum": 1, "description": "Seconds a gh call of serve may take." }
       }
     },
     "notify": {

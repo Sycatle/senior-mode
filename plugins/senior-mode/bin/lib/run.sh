@@ -131,6 +131,8 @@ run_launch() {
     run_usage_line "$n" "${RUN_ROLE[$n]:-ticket}" "$RUN_DIR/$n-$model.json"
     printf 'echo $rc >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit" "$RUN_DIR/$n.exit"
   } | state_write "$script"
+  [ -z "${RUN_LAUNCH_LOG:-}" ] || run_meta "$n" "$model"
+  fault_point after-meta
   cmd="bash $(printf '%q' "$script")"
   if command -v tmux >/dev/null; then
     if tmux has-session -t senior-mode-run 2>/dev/null; then
@@ -154,6 +156,31 @@ run_launch() {
     state_put "$RUN_DIR/$n.launched" "$line"
     printf '%s\n' "$line" | state_append "$RUN_LAUNCH_LOG"
   fi
+  fault_point after-launch
+}
+
+# What serve keeps of a session before it starts it (<n>.meta, spec 373, section 2): the intent that a restarted serve
+# reads to adopt the session, or to put its ticket back. A session of a ticket also leaves a marker in the git directory of
+# its worktree, so that its worktree is known for one of serve's when the serve dir is gone.
+run_meta() {
+  local n=$1 model=$2 role=${RUN_ROLE[$1]:-ticket} pr="" sha=""
+  if [ "$role" = reviewer ]; then
+    pr=${SERVE_PR[$n]:-}
+    sha=${SERVE_SHA[$n]:-}
+  fi
+  jq -nc --argjson n "$n" --arg role "$role" --arg model "$model" --arg branch "${RUN_BRANCH[$n]:-}" --arg wt "${RUN_WT[$n]:-}" \
+    --arg cwd "${RUN_CWD[$n]:-}" --arg batch "${RUN_BATCH[$n]:-}" --arg pr "$pr" --arg sha "$sha" --argjson started "$(serve_now)" \
+    '{ticket: $n, role: $role, model: $model, branch: $branch, worktree: $wt, cwd: $cwd, batch: $batch, pr: $pr, sha: $sha,
+    started: $started}' | state_write "$RUN_DIR/$n.meta"
+  [ "$role" = reviewer ] || run_mark "$n"
+}
+
+# The marker of a worktree opened for serve's session of ticket $1, in the git directory of the worktree.
+run_mark() {
+  local gd
+  if gd=$(git -C "${RUN_WT[$1]}" rev-parse --absolute-git-dir 2>/dev/null); then
+    printf '%s\n' "$1" | state_write "$gd/senior-mode-session"
+  fi
 }
 
 # Opens the ticket with `senior-mode start` (worktree, branch and Status In progress, named and tracked
@@ -169,6 +196,7 @@ run_open() {
     for m in $(run_members "$n"); do [ "$m" = "$n" ] || echo "#$m: not started, #$n, the lead of its batch, has no worktree"; done
     return 1
   fi
+  [ -z "${RUN_LAUNCH_LOG:-}" ] || run_mark "$n"
   [ "$rc" -eq 0 ] || echo "#$n: could not set the Status In progress: $(head -n 1 "$RUN_DIR/$n.err")" >&2
   # A batch is one worktree, on the branch of its lead: its other tickets are In progress there too.
   for m in $(run_members "$n"); do
@@ -458,6 +486,50 @@ run_review() {
   fi
 }
 
+# The open pull requests of the session $1's branch (the REST list, on stdout) for a session that said `delivered`. Under
+# serve (RUN_RECONCILE), a branch with commits and no pull request of any state gets one (spec 373, section 2): the branch
+# is pushed when the remote is behind (never forced), then the pull request opened with `Closes #<n>` for each ticket of
+# the session; opened once, because a head that has a pull request, open or not, is left alone. Returns 1 when GitHub could
+# not be read: the end is then read again at the next poll rather than failed.
+run_pulls() {
+  local n=$1 head wt branch pulls all ahead remote local_sha body m
+  branch=${RUN_BRANCH[$n]}
+  head=${RUN_SLUG%%/*}:$branch
+  pulls=$(gh_retry api "repos/$RUN_SLUG/pulls?head=$head&state=open") || return 1
+  if [ -z "${RUN_RECONCILE:-}" ] || jq -e 'length > 0' <<<"$pulls" >/dev/null; then
+    printf '%s\n' "$pulls"
+    return 0
+  fi
+  all=$(gh_retry api "repos/$RUN_SLUG/pulls?head=$head&state=all") || return 1
+  if jq -e 'length > 0' <<<"$all" >/dev/null; then
+    printf '%s\n' "$pulls"
+    return 0
+  fi
+  wt=${RUN_WT[$n]}
+  ahead=$(git -C "$wt" rev-list --count "$RUN_BASE..HEAD" 2>/dev/null) || ahead=0
+  if [ "$ahead" -eq 0 ]; then
+    printf '%s\n' "$pulls"
+    return 0
+  fi
+  local_sha=$(git -C "$wt" rev-parse HEAD)
+  remote=$(git_bound -C "$wt" ls-remote origin "refs/heads/$branch" 2>/dev/null | cut -f1) || return 1
+  if [ "$remote" != "$local_sha" ]; then
+    git_bound -C "$wt" push -q origin "$local_sha:refs/heads/$branch" 2>/dev/null || {
+      printf '%s\n' "$pulls"
+      return 0
+    }
+  fi
+  fault_point after-push
+  body=""
+  for m in $(run_members "$n"); do body+="Closes #$m"$'\n'; done
+  if gh_retry api "repos/$RUN_SLUG/pulls" -X POST -f title="${RUN_TITLE[$n]:-ticket #$n}" -f head="$branch" -f base="${RUN_BASE#origin/}" \
+    -f body="$body" >/dev/null; then
+    echo "#$n: the session delivered but left no pull request; serve opened it" >&2
+  fi
+  fault_point after-pr-create
+  gh_retry api "repos/$RUN_SLUG/pulls?head=$head&state=open"
+}
+
 # Reads how a finished batch session went (#263): one outcome line per ticket in its outcome file, `#<n> delivered`,
 # `#<n> outgrown: <reason>` or `#<n> failed: <reason>`; a file without such lines gives its first line to every
 # ticket. The delivered ones are merged or left for a human with their one pull request; each of the others goes
@@ -479,7 +551,10 @@ run_finish_batch() {
     if [ "${out[$m]}" = delivered ]; then done_+=("$m"); else bad+=("$m"); fi
   done
   if [ ${#done_[@]} -gt 0 ]; then
-    pulls=$(gh_retry api "repos/$RUN_SLUG/pulls?head=${RUN_SLUG%%/*}:${RUN_BRANCH[$n]}&state=open") || pulls='[]'
+    if ! pulls=$(run_pulls "$n"); then
+      [ -z "${RUN_RECONCILE:-}" ] || return 1
+      pulls='[]'
+    fi
     if ! jq -e 'length > 0' <<<"$pulls" >/dev/null; then
       for m in "${done_[@]}"; do out[$m]="failed: the session said delivered but there is no open pull request for its branch"; done
       bad=("${done_[@]}" "${bad[@]}")
@@ -534,7 +609,10 @@ run_finish() {
   outcome=$(head -n 1 "$RUN_DIR/$n.outcome" 2>/dev/null) || outcome=""
   [ -n "$outcome" ] || outcome="failed: the session ended without saying how it went (exit code $(cat "$RUN_DIR/$n.exit"), log in $RUN_DIR)"
   if [ "$outcome" = delivered ]; then
-    pulls=$(gh_retry api "repos/$RUN_SLUG/pulls?head=${RUN_SLUG%%/*}:${RUN_BRANCH[$n]}&state=open") || pulls='[]'
+    if ! pulls=$(run_pulls "$n"); then
+      [ -z "${RUN_RECONCILE:-}" ] || return 1
+      pulls='[]'
+    fi
     jq -e 'length > 0' <<<"$pulls" >/dev/null ||
       outcome="failed: the session said delivered but there is no open pull request for its branch"
   fi
@@ -833,10 +911,13 @@ run_reap() {
   local n still=()
   for n in "${running[@]}"; do
     if [ -f "$RUN_DIR/$n.exit" ]; then
+      fault_point after-exit-read
       if [ -n "${RUN_ON_EXIT:-}" ] && "$RUN_ON_EXIT" "$n"; then continue; fi
       "${RUN_FINISH:-run_finish}" "$n" && continue
     elif [ -f "$RUN_DIR/$n.timebox" ] && [ $((SECONDS - RUN_STARTED[$n])) -ge $(($(cat "$RUN_DIR/$n.timebox") * ${SENIOR_MODE_TIMEOUT_UNIT:-60})) ]; then
       run_spike_stop "$n"
+      continue
+    elif [ -n "${RUN_WATCH:-}" ] && "$RUN_WATCH" "$n"; then
       continue
     elif [ $((SECONDS - RUN_STARTED[$n])) -ge $((RUN_TIMEOUT * ${SENIOR_MODE_TIMEOUT_UNIT:-60})) ]; then
       run_timeout "$n"

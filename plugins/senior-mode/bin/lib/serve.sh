@@ -654,6 +654,7 @@ serve_done() {
   local t=$1 pr=$2 m
   rm -f "$SERVE_DIR/queued-$pr" "$SERVE_DIR/rounds-$t"
   serve_backmerge "$t" "$pr"
+  hotfix_release "$t" "$pr"
   # Every ticket of a batch is done with its one pull request (the lead's <n>.batch).
   for m in $(cat "$SERVE_DIR/$t.batch" 2>/dev/null || echo "$t"); do
     RUN_MERGED+=("#$m ${RUN_TITLE[$m]:-} (pull request #$pr)")
@@ -953,7 +954,8 @@ serve_prs() {
     states=$(serve_states "$sha") || continue
     review=$(jq -r '.["senior-mode/review"] // empty' <<<"$states")
     ci=$(jq -r '.["senior-mode/ci"] // empty' <<<"$states")
-    [ -n "$review" ] || [ "$gate" != false ] || [ "$ci" != success ] || review=success
+    # The review of a hotfix (#322) is mandatory whatever the profile says.
+    [ -n "$review" ] || [ "$gate" != false ] || [ "$ci" != success ] || hotfix_item "$data" "$t" || review=success
     case $review in
       "") [ "$ci" != success ] || serve_review "$t" "$pr" "$sha" "$ref" ;;
       failure | error) serve_changes "$t" "$pr" "$ref" ;;

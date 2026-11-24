@@ -39,6 +39,17 @@ conversation. Propose it as the recommended answer, never default to `en` silent
 `jq '.language = "<code>"' .claude/senior-mode.json`, written back to the file. Another language
 than `en` or `fr` is kept as the reply language and uses the `en` templates.
 
+## Existing project
+
+`senior-mode setup repo` first reads the project's workflow (branch model, commit and pull request format, merge
+method, CI jobs, labels, tracker, evergreen or legacy) and prints it with its evidence under `## Detected` and
+`## Not mapped`. Relay both. Each `ask: ... (assumed)` line is a question it could not ask: it took the recommended
+answer, so say which and offer to change the key in `.claude/senior-mode.json`. `--dry-run` shows the findings and the
+config it would write and changes nothing: offer it first on a project with history. `--adopt` opens them as the pull
+request `docs: adopt senior-mode`. When `ci.mode` is `existing` (the project's CI runs on pull requests), run
+`senior-mode setup github --ci existing`: no workflow is disabled, none is written, and its required contexts are kept.
+A commit-msg hook of the project's own is kept, and ours goes to `.githooks/commit-subjects`.
+
 ## Repository follow-ups
 
 1. If `setup repo` prints `missing:`, propose a tool for each (Biome to lint, Vitest to test),

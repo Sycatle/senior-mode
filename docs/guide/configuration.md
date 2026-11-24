@@ -38,7 +38,10 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `envGuard.forbidden` | none | Strings, or `/regex/` patterns, that must never appear on an agent machine; turns on the `env guard` check |
 | `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, even an empty one; `senior-mode protected` and the reviewer read it, and `setup github` maps it to [CODEOWNERS](autonomy.md#code-owners) |
-| `ci.mode` | `local` | `local` or `actions` |
+| `ci.mode` | `local` | `local`, `actions` or `existing` (the project's own CI is reused, see [CI mode](#ci-mode)) |
+| `workflow.ci.jobs`, `workflow.ci.required` | detected | With `ci.mode` `existing`: the jobs of the project's CI that cover a check (`{ "context", "covers" }`, one per job) and its required status contexts; setup writes both, see [Following the project's workflow](#following-the-projects-workflow) |
+| `workflow` | none | What `setup repo` detected of the project's branch model, commits, pull requests, merge method, labels and tracker, see [Following the project's workflow](#following-the-projects-workflow); absent, everything behaves as senior-mode's defaults |
+| `adopt.kind` | detected | `evergreen` or `legacy`, from four signals (commits, age, source files, tests and lint); setup records it and a value you set is kept |
 | `audit` | `true` | `false` turns off the [dependency audit](#dependency-audit) of `check`; `status` then says so. Set it yourself, setup does not write it |
 | `security.minPackageAgeDays` | `30` | A dependency the branch adds fails `check` when its package was first published fewer days ago ([new dependencies](#new-dependencies)); a whole number from 1 |
 | `security.minWeeklyDownloads` | `50` | A dependency the branch adds fails `check` when its package had fewer downloads last week; a whole number from 1 |
@@ -91,7 +94,7 @@ and `check` runs it as its `config` step:
 
 ```
 error: autonomy.maxTicket: unknown key, did you mean maxTickets
-error: ci.mode: "actoins" is not one of "local", "actions", did you mean "actions"
+error: ci.mode: "actoins" is not one of "local", "actions", "existing", did you mean "actions"
 error: autonomy.sessionTimeout: 0 is below the minimum 1
 warning: preset: "typescript" is deprecated, use "node"
 ```
@@ -353,9 +356,10 @@ secrets scanner: it catches the production host, ref or account you listed, not 
 | `ci.mode` | What setup does |
 |---|---|
 | `local` | Disables the repository's workflows on GitHub (files kept). Checks run before each push; `senior-mode publish` sets `senior-mode/ci`. |
+| `existing` | Reuses the project's CI ([ADR 0022](../adr/0022-adapt-to-the-existing-project.md)): no workflow is disabled and no `senior-mode.yml` is written; the ruleset requires the project's own contexts (`workflow.ci.required`) next to `senior-mode/ci`, `senior-mode/review` and `senior-mode/security`. A check that a job of `ci.jobs` covers is not run again by `check --ci-only` or by `publish`: the state of that job on the commit is read instead (`success` passes, a running or missing job is `wait`, a failure fails with the URL of its run). `setup repo` proposes it when workflows ran on pull requests in the last 30 days; the pre-push hook still runs the covered commands so a push fails fast. |
 | `actions` | Adds `.github/workflows/senior-mode.yml`: on pull requests and pushes to the default branch, it installs dependencies (with caching), runs the checks, sets `senior-mode/ci`, runs a dependency review, and releases (below). Re-enables it if `local` disabled it before. |
 
-Switch with `senior-mode setup github --ci actions` (or `local`), then `senior-mode setup repo`.
+Switch with `senior-mode setup github --ci actions` (or `local`, or `existing`), then `senior-mode setup repo`.
 Your other workflows stay as they are in `actions` mode; turn one back on with `gh workflow enable <name>`.
 
 When `github.protection` is `none` (private repository on GitHub Free), setup keeps or forces `local`:
@@ -365,6 +369,28 @@ public, then run `senior-mode setup github` again to get the ruleset and `"rules
 
 `setup github` also turns on Dependabot alerts, secret scanning and push protection where the plan
 allows it. It turns on no Dependabot security updates and writes no `.github/dependabot.yml`; see [GitHub's scanners](autonomy.md#githubs-scanners).
+
+### Following the project's workflow
+
+`senior-mode setup repo` reads the repository and GitHub (never changes them) and records what differs from
+senior-mode's defaults under `workflow`; `--dry-run` prints the findings with their evidence and writes
+nothing, `--adopt` opens them as one pull request, `docs: adopt senior-mode`. A question it cannot ask
+takes the recommended answer, printed as `ask: ... (assumed)`. A key you already set is kept. Without a
+`workflow` key nothing below applies.
+
+| Key | Used for |
+|---|---|
+| `workflow.model`, `base`, `integration` | `trunk`, `integration` or `gitflow`; `base` is the production branch, `integration` the branch tickets start from and their pull requests target (`start`, `run`, `serve`, `ready`, `check`, the hooks) |
+| `workflow.release.branches`, `release.hotfix` | Release lines a ticket may target with a `Base: release/1.4` line (else it is `needs-human`), and the prefix of a `hotfix` ticket's branch, cut from `base` |
+| `workflow.branch.pattern`, `branch.types` | Branch name with `{type}`, `{issue}`, `{key}`, `{slug}` (default `{type}/{issue}-{slug}`) and the project's names for `feat`, `fix`, `chore`; the pattern also maps a branch back to its ticket for `status` and `clean` |
+| `workflow.commit.format`, `pattern`, `scopes` | `conventional`, `ticket-prefix` or `free`; the regex the `commit subjects` check and the `commit-msg` hook enforce (`free`: any subject, and no release-please configuration) |
+| `workflow.pr.template`, `title`, `link` | Template whose headings a pull request keeps, title style, and the keyword that links the issue; `ready` refuses a pull request that differs |
+| `workflow.merge` | `rebase`, `squash` or `merge`: `run`, `serve` and the merge helper use it, and `setup github` allows it in the ruleset without `required_linear_history` and keeps the repository's other methods |
+| `workflow.labels` | The project's own label that stands for a senior-mode one (`"type:bug": "bug"`); `setup github` does not create the mapped ones |
+| `workflow.tracker` | `{ "kind", "key" }` of an external tracker; a ticket carries its key in a `Tracker: ABC-123` line, and a pattern that needs the key labels a ticket without one `needs-info` |
+
+The ruleset still covers the default branch only: a project that works on `dev` is not protected there by
+`setup github`.
 
 ## Presets
 

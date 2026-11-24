@@ -44,7 +44,7 @@ grep -q '^error: completely: unknown key$' "$work/out" || fail "a key with no ne
 # A value out of its domain says what was expected.
 config '{"ci":{"mode":"remote"},"autonomy":{"sessionTimeout":0,"maxTickets":"3","schedule":"2am","merge":"yes"},"wip":1.5,"language":"de","protected":"a/**","checks":[{"name":"x","runs":"y"}],"notify":{"webhook":"ftp://x"}}'
 run config validate && fail "out-of-domain values pass"
-grep -q '^error: ci.mode: "remote" is not one of "local", "actions"$' "$work/out" || fail "enum: $(cat "$work/out")"
+grep -q '^error: ci.mode: "remote" is not one of "local", "actions", "existing"$' "$work/out" || fail "enum: $(cat "$work/out")"
 grep -q '^error: autonomy.sessionTimeout: 0 is below the minimum 1$' "$work/out" || fail "minimum: $(cat "$work/out")"
 grep -q '^error: autonomy.maxTickets: expected integer, got string ("3")$' "$work/out" || fail "type: $(cat "$work/out")"
 grep -q '^error: autonomy.schedule: "2am" does not match' "$work/out" || fail "pattern: $(cat "$work/out")"

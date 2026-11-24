@@ -382,10 +382,10 @@ echo '{"rules": []}' >"$FIX/ruleset-9.json"
 grep -q 'Workflows' "$work/out" && fail "built-in workflows reported although both are on: $(cat "$work/out")"
 
 # Spec 409: a project with its own CI, merge method and labels. `--ci existing` disables no workflow and writes no
-# senior-mode.yml; the ruleset keeps ci.required next to ours, allows the project's merge method and has no linear
+# senior-mode.yml; the ruleset keeps workflow.ci.required next to ours, allows the project's merge method and has no linear
 # history; the labels the project maps are not created; the repository keeps its other merge methods.
 cp "$repo/.claude/senior-mode.json" "$work/config.wf"
-jq '.workflow = {merge: "squash", labels: {"type:bug": "bug"}} | .ci.required = ["build", "lint"]' "$work/config.wf" >"$repo/.claude/senior-mode.json"
+jq '.workflow = {merge: "squash", labels: {"type:bug": "bug"}} | .workflow.ci.required = ["build", "lint"]' "$work/config.wf" >"$repo/.claude/senior-mode.json"
 echo '[{"id": 7, "name": "ci", "path": ".github/workflows/ci.yml", "state": "active"}]' >"$FIX/workflows.json"
 rm -f "$FIX/rulesets.json"
 : >"$GH_LOG"
@@ -406,12 +406,12 @@ logged "repo edit acme/app --enable-squash-merge --delete-branch-on-merge" || fa
 logged "--enable-rebase-merge" && fail "the repository restricted to rebase although the project squash-merges"
 grep -q "squash merges, senior-mode/ci, senior-mode/review and senior-mode/security next to build, lint" "$work/out" ||
   fail "the ruleset line does not say it: $(cat "$work/out")"
-# An update keeps the same shape, and a project CI mode other than existing adds none of ci.required.
+# An update keeps the same shape, and a project CI mode other than existing adds none of workflow.ci.required.
 echo '[{"id": 9, "name": "senior-mode", "source_type": "Repository"}]' >"$FIX/rulesets.json"
 echo '{"rules": []}' >"$FIX/ruleset-9.json"
 jq '.ci.mode = "local"' "$repo/.claude/senior-mode.json" >"$work/c" && cp "$work/c" "$repo/.claude/senior-mode.json"
 setup
-tr -d ' \n' <"$GH_LOG" | grep -qF '{"context":"build"}' && fail "ci.required added although ci.mode is not existing"
+tr -d ' \n' <"$GH_LOG" | grep -qF '{"context":"build"}' && fail "workflow.ci.required added although ci.mode is not existing"
 logged "workflow disable 7" || fail "ci.mode local no longer disables the project's workflows"
 cp "$work/config.wf" "$repo/.claude/senior-mode.json"
 rm -f "$FIX/workflows.json"

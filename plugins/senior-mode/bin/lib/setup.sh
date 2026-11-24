@@ -138,7 +138,7 @@ setup_ruleset() {
       | (.rules[] | select(.type == "pull_request") | .parameters.allowed_merge_methods) = [$m]
       | if $c[0].ci.mode == "existing" then
           (.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks) |=
-            (. as $ours | $ours + [($c[0].ci.required // [])[] | {context: .} | select(.context | IN($ours[].context) | not)])
+            (. as $ours | $ours + [($c[0].workflow.ci.required // [])[] | {context: .} | select(.context | IN($ours[].context) | not)])
         else . end' <<<"$body")
   fi
   id=$(gh_retry api "repos/$1/rulesets" \
@@ -349,8 +349,8 @@ setup_github() {
   if err=$(setup_ruleset "$slug" "$review" "$checks" "$file" 2>&1 >/dev/null); then
     setup_protection "$file" ruleset
     ctx="senior-mode/ci, senior-mode/review and senior-mode/security"
-    jq -e '.ci.mode == "existing" and ((.ci.required // []) | length) > 0' "$file" >/dev/null &&
-      ctx+=" next to $(jq -r '.ci.required | join(", ")' "$file")"
+    jq -e '.ci.mode == "existing" and ((.workflow.ci.required // []) | length) > 0' "$file" >/dev/null &&
+      ctx+=" next to $(jq -r '.workflow.ci.required | join(", ")' "$file")"
     if [ "$merge" != rebase ] && [ "$checks" = true ]; then
       echo "default branch: ruleset senior-mode, pull requests only, $merge merges, $ctx on an up-to-date branch, no linear history requirement; admins may bypass with gh pr merge --admin; other protection untouched"
     elif [ "$checks" = true ]; then

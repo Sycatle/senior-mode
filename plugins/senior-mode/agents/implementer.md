@@ -19,6 +19,8 @@ You deliver one ticket inside its branch.
   the code they cover.
 - A security risk outside the ticket is filed, never fixed in it: `senior-mode issue create --severity
   <s> --kind <k> --path <p> --rule <r> ...`, with no exploit detail in the body.
+- A step you retried twice over a constraint the code does not show gets a knowledge note in your
+  pull request (skill `tdd`, `knowledge.md`): at most 2, none without such a pitfall.
 - Before reporting, run `senior-mode check` (skill `verify`) and read its output.
 - If the work outgrows the ticket's size, or touches a protected zone
   (`senior-mode config get protected`) the ticket did not plan for, stop and report.

@@ -438,6 +438,10 @@ and `stale` after `knowledge.staleMonths` (default 6) months.
 `senior-mode check` runs a `knowledge` step when `docs/knowledge/` exists and fails, naming the file and the key, on a note
 that breaks one of these rules; a repository with no such directory sees nothing.
 
+Notes enter through pull requests only. The [`implementer`](agents.md#implementer) adds or re-verifies one in
+its own pull request when it hit a pitfall; the [`reviewer`](agents.md#reviewer) opens a separate
+`docs(knowledge): <slug>` pull request for a finding seen on two pull requests.
+
 ## Architecture rules
 
 `architecture.rules` lists rules that `senior-mode check` enforces (the `architecture` step, run when the list is not empty):

@@ -8,7 +8,7 @@ SELF=$(readlink -f "${BASH_SOURCE[0]}")
 LIB=$(dirname "$SELF")/lib
 
 usage() {
-  die "usage: senior-mode config get <key> | config explain <key> | config validate [--json] | override list | override show <file> | doctor [--json] | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish] | clean [--dry-run] [--days N] | statusline | retro [--since <dur> | --iteration [<name>]] [--json] | check [--pre-push|--ci-only] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions|existing] [--migrate|--upgrade] [--dry-run] | setup repo [--command <name>=<command>]... [--dry-run] [--adopt] | setup remove [--apply] | setup statusline"
+  die "usage: senior-mode config get <key> | config explain <key> | config validate [--json] | override list | override show <file> | doctor [--json] | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish] | clean [--dry-run] [--days N] | statusline | retro [--since <dur> | --iteration [<name>]] [--json] | check [--pre-push|--ci-only] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions|existing] [--migrate|--upgrade] [--dry-run] | setup repo [--command <name>=<command>]... [--dry-run] [--adopt] | setup detect [--json] | setup answers [--strictness strict|fast] [--language en|fr] [--autonomy ask|alone] [--dry-run] | setup remove [--apply] | setup statusline"
 }
 
 # The modules hold definitions only: function bodies and constants, no statement runs at load time.
@@ -34,6 +34,8 @@ usage() {
 . "$LIB/setup.sh"
 # shellcheck source=lib/setup-workflow.sh
 . "$LIB/setup-workflow.sh"
+# shellcheck source=lib/setup-answers.sh
+. "$LIB/setup-answers.sh"
 # shellcheck source=lib/setup-remove.sh
 . "$LIB/setup-remove.sh"
 # shellcheck source=lib/status.sh
@@ -76,6 +78,8 @@ case "${1:-}" in
     case "${2:-}" in
       github) shift 2; setup_github "$@" ;;
       repo) shift 2; setup_repo "$@" ;;
+      detect) shift 2; setup_detect "$@" ;;
+      answers) shift 2; setup_answers "$@" ;;
       remove) shift 2; setup_remove "$@" ;;
       statusline) [ $# -eq 2 ] || usage; setup_statusline ;;
       *) usage ;;

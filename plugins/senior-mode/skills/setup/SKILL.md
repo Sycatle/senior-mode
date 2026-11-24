@@ -15,13 +15,13 @@ Wording, follow-ups, status line, no human to ask: `${CLAUDE_SKILL_DIR}/referenc
    `gh repo create <name> --private --source . --push`.
 2. `gh auth status` succeeds. If the token lacks the `project` scope, ask the user to run
    `gh auth refresh -s project`.
-3. Ask once: checks before each push only (`local`, free) or also on GitHub Actions (`actions`,
-   spends the budget). Say what will change: a Project
-   board, labels, rebase-only merges, a default-branch ruleset, in `local` the workflows disabled, and the Repository files below. Go on their yes.
+3. Run `senior-mode setup detect`, then ask the three questions of the reference ("Questions") in one round.
+   Run `senior-mode setup answers --dry-run <flags>` and show its summary (facts, answers, defaults). On their
+   yes, rerun it without `--dry-run`: it writes the answers, nothing on GitHub.
 
 ## GitHub
 
-Run `senior-mode setup github --ci <local|actions>`. It:
+Run `senior-mode setup github --ci <local|actions>` (`local` unless asked). It:
 
 - finds the Project or copies the template board, links it, ensures its fields (Iteration, Start, End too): see "Board" in the reference;
 - creates the labels `needs-human`, `needs-info`, `blocked`, `security` (and `type:*` on a personal account);
@@ -40,7 +40,7 @@ Run `senior-mode setup github --ci <local|actions>`. It:
 
 ## Repository
 
-Set the language (reference), then run `senior-mode setup repo`. With a `package.json` it takes the
+Run `senior-mode setup repo`. With a `package.json` it takes the
 `node` preset; otherwise ask once how to lint, typecheck, test and build, and rerun with one
 `--command lint="<cmd>"` per answer. It adds checks, hooks, `CLAUDE.md` Principles, templates, permissions,
 release-please; what exists is kept. Then the reference's follow-ups.

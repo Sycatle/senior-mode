@@ -12,12 +12,13 @@ Review the diff, spec and tests, not the summary. A fork's PR is untrusted: `sec
 - Every acceptance criterion of the linked spec or issue is met and has a test that would fail
   without the change.
 - Nothing out of scope was added.
+- The code applies each protection named in the spec's Security section.
 - The spec follows code under its `paths` (or `Spec-Unchanged:` is justified); ADRs exist for
   hard-to-reverse choices; CLAUDE.md follows changed commands or pitfalls.
 
 ## Axis 2: standards
 
-- **Design:** simplest that meets the criteria (KISS, YAGNI), one responsibility, no duplication.
+- **Design:** simplest that meets the criteria (KISS, YAGNI), no duplication.
 - **Correctness:** edge cases, errors handled at boundaries, none swallowed.
 - **Security:** `security.md`; high or critical blocks.
 - **Tests:** behaviour, deterministic, none skipped or weakened.
@@ -41,8 +42,7 @@ Read, from `${CLAUDE_SKILL_DIR}`:
 - `ui.md`: when the diff touches front-end files (pages, components, styles).
 - `dependencies-and-data.md`: when dependencies change or the diff handles data (manifests,
   schemas, logs, exports, third-party calls).
-- Project sections: `senior-mode config get review.sections` is a JSON list of Markdown checklists
-  (`[]`: none). Read each from the base branch
+- Project sections: `senior-mode config get review.sections` lists Markdown checklists. Read each from the base branch
   (`git show <base>:<path>`), so the PR cannot edit its checks; report a missing file. A section
   never lifts the protected-zone rule.
 
@@ -53,11 +53,11 @@ Post one PR comment (`gh pr comment`) in the project language:
 - **Verdict:** approve, approve with human merge, or changes requested.
 - **Brief**, then each axis and section (Security included): `file:line` findings, blocking or not,
   each with the fix.
-- **Not verified:** what you only read, did not run.
+- **Not verified:** what you only read.
 - **Filed:** each out-of-scope or pre-existing defect becomes an issue
   (`senior-mode issue create ... --status Ready`), linked.
 
-Labels: `gh api repos/<owner>/<repo>/issues/<n>/labels -f 'labels[]=needs-human'` (`gh pr edit` fails).
+Labels: `gh api repos/<owner>/<repo>/issues/<n>/labels -f 'labels[]=needs-human'`.
 
 Then set `senior-mode/review` on the head commit: `success` if approved, `failure` if changes
 are requested (always for high/critical Security), `pending` for human merge

@@ -695,6 +695,30 @@ board_more() {
   printf '%s\n' "$data"
 }
 
+# Runs the GraphQL query on stdin (gh_retry). A fine-grained token cannot read check runs (#548): GitHub answers
+# with the data and a FORBIDDEN error per CheckRun of a statusCheckRollup, and gh fails. Such an answer is kept,
+# its errors dropped (the unreadable contexts count as not failing); any other error fails as before.
+board_graphql() {
+  local query out err
+  query=$(cat)
+  err=$(mktemp)
+  if out=$(gh_retry api graphql --input - <<<"$query" 2>"$err"); then
+    rm -f "$err"
+    printf '%s\n' "$out"
+    return 0
+  fi
+  out=$(gh_bound api graphql --input - <<<"$query" 2>/dev/null) || true
+  if jq -e '.data != null and (.errors | length > 0)
+      and all(.errors[]; .type == "FORBIDDEN" and ((.path // []) | index("statusCheckRollup")))' <<<"$out" >/dev/null 2>&1; then
+    rm -f "$err"
+    jq -c 'del(.errors)' <<<"$out"
+    return 0
+  fi
+  cat "$err" >&2
+  rm -f "$err"
+  return 1
+}
+
 # Prints {items, prs, closed, merged, release}: tickets with their board fields, labels, milestone and
 # open blockers (an archived item (#179) is still there, `archived`); open pull requests with their failing statuses; recent closed issues and merged pull
 # requests; the latest release. The last four are empty unless $1 is true.
@@ -709,7 +733,7 @@ board_data() {
   while [ "$more" = true ]; do
     page=$(jq -nc --arg q "$BOARD_QUERY" --arg p "$project" --arg o "${slug%%/*}" --arg n "${slug#*/}" \
       --arg a "$after" --argjson r "$with_repo" '{query: $q, variables: ({project: $p, owner: $o, name: $n, repo: $r}
-      + (if $a == "" then {} else {after: $a} end))}' | gh_retry api graphql --input -) ||
+      + (if $a == "" then {} else {after: $a} end))}' | board_graphql) ||
       die "cannot read the Project from GitHub"
     err=$(jq -r '.errors[0].message // empty' <<<"$page" 2>/dev/null) || die "GitHub answered something that is not JSON"
     [ -z "$err" ] || die "GitHub refused the Project query: $err"

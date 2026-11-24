@@ -57,6 +57,13 @@ fi
 [ -z "$(jq -r '.variables.number // empty' <<<"$body")" ] || { cat "$FIX/item-$(jq -r .variables.number <<<"$body").json"; exit 0; }
 after=$(jq -r '.variables.after // "first"' <<<"$body")
 [ "$(jq -r '.variables.branchesAfter // empty' <<<"$body")" != B1 ] || { cat "$FIX/more-branches.json"; exit 0; }
+if [ -n "${GH_GQL_ERROR:-}" ]; then
+  # The data with an error, gh failing (#548): FORBIDDEN under a statusCheckRollup, or any other path.
+  jq -c --arg p "$GH_GQL_ERROR" '. + {errors: [{type: "FORBIDDEN", message: "Resource not accessible by personal access token",
+    path: ($p | split("."))}]}' "$FIX/page-$after.json"
+  echo "gh: Resource not accessible by personal access token" >&2
+  exit 1
+fi
 cat "$FIX/page-$after.json"
 STUB
 chmod +x "$work/stub/gh"
@@ -168,6 +175,12 @@ grep -q 'No Ready ticket' "$work/out" || fail "empty pick message: $(cat "$work/
 run pick --json || fail "empty pick --json failed"
 [ "$(cat "$work/out")" = "[]" ] || fail "empty pick --json: $(cat "$work/out")"
 cp "$FIX/page-first.full" "$FIX/page-first.json"
+
+# A token that cannot read check runs (#548): the board is read anyway; any other error still fails.
+GH_GQL_ERROR=repository.pullRequests.nodes.0.commits.nodes.0.commit.statusCheckRollup.contexts.nodes.0 run pick --json ||
+  fail "pick with forbidden check runs failed: $(cat "$work/err")"
+[ "$(json 'map(.number)')" = "[11,16,12,10]" ] || fail "pick with forbidden check runs: $(cat "$work/out")"
+GH_GQL_ERROR=node.items.nodes.0 run pick --json && fail "pick with another forbidden path succeeded"
 
 # A critical ticket leads its priority, ahead of an earlier milestone; Severity is read from the board.
 cp "$FIX/page-first.json" "$FIX/page-first.keep"

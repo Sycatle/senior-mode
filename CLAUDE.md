@@ -23,6 +23,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `guard.sh`: `secret_scan`, `audit`, `e2e_lock`, slots, `protected`, `red_tests`.
 - `setup-board.sh`: Project creation, migration, fields, cycles, board workflows.
 - `setup.sh`: `setup github` (CODEOWNERS, ruleset, labels) and `setup repo` (presets, hooks, CLAUDE.md).
+- `setup-answers.sh`: `setup detect` and `setup answers` (the three questions: detection, profile, config layers).
 - `setup-remove.sh`: `setup remove` (files through a pull request, ruleset, labels, workflows).
 - `status.sh`: `context`, `status`, hygiene, health, `retro`, `statusline`.
 - `clean.sh`: `clean` (branches, worktrees).

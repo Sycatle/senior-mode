@@ -31,13 +31,25 @@ protection, and prints `security: <feature>: on` or `not enabled (<reason>)` for
 them to high and critical severity, so alerts become issues only); if the project has its own, setup
 prints `dependabot.yml: untouched`.
 
-## Language
+## Questions
 
-The language picks the templates `setup repo` writes (`en` or `fr`), so settle it before. Take it
-from the user's `CLAUDE.md` (project, then `~/.claude/CLAUDE.md`), else from the language of the
-conversation. Propose it as the recommended answer, never default to `en` silently. On a yes, set it:
-`jq '.language = "<code>"' .claude/senior-mode.json`, written back to the file. Another language
-than `en` or `fr` is kept as the reply language and uses the `en` templates.
+Three, asked once, in the project language, plain words, never a key name. The recommended answer is first;
+`senior-mode setup answers` takes each as a flag and keeps what the repository already holds, so a rerun
+asks only what changed.
+
+1. How strict the process is: `--strictness strict` (recommended: an independent review before every merge) or
+   `fast` (a pull request merges once check is green; the other guards stay). `fast` lifts the review: say so, and
+   that setup then writes an accepted ADR (`docs/adr/`), which the user commits to the default branch. It maps to
+   the `process.profile` of the repository layer; `strict` writes no key.
+2. Which language: `--language en|fr`, recommended from `setup detect` (the user's `CLAUDE.md`, then the locale),
+   else from the conversation; never `en` silently. It picks the templates `setup repo` writes. Another language
+   than `en` or `fr` is not a setup answer: keep the conversation in it and use `en`.
+3. May agents work alone: `--autonomy ask` (recommended: agents deliver pull requests, the user merges) or `alone`
+   (the daemon merges what passed check and review). It maps to `autonomy.merge`.
+
+Not asked, shown in the summary: the owner decides on risky changes (protected zones wait for the owner's approval,
+and no answer lifts that), checks `local` (`actions` spends the Actions budget: only on request), the work limits.
+If `setup detect` says branch rules are not enforced, see "No branch protection".
 
 ## Repository follow-ups
 
@@ -62,8 +74,8 @@ run `senior-mode setup statusline`.
 ## Without a human
 
 Nobody can answer in `claude -p` or a session with `SENIOR_MODE_RUN=1`. Take the recommended option
-of each reversible question and say so in the report: checks `local`, the detected language, no
-status line (it edits settings). Never acknowledge `protection: NOT enforced`: finish the rest,
+of each reversible question and say so in the report: `setup answers` with no flag (strict, the detected
+language, agents ask), checks `local`, no status line (it edits settings). Never acknowledge `protection: NOT enforced`: finish the rest,
 report that the gap awaits a human, stop there. The permissions that `setup repo` writes to
 `.claude/settings.json` are ignored by a headless session in a workspace Claude Code does not trust
 yet: open the folder interactively once and accept the trust prompt, or pass the permissions on the

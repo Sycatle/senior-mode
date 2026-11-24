@@ -119,7 +119,9 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
     facts for a human and does not rule on them;
   - your own, from [`review.sections`](configuration.md#project-review-sections).
 - **Produces.** One PR comment with the verdict, the brief and `file:line` findings, and the status
-  `senior-mode/review` (`success`, `pending` for a human merge, `failure`).
+  `senior-mode/review` (`success`, `pending` for a human merge, `failure`). Each finding ends with a stable
+  `<!-- finding: <slug> -->`; one seen on two pull requests becomes a
+  [knowledge note](configuration.md#knowledge-notes) in a separate `docs(knowledge): <slug>` pull request.
 - **When.** For every pull request, from a fresh context. A pull request that touches a protected
   zone or closes an L ticket also gets the [`security`](agents.md#security) agent.
 

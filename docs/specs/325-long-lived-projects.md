@@ -71,7 +71,8 @@ it first. Biome's organize-imports moves it; keep the `// biome-ignore` line.
   is about those files.
 - `verified`: date (`YYYY-MM-DD`, not in the future) a person or an agent last confirmed the note is
   true of the code at `paths`.
-- `origin`: `#<n>` (ticket or pull request that taught it), `retro`, or a `docs/spikes/` path.
+- `origin`: `#<n>` (ticket or pull request that taught it; several, `#41, #57`, when more than one did),
+  `retro`, or a `docs/spikes/` path.
 - `kind`: `pitfall` (a trap), `convention` (a rule the code follows), `howto` (a non-obvious
   procedure), `context` (why something is as it is).
 - Size: the body (after the front matter) is at most `knowledge.maxLines` lines (default 40). A longer

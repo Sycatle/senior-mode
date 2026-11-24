@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Tests for the capture of knowledge notes by the implementer (#336, spec 325 §4): the instructions are
-# wired and bounded, and the eval grader (evals/knowledge/grade.sh) accepts a good session and refuses the
-# bad ones. Offline: no model is run, the sessions' results are written by hand.
+# Tests for the capture of knowledge notes (spec 325 §4). Implementer (#336): the instructions are wired
+# and bounded, and the eval grader (evals/knowledge/grade.sh) accepts a good session and refuses the bad
+# ones. Reviewer (#359): the finding marker grader and the note a review opens for a finding seen twice.
+# Offline: no model is run, the sessions' results are written by hand.
 set -u
 root=$(cd "$(dirname "$0")/../../../.." && pwd)
 plugin=$root/plugins/senior-mode
@@ -72,5 +73,50 @@ new_repo fixture
 printf 'import { ready } from "./locale.js";\nimport { euros } from "./money.js";\n\nexport const totalLabel = (cents) => (ready ? `${euros(cents)} EUR` : "");\n' >"$repo/src/invoice.js"
 (cd "$repo" && npm run --silent lint >/dev/null 2>&1) && fail "fixture: lint accepts unsorted imports"
 (cd "$repo" && npm run --silent fix >/dev/null 2>&1 && npm test >/dev/null 2>&1) && fail "fixture: sorted imports still pass the test"
+
+# Reviewer (#359): the instructions are wired.
+rev=$plugin/skills/review
+grep -q 'knowledge.md' "$rev/SKILL.md" || fail "skill review does not point to knowledge.md"
+grep -q 'finding: <slug>' "$rev/SKILL.md" || fail "skill review does not name the finding marker"
+[ "$(wc -c <"$rev/SKILL.md")" -le 3072 ] || fail "skill review is over 3072 bytes"
+grep -q 'finding: <slug>' "$plugin/agents/reviewer.md" || fail "the reviewer agent does not name the finding marker"
+grep -q 'docs(knowledge): <slug>' "$rev/knowledge.md" || fail "review knowledge.md: no title of the pull request"
+grep -q 'kind: pitfall' "$rev/knowledge.md" || fail "review knowledge.md: no pitfall kind"
+grep -q 'covered by' "$rev/knowledge.md" || fail "review knowledge.md: no citation of a covering note"
+grep -q 'untouched' "$rev/knowledge.md" || fail "review knowledge.md: the reviewed branch is not left untouched"
+
+# The marker: every finding ends with it, slug in kebab-case.
+grade_review=$root/evals/knowledge/grade-review.sh
+cat >"$work/good.md" <<'MD'
+**Verdict:** changes requested
+
+Spec axis:
+- `src/billing/invoice.js:12` the total is not rounded, add a test and `Math.round`. <!-- finding: missing-test-billing -->
+- `src/auth/login.js:40` the error is swallowed; rethrow it at the boundary.
+  Log it first. <!-- finding: swallowed-error-auth -->
+
+Not verified: the migration, read only.
+MD
+"$grade_review" "$work/good.md" >/dev/null 2>&1 || fail "review with every marker refused"
+# shellcheck disable=SC2016 # backquotes are Markdown
+printf -- '- `src/a.js:3` bad input <!-- finding: unchecked-input-a -->
+- `src/b.js:9` no marker here
+' >"$work/missing.md"
+"$grade_review" "$work/missing.md" >/dev/null 2>&1 && fail "finding with no marker accepted"
+# shellcheck disable=SC2016 # backquotes are Markdown
+printf -- '- `src/a.js:3` bad input <!-- finding: Unchecked_Input --> and more
+' >"$work/bad-slug.md"
+"$grade_review" "$work/bad-slug.md" >/dev/null 2>&1 && fail "finding with a bad slug accepted"
+printf -- '- Verdict: approve, nothing to fix.
+- Not verified: the deploy.
+' >"$work/no-finding.md"
+"$grade_review" "$work/no-finding.md" >/dev/null 2>&1 || fail "review with no finding refused"
+
+# The note of a finding seen twice: origin lists both pull requests, kind pitfall, and check passes.
+new_repo seen-twice
+note "$repo/docs/knowledge/missing-test-billing.md" '#41, #57'
+(cd "$repo" && "$plugin/bin/senior-mode" knowledge-check >/dev/null 2>&1) || fail "origin listing two pull requests refused"
+note "$repo/docs/knowledge/missing-test-billing.md" '#41, retro'
+(cd "$repo" && "$plugin/bin/senior-mode" knowledge-check >/dev/null 2>&1) && fail "origin mixing a pull request and retro accepted"
 
 [ "$failures" -eq 0 ] && echo "ok test-knowledge-capture" || exit 1

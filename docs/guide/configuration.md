@@ -428,7 +428,7 @@ kind: pitfall
 
 - `paths`: a non-empty list of globs (the dialect of `protected`): the files the note is about.
 - `verified`: `YYYY-MM-DD`, not in the future: when a person or an agent last confirmed the note is true.
-- `origin`: `#<n>` (the ticket or pull request that taught it), `retro` or a path under `docs/spikes/`.
+- `origin`: `#<n>` (the ticket or pull request that taught it; several, `#41, #57`, when more than one did), `retro` or a path under `docs/spikes/`.
 - `kind`: `pitfall`, `convention`, `howto` or `context`.
 - The body (after the front matter) has at most `knowledge.maxLines` lines (default 40): a longer subject is split in notes, or becomes an ADR or a spec.
 

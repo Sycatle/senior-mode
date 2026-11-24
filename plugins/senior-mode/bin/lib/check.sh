@@ -195,7 +195,7 @@ vision_brief() {
 
 # The check of the knowledge notes (#333, spec 325 §2): each docs/knowledge/<slug>.md has a kebab-case name, a
 # front matter with `paths` (a non-empty list of globs), `verified` (YYYY-MM-DD, not in the future), `origin` (`#n`,
-# `retro` or a docs/spikes/ path) and `kind` (pitfall, convention, howto or context), and a body of at most
+# `#n, #m`, `retro` or a docs/spikes/ path) and `kind` (pitfall, convention, howto or context), and a body of at most
 # `knowledge.maxLines` lines (default 40). With no docs/knowledge directory there is nothing to check. Prints
 # every problem, one per line with the file and the key, and fails when there is one.
 knowledge_check() {
@@ -238,8 +238,8 @@ knowledge_check() {
           fi
           ;;
         origin)
-          [[ $val =~ ^(#[0-9]+|retro|docs/spikes/[^[:space:]]+)$ ]] ||
-            problems+="$name: origin must be #<n>, retro or a docs/spikes/ path, not $raw"$'\n'
+          [[ $val =~ ^(#[0-9]+(,[[:space:]]*#[0-9]+)*|retro|docs/spikes/[^[:space:]]+)$ ]] ||
+            problems+="$name: origin must be #<n> (or several, #<n>, #<m>), retro or a docs/spikes/ path, not $raw"$'\n'
           ;;
         kind)
           [[ $val =~ ^(pitfall|convention|howto|context)$ ]] ||

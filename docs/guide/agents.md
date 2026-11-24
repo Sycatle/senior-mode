@@ -82,6 +82,13 @@ the status `senior-mode/review`; it is the only role that may (`SENIOR_MODE_ROLE
 memory (in `.claude/agent-memory/`, git-ignored by `setup repo`: it stays on the machine and `retro`
 reads it there).
 
+Each finding of its review ends with `<!-- finding: <slug> -->`, the slug stable for the same rule on the same
+area. When a finding's slug is already on an earlier merged pull request that changed files under the same
+directory, the reviewer opens a separate pull request `docs(knowledge): <slug>` with a `kind: pitfall`
+[knowledge note](configuration.md#knowledge-notes) whose `origin` lists both pull requests (the reviewed pull
+request and its branch are untouched); when a note already covers the finding, the review cites it and opens
+nothing. A finding seen once opens nothing, and at most 2 such pull requests per review.
+
 ## `security`
 
 The second review level ([ADR 0015](../adr/0015-security-posture.md)), for a pull request that

@@ -170,6 +170,11 @@
       "additionalProperties": false,
       "properties": { "days": { "type": "integer", "minimum": 1 } }
     },
+    "vision": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "maxLines": { "type": "integer", "minimum": 1 } }
+    },
     "limits": {
       "type": "object",
       "additionalProperties": false,

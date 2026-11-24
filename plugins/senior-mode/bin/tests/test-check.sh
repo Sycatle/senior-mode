@@ -81,7 +81,7 @@ grep -q "vision" "$work/out" && fail "vision reported with no file: $(cat "$work
 vision '# Vision' '' '## Goals' '' '- G1: people can log in' '- **G2** people can pay' '' '## Non-goals' '' '- No mobile app' '' '## Constraints' '' '- EU hosting'
 run check || fail "check fails on a valid vision: $(cat "$work/out")"
 grep -q "^ok    vision" "$work/out" || fail "valid vision not reported ok: $(cat "$work/out")"
-grep -q "5/5 checks passed" "$work/out" || fail "vision not counted: $(cat "$work/out")"
+grep -q "6/6 checks passed" "$work/out" || fail "vision not counted: $(cat "$work/out")"
 vision '# Vision' '' '## Goals' '' '- G1: people can log in'
 run check && fail "check passes without ## Non-goals"
 grep -q "FAIL  vision" "$work/out" || fail "vision failure not reported: $(cat "$work/out")"

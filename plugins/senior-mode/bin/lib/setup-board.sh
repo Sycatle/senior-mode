@@ -53,6 +53,22 @@ copy_template() { # title
     gh_retry api graphql --input - --jq '.data.copyProjectV2.projectV2 | "\(.number) \(.id)"'
 }
 
+# A fine-grained token is bound to one resource owner: from another owner's token GitHub cannot resolve the
+# template Project, public as it is (#527). The error it answers, and what setup says about it.
+UNRESOLVED='Could not resolve to a node with the global id'
+template_unreadable() { # owner title
+  echo "senior-mode: the template Project $template (board.template) cannot be read with this token: a fine-grained token is bound to one owner and sees no Project of another owner, even a public one. Either open the template on GitHub, choose \"Make a copy\" into $1 with the title $2, then run setup github again, which finds the Project by its title; or set board.template in .claude/senior-mode.json to the id of a template Project that $1 owns." >&2
+}
+
+# The fields of the template, built in, for when it cannot be read: the single-selects of $BOARD with their
+# options, Paths, Start and End (the Iteration field is made apart, by setup_cycle).
+# shellcheck disable=SC2016 # a jq program, not shell
+builtin_template_fields() {
+  jq -c '[to_entries[] | {id: ("builtin:" + .key), name: .key, options: [.value[] | {name, color, description: ""}]}]
+    + [{name: "Paths", dataType: "TEXT"}, {name: "Start", dataType: "DATE"}, {name: "End", dataType: "DATE"}
+       | . + {id: ("builtin:" + .name)}]' <<<"$BOARD"
+}
+
 # Sets fields of a Project (updateProjectV2): $2 is a JSON object of the input fields.
 project_update() { # project-id fields
   jq -nc --arg id "$1" --argjson f "$2" '{variables: {input: ({projectId: $id} + $f)},
@@ -81,7 +97,18 @@ setup_project() {
     if [ -n "$number" ]; then
       id=$(gh_retry project view "$number" --owner "$owner" --format json --jq .id) || return 1
     else
-      out=$(copy_template "$name") || { echo "senior-mode: cannot copy the template Project $template (board.template)" >&2; return 1; }
+      err=$(mktemp)
+      if ! out=$(copy_template "$name" 2>"$err"); then
+        if grep -q "$UNRESOLVED" "$err"; then
+          template_unreadable "$owner" "$name"
+        else
+          cat "$err" >&2
+          echo "senior-mode: cannot copy the template Project $template (board.template)" >&2
+        fi
+        rm -f "$err"
+        return 1
+      fi
+      rm -f "$err"
       read -r number id <<<"$out"
       how=copied
       echo "Project #$number $name: copied from the template" >&2
@@ -115,9 +142,18 @@ board_lacks() { # project-id template-id
 # (GitHub has no API for views and built-in workflows); an existing Project is never replaced, and
 # setup names --migrate. Reads template of setup_github.
 setup_board_template() { # project-id copied|found
-  local lacks
-  lacks=$(board_lacks "$1" "$template" 2>/dev/null) ||
-    { echo "board: could not read the template Project $template; compare the Project with it by hand"; return 0; }
+  local lacks err
+  err=$(mktemp)
+  if ! lacks=$(board_lacks "$1" "$template" 2>"$err"); then
+    if grep -q "$UNRESOLVED" "$err"; then
+      echo "board: the template Project $template cannot be read with this token (a fine-grained token sees no Project of another owner); the fields and options the commands need are set from the built-in list, compare the views and workflows with the template by hand"
+    else
+      echo "board: could not read the template Project $template; compare the Project with it by hand"
+    fi
+    rm -f "$err"
+    return 0
+  fi
+  rm -f "$err"
   if [ "$2" = copied ]; then
     if [ -z "$lacks" ]; then echo "board: the copy has the views and workflows of the template"
     else echo "board: the copy lacks $lacks that the template has; add the views by hand (GitHub has no API for views) and turn the workflows on in Project → Workflows"
@@ -460,10 +496,21 @@ cache_project() { # config-file owner number id fields keep-migration
 # and changes nothing. A rerun finds nothing to add. Reads template of setup_github.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_upgrade() { # config-file dry-run owner
-  local file=$1 dry=$2 owner=$3 number id tplf boardf plan fields options added=""
+  local file=$1 dry=$2 owner=$3 number id tplf boardf plan fields options added="" err
   number=$(jq -r '.project.number // empty' "$file") id=$(jq -r '.project.id // empty' "$file")
   [ -n "$number" ] && [ -n "$id" ] || die "no Project to upgrade in .claude/senior-mode.json; run senior-mode setup github first"
-  tplf=$(board_fields "$template") || die "cannot read the template Project $template (board.template)"
+  # A template this token cannot resolve (#527): its built-in field list stands in for it.
+  err=$(mktemp)
+  if ! tplf=$(board_fields "$template" 2>"$err"); then
+    grep -q "$UNRESOLVED" "$err" || {
+      cat "$err" >&2
+      rm -f "$err"
+      die "cannot read the template Project $template (board.template)"
+    }
+    echo "upgrade: the template Project $template cannot be read with this token (a fine-grained token sees no Project of another owner); its built-in field list is used instead"
+    tplf=$(builtin_template_fields)
+  fi
+  rm -f "$err"
   boardf=$(board_fields "$id") || die "cannot read the fields of Project #$number"
   # The fields to create come from the migration plan; the options are the template's that the board has under neither
   # their name nor an alias of $BOARD (a board whose Status has Todo does not lack Backlog).

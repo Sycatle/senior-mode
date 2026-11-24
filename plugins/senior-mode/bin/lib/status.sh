@@ -15,6 +15,7 @@ ROUTER
     echo "This repository is not set up for senior-mode; /senior-mode:setup adopts it."
     return 0
   fi
+  vision_brief "$root" || true
   branch=$(git symbolic-ref --short -q HEAD) || return 0
   issue=$(sed -nE 's#^[a-z]+/([0-9]+)-.*#\1#p' <<<"$branch")
   [ -n "$issue" ] || return 0

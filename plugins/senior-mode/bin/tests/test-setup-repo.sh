@@ -63,6 +63,24 @@ grep -q "CODEOWNERS: the protected zones are not owned yet; rerun senior-mode se
 git -C "$new" check-ignore -q .claude/agent-memory/reviewer/MEMORY.md || fail "agent memory not ignored"
 grep -q '^.gitignore: .claude/agent-memory/ ignored' "$work/out" || fail "ignore not reported: $(cat "$work/out")"
 
+# docs/vision.md is the owner's (#342): setup repo proposes to protect it while no glob of `protected` covers it,
+# and says nothing once one does (the generic preset's globs do not).
+grep -q "docs/vision.md: add it to protected" "$work/out" || fail "no proposal to protect docs/vision.md: $(cat "$work/out")"
+jq '.protected += ["docs/vision.md"]' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
+setup "$new" --command test="true" --command lint="true"
+grep -q "docs/vision.md" "$work/out" && fail "protection proposed again once docs/vision.md is protected: $(cat "$work/out")"
+jq '.protected -= ["docs/vision.md"]' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
+setup "$new" --command test="true" --command lint="true"
+grep -q "docs/vision.md: add it to protected" "$work/out" || fail "proposal lost when the glob is removed: $(cat "$work/out")"
+jq '.protected = ["docs/**"]' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
+setup "$new" --command test="true" --command lint="true"
+grep -q "docs/vision.md" "$work/out" && fail "protection proposed although docs/** covers it: $(cat "$work/out")"
+jq '.protected = []' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
+setup "$new" --command test="true" --command lint="true"
+grep -q "docs/vision.md: add it to protected" "$work/out" || fail "an empty protected list is not proposed docs/vision.md: $(cat "$work/out")"
+jq 'del(.protected)' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
+setup "$new" --command test="true" --command lint="true"
+
 # Second run: nothing changes.
 before=$(snapshot "$new")
 setup "$new" --command test="true" --command lint="true"

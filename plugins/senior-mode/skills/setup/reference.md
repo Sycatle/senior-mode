@@ -4,7 +4,9 @@
 
 `senior-mode setup github` prints `protection: NOT enforced` on a private repository of a Free
 account or organization: GitHub offers no ruleset there, so anyone with push access can push to the
-default branch, and the pre-push hook is the only gate. Relay it in plain words, with the two ways
+default branch, and the pre-push hook is the only gate. Setup records `github.protection: local`:
+`serve` still merges, with senior-mode as the gate, and an audit workflow (`senior-mode-audit.yml`, to
+commit) reports a push outside a pull request, after the fact. Relay it in plain words, with the two ways
 out (make the repository public, or upgrade to Pro or Team and rerun setup), and get an explicit
 acknowledgement before going on.
 

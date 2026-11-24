@@ -1,0 +1,59 @@
+# Written by senior-mode setup (github.protection "local", a private repository on a GitHub Free plan).
+# GitHub enforces no branch protection there, so this audit reports after the fact: a commit pushed to the default
+# branch that belongs to no merged pull request opens (or comments on) one needs-human issue. It blocks nothing.
+name: senior-mode audit
+
+on:
+  push:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  audit:
+    name: Direct pushes
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      BRANCH: ${{ github.ref_name }}
+      BEFORE: ${{ github.event.before }}
+      AFTER: ${{ github.sha }}
+      PUSHER: ${{ github.actor }}
+    steps:
+      - name: Report commits outside a pull request
+        run: |
+          set -euo pipefail
+          zero=0000000000000000000000000000000000000000
+          fmt='"\(.sha) \(.commit.message | split("\n")[0])"'
+          if [ "$BEFORE" = "$zero" ] || ! lines=$(gh api "repos/$REPO/compare/$BEFORE...$AFTER" --paginate --jq ".commits[] | $fmt"); then
+            lines=$(gh api "repos/$REPO/commits/$AFTER" --jq "$fmt")
+          fi
+          found=""
+          while read -r sha subject; do
+            [ -n "$sha" ] || continue
+            merged=0
+            for attempt in 1 2 3; do
+              merged=$(gh api "repos/$REPO/commits/$sha/pulls" --jq '[.[] | select(.merged_at != null and .base.ref == env.BRANCH)] | length')
+              [ "$merged" = 0 ] || break
+              [ "$attempt" = 3 ] || sleep "${AUDIT_RETRY_SLEEP:-5}"
+            done
+            [ "$merged" != 0 ] || found+="- \`${sha:0:7}\` $subject"$'\n'
+          done <<<"$lines"
+          [ -n "$found" ] || { echo "audit: every pushed commit belongs to a merged pull request"; exit 0; }
+          export TITLE="Direct push to $BRANCH outside a pull request"
+          body="Pushed to \`$BRANCH\` by @$PUSHER, in no merged pull request:
+
+          $found
+          senior-mode reports this after the fact and blocks nothing. A person decides whether to keep it, revert it or move it into a pull request."
+          open=$(gh api "repos/$REPO/issues?labels=needs-human&state=open&per_page=100" --jq '[.[] | select(.pull_request == null and .title == env.TITLE) | .number][0] // empty')
+          if [ -n "$open" ]; then
+            gh api "repos/$REPO/issues/$open/comments" -f body="$body" >/dev/null
+            echo "audit: commented on #$open"
+          else
+            gh api "repos/$REPO/issues" -f title="$TITLE" -f body="$body" -f 'labels[]=needs-human' >/dev/null
+            echo "audit: opened an issue"
+          fi

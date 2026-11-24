@@ -30,7 +30,7 @@ State: **Available.**
   test and build; your yes before adding a missing linter or test runner.
 - **Produces.** A Project board with `Status`, `Priority`, `Size`, `Severity` and the text field `Paths`; labels; rebase-only merges;
   the `senior-mode` ruleset; `.github/CODEOWNERS` for the protected zones; Dependabot alerts, secret scanning and push protection (where the plan allows); `.claude/senior-mode.json`; git hooks; `CLAUDE.md` Principles; PR and
-  issue templates; permissions; release-please config; in `actions` mode, a workflow. Ends with a
+  issue templates; permissions; release-please config; in `actions` mode, a workflow; on a Free plan that refuses rulesets, the audit workflow `senior-mode-audit.yml`. Ends with a
   plain summary and the Project URL.
 
 Details: [Getting started](getting-started.md#adopt-a-repository).
@@ -156,7 +156,7 @@ daemon) and runs that. The `senior-mode run` command below stays, for a bounded 
   each open secret-scanning alert (once: the second pass finds them), then picks tickets.
 - **Merging** is off by default: the run stops at pull requests with `senior-mode/ci`,
   `senior-mode/review` and `senior-mode/security` set. With `autonomy.merge: true` it merges what is green, not `needs-human`,
-  on a repository with server-side protection. See [Autonomy](autonomy.md#run).
+  on a repository with server-side protection or `github.protection: "local"` (senior-mode gates the merge). See [Autonomy](autonomy.md#run).
 - **Needs** `claude` on PATH or in `~/.local/bin`, `flock` and a user that is not root. In a workspace Claude
   Code does not trust yet, headless sessions ignore the project's permissions: open the folder once
   interactively and accept the trust prompt. See [Sessions without a human](autonomy.md#sessions-without-a-human).

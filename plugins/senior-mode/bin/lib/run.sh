@@ -341,18 +341,19 @@ pr_external() {
 }
 
 # Why the pull request $1 (head $2, $3 its REST object) may not merge on its own, in one phrase, or nothing when
-# every bound holds (ADR 0003, 0008, 0018, 0024): merging is on, the pull request is not external, the server
-# enforces protection, no needs-human, the three statuses green on the head, no protected zone among the files
-# GitHub would merge.
+# every bound holds (ADR 0003, 0008, 0018, 0024, 0032): merging is on, the pull request is not external, the server
+# enforces protection (ruleset) or senior-mode does (local: the three statuses whatever github.requiredChecks says, and
+# a branch up to date with the base), no needs-human, the three statuses green on the head, no protected zone among the
+# files GitHub would merge.
 run_blocker() {
-  local pr=$1 sha=$2 missing="" files zones gaps need='["senior-mode/ci", "senior-mode/review", "senior-mode/security"]'
+  local pr=$1 sha=$2 missing="" base files zones gaps need='["senior-mode/ci", "senior-mode/review", "senior-mode/security"]'
   # A profile that lifts the independent review (an accepted ADR, process.lifts) drops its status from the bounds.
   [ "$(config_get process.gates.review 2>/dev/null)" != false ] || need='["senior-mode/ci", "senior-mode/security"]'
   if [ "$RUN_MERGE" != true ]; then
     echo "merging is off (autonomy.merge)"
   elif pr_external "$3"; then
     echo "it is external (a fork or a non-collaborator): its merge stays human"
-  elif [ "$RUN_PROTECTION" != ruleset ]; then
+  elif [ "$RUN_PROTECTION" != ruleset ] && [ "$RUN_PROTECTION" != local ]; then
     echo "the server enforces no branch protection (github.protection is ${RUN_PROTECTION:-unset})"
   elif jq -e '[.labels[]?.name] | index("needs-human")' <<<"$3" >/dev/null; then
     echo "labelled needs-human"
@@ -360,10 +361,11 @@ run_blocker() {
   elif gaps=$(workflow_pr_gaps "$3" "" "$RUN_ROOT") && [ -n "$gaps" ]; then
     echo "it does not follow the project's workflow: $gaps"
   # github.requiredChecks false (ADR 0016): the ruleset requires no status, so none is waited for.
-  elif [ "$RUN_REQUIRED" = true ] && ! missing=$(gh_retry api "repos/$RUN_SLUG/commits/$sha/status" | jq -r --argjson need "$need" '$need
+  # github.protection local (ADR 0032): the ruleset is not there to require them, so senior-mode does, whatever requiredChecks says.
+  elif { [ "$RUN_REQUIRED" = true ] || [ "$RUN_PROTECTION" = local ]; } && ! missing=$(gh_retry api "repos/$RUN_SLUG/commits/$sha/status" | jq -r --argjson need "$need" '$need
       - [.statuses[] | select(.state == "success") | .context] | join(" and ")'); then
     echo "its statuses could not be read"
-  elif [ "$RUN_REQUIRED" = true ] && [ -n "$missing" ]; then
+  elif { [ "$RUN_REQUIRED" = true ] || [ "$RUN_PROTECTION" = local ]; } && [ -n "$missing" ]; then
     echo "$missing not green"
   # The command applies the protected zones, not the reviewer: the files GitHub would merge, against
   # the globs of the base branch, so a pull request cannot unprotect itself.
@@ -375,7 +377,19 @@ run_blocker() {
     echo "it touches a protected zone ($(paste -sd, - <<<"$zones" | sed 's/,/, /g'))"
   else
     # One commit per ticket and the size budget of the tickets it closes (#297, #303).
-    delivery_blocker "$RUN_SLUG" "$pr" "$3" "$files"
+    missing=$(delivery_blocker "$RUN_SLUG" "$pr" "$3" "$files")
+    if [ -n "$missing" ]; then
+      echo "$missing"
+    elif [ "$RUN_PROTECTION" = local ]; then
+      # The ruleset would require an up-to-date branch; serve's rebase step lifts this one (the reason starts "it is behind").
+      base=$(jq -r '.base.ref // empty' <<<"$3")
+      base=${base:-${RUN_BASE#origin/}}
+      if ! missing=$(gh_retry api "repos/$RUN_SLUG/compare/$base...$sha" --jq .behind_by); then
+        echo "its distance to $base could not be read"
+      elif [ "$missing" != 0 ]; then
+        echo "it is behind $base by $missing commit$([ "$missing" = 1 ] || echo s)"
+      fi
+    fi
   fi
 }
 

@@ -91,6 +91,22 @@ the intended "merging a protected zone stays human" until agents get an identity
 On a private repository with a free GitHub plan, rulesets are refused. Setup says so and continues;
 the git hooks and the Bash guard still apply, but GitHub will not enforce the statuses.
 
+### Audit of direct pushes
+
+On a private repository of a GitHub Free account or organization, GitHub refuses the ruleset and `setup github` records
+`github.protection: "local"` ([ADR 0032](../adr/0032-local-protection-on-github-free.md)). The gate then moves to
+senior-mode: before `run` or `serve` merges, it requires `senior-mode/ci`, `senior-mode/review` and `senior-mode/security`
+on the head, whatever `github.requiredChecks` says, and a branch up to date with the base (a branch that is behind waits
+with the reason, and `serve` rebases it); every other bound stays. Setup also writes
+`.github/workflows/senior-mode-audit.yml` for you to commit. On each push to the default branch it looks up, for every
+pushed commit, the pull requests the commit belongs to; a commit in no merged pull request opens, or comments on, one
+`needs-human` issue "Direct push to <branch> outside a pull request" with the commits and the pusher. It uses no secret
+and no third-party action (`contents: read`, `issues: write`, `pull-requests: read`).
+
+This is not server protection. Anyone with push access can still push to the default branch, and a merge made by hand
+skips the gate: the audit only reports it, after the fact. `github.protection: "none"` stops `run` and `serve` from
+merging at all.
+
 ### GitHub's scanners
 
 `setup github` also switches on Dependabot alerts, secret scanning and
@@ -341,7 +357,7 @@ shows the same patches, check and publish run again on the new head and the revi
 review is requested. A conflict starts an Opus `integrator` session on `<branch>-r2` (`-r3` once more, then
 `needs-human`), whose pull request supersedes and closes the old one. An M ticket without recorded red tests gets a
 `test-author` session before its ticket session. A pull request that can never merge on its own (`autonomy.merge`
-off, no server protection, a protected zone, a pull request that is not ready) gets `needs-human` on itself and its ticket, a comment with the reason
+off, `github.protection` none, a protected zone, a pull request that is not ready) gets `needs-human` on itself and its ticket, a comment with the reason
 and one [alert](#alerts), then is left alone and listed by `status` under "Waiting for a human"; a blocker that a
 later poll may lift (a status not green yet, an unknown merge state) is only logged and retried. The usage limit and
 the breaker hold the launches, not the merges.
@@ -507,7 +523,8 @@ command, not a model, applies these bounds:
 - **Merge** ([ADR 0008](../adr/0008-merge-off-by-default.md)): off by default. With
   `autonomy.merge: true`, a pull request merges (`gh pr merge --rebase`) only when `senior-mode/ci`,
   `senior-mode/review` and `senior-mode/security` are all `success` on its head, it has no `needs-human` label, the
-  server enforces protection (`github.protection` is `ruleset`), and none of its files matches a
+  server enforces protection (`github.protection` is `ruleset`) or senior-mode does (`local`, see
+  [below](#audit-of-direct-pushes)), and none of its files matches a
   protected zone of the default branch: `run` checks that itself, it does not rely on the reviewer.
   The merge names the head it checked (`--match-head-commit`), so a later push is refused.
   Everything else waits for a human, and the report says why. The ticket session itself never

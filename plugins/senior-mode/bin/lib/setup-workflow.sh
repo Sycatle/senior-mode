@@ -327,7 +327,7 @@ wf_workflow_jobs() {
   local f
   for f in "$WF_ROOT"/.github/workflows/*.yml "$WF_ROOT"/.github/workflows/*.yaml; do
     [ -f "$f" ] || continue
-    [ "$(basename "$f")" != senior-mode.yml ] || continue
+    [ "$(basename "$f")" != senior-mode.yml ] && [ "$(basename "$f")" != senior-mode-audit.yml ] || continue
     awk '
       function flush() { if (id != "") { n++; jobs[n] = id "\t" name "\t" run } id = ""; name = ""; run = ""; inrun = 0 }
       { sub(/\r$/, ""); ind = match($0, /[^ ]/) - 1 }
@@ -356,7 +356,7 @@ wf_workflow_jobs() {
 wf_ci() {
   local jobs ctx req="" b prs=0 any=0 cutoff ts f count=0 other
   for f in "$WF_ROOT"/.github/workflows/*.yml "$WF_ROOT"/.github/workflows/*.yaml; do
-    [ -f "$f" ] && [ "$(basename "$f")" != senior-mode.yml ] && count=$((count + 1))
+    [ -f "$f" ] && [ "$(basename "$f")" != senior-mode.yml ] && [ "$(basename "$f")" != senior-mode-audit.yml ] && count=$((count + 1))
   done
   [ -e "$WF_ROOT/.gitlab-ci.yml" ] && WF_UNMAPPED+=(".gitlab-ci.yml: GitLab CI jobs are not read; senior-mode/ci stays the local check")
   [ -e "$WF_ROOT/Jenkinsfile" ] && WF_UNMAPPED+=("Jenkinsfile: Jenkins jobs are not read; senior-mode/ci stays the local check")

@@ -175,6 +175,7 @@ doctor_github() {
         doctor_add warn ruleset "could not read the rulesets of $slug (gh api failed)" "gh auth status"
       fi
       ;;
+    local) doctor_add warn ruleset "github.protection is local: GitHub enforces nothing on the default branch; senior-mode requires the statuses and an up-to-date branch before it merges, and the audit workflow reports direct pushes (ci.mode local, the pre-push hook is the only gate)" "" ;;
     none) doctor_add warn ruleset "github.protection is none: nothing enforces the default branch on the server (ci.mode local, the pre-push hook is the only gate)" "" ;;
     *) doctor_add warn ruleset "github.protection is not set: setup github has not recorded the ruleset" "senior-mode setup github" ;;
   esac

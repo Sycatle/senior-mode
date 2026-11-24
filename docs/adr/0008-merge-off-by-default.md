@@ -39,3 +39,8 @@ argument of ADR 0003 does not hold there.
 - By default a person merges, so `review` must give them a plain-language brief of each change.
 - Turning merging on is one line of config, recorded in the repository, visible in review.
 - ADR 0003 stays the rule for what may be merged; this ADR only decides whether `run` does it.
+
+## Note (2026-11-24, #523)
+
+Amended by [0032](0032-local-protection-on-github-free.md): "the server enforces protection" also holds when `github.protection` is
+`local`, where senior-mode requires the three statuses and an up-to-date branch itself and an audit reports direct pushes.

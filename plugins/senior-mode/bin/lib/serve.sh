@@ -814,12 +814,16 @@ serve_merge() {
   pull=$(gh_retry api "repos/$RUN_SLUG/pulls/$pr") || return 1
   sha=$(jq -r '.head.sha' <<<"$pull")
   reason=$(run_blocker "$pr" "$sha" "$pull")
-  if [ -n "$reason" ]; then
+  if [[ $reason == "it is behind "* ]]; then
+    # github.protection local (ADR 0032): GitHub has no up-to-date rule to report it, run_blocker does.
+    state=behind
+  elif [ -n "$reason" ]; then
     serve_note "w$pr" "#$t ${RUN_TITLE[$t]:-}: pull request #$pr, $reason"
     serve_permanent "$reason" && serve_stuck "$t" "$pr" "$reason"
     return 1
+  else
+    state=$(jq -r '.mergeable_state // "unknown"' <<<"$pull")
   fi
-  state=$(jq -r '.mergeable_state // "unknown"' <<<"$pull")
   case $state in
     unknown) return 1 ;;
     dirty)

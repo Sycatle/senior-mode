@@ -118,7 +118,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "protection": { "type": "string", "enum": ["", "ruleset", "none"], "description": "Written by setup github." },
+        "protection": { "type": "string", "enum": ["", "ruleset", "local", "none"], "description": "Written by setup github: ruleset, local (GitHub refused the ruleset: senior-mode gates the merge and audits pushes) or none (no merge on its own)." },
         "requiredChecks": { "type": "boolean", "description": "false keeps setup github from adding required status checks to the ruleset." }
       }
     },

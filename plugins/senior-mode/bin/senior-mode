@@ -149,6 +149,10 @@ case "${1:-}" in
     [ $# -eq 1 ] || usage
     vision_check
     ;;
+  knowledge-check)
+    [ $# -eq 1 ] || usage
+    knowledge_check
+    ;;
   publish)
     [ $# -le 2 ] || usage
     publish "${2:-}"

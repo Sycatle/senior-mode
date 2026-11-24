@@ -193,6 +193,64 @@ vision_brief() {
   [ -z "$nongoals" ] || printf 'Non-goals (an idea that contradicts one is quoted and asked, never framed):\n%s\n' "$nongoals"
 }
 
+# The check of the knowledge notes (#333, spec 325 §2): each docs/knowledge/<slug>.md has a kebab-case name, a
+# front matter with `paths` (a non-empty list of globs), `verified` (YYYY-MM-DD, not in the future), `origin` (`#n`,
+# `retro` or a docs/spikes/ path) and `kind` (pitfall, convention, howto or context), and a body of at most
+# `knowledge.maxLines` lines (default 40). With no docs/knowledge directory there is nothing to check. Prints
+# every problem, one per line with the file and the key, and fails when there is one.
+knowledge_check() {
+  local root dir max f name file fm body n today key raw val problems="" slug_re='^[a-z0-9]+(-[a-z0-9]+)*\.md$'
+  root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
+  dir=$root/docs/knowledge
+  [ -d "$dir" ] || { echo "skipped: no docs/knowledge"; return 0; }
+  max=$(config_get knowledge.maxLines)
+  [[ $max =~ ^[1-9][0-9]*$ ]] || die "knowledge.maxLines must be a positive whole number, not $max"
+  today=$(date -u +%Y-%m-%d)
+  while IFS= read -r f; do
+    name=docs/knowledge/$f
+    file=$dir/$f
+    [[ $f =~ $slug_re ]] || problems+="$name: file name is not a kebab-case slug (lowercase words joined by dashes)"$'\n'
+    fm=$(awk 'NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { exit } NR > 1 { print }' "$file")
+    body=$(awk 'NR == 1 && $0 == "---" { fm = 1; next } fm && $0 == "---" { fm = 0; next } !fm' "$file" | sed '/./,$!d')
+    n=0
+    [ -z "$body" ] || n=$(printf '%s\n' "$body" | grep -c '')
+    [ "$n" -le "$max" ] || problems+="$name: body has $n lines, over knowledge.maxLines ($max)"$'\n'
+    for key in paths verified origin kind; do
+      if ! grep -q "^$key:" <<<"$fm"; then
+        problems+="$name: missing key $key"$'\n'
+        continue
+      fi
+      raw=$(sed -n "s/^$key:[[:space:]]*//p" <<<"$fm" | head -n 1 | tr -d '\r')
+      val=$(tr -d "\"'" <<<"$raw")
+      case $key in
+        paths)
+          if ! jq -e 'type == "array" and all(.[]; type == "string")' <<<"$raw" >/dev/null 2>&1; then
+            problems+="$name: paths must be a list of globs, like [\"src/billing/**\"], not $raw"$'\n'
+          elif [ "$(jq 'length' <<<"$raw")" -eq 0 ]; then
+            problems+="$name: paths is empty, a note is about some files"$'\n'
+          fi
+          ;;
+        verified)
+          if ! [[ $val =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || [ "$(date -u -d "$val" +%Y-%m-%d 2>/dev/null)" != "$val" ]; then
+            problems+="$name: verified must be a date, YYYY-MM-DD, not $raw"$'\n'
+          elif [[ $val > $today ]]; then
+            problems+="$name: verified $val is in the future"$'\n'
+          fi
+          ;;
+        origin)
+          [[ $val =~ ^(#[0-9]+|retro|docs/spikes/[^[:space:]]+)$ ]] ||
+            problems+="$name: origin must be #<n>, retro or a docs/spikes/ path, not $raw"$'\n'
+          ;;
+        kind)
+          [[ $val =~ ^(pitfall|convention|howto|context)$ ]] ||
+            problems+="$name: kind must be pitfall, convention, howto or context, not $raw"$'\n'
+          ;;
+      esac
+    done
+  done < <(find "$dir" -maxdepth 1 -type f -name '*.md' -printf '%f\n' | LC_ALL=C sort)
+  [ -z "$problems" ] || { printf '%s' "$problems"; return 1; }
+}
+
 # The context the agents load, kept lean and true (#314, #335): each tracked CLAUDE.md within
 # `context.claudeMdLines` lines (default 80), each tracked SKILL.md within 3072 bytes, and the `paths` of an ADR
 # front matter, when it has one, a list of strings (`paths: ["src/billing/**"]`). Those fail. A path cited
@@ -381,10 +439,14 @@ check() {
   names=("secret scan" "dependency audit" "new dependencies" "config" "context hygiene")
   cmds=("$(printf '%q' "$SELF") secret-scan" "$(printf '%q' "$SELF") audit" "$(printf '%q' "$SELF") deps" "$(printf '%q' "$SELF") config validate"
     "$(printf '%q' "$SELF") context-hygiene")
-  # docs/vision.md is checked when it exists (#342).
+  # docs/vision.md is checked when it exists (#342), the knowledge notes when docs/knowledge does (#333).
   if [ -f "$root/docs/vision.md" ]; then
     names+=("vision")
     cmds+=("$(printf '%q' "$SELF") vision-check")
+  fi
+  if [ -d "$root/docs/knowledge" ]; then
+    names+=("knowledge")
+    cmds+=("$(printf '%q' "$SELF") knowledge-check")
   fi
   for ((i = 0; i < count; i++)); do
     names+=("$(jq -r ".checks[$i].name" "$file")")

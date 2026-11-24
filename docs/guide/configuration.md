@@ -56,6 +56,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `project` | written by setup | Board owner, number, id, and field and option ids, so no agent looks them up again; the text field `Paths` has an id and no options |
 | `board.template` | the senior-mode template Project | Id of the Project that `setup github` copies (`copyProjectV2`, without draft issues) when the repository has none, and that `setup github --migrate` builds the new board from. Set the id of your own template, for instance an organization's; the copy brings its views, fields and built-in workflows. A fine-grained token bound to another owner cannot read the default one: setup says what to do, and `--upgrade` then uses a built-in list of its fields |
 | `vision.maxLines` | `100` | Lines `docs/vision.md` may have; `check` fails above it (a positive whole number). See [`docs/vision.md`](commands.md#frame) |
+| `knowledge.maxLines` | `40` | Lines the body of a [knowledge note](#knowledge-notes) may have; `check` fails above it (a positive whole number) |
 | `docs.extra` | none | Extra living documents the `docs` skill keeps current after a merge: a list of `{ "path", "purpose" }`; its changes are flagged for human review. Add it yourself |
 | `context.claudeMdLines` | `80` | Most lines a tracked `CLAUDE.md` may have before `check` fails (context hygiene); a whole number from 1 |
 | `wip` | `1` | Open tickets In progress at once: `senior-mode start` refuses another and names the one to finish first; `status` shows the count when it is over. A [run](autonomy.md#run) is bounded by `autonomy.parallel` instead, and is the only caller that skips `wip`: it proves itself with a token, so setting `SENIOR_MODE_RUN=1` by hand does not |
@@ -399,6 +400,31 @@ takes the recommended answer, printed as `ask: ... (assumed)`. A key you already
 
 The ruleset still covers the default branch only: a project that works on `dev` is not protected there by
 `setup github`.
+
+## Knowledge notes
+
+A note is a Markdown file `docs/knowledge/<slug>.md` (`<slug>` kebab-case, one fact per note) that tells agents what
+the code does not: a trap, a rule the code follows, a procedure that is not obvious, why something is as it is.
+
+```markdown
+---
+paths: ["src/billing/**", "src/lib/money.ts"]
+verified: 2026-11-23
+origin: "#312"
+kind: pitfall
+---
+
+# Reordering imports in billing breaks currency rounding
+```
+
+- `paths`: a non-empty list of globs (the dialect of `protected`): the files the note is about.
+- `verified`: `YYYY-MM-DD`, not in the future: when a person or an agent last confirmed the note is true.
+- `origin`: `#<n>` (the ticket or pull request that taught it), `retro` or a path under `docs/spikes/`.
+- `kind`: `pitfall`, `convention`, `howto` or `context`.
+- The body (after the front matter) has at most `knowledge.maxLines` lines (default 40): a longer subject is split in notes, or becomes an ADR or a spec.
+
+`senior-mode check` runs a `knowledge` step when `docs/knowledge/` exists and fails, naming the file and the key, on a note
+that breaks one of these rules; a repository with no such directory sees nothing.
 
 ## Presets
 

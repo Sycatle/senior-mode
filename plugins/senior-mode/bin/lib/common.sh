@@ -20,6 +20,7 @@ DEFAULTS='{
   "review": { "sections": [], "crossModel": true, "otherModel": "sonnet" },
   "docs": { "extra": [] },
   "vision": { "maxLines": 100 },
+  "knowledge": { "maxLines": 40 },
   "github": { "protection": "", "requiredChecks": true }
 }'
 die() {

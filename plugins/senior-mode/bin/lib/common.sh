@@ -4,7 +4,7 @@ DEFAULTS='{
   "ci": { "mode": "local" },
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "merge": false, "escalate": true, "sessionTimeout": 90, "schedule": "02:00", "ticketsPerHour": 6, "sessionsPerHour": 0, "minMemoryMB": 1024, "userSettings": false },
   "serve": { "interval": 60, "grace": 600, "breakerCooldown": 300 },
-  "notify": { "mention": "", "webhook": "", "digest": true, "digestAt": "" },
+  "notify": { "mention": "", "webhook": "", "digest": true, "digestAt": "", "batchMinutes": 60 },
   "agent": { "command": "claude" },
   "e2e": { "slots": 2 },
   "limits": { "prLines": 400, "diffLines": { "S": 300, "M": 800, "L": 2000 } },

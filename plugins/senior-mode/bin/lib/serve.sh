@@ -1137,6 +1137,25 @@ serve_digest_at() {
     echo "notify: the webhook did not answer (digest)" >&2
 }
 
+# The questions that serve queued (notify, #308) go out as one notification, once the oldest has waited
+# notify.batchMinutes (default 60; 0 sends at each poll): at most one per window, whatever the number of questions. The
+# text is plain, control characters stripped and 300 characters at most (a title can come from an outsider). The label and
+# the comment of each question were already on GitHub; only the webhook waits. The queue is emptied even without a webhook.
+serve_questions() {
+  local file=$SERVE_DIR/questions now minutes first items count text
+  [ -s "$file" ] || return 0
+  now=$(serve_now)
+  minutes=$(serve_int notify.batchMinutes 0)
+  first=$(jq -rs 'map(.at) | min' "$file") || return 0
+  [ $((now - first)) -ge $((minutes * 60)) ] || return 0
+  items=$(jq -sc 'map(.reason |= (gsub("[[:cntrl:]]"; " ") | .[:300]))' "$file") || return 0
+  : >"$file"
+  count=$(jq 'length' <<<"$items")
+  text=$(jq -r 'map("#\(.number) \(.reason)") | join("; ") | gsub("[[:cntrl:]]"; " ")' <<<"$items")
+  text="$count decision$([ "$count" = 1 ] || echo s) wait for you: $text"
+  notify_post decisions "" "" "${text:0:300}" "$(jq -nc --argjson i "$items" '{count: ($i | length), items: $i}')"
+}
+
 # The loop (ADR 0017): the shared part of `run` (run_prepare, run_start, run_reap, run_finish...) with a poll
 # every serve.interval seconds instead of a batch. TERM and INT stop the launching and drain. State is under
 # <git common dir>/senior-mode/serve/. SENIOR_MODE_SERVE_ONCE=1 polls once, waits for its sessions and exits.
@@ -1180,6 +1199,7 @@ serve_loop() {
   echo "serve: polling every ${interval}s, $SERVE_PARALLEL session(s) at a time; sessions and state in $SERVE_DIR"
   while [ "$SERVE_TERM" = false ]; do
     serve_poll
+    serve_questions
     serve_digest
     serve_digest_at
     [ -z "${SENIOR_MODE_SERVE_ONCE:-}" ] || break
@@ -1189,6 +1209,7 @@ serve_loop() {
     kill "$sleeper" 2>/dev/null || true
   done
   serve_drain
+  serve_questions
   echo "serve: stopped"
 }
 

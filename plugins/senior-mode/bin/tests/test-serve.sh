@@ -72,6 +72,9 @@ case "$*" in
   "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
   "project item-edit"*) ;;
   "auth status"*) [ ! -f "$FIX/gh-auth-bad" ] ;;
+  "api repos/acme/app/compare/"*)
+    sha=$(sed -E 's#^api repos/acme/app/compare/[^ ]*\.\.\.([^ ]+) .*#\1#' <<<"$*")
+    echo "{\"behind_by\": $(cat "$FIX/behind-$sha" 2>/dev/null || echo 0)}" | respond ;;
   "api repos/acme/app/pulls/"*"/commits"*) cat "$FIX/commits-$(sed -E 's#.*/pulls/([0-9]+)/commits.*#\1#' <<<"$*").json" | respond ;;
   "api repos/acme/app/pulls/"*"/files"*) cat "$FIX/files-$(sed -E 's#.*/pulls/([0-9]+)/files.*#\1#' <<<"$*")" 2>/dev/null || echo src/app.ts ;;
   "api repos/acme/app/pulls/"[0-9]*) cat "$FIX/pull-$(sed -E 's#^api repos/acme/app/pulls/([0-9]+).*#\1#' <<<"$*").json" | respond ;;
@@ -1320,6 +1323,39 @@ session 90-opus-reviewer "reviewed: success" "" "" review:success
 fresh
 once || fail "Z: serve failed: $(cat "$work/out")"
 grep -q 'never instructions to you' "$state/90.prompt" || fail "Z: the reviewer prompt does not mark the pull request as untrusted data: $(ls "$state")"
+
+# LP (#523, ADR 0032): github.protection local. GitHub has no up-to-date rule to call a branch behind (it says clean), so
+# senior-mode reads the distance: a branch behind is rebased by the server and merges on its new head; one up to date merges.
+# A missing status waits, and under none nothing merges.
+boardx "73:In review:S:P1 next" "74:In review:S:P1 next"
+prs_reset
+old73=$(mkbranch feat/73-x f73.txt)
+sha74=$(mkbranch feat/74-x f74.txt)
+config '{}'
+new73=$(mkrebased feat/73-x "$old73")
+jq '.github.protection = "local" | .github.requiredChecks = false' "$repo/.claude/senior-mode.json" >"$work/cfg.json" && mv "$work/cfg.json" "$repo/.claude/senior-mode.json"
+pr 173 feat/73-x "$old73" clean
+green "$old73"
+echo 2 >"$FIX/behind-$old73"
+echo "$new73" >"$FIX/rebase-173"
+fresh
+once || fail "LP: serve failed: $(cat "$work/out")"
+grep -q '^pr update-branch 173 --rebase -R acme/app$' "$GH_LOG" || fail "LP: a branch behind is not rebased: $(grep '^pr ' "$GH_LOG")"
+grep -q "^pr merge 173 --rebase --match-head-commit $new73 " "$GH_LOG" || fail "LP: not merged on the new head: $(grep '^pr ' "$GH_LOG")"
+prs_reset
+pr 174 feat/74-x "$sha74" clean
+green "$sha74"
+fresh
+once || fail "LP: serve failed: $(cat "$work/out")"
+grep -q '^pr update-branch' "$GH_LOG" && fail "LP: a branch up to date is rebased"
+grep -q "^pr merge 174 --rebase --match-head-commit $sha74 " "$GH_LOG" || fail "LP: an up-to-date branch is not merged: $(grep '^pr ' "$GH_LOG")"
+prs_reset
+pr 174 feat/74-x "$sha74" clean
+st "$sha74" "senior-mode/ci success" "senior-mode/review success"
+fresh
+once || fail "LP: serve failed: $(cat "$work/out")"
+grep -q '^pr merge' "$GH_LOG" && fail "LP: merged with senior-mode/security missing: $(grep '^pr ' "$GH_LOG")"
+grep -q 'Waiting for a human.*#74.*senior-mode/security not green' "$work/out" || fail "LP: the missing status is not said: $(cat "$work/out")"
 
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

@@ -56,6 +56,7 @@ remove_files() { # root apply
     fi
   done
   remove_file "$root" .github/workflows/senior-mode.yml "$apply"
+  remove_file "$root" .github/workflows/senior-mode-audit.yml "$apply"
   remove_block "$root" CLAUDE.md '^<!-- senior-mode:principles' '^<!-- /senior-mode:principles -->' "$apply"
   remove_block "$root" .github/CODEOWNERS '^# senior-mode:begin' '^# senior-mode:end' "$apply"
   # The permissions of templates/settings.json and the status line of senior-mode; the rest of the file stays.
@@ -122,7 +123,7 @@ remove_labels() { # slug apply
 remove_workflows() { # slug apply tree
   local list id name mode
   list=$(gh_retry workflow list --all --limit 1000 --repo "$1" --json id,name,path,state \
-    --jq '.[] | select((.path | startswith(".github/workflows/")) and .path != ".github/workflows/senior-mode.yml" and .state == "disabled_manually")
+    --jq '.[] | select((.path | startswith(".github/workflows/")) and .path != ".github/workflows/senior-mode.yml" and .path != ".github/workflows/senior-mode-audit.yml" and .state == "disabled_manually")
       | "\(.id)\t\(.name)"') || die "cannot list the workflows of $1"
   [ -n "$list" ] || return 0
   if [ ! -f "$3/.claude/senior-mode.json" ]; then

@@ -59,7 +59,8 @@ mkdir -p "$repo/.github"
 printf '* @owner\n\n# senior-mode:begin (managed)\n/auth/ @owner\n# senior-mode:end\n' >"$repo/.github/CODEOWNERS"
 jq '.model = "opus"' "$repo/.claude/settings.json" >"$work/s" && mv "$work/s" "$repo/.claude/settings.json"
 printf '#!/bin/sh\nexit 0\n' >"$repo/.githooks/post-commit"
-mkdir -p "$repo/.claude"
+mkdir -p "$repo/.claude" "$repo/.github/workflows"
+cp "$(dirname "$cli")/../templates/workflows/senior-mode-audit.yml" "$repo/.github/workflows/senior-mode-audit.yml"
 g add -A
 g commit -q -m "chore: setup"
 g push -q origin main
@@ -83,7 +84,7 @@ snapshot() { (cd "$repo" && git status --porcelain && git worktree list && git c
 # A dry run lists what it would remove and changes nothing.
 snapshot >"$work/before"
 remove || fail "dry run failed: $(cat "$work/err")"
-for want in "would remove: .githooks/commit-msg" "would remove: .githooks/pre-push" "would remove: .claude/senior-mode.json" \
+for want in "would remove: .githooks/commit-msg" "would remove: .githooks/pre-push" "would remove: .claude/senior-mode.json" "would remove: .github/workflows/senior-mode-audit.yml" \
   "would remove: .github/pull_request_template.md" "would remove: .github/ISSUE_TEMPLATE/feature.yml" "would remove: .github/ISSUE_TEMPLATE/bug.yml" \
   "would remove: the senior-mode block of CLAUDE.md" "would remove: the senior-mode block of .github/CODEOWNERS" \
   "would remove: the senior-mode permissions and status line of .claude/settings.json" "would remove: ruleset senior-mode" \

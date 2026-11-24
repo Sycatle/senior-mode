@@ -101,6 +101,11 @@ GH_STUB_RULESETS=0 expect_fail "E2" 'no active senior-mode ruleset' 'senior-mode
 GH_STUB_RULESETS=fail doctor || fail "E3: an unreadable ruleset fails"
 grep -q 'warn .*could not read the rulesets' "$work/out" || fail "E3: no warning: $(cat "$work/out")"
 
+config "$(jq -c '.github.protection = "local"' <<<"$good")"
+doctor || fail "E4: github.protection local fails"
+grep -q 'warn .*github.protection is local' "$work/out" || fail "E4: no warning for local: $(cat "$work/out")"
+config "$good"
+
 # F: customization: a lift names its ADR, a refused one fails; overrides and layer values are listed.
 printf -- '---\nid: 0016\nstatus: proposed\n---\n' >"$repo/docs/adr/0016-lift.md"
 config "$(jq -c '.process = {profile: "fast", lifts: [{rule: "review", adr: "docs/adr/0016-lift.md"}]}' <<<"$good")"

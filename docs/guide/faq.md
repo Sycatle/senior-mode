@@ -34,17 +34,23 @@ Why: [ADR 0006](../adr/0006-local-ci.md).
 
 GitHub refuses rulesets and branch protection on private repositories of a Free account or
 organization (HTTP 403, "Upgrade to GitHub Pro or make this repository public"). Setup reports it and
-goes on: it skips the ruleset, sets `ci.mode` to `local` and records `github.protection: "none"` in
+goes on: it skips the ruleset, sets `ci.mode` to `local` and records `github.protection: "local"` in
 `.claude/senior-mode.json`.
 
 You keep the board, labels, git hooks, the Bash guard and the statuses, but branch protection is
 **not enforced on the server**: anyone with push access can push to the default branch, and GitHub
-does not block a merge when `senior-mode/ci`, `senior-mode/review` or `senior-mode/security` is missing or red. Your options:
+does not block a merge when `senior-mode/ci`, `senior-mode/review` or `senior-mode/security` is missing or red.
+
+`serve` and `run` still merge on their own, with no paid plan: under `local` they require the three statuses on
+the head and a branch up to date with the base before each merge, and setup writes
+`.github/workflows/senior-mode-audit.yml` (commit it), which opens a `needs-human` issue when a commit reaches the
+default branch outside a pull request. That is a gate in senior-mode and a report after the fact, not a server
+protection: anyone with push access can still push to the default branch, and a merge by hand skips the gate. Your options:
 
 - make the repository public;
 - upgrade to GitHub Pro or Team, then run `/senior-mode:setup` again to get the ruleset;
-- accept it and keep the local gate (the pre-push hook and `senior-mode check`), checking the
-  statuses yourself before merging. If a governance document describes your controls, say it this way.
+- accept it and keep the local gate (the pre-push hook, `senior-mode check` and the merge gate of `serve`), checking the
+  statuses yourself before merging by hand; write `github.protection: "none"` to stop `serve` and `run` from merging. If a governance document describes your controls, say it this way.
 
 ## Can I use it on an existing repository?
 

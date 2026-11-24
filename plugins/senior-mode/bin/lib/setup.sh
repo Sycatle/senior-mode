@@ -166,18 +166,32 @@ ruleset_refused() {
   grep -q 'HTTP 403' <<<"$err" && grep -qiE 'upgrade to github (pro|team)|make this repository public' <<<"$err"
 }
 
-# Sets github.protection (spec 0001 §13): ruleset, or none when the plan refuses it; none also forces
-# ci.mode local, since the pre-push hook is then the only gate. Prints the plain-words warning.
-setup_protection() { # config-file ruleset|none
+# Sets github.protection (spec 0001 §13): ruleset, or local when the plan refuses it (ADR 0032); local also forces
+# ci.mode local, since the pre-push hook is then the only gate, and makes senior-mode itself the merge gate (statuses and
+# an up-to-date branch checked by run_blocker, an audit of direct pushes). Prints the plain-words warning.
+setup_protection() { # config-file ruleset|local
   local was=""
   [ "$(jq -r '.ci.mode' "$1")" != actions ] || was=" (changed from actions)"
-  if [ "$2" = none ]; then
-    json_update "$1" '.github.protection = "none" | .ci.mode = "local"' || [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
+  if [ "$2" = local ]; then
+    json_update "$1" '.github.protection = "local" | .ci.mode = "local"' || [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
     echo "protection: NOT enforced on the server. GitHub offers no rulesets or branch protection on a private repository of a Free account or organization, so anyone with push access can push to the default branch. ci.mode is local$was: the pre-push hook is the only gate."
-    echo "protection: to enforce it, make the repository public, or upgrade to GitHub Pro or Team and run setup again; otherwise accept it and keep the local gate."
+    echo "protection: github.protection is local: serve and run merge a pull request only when senior-mode/ci, senior-mode/review and senior-mode/security are green on its head and the branch is up to date with the base (senior-mode checks it, GitHub does not), and an audit workflow reports a push that belongs to no merged pull request. It reports after the fact and blocks nothing."
+    echo "protection: to enforce it on the server, make the repository public, or upgrade to GitHub Pro or Team and run setup again; to stop merging on its own, set github.protection to none in .claude/senior-mode.json."
   else
     json_update "$1" '.github.protection = "ruleset"' || [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
   fi
+}
+
+# The audit of direct pushes (ADR 0032) written for github.protection local: .github/workflows/senior-mode-audit.yml, never
+# replaced. Like CODEOWNERS it is a file for the project to commit: GitHub runs it from the default branch.
+setup_audit() { # root
+  local tpl out
+  tpl=$(cd "$(dirname "$SELF")/.." && pwd)/templates
+  out=$(place "$tpl/workflows/senior-mode-audit.yml" "$1/.github/workflows/senior-mode-audit.yml" "audit workflow senior-mode-audit.yml")
+  echo "$out"
+  case $out in
+    *created*) echo "audit workflow: commit and merge .github/workflows/senior-mode-audit.yml (setup commits nothing); it opens a needs-human issue when a commit reaches the default branch outside a pull request" ;;
+  esac
 }
 
 # The GitHub side of a project (spec 0001 §11, #11), idempotent: Project linked to the repository with
@@ -200,6 +214,8 @@ setup_workflows() { # slug mode
   fi
   while IFS=$'\t' read -r id path state wname; do
     [ -n "$id" ] || continue
+    # The audit of direct pushes (ADR 0032) is senior-mode's own and costs nothing to keep on.
+    [ "$path" != .github/workflows/senior-mode-audit.yml ] || continue
     if [ "$2" = local ] && [ "$state" = active ]; then
       gh_retry workflow disable "$id" --repo "$1" >/dev/null || die "cannot disable workflow $wname"
       disabled+="${disabled:+, }$wname"
@@ -368,7 +384,8 @@ setup_github() {
     fi
     [ "$review" = false ] || echo "code owners: a pull request touching a protected zone needs the owner's approval, and GitHub never lets an author approve their own pull request; agents act as the owner (#175 gives them an identity of their own), so merging one is the owner's call by hand, with gh pr merge --admin"
   elif ruleset_refused <<<"$err"; then
-    setup_protection "$file" none
+    setup_protection "$file" local
+    setup_audit "$root"
   else
     die "ruleset on the default branch: $err"
   fi

@@ -31,3 +31,8 @@ frames: a queue that waits for a person to merge stops the daemon. Spec 130 alre
 
 - The protected zones are the one place where the owner must keep the list current.
 - The daily digest lists what merged, so the owner can read after the fact.
+
+## Note (2026-11-24, #523)
+
+Amended by [0032](0032-local-protection-on-github-free.md): "the server enforces protection" also holds when `github.protection` is
+`local`, where senior-mode requires the three statuses and an up-to-date branch itself and an audit reports direct pushes.

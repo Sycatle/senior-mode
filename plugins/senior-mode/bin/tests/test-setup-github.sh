@@ -832,14 +832,19 @@ set_protected '[]'
 setup
 
 # Private repository on GitHub Free: the API refuses rulesets (real response of GET and POST, HTTP 403).
-# Setup finishes, forces ci.mode local, records protection none and warns in plain words.
+# Setup finishes, forces ci.mode local, records protection local (ADR 0032), writes the audit workflow and warns in plain words.
 rm -f "$FIX/rulesets.json"
 echo '[{"id": 14, "name": "senior-mode", "path": ".github/workflows/senior-mode.yml", "state": "disabled_manually"}]' >"$FIX/workflows.json"
 for where in 1 write; do
-  rm -f "$FIX/rulesets.json"
+  rm -f "$FIX/rulesets.json" "$repo/.github/workflows/senior-mode-audit.yml"
   jq '.ci.mode = "actions"' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
   PROTECTION_403=$where setup
-  [ "$(cfg .github.protection)" = none ] || fail "$where: protection not recorded as none: $(cfg .github)"
+  [ "$(cfg .github.protection)" = local ] || fail "$where: protection not recorded as local: $(cfg .github)"
+  audit=$repo/.github/workflows/senior-mode-audit.yml
+  [ -f "$audit" ] || fail "$where: the audit workflow is not written"
+  grep -q "audit workflow senior-mode-audit.yml: created" "$work/out" || fail "$where: audit workflow not reported: $(cat "$work/out")"
+  grep -q "anyone with push access" "$work/out" || fail "$where: the push risk is not said: $(cat "$work/out")"
+  grep -q "reports after the fact and blocks nothing" "$work/out" || fail "$where: the audit's limit is not said: $(cat "$work/out")"
   [ "$(cfg .ci.mode)" = local ] || fail "$where: ci.mode not forced to local: $(cfg .ci)"
   [ "$(cfg .project.number)" = 5 ] || fail "$where: the rest of the setup is lost: $(cfg .project)"
   grep -q "NOT enforced" "$work/out" || fail "$where: no plain warning: $(cat "$work/out")"
@@ -851,6 +856,22 @@ for where in 1 write; do
   logged "api -X PUT repos/acme/app/rulesets" && fail "$where: ruleset updated although the plan refuses it"
 done
 [ "$(grep -c "NOT enforced" "$work/out")" = 1 ] || fail "warning repeated: $(cat "$work/out")"
+
+# Rerun on the same plan: idempotent. The audit workflow is kept as it is and the config does not change.
+before=$(cat "$repo/.claude/senior-mode.json") audit_before=$(cat "$audit")
+PROTECTION_403=1 setup
+grep -q "audit workflow senior-mode-audit.yml: kept" "$work/out" || fail "rerun: audit workflow not kept: $(cat "$work/out")"
+[ "$(cat "$repo/.claude/senior-mode.json")" = "$before" ] || fail "rerun: the config changed"
+[ "$(cat "$audit")" = "$audit_before" ] || fail "rerun: the audit workflow changed"
+grep -q "commit and merge .github/workflows/senior-mode-audit.yml" "$work/out" && fail "rerun: commit reminder repeated for a kept file"
+
+# The audit workflow is senior-mode's own: it never disables it, though ci.mode local disables the others.
+echo '[{"id": 15, "name": "senior-mode audit", "path": ".github/workflows/senior-mode-audit.yml", "state": "active"},
+  {"id": 16, "name": "ci", "path": ".github/workflows/ci.yml", "state": "active"}]' >"$FIX/workflows.json"
+PROTECTION_403=1 setup
+logged "workflow disable 16" || fail "another workflow not disabled under local: $(cat "$GH_LOG")"
+logged "workflow disable 15" && fail "the audit workflow was disabled"
+echo '[{"id": 14, "name": "senior-mode", "path": ".github/workflows/senior-mode.yml", "state": "disabled_manually"}]' >"$FIX/workflows.json"
 
 # The plan changes (public, Pro): the next run puts the ruleset back and says so.
 setup

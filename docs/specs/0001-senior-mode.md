@@ -291,7 +291,7 @@ these bounds:
   improvises is worse than one that stops. One rule, stated here, in the SessionStart router of a
   run session and in each skill that asks (`grill`, `frame`, `setup`): for a reversible choice take
   the recommended option and say so in the report; never accept an L spec or any ADR, never accept
-  a protection gap (no branch protection), never touch a protected zone: leave the document `draft`
+  a protection gap (`github.protection` none), never touch a protected zone: leave the document `draft`
   or `proposed`, label the issue or pull request `needs-human`, and stop that step with a report of
   what a human must decide. A headless session in a workspace Claude Code does not yet trust ignores
   the project's permissions (`.claude/settings.json`): trust the folder once in an interactive
@@ -334,7 +334,7 @@ for each, at most P at a time:
   `autonomy.escalate` is true (default). A ticket given up goes back to `Backlog` with a comment;
 - merges a delivered pull request only when `autonomy.merge` is true, `senior-mode/ci` and
   `senior-mode/review` are both `success` on its head, it has no `needs-human` label,
-  `github.protection` is `ruleset` and no changed file (old name of a rename included) matches the
+  `github.protection` is `ruleset` (or `local`, §11) and no changed file (old name of a rename included) matches the
   `protected` globs of the default branch, checked by `run` itself; the merge names that head
   (`--match-head-commit`), and the guard denies the ticket session any merge; after any merge, one more session updates the living docs on a
   branch of its own;
@@ -406,11 +406,17 @@ last result.
   API answers HTTP 403 ("Upgrade to GitHub Pro or make this repository public to enable this
   feature."). `setup` detects it on the status and a stable fragment of that message, skips the ruleset
   and finishes the rest. It sets `ci.mode` to `local` (the pre-push hook is then the only gate),
-  records `github.protection: "none"` (§13) and warns in plain words: protection is not enforced on
+  records `github.protection: "local"` (§13, ADR 0032) and warns in plain words: protection is not enforced on
   the server, anyone with push access can push to the default branch; make the repository public,
   upgrade to Pro or Team, or accept the local gate. The setup skill relays the warning and asks the
   user to acknowledge it. Any other refusal stops `setup`. A later run on a plan that allows rulesets
-  creates the ruleset and records `"ruleset"`; `ci.mode` is not changed back.
+  creates the ruleset and records `"ruleset"`; `ci.mode` is not changed back. Under `local`, senior-mode is
+  the merge gate: `run` and `serve` require the three statuses on the head, whatever `github.requiredChecks`
+  says, and a branch up to date with the base (`compare` `behind_by` 0; `serve` rebases one that is behind),
+  and `setup github` writes `.github/workflows/senior-mode-audit.yml` (for the project to commit): on a push to
+  the default branch, a commit in no merged pull request opens or comments on one `needs-human` issue "Direct
+  push to <branch> outside a pull request". The audit reports, it blocks nothing: anyone with push access can
+  still push, and `"none"` (written by hand) stops merging on its own.
 - **Titles:** issue and PR titles say what the user gets, in plain words, in the project language.
 
 ## 12. Documents in an adopted repository
@@ -472,7 +478,7 @@ has to treat an error as "empty".
 
 Field and option ids are cached here so no agent rediscovers them with extra API calls.
 `github.protection` is written by `setup github`: `"ruleset"` when the `senior-mode` ruleset is in
-place, `"none"` when the plan refused it (§11), so status and governance documents can say whether
+place, `"local"` when the plan refused it (§11; `"none"`, written by hand, opts out of merging), so status and governance documents can say whether
 the default branch is protected on the server.
 
 `secrets` lists globs the secrets guard denies on top of its defaults (section 10): a glob without a slash

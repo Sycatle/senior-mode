@@ -87,9 +87,10 @@ Before changing anything, setup:
   rewrite it. With `github.requiredChecks: false` in the config, the ruleset has no required status
   (setup removes the rule if it had one): see [Configuration](configuration.md). Admins can bypass it with `gh pr merge --admin`; agents cannot (see
   [Autonomy](autonomy.md)). On a private repository of a GitHub Free account or organization, GitHub
-  refuses rulesets: setup says so, switches to `local` mode and records `github.protection: "none"`.
-  Nothing then stops a push to the default branch on the server, only your pre-push hook; setup asks
-  you to acknowledge it. See the [FAQ](faq.md#my-repository-is-private-on-the-free-plan-what-changes).
+  refuses rulesets: setup says so, switches to `local` mode, records `github.protection: "local"` and
+  writes an audit workflow to commit (`.github/workflows/senior-mode-audit.yml`). `serve` then merges with senior-mode as
+  the gate (the three statuses and an up-to-date branch). Nothing stops a push to the default branch on the server,
+  only your pre-push hook, and the audit only reports one; setup asks you to acknowledge it. See the [FAQ](faq.md#my-repository-is-private-on-the-free-plan-what-changes).
 - **Workflows.** In `local` mode, the repository's GitHub Actions workflows are disabled. The files
   are kept; `gh workflow enable <name>` turns one back on.
 

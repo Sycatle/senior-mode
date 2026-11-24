@@ -92,6 +92,9 @@ case "$*" in
   "api repos/acme/app/commits/sha"*"/status")
     n=$(sed -E 's#.*/sha([0-9]+)/status#\1#' <<<"$*")
     cat "$FIX/status-$n" 2>/dev/null || echo '{"statuses": []}' ;;
+  "api repos/acme/app/compare/"*)
+    n=$(sed -E 's#.*\.\.\.sha([0-9]+).*#\1#' <<<"$*")
+    echo "{\"behind_by\": $(cat "$FIX/behind-$n" 2>/dev/null || echo 0)}" | respond ;;
   "api repos/acme/app/issues/"*"/comments"*) echo '{}' ;;
   "api repos/acme/app/issues/"*"/labels"*) echo '[]' ;;
   "pr merge"*) ;;
@@ -406,6 +409,36 @@ board 49 '[]'
 session 49-sonnet delivered pr
 run || fail "K2: run failed: $(cat "$work/out")"
 grep -q 'pr merge' "$GH_LOG" && fail "K2: merged with no protection on the server"
+
+# K3 (#523, ADR 0032): github.protection local (GitHub Free): senior-mode is the gate. The three statuses are required whatever
+# github.requiredChecks says, and the branch must be up to date with the base. Green and up to date merges.
+config '{"merge": true}' '{"protection": "local", "requiredChecks": false}'
+board 94 '[]'
+session 94-sonnet delivered pr
+echo "$green" >"$FIX/status-94"
+run || fail "K3: run failed: $(cat "$work/out")"
+grep -q 'pr merge 194' "$GH_LOG" || fail "K3: green and up to date not merged under local: $(cat "$work/out")"
+grep -q 'compare/main...sha94' "$GH_LOG" || fail "K3: the distance to the base was not read: $(cat "$GH_LOG")"
+board 95 '[]'
+session 95-sonnet delivered pr
+echo '{"statuses": [{"context": "senior-mode/ci", "state": "success"}, {"context": "senior-mode/review", "state": "success"}]}' >"$FIX/status-95"
+run || fail "K3: run failed: $(cat "$work/out")"
+grep -q 'pr merge 195' "$GH_LOG" && fail "K3: merged under local without senior-mode/security"
+grep -q 'Waiting for a human.*#95.*senior-mode/security not green' "$work/out" || fail "K3: report misses the status: $(cat "$work/out")"
+board 96 '[]'
+session 96-sonnet delivered pr
+echo "$green" >"$FIX/status-96"
+echo 3 >"$FIX/behind-96"
+run || fail "K3: run failed: $(cat "$work/out")"
+grep -q 'pr merge 196' "$GH_LOG" && fail "K3: merged a branch that is behind its base"
+grep -q 'Waiting for a human.*#96.*it is behind main by 3 commits' "$work/out" || fail "K3: report misses the distance: $(cat "$work/out")"
+# The ruleset reads no distance (the server holds it), and none merges nothing.
+config '{"merge": true}' '{"protection": "ruleset"}'
+board 97 '[]'
+session 97-sonnet delivered pr
+echo "$green" >"$FIX/status-97"
+run || fail "K3: run failed: $(cat "$work/out")"
+grep -q 'compare/' "$GH_LOG" && fail "K3: the distance was read under ruleset"
 
 # F: a ticket already opened with `senior-mode start` (its worktree and branch exist) is reused as it is.
 config '{}'

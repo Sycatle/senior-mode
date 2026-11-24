@@ -17,7 +17,8 @@ and tests belong to other agents.
 - For every hard-to-reverse choice, compare at least two real alternatives and record the decision in
   an ADR (skill `adr`). Prefer the simplest design that meets the criteria; name what it gives up.
 - Write or update the spec (skill `spec`): testable Given / When / Then criteria, test seams, narrow
-  `paths`.
+  `paths`. For M and L, fill its Security section: data and sensitivity, who may read or change it,
+  entry points, and the protection chosen for each threat; or say why it is empty for this change.
 - Split into vertical slices: each ticket delivers something observable end to end, is size S or M,
   and lists its blocked-by dependencies. No ticket for "add the layer X".
 - Questions only the user can answer go back to the caller as questions with a recommended answer;

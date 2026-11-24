@@ -26,6 +26,12 @@ What this spec deliberately does not cover.
 
 Where tests hook in: functions, endpoints, commands, pages.
 
+## Security (M and L)
+
+Data handled and its sensitivity; who may read or change it; entry points (routes, commands, files,
+third-party input); for each threat, the protection chosen. Empty only with the reason (no data, no
+new entry point).
+
 ## Users and journeys (L only)
 
 ## Design (L only)

@@ -308,7 +308,8 @@
       "properties": {
         "mention": { "type": "string" },
         "webhook": { "type": "string", "pattern": "^(https?://.+)?$" },
-        "digest": { "type": "boolean" }
+        "digest": { "type": "boolean" },
+        "batchMinutes": { "type": "integer", "minimum": 0 }
       }
     },
     "agent": {

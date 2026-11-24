@@ -118,6 +118,35 @@ DRIFT_DEF="$BRANCH_DEF"'def drift($d; $locals): $d.items as $items
       | select([$d.hygiene.prs[].branch, $d.hygiene.branches[].name, $locals[]] | any(test(bre($i.number))) | not)
       | {number, title, kind: "stale", why: "\(.status) with no open pull request and no branch"}]);'
 
+# The decisions (#308): everything that waits for the human, from board_data and $now. A ticket with `needs-human`
+# (kind needs-human), a pull request with `needs-human` (pull-request), a ticket in framing (an open ticket with
+# `needs-info`: the questions of the framing wait for an answer) and a pull request labelled `framing-draft` (framing).
+# Each has its age (seconds since its last activity, GitHub's updatedAt; null when unknown) and the question to answer: the
+# first line of the last comment when a collaborator wrote it (the reason of the alert, without its mention), else a
+# default that does not repeat the title. Plain text, control characters stripped, 300 characters at most (a title can be an
+# outsider's). `options`, `recommended` and `id` are there for the answers of #466 and empty until then. Sorted by Priority
+# (a pull request has none), then the oldest first.
+# shellcheck disable=SC2016 # a jq program, not shell
+DECISIONS_DEF='def plain: gsub("[[:cntrl:]]"; " ") | gsub("^ +| +$"; "") | .[:300];
+  def asked($default): (.last // null) as $c
+    | (if $c != null and ((["OWNER", "MEMBER", "COLLABORATOR"] | index($c.assoc // "")) != null)
+        then ([$c.body | gsub("<!--.*?-->"; ""; "s") | split("\n")[] | select(test("\\S"))][0] // "")
+          | sub("^\\s*@[^ ]+ this needs a human \\([^)]*\\): "; "") | plain
+        else "" end) as $q
+    | if $q != "" then $q else $default end;
+  def decision($kind; $default): . as $i | {number, kind: $kind, title: (.title | plain),
+    age: (if .updated then (($now | fromdateiso8601) - (.updated | fromdateiso8601) | if . < 0 then 0 else . end) else null end),
+    question: asked($default), options: [], recommended: null, id: null,
+    priority: ($i.priority // null)};
+  def decisions($d): ([$d.items[] | select(.open and (.archived | not))
+      | if (.labels | index("needs-human")) then decision("needs-human"; "Needs your decision")
+        elif (.labels | index("needs-info")) then decision("framing"; "Answer the open questions of the framing")
+        else empty end]
+    + [$d.prs[] | if (.labels | index("needs-human")) then decision("pull-request"; "Merge or close this pull request")
+        elif (.labels | index("framing-draft")) then decision("framing"; "Approve or amend the framing")
+        else empty end])
+    | sort_by([([(.priority // "") | scan("^P([0-9]+)") | .[0] | tonumber] | first // 99), -(.age // 0), .number]);'
+
 # The dashboard as JSON, from board_data; $1 is the start of the period, $2 now, $3 the repository, $locals the
 # local branch names.
 # shellcheck disable=SC2016 # a jq program, not shell
@@ -138,6 +167,7 @@ STATUS_JQ="$BRANCH_DEF"'. as $d | $d.items as $items | {
       + [$d.prs[] | select(.failing | length > 0) | {kind: "pull request", number, title, why: ("failing: " + (.failing | join(", ")))}]
       + [$items[] | select(.open and (.labels | index("needs-human"))) | {kind: "ticket", number, title, why: "needs a human decision"}])
     | group_by([.kind, .number]) | map(.[0] + {why: (map(.why) | join("; "))})),
+  decisions: decisions($d),
   drift: drift($d; $locals),
   wip: {limit: $wip, count: ([$items[] | select(.open and .status == "In progress")] | length)},
   audit: $audit,
@@ -150,6 +180,7 @@ STATUS_JQ="$BRANCH_DEF"'. as $d | $d.items as $items | {
 # shellcheck disable=SC2016 # a jq program, not shell
 STATUS_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" else ($ls[] | "  " + .) end);
   def ticket: "#\(.number) \(.title)";
+  def age_text: if . == null then "age unknown" elif . < 3600 then "\(. / 60 | floor)m" elif . < 86400 then "\(. / 3600 | floor)h" else "\(. / 86400 | floor)d" end;
   "senior-mode · \(.repository) · \(.generatedAt)", "",
   sec("\($head) (\(.done | length))"; [.done[] | ticket] + (if .mergedPullRequests > 0
     then ["\(.mergedPullRequests) pull request\(if .mergedPullRequests > 1 then "s" else "" end) merged"] else [] end)),
@@ -157,7 +188,9 @@ STATUS_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" e
     [.inProgress[] | ticket + (if .worktree then " (worktree \(.worktree))" else "" end)]),
   sec("In review (\(.inReview | length))"; [.inReview[] | ticket + (if .pr then " (pull request #\(.pr))" else "" end)]),
   sec("Blocked or missing information (\(.blocked | length))"; [.blocked[] | ticket + ": " + (.reasons | join(", "))]),
-  sec("Waiting for a human (\(.waiting | length))"; [.waiting[] | "\(.kind) #\(.number) \(.title): \(.why)"]),
+  sec("Decisions (\(.decisions | length))"; [.decisions[] | "#\(.number) \(.title) · \(.kind) · \(.age | age_text): \(.question)"]),
+  (if ([.waiting[] | select(.why | test("failing: "))] | length) > 0 then sec("Failing checks (\([.waiting[] | select(.why | test("failing: "))] | length))";
+    [.waiting[] | select(.why | test("failing: ")) | "\(.kind) #\(.number) \(.title): \(.why | sub("^needs a human decision; "; ""))"]) else empty end),
   (if (.drift | length) > 0 then sec("Board drift (\(.drift | length))"; [.drift[] | ticket + ": " + .why]) else empty end),
   (if (.hygiene | hygiene_lines | length) > 0 then sec("Hygiene (\(.hygiene | hygiene_lines | length))"; .hygiene | hygiene_lines) else empty end),
   (if ((.specDrift // []) | length) > 0 then sec("Spec drift (\(.specDrift | length))"; [.specDrift[]
@@ -520,7 +553,7 @@ status_once() {
   # The local branches count too: a ticket worked on and not pushed yet has a branch.
   locals=$(local_branches)
   out=$(jq -c --arg now "$now" --arg since "$since_iso" --arg repo "$(repo_slug)" --argjson wip "$wip" \
-    --argjson audit "$audit" --argjson locals "$locals" --argjson process "$(process_summary)" "$PICK_DEF$DRIFT_DEF$STATUS_JQ" <<<"$data") ||
+    --argjson audit "$audit" --argjson locals "$locals" --argjson process "$(process_summary)" "$PICK_DEF$DRIFT_DEF$DECISIONS_DEF$STATUS_JQ" <<<"$data") ||
     die "could not build the status"
   trees=$(ticket_trees "$root")
   out=$(jq -c --argjson t "$trees" '.inProgress |= map(. + {worktree: ($t[.number | tostring])})' <<<"$out")

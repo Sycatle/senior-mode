@@ -446,16 +446,39 @@ session 60-sonnet "failed: it broke"
 fresh
 SENIOR_MODE_NOTIFY_WEBHOOK='' once || fail "J: serve failed: $(cat "$work/out")"
 grep -q 'https://hooks.example/senior' "$CURL_LOG" || fail "J: an empty variable hides notify.webhook: $(cat "$CURL_LOG")"
-# A timeout is a needs-human event; a failing webhook is said on stderr and serve goes on.
-config '{"sessionTimeout": 1}' '{}' '{"webhook": "https://hooks.example/senior"}'
+# A timeout is a needs-human event; a failing webhook is said on stderr and serve goes on. batchMinutes 0: no wait (#308).
+config '{"sessionTimeout": 1}' '{}' '{"webhook": "https://hooks.example/senior", "batchMinutes": 0}'
 board 61
 session 61-sonnet "" "" hang
 touch "$FIX/curl-fails"
 fresh
 SENIOR_MODE_TIMEOUT_UNIT=1 once || fail "J: serve failed with a failing webhook: $(cat "$work/out")"
 rm -f "$FIX/curl-fails"
-grep -q '"event":"needs-human"' "$CURL_LOG" || fail "J: no needs-human event: $(cat "$CURL_LOG")"
+grep -q '"event":"decisions"' "$CURL_LOG" || fail "J: no decisions event: $(cat "$CURL_LOG")"
 grep -q 'webhook' "$work/out" || fail "J: the failing webhook is not said: $(cat "$work/out")"
+# The questions are batched (#308): a needs-human event labels and mentions at once but is queued, and the webhook gets one
+# `decisions` notification once the oldest has waited notify.batchMinutes (default 60), whatever the number of questions.
+config '{"sessionTimeout": 1}' '{}' '{"webhook": "https://hooks.example/senior"}'
+board 61
+session 61-sonnet "" "" hang
+: >"$CURL_LOG"
+fresh
+SENIOR_MODE_TIMEOUT_UNIT=1 once || fail "J: serve failed: $(cat "$work/out")"
+grep -q 'issues/61/labels.*needs-human' "$GH_LOG" || fail "J: the question did not label the ticket at once: $(cat "$GH_LOG")"
+[ ! -s "$CURL_LOG" ] || fail "J: a question went out before its batch: $(cat "$CURL_LOG")"
+[ "$(wc -l <"$state/questions")" = 1 ] || fail "J: the question is not queued: $(cat "$state/questions" 2>&1)"
+now=$SENIOR_MODE_NOW
+printf '{"at": %s, "number": 7, "url": "https://github.com/acme/app/issues/7", "reason": "first\\u0007 question"}\n' "$((now - 600))" >>"$state/questions"
+printf '{"at": %s, "number": 8, "url": "https://github.com/acme/app/issues/8", "reason": "second"}\n' "$((now - 300))" >>"$state/questions"
+board
+once || fail "J: serve failed: $(cat "$work/out")"
+[ ! -s "$CURL_LOG" ] || fail "J: the batch went out before batchMinutes: $(cat "$CURL_LOG")"
+SENIOR_MODE_NOW=$((now + 3601)) once || fail "J: serve failed: $(cat "$work/out")"
+[ "$(wc -l <"$CURL_LOG")" = 1 ] || fail "J: not one notification for three questions: $(cat "$CURL_LOG")"
+jq -e '.event == "decisions" and .number == null and .count == 3 and (.items | map(.number) | sort) == [7, 8, 61]
+  and (.reason | startswith("3 decisions wait for you: ") and length <= 300 and (test("[[:cntrl:]]") | not))' \
+  <<<"$(sed -n 's/.* -d //p' "$CURL_LOG")" >/dev/null || fail "J: batched payload wrong: $(cat "$CURL_LOG")"
+[ ! -s "$state/questions" ] || fail "J: the queue is not emptied: $(cat "$state/questions")"
 # The breaker pause.
 config '{"parallel": 3, "maxConsecutiveFailures": 2, "escalate": false}' '{"breakerCooldown": 100}' '{"webhook": "https://hooks.example/senior"}'
 board 62 63
@@ -1060,7 +1083,8 @@ rm -f "$FIX/merge-fails"
 # A pull request that can never merge on its own (#282): protection none, a protected zone, merge off. The pull
 # request and its ticket get needs-human, a comment with the reason and one alert; a pull request that already
 # has the label is left alone, so the next poll does nothing. A status not green yet is only logged, retried.
-config '{}' '{}' '{"webhook": "https://hooks.example/senior"}'
+config '{}' '{}' '{"webhook": "https://hooks.example/senior", "batchMinutes": 0}'
+rm -f "$state/questions"
 jq '.github.protection = "none"' "$repo/.claude/senior-mode.json" >"$work/cfg.json" && mv "$work/cfg.json" "$repo/.claude/senior-mode.json"
 : >"$CURL_LOG"
 once || fail "W: serve failed: $(cat "$work/out")"
@@ -1069,7 +1093,7 @@ grep -q 'issues/166/labels.*needs-human' "$GH_LOG" || fail "W: #166 not labelled
 grep -q 'issues/66/labels.*needs-human' "$GH_LOG" || fail "W: ticket #66 not labelled needs-human: $(cat "$GH_LOG")"
 grep -q 'issues/166/comments.*@acme.*no branch protection' "$GH_LOG" || fail "W: no comment with the reason: $(cat "$GH_LOG")"
 [ "$(grep -c 'hooks.example' "$CURL_LOG")" = 1 ] || fail "W: the alert did not fire once: $(cat "$CURL_LOG")"
-jq -e '.event == "needs-human" and .number == 166 and (.reason | test("no branch protection"))' <<<"$(sed -n 's/.* -d //p' "$CURL_LOG")" >/dev/null ||
+jq -e '.event == "decisions" and .count == 1 and .items[0].number == 166 and (.items[0].reason | test("no branch protection"))' <<<"$(sed -n 's/.* -d //p' "$CURL_LOG")" >/dev/null ||
   fail "W: webhook payload wrong: $(cat "$CURL_LOG")"
 grep -q 'Waiting for a human.*#66.*pull request #166, the server enforces no branch protection' "$work/out" || fail "W: not reported: $(cat "$work/out")"
 pr 166 feat/66-x "$sha66" clean needs-human

@@ -346,7 +346,7 @@ pr_external() {
 # a branch up to date with the base), no needs-human, the three statuses green on the head, no protected zone among the
 # files GitHub would merge.
 run_blocker() {
-  local pr=$1 sha=$2 missing="" base files zones gaps need='["senior-mode/ci", "senior-mode/review", "senior-mode/security"]'
+  local pr=$1 sha=$2 missing="" base files zones gaps reason need='["senior-mode/ci", "senior-mode/review", "senior-mode/security"]'
   # A profile that lifts the independent review (an accepted ADR, process.lifts) drops its status from the bounds.
   [ "$(config_get process.gates.review 2>/dev/null)" != false ] || need='["senior-mode/ci", "senior-mode/security"]'
   if [ "$RUN_MERGE" != true ]; then
@@ -376,10 +376,11 @@ run_blocker() {
   elif zones=$(protected_match "$RUN_GLOBS" < <(cut -f1 <<<"$files")) && [ -n "$zones" ]; then
     echo "it touches a protected zone ($(paste -sd, - <<<"$zones" | sed 's/,/, /g'))"
   else
-    # One commit per ticket and the size budget of the tickets it closes (#297, #303).
-    missing=$(delivery_blocker "$RUN_SLUG" "$pr" "$3" "$files")
-    if [ -n "$missing" ]; then
-      echo "$missing"
+    # One commit per ticket and the size budget of the tickets it closes (#297, #303), then their red tests (#306).
+    reason=$(delivery_blocker "$RUN_SLUG" "$pr" "$3" "$files")
+    [ -n "$reason" ] || reason=$(red_blocker "$RUN_SLUG" "$pr" "$(jq -r '.body // ""' <<<"$3")" "$RUN_ROOT")
+    if [ -n "$reason" ]; then
+      echo "$reason"
     elif [ "$RUN_PROTECTION" = local ]; then
       # The ruleset would require an up-to-date branch; serve's rebase step lifts this one (the reason starts "it is behind").
       base=$(jq -r '.base.ref // empty' <<<"$3")

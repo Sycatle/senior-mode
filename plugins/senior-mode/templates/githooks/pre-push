@@ -22,7 +22,8 @@ while read -r _ sha _ rsha; do
   if [[ $sha =~ ^0+$ ]]; then scoped=false; break; fi
   if [[ $rsha =~ ^0+$ ]]; then
     from=
-    for b in origin/HEAD origin/main origin/master; do
+    integration=$(jq -r '.workflow.integration // empty' "$config" 2>/dev/null) || integration=
+    for b in ${integration:+"origin/$integration"} origin/HEAD origin/main origin/master; do
       from=$(git -C "$root" merge-base "$sha" "$b" 2>/dev/null) && break
       from=
     done

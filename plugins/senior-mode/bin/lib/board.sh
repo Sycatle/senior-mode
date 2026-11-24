@@ -248,7 +248,7 @@ issue_create() {
     [ -z "$milestone" ] || edits+=(--milestone "$milestone")
     [ -z "$severity" ] || edits+=(--add-label security)
     if [ -n "$type" ]; then
-      edits+=(--add-label "type:$type")
+      edits+=(--add-label "$(workflow_label "" "type:$type")")
       while IFS= read -r b; do
         [ -z "$b" ] || edits+=(--remove-label "$b")
       done <<<"$(tail -n +2 <<<"$found")"
@@ -258,7 +258,7 @@ issue_create() {
     gh issue edit "$number" --repo "$slug" --body-file "$body" >/dev/null
   else
     url=$(gh issue create --repo "$slug" --title "$title" --body-file "$body" \
-      ${milestone:+--milestone "$milestone"} ${type:+--label "type:$type"} ${severity:+--label security})
+      ${milestone:+--milestone "$milestone"} ${type:+--label "$(workflow_label "" "type:$type")"} ${severity:+--label security})
     number=${url##*/}
     echo "#$number $title (created)"
     status=${status:-Backlog}
@@ -829,7 +829,12 @@ pick() {
 
 # The ref a new branch starts from: origin's default branch, else a local main or master.
 start_base() {
-  local main=$1 base
+  local main=$1 base integration
+  integration=$(workflow_get integration "$main")
+  if [ -n "$integration" ] && base=$(workflow_ref "$main" "$integration"); then
+    printf '%s\n' "$base"
+    return 0
+  fi
   base=$(git -C "$main" symbolic-ref -q --short refs/remotes/origin/HEAD) ||
     base=$(git -C "$main" for-each-ref --format='%(refname:short)' refs/remotes/origin/main refs/remotes/origin/master | head -1)
   [ -n "$base" ] || base=$(git -C "$main" for-each-ref --format='%(refname:short)' refs/heads/main refs/heads/master | head -1)
@@ -857,8 +862,16 @@ branch_worktree() {
 # The worktrees of the tickets in the repository of $1, as `<issue> <path>` lines, wherever they are: any
 # worktree on a branch `<type>/<issue>-<slug>` with a type `start` makes (feat, fix, chore).
 ticket_worktrees() {
+  local p="" b n
+  if [ -n "$(workflow_get branch.pattern "$1")" ]; then
+    while IFS=$'\t' read -r p b; do
+      n=$(workflow_branch_issue "$b" "$1")
+      [ -z "$n" ] || echo "$n $p"
+    done < <(git -C "$1" worktree list --porcelain | awk '$1 == "worktree" {p = substr($0, 10)} $1 == "branch" {print p "\t" substr($2, 12)}')
+    return 0
+  fi
   git -C "$1" worktree list --porcelain | awk '$1 == "worktree" {p = substr($0, 10)}
-    $1 == "branch" && match($2, /^refs\/heads\/(feat|fix|chore)\/[0-9]+(-|$)/) {
+    $1 == "branch" && match($2, /^refs\/heads\/(feat|fix|chore|hotfix)\/[0-9]+(-|$)/) {
       n = substr($2, 12); sub(/^[a-z]+\//, "", n); sub(/[^0-9].*/, "", n); print n, p}'
 }
 
@@ -925,30 +938,62 @@ wip_check() {
 # In progress. Shared by `next` and `run`. The branch type follows the `type:` label (feature: feat, bug:
 # fix, task and chore: chore; feat without a label). The branch starts from the default branch, fetched
 # first when origin answers; the worktree is `<data dir>/senior-mode/worktrees/<repo>/<issue>` (#224, see `worktree_path`).
+# A project with a detected workflow (spec 409 §3) has its own branch name pattern and base: the integration branch,
+# a release line named by a `Base:` line, the base for a `hotfix` ticket; a base that is none of those, or a missing
+# tracker key the name needs, labels the ticket needs-human or needs-info and stops. `base <branch>` says where
+# its pull request goes.
 # Rerunning reuses the branch and the worktree, wherever an earlier start put it. A new worktree gets its dependencies (a node one that
 # lost them too), installed with the project's install command (#110); a failed install only warns, and
 # `check` says what is missing. Prints `branch <name>` and `worktree <path>`.
 start() {
   [ $# -eq 1 ] && [[ $1 =~ ^[1-9][0-9]*$ ]] || usage
   local issue=$1 slug info state title labels type common main name base branch path existing created=false cmd
+  local body target kind="ticket" key="" pat wf=false
   slug=$(repo_slug)
-  info=$(gh_retry issue view "$issue" --repo "$slug" --json title,labels,state) || die "cannot read issue #$issue"
+  info=$(gh_retry issue view "$issue" --repo "$slug" --json title,labels,state,body) || die "cannot read issue #$issue"
   state=$(jq -r '.state' <<<"$info")
   [ "$state" = OPEN ] || die "issue #$issue is ${state,,}"
   run_token_ok || wip_check "$issue"
   title=$(jq -r '.title' <<<"$info")
   labels=$(jq -r '.labels[].name' <<<"$info")
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
+  main=${common%/.git}
+  ! workflow_active "$main" || wf=true
+  if [ "$wf" = true ]; then
+    labels=$(workflow_labels_normalize "$main" "$labels")
+    body=$(jq -r '.body // ""' <<<"$info")
+    if ! target=$(workflow_ticket_base "$main" "$body" "$labels"); then
+      workflow_flag "$slug" "$issue" needs-human "$target"
+      die "$target: #$issue is needs-human"
+    fi
+    kind=${target#* }
+    target=${target%% *}
+    key=$(workflow_tracker_key "$body")
+    pat=$(workflow_branch_pattern "$main")
+    if [ -z "$key" ] && { [[ $pat == *'{key}'* ]] || [ "$(workflow_get commit.format "$main")" = ticket-prefix ]; }; then
+      workflow_flag "$slug" "$issue" needs-info "the project's branch and commit format need a tracker key; add a \`Tracker: ABC-123\` line to the issue"
+      die "#$issue has no \`Tracker: KEY-n\` line, which the project's branch and commit format need: it is needs-info"
+    fi
+  fi
   case $(sed -n 's/^type://p' <<<"$labels" | head -1) in
     bug) type=fix ;;
     task | chore) type=chore ;;
     *) type=feat ;;
   esac
-  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
-  main=${common%/.git}
   name=$(slugify "$title")
-  # The branch of an earlier start wins, whatever its slug.
-  branch=$(git -C "$main" for-each-ref --format='%(refname:short)' "refs/heads/$type/$issue-*" | head -1)
-  branch=${branch:-$type/$issue${name:+-$name}}
+  if [ "$wf" = true ]; then
+    # The branch of an earlier start wins, whatever its slug.
+    branch=$(workflow_find_branch "$main" "$issue") || branch=""
+    if [ -z "$branch" ] && [ "$kind" = hotfix ]; then
+      branch=$(workflow_get release.hotfix "$main")
+      branch=${branch%\*}$issue${name:+-$name}
+    fi
+    [ -n "$branch" ] || branch=$(workflow_branch_name "$main" "$type" "$issue" "$name" "$key")
+  else
+    # The branch of an earlier start wins, whatever its slug.
+    branch=$(git -C "$main" for-each-ref --format='%(refname:short)' "refs/heads/$type/$issue-*" | head -1)
+    branch=${branch:-$type/$issue${name:+-$name}}
+  fi
   existing=$(branch_worktree "$main" "$branch")
   if [ -n "$existing" ]; then
     path=$existing
@@ -958,14 +1003,20 @@ start() {
     [ ! -e "$path" ] || die "$path exists and is not the worktree of $branch"
     if ! git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
       git -C "$main" fetch -q origin 2>/dev/null || true
-      base=$(start_base "$main") || die "no default branch to start $branch from"
+      if [ "$wf" = true ]; then
+        base=$(workflow_ref "$main" "$target") || die "the branch $target of the project's workflow does not exist: cannot start $branch from it"
+      else
+        base=$(start_base "$main") || die "no default branch to start $branch from"
+      fi
       git -C "$main" worktree add -q --no-track -b "$branch" "$path" "$base" >/dev/null || die "cannot create the worktree"
     else
       git -C "$main" worktree add -q "$path" "$branch" >/dev/null || die "cannot create the worktree"
     fi
   fi
+  if [ "$wf" = true ]; then (cd "$main" && workflow_record_branch "$branch" "$issue"); fi
   echo "branch $branch"
   echo "worktree $path"
+  [ "$wf" != true ] || echo "base $target"
   if [ "$created" = true ] || deps_missing "$path"; then
     cmd=$(install_command "$path")
     if [ -n "$cmd" ]; then

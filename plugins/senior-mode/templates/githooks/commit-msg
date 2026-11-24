@@ -1,27 +1,56 @@
 #!/usr/bin/env bash
-# senior-mode: refuses a commit whose subject is not a Conventional Commit (spec 0001 §11).
-# Standalone, so it works in any terminal.
+# senior-mode: refuses a commit whose subject is not a Conventional Commit (spec 0001 §11), or does not match the
+# project's detected workflow.commit.pattern (spec 409; format free accepts any subject). Standalone, so it works in any terminal.
 #   commit-msg <file>     checks a commit message (git calls it so); fixup! and squash! pass
 #   commit-msg --subjects checks subjects read on stdin, one per line
 #   commit-msg --branch   checks the commits of the branch that the default branch lacks
 # The last two gate what gets merged: a rebase merge does not squash, so fixup! is refused there.
 set -u
 pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: [^ ].*$'
+expected="Expected <type>(<scope>): <summary>, type among feat fix docs style refactor perf test build ci chore revert."
 status=0
+label="Conventional Commit"
+format="" integration="" branchpat=""
+
+# The workflow the project follows, when `setup repo` detected one: commit.format, commit.pattern, integration, branch.pattern.
+config=$(git rev-parse --show-toplevel 2>/dev/null)/.claude/senior-mode.json
+if [ -f "$config" ] && command -v jq >/dev/null; then
+  { IFS= read -r format; IFS= read -r custom; IFS= read -r integration; IFS= read -r branchpat; } < <(
+    jq -r '.workflow // {} | (.commit.format // ""), (.commit.pattern // ""), (.integration // ""), (.branch.pattern // "")' "$config" 2>/dev/null)
+  if [ -n "${custom:-}" ]; then
+    pattern=$custom
+    label="commit subject of this project"
+    expected="Expected a subject matching $custom (the commit format of this project: ${format:-detected})."
+  fi
+fi
 
 check() {
   case $1 in '' | 'Merge '*) return ;; esac
+  [ "$format" != free ] || return 0
   [ -n "$squash" ] && case $1 in 'fixup! '* | 'squash! '* | 'amend! '*) return ;; esac
   [[ $1 =~ $pattern ]] && return
-  echo "Not a Conventional Commit: $1" >&2
+  echo "Not a ${label}: $1" >&2
   status=1
 }
 
-# Commits that the default branch on origin lacks; every commit of HEAD while origin has no branch.
+# Warns when the current branch does not follow workflow.branch.pattern (the placeholders {type} {issue} {key} {slug}).
+branch_name() {
+  local re branch
+  [ -n "$branchpat" ] || return 0
+  branch=$(git symbolic-ref -q --short HEAD) || return 0
+  case $branch in main | master | "$integration") return 0 ;; esac
+  re=$(sed -e 's/[.+*?^$()|\\]/\\&/g' -e 's/-{slug}/(-.*)?/' -e 's/{slug}/.*/' -e 's/{type}/[A-Za-z0-9._-]+/' \
+    -e 's/{issue}/[0-9]+/' -e 's/{key}/[A-Za-z][A-Za-z0-9]*-[0-9]+/' <<<"$branchpat")
+  [[ $branch =~ ^$re$ ]] || echo "commit-msg: branch $branch does not follow the project's pattern $branchpat" >&2
+}
+
+# Commits that the integration branch on origin lacks (the default branch when the project has none); every commit
+# of HEAD while origin has no branch.
 range() {
-  local base
+  local base=""
   [ -n "$(git for-each-ref --count=1 refs/remotes/origin)" ] || { echo HEAD; return; }
-  base=$(git symbolic-ref -q --short refs/remotes/origin/HEAD) ||
+  [ -z "$integration" ] || ! git rev-parse -q --verify "refs/remotes/origin/$integration" >/dev/null || base=origin/$integration
+  [ -n "$base" ] || base=$(git symbolic-ref -q --short refs/remotes/origin/HEAD) ||
     base=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin/main refs/remotes/origin/master | head -n 1)
   [ -n "$base" ] && echo "$base..HEAD"
 }
@@ -31,12 +60,12 @@ case "${1:-}" in
   --subjects) subjects=$(cat) ;;
   --branch)
     git rev-parse -q --verify HEAD >/dev/null || exit 0
+    branch_name
     range=$(range) || { echo "commit-msg: default branch unknown; run git remote set-head origin --auto" >&2; exit 1; }
     subjects=$(git log --format=%s "$range") || { echo "commit-msg: cannot read the branch's commits" >&2; exit 1; }
     ;;
   *) squash=1 subjects=$(grep -v '^#' "$1" | sed -n '/[^[:space:]]/{p;q;}') ;;
 esac
 while IFS= read -r subject; do check "$subject"; done <<<"$subjects"
-[ "$status" -eq 0 ] ||
-  echo "Expected <type>(<scope>): <summary>, type among feat fix docs style refactor perf test build ci chore revert." >&2
+[ "$status" -eq 0 ] || echo "$expected" >&2
 exit "$status"

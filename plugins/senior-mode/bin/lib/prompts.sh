@@ -1,6 +1,8 @@
 # shellcheck shell=bash
 # The task of the headless session of one ticket (spec 0001 §10, ADR 0007): number, title, branch.
 run_prompt() {
+  local nl=$'\n' wf
+  wf=$(workflow_prompt_block "$1")
   cat <<EOF
 You are one ticket session of an autonomous senior-mode run on $RUN_SLUG. Nobody will answer
 questions: decide within the ticket, its spec and the project's rules, or give up as described below.
@@ -20,7 +22,7 @@ Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode tea
    too; at most 2 fix rounds, with check and publish after each push.
 5. Never merge, never touch another ticket: \`senior-mode run\` decides what happens next. A risk
    you meet outside this ticket is filed, never fixed here: \`senior-mode issue create --severity ...
-   --kind ... --path ... --rule ...\` (no exploit detail in the body).
+   --kind ... --path ... --rule ...\` (no exploit detail in the body).${wf:+$nl$nl$wf}
 
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the pull request is open with senior-mode/ci, senior-mode/review and senior-mode/security set;
@@ -32,7 +34,8 @@ EOF
 # The task of the headless session of a batch: lead $1, branch $2 and the tickets $3 on, one commit and one `Closes`
 # each, one pull request, an outcome line per ticket.
 run_prompt_batch() {
-  local branch=$2 m list="" closes=""
+  local branch=$2 m list="" closes="" nl=$'\n' wf
+  wf=$(workflow_prompt_block "$1")
   for m in $3; do
     list+="- #$m (\"${RUN_TITLE[$m]}\")"$'\n'
     closes+="\`Closes #$m\`, "
@@ -57,7 +60,7 @@ $list
    too; at most 2 fix rounds, with check and publish after each push.
 5. Never merge, never touch another ticket: \`senior-mode run\` decides what happens next. A risk
    you meet outside these tickets is filed, never fixed here: \`senior-mode issue create --severity ...
-   --kind ... --path ... --rule ...\` (no exploit detail in the body).
+   --kind ... --path ... --rule ...\` (no exploit detail in the body).${wf:+$nl$nl$wf}
 6. A ticket you cannot deliver does not stop the others: remove its commits from the branch (rebase them
    out) and leave its \`Closes\` out of the pull request. It goes back alone.
 
@@ -72,7 +75,8 @@ EOF
 # The prompt of a ticket session under serve (role ticket, ADR 0017): it delivers up to a pull request with
 # senior-mode/ci and senior-mode/security published; the reviewer and the integrator are other sessions.
 serve_prompt() {
-  local tests
+  local tests nl=$'\n' wf
+  wf=$(workflow_prompt_block "$1")
   if [ -f "$SERVE_COMMON/senior-mode/runs/$1/red-tests" ]; then
     tests="2. The failing tests are written and committed already, by a test-author session; they are recorded
    and read-only for you (the guard denies editing, moving or deleting them). The implementer agent makes them
@@ -98,7 +102,7 @@ $tests
 4. Stop there. A reviewer session reviews the pull request from a fresh context and sets
    senior-mode/review: you never set it, never merge, never touch another ticket. You may be resumed on this
    branch with the reviewer's findings. A risk you meet outside this ticket is filed, never fixed here:
-   \`senior-mode issue create --severity ... --kind ... --path ... --rule ...\` (no exploit detail in the body).
+   \`senior-mode issue create --severity ... --kind ... --path ... --rule ...\` (no exploit detail in the body).${wf:+$nl$nl$wf}
 
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the pull request is open with senior-mode/ci and senior-mode/security published;
@@ -114,7 +118,8 @@ PROMPT
 # run_prompt. The session has the role ticket and cannot set senior-mode/review (ADR 0017): a reviewer session does.
 # Lead $1, branch $2 and the tickets $3 on.
 serve_prompt_batch() {
-  local branch=$2 m list="" closes=""
+  local branch=$2 m list="" closes="" nl=$'\n' wf
+  wf=$(workflow_prompt_block "$1")
   for m in $3; do
     list+="- #$m (\"${RUN_TITLE[$m]}\")"$'\n'
     closes+="\`Closes #$m\`, "
@@ -137,7 +142,7 @@ $list
 4. Stop there. A reviewer session reviews the pull request once, from a fresh context, and sets
    senior-mode/review: you never set it, never merge, never touch another ticket. You may be resumed on this
    branch with the reviewer's findings. A risk you meet outside these tickets is filed, never fixed here:
-   \`senior-mode issue create --severity ... --kind ... --path ... --rule ...\` (no exploit detail in the body).
+   \`senior-mode issue create --severity ... --kind ... --path ... --rule ...\` (no exploit detail in the body).${wf:+$nl$nl$wf}
 5. A ticket you cannot deliver does not stop the others: remove its commits from the branch (rebase them
    out) and leave its \`Closes\` out of the pull request. It goes back alone.
 

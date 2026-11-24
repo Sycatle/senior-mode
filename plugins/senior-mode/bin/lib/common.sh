@@ -19,6 +19,7 @@ DEFAULTS='{
   "envGuard": { "forbidden": [] },
   "review": { "sections": [] },
   "docs": { "extra": [] },
+  "vision": { "maxLines": 100 },
   "github": { "protection": "", "requiredChecks": true }
 }'
 die() {

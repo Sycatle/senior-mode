@@ -6,19 +6,18 @@ argument-hint: "<the idea, in a sentence or two>"
 
 # Frame
 
-Idea: $ARGUMENTS, else the user's request (ask for it in one line if neither). Write in the project
-language (`senior-mode config get language`). Commands, formats, S and headless: `${CLAUDE_SKILL_DIR}/reference.md`.
+Idea: $ARGUMENTS, else the user's request (ask in one line if neither). Write in the project language
+(`senior-mode config get language`). Commands, formats, S and headless: `${CLAUDE_SKILL_DIR}/reference.md`.
 
 1. **Size.** Apply skill `triage`; announce the size with its reason in one line before any work. A
-   smaller size given by the user than the criteria allow is refused with the criterion; a larger is
-   accepted.
+   smaller size than the criteria allow is refused with the criterion; a larger is accepted.
 2. **Questions.** Always one round, even for S: one batch of 3 to 4 questions, recommended option
-   first, then only what stays open (skill `grill`). Nobody to ask: take the recommended options and
+   first, then only what stays open (skill `grill`). `docs/vision.md` against the idea: reference "Vision". Nobody to ask: take the recommended options and
    record them as assumed. Facts the files settle (`scout` agent) or the web (`researcher`) are never asked. Log each answer (reference "Decisions").
 3. **S.** No spec: create its issue with the expected behaviour, then deliver it in this session
    through the `go` steps 4-9 (reference "Size S").
 4. **Workspace (M, L).** `senior-mode frame start <slug>` makes a worktree and a branch `docs/<slug>`
-   from `origin/main`; write there only. Default branch ahead of origin: stop, it must be pushed first.
+   from `origin/main`; write there only. Default branch ahead of origin: stop, push it first.
 5. **Design.** The spec is named after its anchor issue (the idea's, else one `ops` creates: the epic
    for L, the first slice for M). Give the `architect` agent the idea, the facts, every answer and the
    anchor. It writes `docs/specs/<anchor>-<slug>.md` (skill `spec`; M light, L full), an ADR per

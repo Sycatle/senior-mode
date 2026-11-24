@@ -59,6 +59,26 @@ grep -q "setup" <<<"$out" && fail "setup hint with a config: $out"
 GH_FAIL=1 context "$repo"
 if ! grep -q "#12" <<<"$out" || ! grep -qi "not loaded" <<<"$out"; then fail "GitHub down: $out"; fi
 
+# The vision (#342): its goal ids and non-goals come right after the router, before the ticket, so the start of
+# the briefing is the same for every ticket; without the file nothing is added.
+mkdir -p "$repo/docs"
+printf '%s\n' '# Vision' '' '## Goals' '' '- G1: people log in in one click' '- G2: invoices are legally compliant' '' \
+  '## Non-goals' '' '- No native mobile app' '- No on-premise edition' '' '## Constraints' '' '- EU hosting only' >"$repo/docs/vision.md"
+context "$repo"
+for want in "G1: people log in in one click" "G2: invoices are legally compliant" "No native mobile app" "No on-premise edition"; do
+  grep -qF "$want" <<<"$out" || fail "vision line '$want' missing: $out"
+done
+grep -qF "EU hosting only" <<<"$out" && fail "a Constraints line leaked into the briefing: $out"
+[ "$(grep -n "G1:" <<<"$out" | cut -d: -f1)" -lt "$(grep -n "Current ticket" <<<"$out" | cut -d: -f1)" ] || fail "vision after the ticket: $out"
+git -C "$repo" switch -q main
+context "$repo"
+grep -qF "No native mobile app" <<<"$out" || fail "vision missing on the default branch: $out"
+grep -q "Current ticket" <<<"$out" && fail "ticket on the default branch with a vision: $out"
+git -C "$repo" switch -q feat/12-login
+rm -rf "$repo/docs/vision.md"
+context "$repo"
+grep -qi "vision" <<<"$out" && fail "vision mentioned with no file: $out"
+
 git -C "$repo" switch -q -c spike-oauth
 context "$repo"
 grep -q "Current ticket" <<<"$out" && fail "ticket on a branch without an issue number: $out"

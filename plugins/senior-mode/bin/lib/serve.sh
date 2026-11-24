@@ -586,11 +586,11 @@ It is labelled needs-human: a person decides what happens next." >/dev/null || e
 
 # Whether a run_blocker reason $1 is one no poll will lift: merging off, an external pull request, no server protection,
 # a protected zone, a pull request that is not ready (a ticket without its commit, a diff over its size budget: needs-human
-# with the numbers, #297, #303).
+# with the numbers, #297, #303) or that departs from the project's workflow.
 # A status not green yet, a mergeable state or an unreadable answer is transient: the next poll looks again.
 serve_permanent() {
   case $1 in
-    "merging is off"* | "it is external"* | "the server enforces no branch protection"* | "it touches a protected zone"* | "the protected zones could not be read"* | "not ready: "*) ;;
+    "merging is off"* | "it is external"* | "the server enforces no branch protection"* | "it touches a protected zone"* | "the protected zones could not be read"* | "not ready: "* | "it does not follow the project's workflow"*) ;;
     *) return 1 ;;
   esac
 }
@@ -607,8 +607,10 @@ serve_stuck() {
 # not needs-human, on a branch named <type>/<ticket>-... $1 is the board, $2 the open pull requests.
 # shellcheck disable=SC2016 # a jq program, not shell
 serve_candidates() {
-  jq -r --argjson d "$1" '[.[] | . as $p
-      | (try ($p.head.ref | capture("^[a-z]+/(?<n>[0-9]+)(-|$)") | .n | tonumber) catch null) as $t
+  local re
+  re=$(workflow_branch_re "$RUN_ROOT")
+  jq -r --argjson d "$1" --argjson map "$(workflow_branch_map_json)" --arg re "${re:-^[a-z]+/(?<n>[0-9]+)(-|\$)}" '[.[] | . as $p
+      | ((try ($p.head.ref | capture($re) | .n | tonumber) catch null) // $map[$p.head.ref]) as $t
       | select($t != null)
       | ($d.items[] | select(.number == $t and .open and .status == "In review")) as $i
       | select((($i.labels | index("needs-human")) // ([$p.labels[]?.name] | index("needs-human"))) | not)
@@ -618,10 +620,33 @@ serve_candidates() {
     | sort_by([.k, .t])[] | [.t, .pr, .sha, .ref, .title] | @tsv' <<<"$2"
 }
 
+# A merged hotfix pull request (head matching workflow.release.hotfix, base other than the integration branch): the
+# ticket `chore: back-merge <hotfix> into <integration>` that brings the fix back to the integration branch. Filed
+# once per hotfix branch; a failure is said, never fatal.
+serve_backmerge() {
+  local pr=$2 hot integration info head base title file
+  workflow_active "$RUN_ROOT" || return 0
+  hot=$(workflow_get release.hotfix "$RUN_ROOT")
+  integration=$(workflow_get integration "$RUN_ROOT")
+  [ -n "$hot" ] && [ -n "$integration" ] || return 0
+  info=$(gh_retry pr view "$pr" -R "$RUN_SLUG" --json headRefName,baseRefName --jq '[.headRefName, .baseRefName] | @tsv') || return 0
+  IFS=$'\t' read -r head base <<<"$info"
+  # shellcheck disable=SC2053 # a glob of workflow.release.hotfix
+  [[ $head == $hot ]] && [ "$base" != "$integration" ] || return 0
+  title="chore: back-merge $head into $integration"
+  file=$(mktemp)
+  printf '## Context\n\nThe hotfix pull request #%s merged into `%s`; `%s` lacks it.\n\n## Acceptance criteria\n\n- Given `%s` is merged, when `%s` is merged into `%s`, then `%s` holds the hotfix and its check is green.\n' \
+    "$pr" "$base" "$integration" "$head" "$base" "$integration" "$integration" >"$file"
+  (issue_create --title "$title" --body-file "$file" --size S --priority P1 --type chore --paths '**' --status Ready) >/dev/null ||
+    echo "pull request #$pr: could not file $title" >&2
+  rm -f "$file"
+}
+
 # A merged pull request: counted, its ticket Done.
 serve_done() {
   local t=$1 pr=$2 m
   rm -f "$SERVE_DIR/queued-$pr" "$SERVE_DIR/rounds-$t"
+  serve_backmerge "$t" "$pr"
   # Every ticket of a batch is done with its one pull request (the lead's <n>.batch).
   for m in $(cat "$SERVE_DIR/$t.batch" 2>/dev/null || echo "$t"); do
     RUN_MERGED+=("#$m ${RUN_TITLE[$m]:-} (pull request #$pr)")
@@ -659,12 +684,13 @@ serve_auto() {
 # (else, or when GitHub refuses, merged now), --match-head-commit in both. Merged means the state read back is
 # MERGED; only then the ticket is Done.
 serve_do_merge() {
-  local t=$1 pr=$2 sha=$3 err="$SERVE_DIR/$1.merge" queued=false state
+  local t=$1 pr=$2 sha=$3 err="$SERVE_DIR/$1.merge" queued=false state method
   : >"$err"
+  method=$(workflow_merge_flag "$RUN_ROOT")
   if [ "$(serve_auto)" = true ] &&
-    gh_bound pr merge "$pr" --auto --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$err"; then
+    gh_bound pr merge "$pr" --auto "$method" --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$err"; then
     queued=true
-  elif ! gh_bound pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$err"; then
+  elif ! gh_bound pr merge "$pr" "$method" --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$err"; then
     serve_note "w$pr" "#$t ${RUN_TITLE[$t]:-}: pull request #$pr, the merge failed: $(head -n 1 "$err")"
     return 0
   fi

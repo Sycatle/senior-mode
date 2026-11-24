@@ -298,7 +298,7 @@ pr_external() {
 # enforces protection, no needs-human, the three statuses green on the head, no protected zone among the files
 # GitHub would merge.
 run_blocker() {
-  local pr=$1 sha=$2 missing="" files zones need='["senior-mode/ci", "senior-mode/review", "senior-mode/security"]'
+  local pr=$1 sha=$2 missing="" files zones gaps need='["senior-mode/ci", "senior-mode/review", "senior-mode/security"]'
   # A profile that lifts the independent review (an accepted ADR, process.lifts) drops its status from the bounds.
   [ "$(config_get process.gates.review 2>/dev/null)" != false ] || need='["senior-mode/ci", "senior-mode/security"]'
   if [ "$RUN_MERGE" != true ]; then
@@ -309,6 +309,9 @@ run_blocker() {
     echo "the server enforces no branch protection (github.protection is ${RUN_PROTECTION:-unset})"
   elif jq -e '[.labels[]?.name] | index("needs-human")' <<<"$3" >/dev/null; then
     echo "labelled needs-human"
+  # The workflow detected in the project (spec 409 §3): its base branch, title, template headings and issue link.
+  elif gaps=$(workflow_pr_gaps "$3" "" "$RUN_ROOT") && [ -n "$gaps" ]; then
+    echo "it does not follow the project's workflow: $gaps"
   # github.requiredChecks false (ADR 0016): the ruleset requires no status, so none is waited for.
   elif [ "$RUN_REQUIRED" = true ] && ! missing=$(gh_retry api "repos/$RUN_SLUG/commits/$sha/status" | jq -r --argjson need "$need" '$need
       - [.statuses[] | select(.state == "success") | .context] | join(" and ")'); then
@@ -338,8 +341,9 @@ run_merge() {
   sha=$(jq -r '.[0].head.sha' <<<"$2")
   reason=$(run_blocker "$pr" "$sha" "$(jq -c '.[0]' <<<"$2")")
   if [ -z "$reason" ]; then
-    if gh_bound pr merge "$pr" --rebase --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
+    if gh_bound pr merge "$pr" "$(workflow_merge_flag "$RUN_ROOT")" --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
       RUN_PRS+=("#$pr")
+      serve_backmerge "$n" "$pr"
       for m in "${all[@]}"; do
         RUN_MERGED+=("#$m ${RUN_TITLE[$m]} (pull request #$pr)")
         if (item_set "$m" Status Done) >/dev/null; then

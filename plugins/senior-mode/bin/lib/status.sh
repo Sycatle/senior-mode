@@ -17,7 +17,7 @@ ROUTER
   fi
   overrides_context || true
   branch=$(git symbolic-ref --short -q HEAD) || return 0
-  issue=$(sed -nE 's#^[a-z]+/([0-9]+)-.*#\1#p' <<<"$branch")
+  issue=$(workflow_branch_issue "$branch")
   [ -n "$issue" ] || return 0
   echo
   if ! json=$(gh issue view "$issue" --json number,title,state,body,projectItems 2>/dev/null); then
@@ -48,7 +48,7 @@ ROUTER
 #   a `Supersedes` line inside a fenced code block does not count.
 # `hygiene_lines` words them.
 # shellcheck disable=SC2016 # a jq program, not shell
-HYGIENE_DEF='def prose: reduce (split("\n")[]) as $l ({f: false, out: []};
+HYGIENE_DEF="$BRANCH_DEF"'def prose: reduce (split("\n")[]) as $l ({f: false, out: []};
       if ($l | test("^\\s{0,3}(```|~~~)")) then .f |= not elif .f then . else .out += [$l] end) | .out[];
   def hygiene($days; $trees; $now; $locals):
     def age($t): ((($now | fromdateiso8601) - ($t | fromdateiso8601)) / 86400 | floor);
@@ -72,7 +72,7 @@ HYGIENE_DEF='def prose: reduce (split("\n")[]) as $l ({f: false, out: []};
          | group_by(.number) | map(sort_by(.act | not)[0])),
        orphans: [$d.items[] | select(.open and .status == "In progress" and .updated != null and age(.updated) >= $days) | . as $i
          | select($trees[$i.number | tostring] == null)
-         | select(([$prs[].branch] + [$d.hygiene.branches[]?.name] + $locals) | any(test("^[a-z]+/\($i.number)(-|$)")) | not)
+         | select(([$prs[].branch] + [$d.hygiene.branches[]?.name] + $locals) | any(test(bre($i.number))) | not)
          | {number, title}]};
   def hygiene_lines: . as $h
     | [(.stale[] | "pull request #\(.number) \(.title): no activity for \(.days) days"),
@@ -109,24 +109,24 @@ ticket_trees() {
 # The drift of the board: tickets whose Status says something their issue does not (closed but not Done, open
 # but Done, In progress or In review with no branch and no open pull request). $locals the local branch names.
 # shellcheck disable=SC2016 # a jq program, not shell
-DRIFT_DEF='def drift($d; $locals): $d.items as $items
+DRIFT_DEF="$BRANCH_DEF"'def drift($d; $locals): $d.items as $items
   | ([$items[] | select((.open | not) and .status != "Done")
       | {number, title, kind: "closed", why: "closed but \(.status // "without a Status")"}]
     + [$items[] | select(.open and .status == "Done") | {number, title, kind: "open-done", why: "open but Done"}]
     + [$items[] | select(.open and (.status | IN("In progress", "In review"))) | . as $i
-      | select([$d.hygiene.prs[].branch, $d.hygiene.branches[].name, $locals[]] | any(test("^[a-z]+/\($i.number)(-|$)")) | not)
+      | select([$d.hygiene.prs[].branch, $d.hygiene.branches[].name, $locals[]] | any(test(bre($i.number))) | not)
       | {number, title, kind: "stale", why: "\(.status) with no open pull request and no branch"}]);'
 
 # The dashboard as JSON, from board_data; $1 is the start of the period, $2 now, $3 the repository, $locals the
 # local branch names.
 # shellcheck disable=SC2016 # a jq program, not shell
-STATUS_JQ='. as $d | $d.items as $items | {
+STATUS_JQ="$BRANCH_DEF"'. as $d | $d.items as $items | {
   repository: $repo, generatedAt: $now, since: $since,
   done: [$d.closed[] | select(.closedAt >= $since and .reason != "NOT_PLANNED") | {number, title, closedAt}] | sort_by(.closedAt) | reverse,
   mergedPullRequests: ([$d.merged[] | select(.mergedAt >= $since)] | length),
   inProgress: [$items[] | select(.open and .status == "In progress") | {number, title}],
   inReview: [$items[] | select(.open and .status == "In review") | . as $i
-    | {number, title, pr: ([$d.prs[] | select(.branch | test("^[a-z]+/\($i.number)-")) | .number][0])}],
+    | {number, title, pr: ([$d.prs[] | select(.branch | test(bre($i.number))) | .number][0])}],
   blocked: [$items[] | select(.open) | ([
       (if (.labels | index("blocked")) then "blocked" else empty end),
       (if (.labels | index("needs-info")) then "needs information" else empty end),
@@ -223,7 +223,7 @@ ORPHAN_QUERY='query($owner: String!, $name: String!, $number: Int!) {
 # Prints why not when it does not. The report may be minutes old, and a run on another machine leaves
 # no worktree here: the board, the issue, the open pull requests and the branches are read again.
 orphan_check() {
-  local slug=$1 n=$2 days=$3 project answer live state status activity heads
+  local slug=$1 n=$2 days=$3 project answer live state status activity heads h
   project=$(jq -r '.project.id // empty' "$(config_file)")
   answer=$(jq -nc --arg q "$ORPHAN_QUERY" --arg o "${slug%%/*}" --arg n "${slug#*/}" --argjson i "$n" \
     '{query: $q, variables: {owner: $o, name: $n, number: $i}}' | gh_retry api graphql --input -) || { echo "could not read the issue"; return 1; }
@@ -238,7 +238,8 @@ orphan_check() {
   heads=$({ gh_retry pr list --state open --limit 1000 --json headRefName --jq '.[].headRefName' &&
     gh_retry api "repos/$slug/branches" --paginate --jq '.[].name' && git for-each-ref --format='%(refname:short)' refs/heads; }) ||
     { echo "could not read the pull requests and branches"; return 1; }
-  ! grep -Eq "^[a-z]+/$n(-|\$)" <<<"$heads" || { echo "a branch or a pull request exists now"; return 1; }
+  ! { while IFS= read -r h; do [ "$(workflow_branch_issue "$h")" != "$n" ] || echo y; done <<<"$heads"; } | grep -q y ||
+    { echo "a branch or a pull request exists now"; return 1; }
 }
 
 # The repairs of `status --fix` for the hygiene report ($1 is the status as JSON), one JSON line each:
@@ -695,7 +696,7 @@ retro_checks() {
 # recorded start is left out of it. A size is over when the pull request holds more than 1.5 times the
 # lines its size allows (S ~50, M ~400, spec §5), since those are approximate.
 # shellcheck disable=SC2016 # a jq program, not shell
-RETRO_JQ='def branch_ticket: [capture("^[a-z]+/(?<n>[0-9]+)-") | .n | tonumber] | first;
+RETRO_JQ='def branch_ticket: [capture($ENV.SENIOR_MODE_BRANCH_RE // "^[a-z]+/(?<n>[0-9]+)(-|$)") | .n | tonumber] | first;
   def round1: . * 10 | round / 10;
   . as $d | $h.data.repository.issues.nodes as $iss | $h.data.repository.pullRequests.nodes as $prs
   | ($d.items | map({key: (.number | tostring), value: .}) | from_entries) as $byn
@@ -869,7 +870,7 @@ statusline() {
   root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
   [ -f "$root/.claude/senior-mode.json" ] || return 0
   branch=$(git symbolic-ref --short -q HEAD) || branch=$(git rev-parse --short HEAD 2>/dev/null) || return 0
-  ticket=$(sed -nE 's#^[a-z]+/([0-9]+)-.*#\1#p' <<<"$branch")
+  ticket=$(workflow_branch_issue "$branch")
   parts=${ticket:+#$ticket}
   parts=${parts:-$branch}
   record=$(check_record "$(git rev-parse HEAD 2>/dev/null)") || true

@@ -79,7 +79,7 @@ case "$*" in
   "issue view "*)
     n=$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*")
     jq -c --argjson n "$n" '.data.node.items.nodes[] | select(.content.number == $n) | .content
-      | {title, state, labels: .labels.nodes}' "$FIX/board.json" ;;
+      | {title, state, labels: .labels.nodes} + {body: $b}' --arg b "$(cat "$FIX/body-$n" 2>/dev/null)" "$FIX/board.json" ;;
   "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
   "project item-edit"*)
     [ -z "${EDIT_FAIL:-}" ] || [[ "$*" != $EDIT_FAIL ]] || { echo "edit refused" >&2; exit 1; } ;;
@@ -147,6 +147,8 @@ echo "start $n" >>"$FIX/trace"
 for t in "$(git rev-parse --path-format=absolute --git-common-dir)"/senior-mode/runs/*/token; do
   [ ! -f "$t" ] || echo "$n $(stat -c %a "$t" 2>/dev/null || stat -f %Lp "$t")" >>"$FIX/token-seen"
 done
+# A spike's note, left in its worktree before the session hangs (#321).
+[ ! -f "$FIX/note-$n" ] || { mkdir -p docs/spikes && cp "$FIX/note-$n" docs/spikes/note.md; }
 if [ "$(sed -n 3p "$fx")" = hang ]; then
   sleep 300 &
   echo "$$ $!" >"$FIX/pids-$n"
@@ -498,6 +500,29 @@ grep -q '#92.*not stopped' "$work/out" || fail "L: the unstopped session is not 
 grep -q 'issues/92/labels.*needs-human' "$GH_LOG" || fail "L: #92 not labelled needs-human"
 jq -e '.outcome == "failed" and .reason == "timed out after 1 minute"' "$repo/.git/senior-mode/runs/"*"/92.json" >/dev/null ||
   fail "L: #92 not recorded as timed out"
+
+# SP: a spike (#321) that reaches its Timebox is stopped before the session timeout, its note is put in a comment,
+# the ticket is labelled needs-human and recorded as delivered; it is not a failure. A spike with no Timebox line
+# (or a token budget) is not stopped by the daemon.
+config '{"sessionTimeout": 90}'
+board 140 '["type:spike"]'
+printf 'Timebox: 2m\n' >"$FIX/body-140"
+printf '# OAuth\nUse the device flow.\n' >"$FIX/note-140"
+session 140-sonnet "" "" hang
+SECONDS=0
+SENIOR_MODE_TIMEOUT_UNIT=1 run || fail "SP: run failed: $(cat "$work/out")"
+[ "$SECONDS" -lt 30 ] || fail "SP: the spike ran past its timebox ($SECONDS s)"
+read -r -a pids <"$FIX/pids-140"
+for pid in "${pids[@]}"; do alive "$pid" && fail "SP: process $pid of the spike is still alive"; done
+for pid in "${pids[@]}"; do kill -9 "$pid" 2>/dev/null; done
+grep -q 'issues/140/labels.*needs-human' "$GH_LOG" || fail "SP: #140 not labelled needs-human"
+grep -q 'issues/140/comments.*timebox reached (2 minutes)' "$GH_LOG" || fail "SP: no comment on the timebox: $(cat "$GH_LOG")"
+grep -q 'Use the device flow' "$GH_LOG" || fail "SP: the note is not in the comment"
+jq -e '.outcome == "delivered" and (.reason | test("timebox reached"))' "$repo/.git/senior-mode/runs/"*"/140.json" >/dev/null ||
+  fail "SP: #140 not recorded as delivered at its timebox"
+grep -q '^Waiting for a human: #140 .*spike stopped' "$work/out" || fail "SP: not reported: $(cat "$work/out")"
+grep -q '^Failed: #140' "$work/out" && fail "SP: a stopped spike is reported as failed"
+rm -f "$FIX/body-140" "$FIX/note-140"
 
 # R: the docs session after a merge is bounded by the same timeout (#120): killed with its processes, recorded
 # in the run log (docs-outcome.json) and reported, and run ends normally. Without a timeout it is recorded done.

@@ -32,6 +32,7 @@ case "$*" in
   "project item-edit"*) ;;
   "api repos/acme/app/issues/"*"/labels"*) echo '[]' ;;
   "api repos/acme/app/issues/"*"/comments"*) echo '{}' ;;
+  "issue view "*) f="$FIX/issue-$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*").json"; if [ -f "$f" ]; then cat "$f"; else echo '{"labels": []}'; fi ;;
   *) echo "unexpected: $*" >&2; exit 1 ;;
 esac
 STUB
@@ -299,6 +300,30 @@ delivery 410 $'Closes #401\nCloses #402\n\n## Self-review\n| # | Evidence |\n|--
 changes 410 src/a.sh:10
 ready --pr 410 && fail "I: a batch with a missing ticket row is ready"
 said 'for #402.1 ' || fail "I: the batch gap is not named: $(cat "$work/out")"
+
+# J: a spike (#321) ends in a note, an ADR or framed tickets, never in code: its pull request changes docs/ only.
+spike() { jq -nc '{labels: [{name: "type:spike"}]}' >"$FIX/issue-$1.json"; }
+size 330 S
+size 331 S
+spike 330
+delivery 320 "Closes #330" "docs: what we learned"
+changes 320 docs/spikes/oauth.md:40 docs/adr/0040-oauth.md:30
+ready --pr 320 || fail "J: a spike pull request that changes docs/ only is not ready: $(cat "$work/out")"
+changes 320 docs/spikes/oauth.md:40 src/a.sh:10 .github/workflows/x.yml:3
+ready --pr 320 && fail "J: a spike pull request that changes code is ready"
+said 'pull request #320 is not ready: #330 is a spike and its pull request changes code outside docs/ \(src/a.sh, .github/workflows/x.yml\)' ||
+  fail "J: the code a spike changed is not named: $(cat "$work/out")"
+changes 320 docs-old/a.md:1
+ready --pr 320 && fail "J: docs-old/ passed for docs/"
+changes 320 README.md:1
+ready --pr 320 && fail "J: a file at the root passed for docs/"
+delivery 321 "Closes #331" "feat: code"
+changes 321 src/a.sh:10
+ready --pr 321 || fail "J: a pull request of a ticket that is no spike is held to docs/: $(cat "$work/out")"
+delivery 322 $'Closes #330\nCloses #331' $'docs: note\n\nRefs #330' $'feat: code\n\nCloses #331'
+changes 322 docs/spikes/oauth.md:40 src/a.sh:10
+ready --pr 322 && fail "J: a batch with a spike and code is ready"
+said '#330 is a spike' || fail "J: the spike of a batch is not named: $(cat "$work/out")"
 
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

@@ -360,5 +360,33 @@ SENIOR_MODE_RUN=1 create --title "Risk by an agent" --body-file "$work/body.md" 
 filed_body "Risk by an agent" | grep -q '^filed-by: agent$' || fail "agent risk misses its marker"
 filed_body "Risk by an agent" | grep -q '^security-id: ' || fail "agent risk lost its security-id"
 
+# A spike (#321) is a type with a timebox, a duration or a token budget, written to the body as `Timebox: <value>`.
+create --title "Can we use OAuth?" --body-file "$work/body.md" --size S --priority "P1 next" --type spike --timebox 2h ||
+  fail "spike: create failed: $(cat "$work/err")"
+logged "--label type:spike" || fail "spike: no type:spike label: $(cat "$GH_LOG")"
+[ "$(filed_body "Can we use OAuth?" | grep -c '^Timebox: 2h$')" -eq 1 ] || fail "spike: no Timebox line: $(filed_body "Can we use OAuth?")"
+filed_body "Can we use OAuth?" | grep -q 'Given a, when b, then c' || fail "spike lost its own body"
+printf '## Acceptance criteria\n- Given from stdin.\n' | create --title "Spike on stdin" --body-file - --size S --priority "P1 next" --type spike --timebox "200k tokens" ||
+  fail "spike stdin: create failed: $(cat "$work/err")"
+filed_body "Spike on stdin" | grep -q 'Given from stdin' || fail "spike read from stdin lost its body"
+filed_body "Spike on stdin" | grep -q '^Timebox: 200k tokens$' || fail "spike on stdin misses its Timebox"
+create --title "Spike by an agent" --body-file "$work/body.md" --size S --priority "P1 next" --type spike --timebox 45m ||
+  fail "spike: 45m refused: $(cat "$work/err")"
+filed_body "Spike by an agent" | grep -q '^Timebox: 45m$' || fail "spike: 45m lost"
+SENIOR_MODE_RUN=1 create --title "Spike by an agent 2" --body-file "$work/body.md" --size S --priority "P1 next" --type spike --timebox 45m ||
+  fail "agent spike: create failed: $(cat "$work/err")"
+[ "$(filed_body "Spike by an agent 2" | grep -c '^Timebox: 45m$')" -eq 1 ] ||
+  fail "agent spike lost its Timebox: $(filed_body "Spike by an agent 2")"
+filed_body "Spike by an agent 2" | grep -q '^filed-by: agent$' || fail "agent spike lost its marker"
+create --title "No timebox" --body-file "$work/body.md" --size S --priority "P1 next" --type spike && fail "a spike without a timebox was created"
+grep -q "timebox" "$work/err" || fail "missing timebox not explained: $(cat "$work/err")"
+create --title "Timebox on a feature" --body-file "$work/body.md" --size S --priority "P1 next" --type feature --timebox 2h &&
+  fail "a timebox was accepted on a feature"
+create --title "Timebox, no type" --body-file "$work/body.md" --size S --priority "P1 next" --timebox 2h && fail "a timebox was accepted with no type"
+for bad in soon 0h 90 "2 hours" "tokens" "0 tokens" "-5m" $'2h\nx'; do
+  create --title "Bad timebox" --body-file "$work/body.md" --size S --priority "P1 next" --type spike --timebox "$bad" && fail "timebox '$bad' accepted"
+done
+logged "issue create" && fail "a rejected spike reached GitHub"
+
 [ "$failures" -eq 0 ] && echo "issue: all cases pass"
 exit "$failures"

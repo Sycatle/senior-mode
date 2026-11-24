@@ -381,6 +381,42 @@ echo '{"rules": []}' >"$FIX/ruleset-9.json"
 
 grep -q 'Workflows' "$work/out" && fail "built-in workflows reported although both are on: $(cat "$work/out")"
 
+# Spec 409: a project with its own CI, merge method and labels. `--ci existing` disables no workflow and writes no
+# senior-mode.yml; the ruleset keeps ci.required next to ours, allows the project's merge method and has no linear
+# history; the labels the project maps are not created; the repository keeps its other merge methods.
+cp "$repo/.claude/senior-mode.json" "$work/config.wf"
+jq '.workflow = {merge: "squash", labels: {"type:bug": "bug"}} | .ci.required = ["build", "lint"]' "$work/config.wf" >"$repo/.claude/senior-mode.json"
+echo '[{"id": 7, "name": "ci", "path": ".github/workflows/ci.yml", "state": "active"}]' >"$FIX/workflows.json"
+rm -f "$FIX/rulesets.json"
+: >"$GH_LOG"
+(cd "$repo" && "$cli" setup github --ci existing) >"$work/out" 2>"$work/err" || fail "setup --ci existing failed: $(cat "$work/err")"
+[ "$(cfg .ci.mode)" = existing ] || fail "--ci existing not recorded: $(cfg .ci)"
+logged "workflow disable" && fail "a workflow of the project disabled under ci.mode existing"
+[ ! -e "$repo/.github/workflows/senior-mode.yml" ] || fail "senior-mode.yml written under ci.mode existing"
+grep -q "none disabled, none written" "$work/out" || fail "ci.mode existing not said: $(cat "$work/out")"
+body=$(tr -d ' \n' <"$GH_LOG")
+for rule in '{"context":"senior-mode/ci"},{"context":"senior-mode/review"},{"context":"senior-mode/security"},{"context":"build"},{"context":"lint"}' \
+  '"allowed_merge_methods":["squash"]'; do
+  grep -qF -- "$rule" <<<"$body" || fail "ruleset without $rule: $body"
+done
+grep -qF '"required_linear_history"' <<<"$body" && fail "linear history required although the project squash-merges"
+logged "label create type:bug" && fail "a label the project maps was created"
+logged "label create type:feature" || fail "an unmapped label was not created"
+logged "repo edit acme/app --enable-squash-merge --delete-branch-on-merge" || fail "the project's merge method not enabled: $(cat "$GH_LOG")"
+logged "--enable-rebase-merge" && fail "the repository restricted to rebase although the project squash-merges"
+grep -q "squash merges, senior-mode/ci, senior-mode/review and senior-mode/security next to build, lint" "$work/out" ||
+  fail "the ruleset line does not say it: $(cat "$work/out")"
+# An update keeps the same shape, and a project CI mode other than existing adds none of ci.required.
+echo '[{"id": 9, "name": "senior-mode", "source_type": "Repository"}]' >"$FIX/rulesets.json"
+echo '{"rules": []}' >"$FIX/ruleset-9.json"
+jq '.ci.mode = "local"' "$repo/.claude/senior-mode.json" >"$work/c" && cp "$work/c" "$repo/.claude/senior-mode.json"
+setup
+tr -d ' \n' <"$GH_LOG" | grep -qF '{"context":"build"}' && fail "ci.required added although ci.mode is not existing"
+logged "workflow disable 7" || fail "ci.mode local no longer disables the project's workflows"
+cp "$work/config.wf" "$repo/.claude/senior-mode.json"
+rm -f "$FIX/workflows.json"
+echo '[{"id": 9, "name": "senior-mode", "source_type": "Repository"}]' >"$FIX/rulesets.json"
+
 # Built-in workflows off: setup names them and says where to turn them on.
 project_workflows false false
 setup

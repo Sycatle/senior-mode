@@ -191,6 +191,11 @@
       "additionalProperties": false,
       "properties": { "maxLines": { "type": "integer", "minimum": 1, "description": "Most lines of the body of a note in docs/knowledge." } }
     },
+    "retro": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "repeat": { "type": "integer", "minimum": 1, "description": "Tickets with the same cause on the same paths or skill, in the period, that make retro open an improvement ticket." } }
+    },
     "architecture": {
       "type": "object",
       "additionalProperties": false,

@@ -176,6 +176,21 @@ State: **Available.**
   as `run` does. Then, from GitHub (two calls) and from this machine: the results of `senior-mode check` and, when
   `run` has written them, its outcomes in `.git/senior-mode/runs/`. Without them, the runs section says
   so. `senior-mode retro --since 14d` widens the period.
+- **Failure causes.** Each ticket of the period that needed a second review round (a merged pull request
+  with a review after a changes-requested one), an escalation, a stuck stop (a run that failed) or a revert (a
+  reopened ticket, a merged pull request titled `Revert`) gets one label `cause:<x>`, `x` being
+  `missing-context`, `fuzzy-criterion`, `fragile-test`, `tool` or `weak-model`, and the report quotes the
+  evidence (`failures` in `--json`). The cause is read from the words of the evidence (a `gh`, `git` or
+  permission problem is `tool`; flaky or snapshot is `fragile-test`; an unclear criterion is `fuzzy-criterion`;
+  a missing context or convention is `missing-context`); with none of them, a run that escalated or got stuck is
+  `weak-model` and the rest `fuzzy-criterion`. A `cause:` label already on the ticket is kept, so correct a wrong
+  one by hand. When [`retro.repeat`](configuration.md#keys-the-plugin-reads-today) tickets (3) of the period share
+  a cause and a Paths glob (or a `skills/<name>/` path), `retro` files one improvement ticket
+  `chore(retro): fix repeated cause:<x> on <area>`, size S, type task, linking the tickets and their evidence,
+  with an action by cause (a knowledge note or ADR, a stricter Definition of Ready, a test fix, a CLI ticket, a
+  routing proposal) and the line `retro-cause: <x> <area>`; it files none while an open issue carries that line
+  (`learning` in `--json`). Tickets with no Paths are labelled and never counted. A label or a ticket that
+  cannot be written is said on stderr and never stops the retro.
 - **Token use.** Each session `run` or `serve` starts appends its tokens (input, output, cache read, cache
   write) per model to `.git/senior-mode/usage.jsonl`. `retro` shows them per ticket and role (ticket,
   test-author, reviewer, integrator, and `run docs` for the docs session), with an estimated USD

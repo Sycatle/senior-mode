@@ -649,7 +649,7 @@ retro_runs() {
         then {ticket, outcome, escalated, reason, at: (.finishedAt // $m)} else empty end' "$f" 2>/dev/null || true
     done
   } | jq -sc --arg since "$2" --arg until "${3:-9999}" '[.[] | select(.at >= $since and .at < $until)] as $l | {found: true,
-    failed: [$l[] | select(.outcome | IN("failed", "outgrown")) | {ticket, reason, at}] | sort_by(.ticket),
+    failed: [$l[] | select(.outcome | IN("failed", "outgrown")) | {ticket, outcome, reason, at}] | sort_by(.ticket),
     escalated: [$l[] | select(.escalated == true or .outcome == "escalated") | {ticket, reason, at}] | sort_by(.ticket)}'
 }
 
@@ -848,10 +848,13 @@ retro() {
   usage=$(retro_usage "$root" "$since_iso" "$until_iso") || die "could not read the token ledger"
   data=$(jq -c --argjson h "$hygiene" --argjson u "$usage" '. + {hygiene: $h, usage: $u}' <<<"$data")
   data=$(jq -c ". + {calibration: ($CALIBRATION_JQ)}" <<<"$data") || die "could not compare the sizes"
+  # The cause label of each failed ticket and the improvement tickets of the causes that repeat (#364).
+  data=$(retro_learn "$data" "$history" "$board" "$slug") || exit 1
   if [ "$json" = true ]; then
     printf '%s\n' "$data"
   else
     jq -r --arg head "$head" "$HYGIENE_DEF$RETRO_TEXT_JQ" <<<"$data"
+    jq -r "$RETRO_LEARN_TEXT_JQ" <<<"$data"
   fi
   # `status` proposes the next retro a week after this one (#319).
   mkdir -p "$root/senior-mode" && printf '%s\n' "$now_s" >"$root/senior-mode/retro-last"

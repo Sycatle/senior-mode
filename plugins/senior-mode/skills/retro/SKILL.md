@@ -27,7 +27,9 @@ In the configured language, plain words, skipping empty sections:
 1. One sentence on the week (for example, "five tickets done, two needed you").
 2. Done, and the cycle time (median, worst): is it a few hours or several days?
 3. What needed a human and why; failed or escalated runs; reopened tickets; failed local checks.
-4. Sizes: tickets whose pull request outgrew their size (`over`); per size (`calibration`) the median
+4. Causes (`failures`, `learning`): each ticket's `cause:<x>` label and evidence, and the improvement
+   tickets filed or open (do not propose them again).
+5. Sizes: tickets whose pull request outgrew their size (`over`); per size (`calibration`) the median
    and spread of hours, lines and tokens, the tickets far outside it, and a `recalibrate` hint. A hint
    seen in two retros in a row becomes a proposal.
 

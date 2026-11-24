@@ -11,10 +11,11 @@ Tests come from the acceptance criteria of the spec or issue, not from the code.
 
 | Code | Rule |
 |---|---|
-| Logic (rules, calculations, parsing, state, data access) | Write the failing test first, run it, see it fail for the expected reason, then make it pass |
+| Logic (rules, calculations, parsing, state, data access) | Failing test first, seen failing for the expected reason, then make it pass |
+| Security (authentication, authorisation, input boundaries, data access, file paths) | Abuse tests first, seen failing: no right, malicious input, another user's record |
 | Bug fix | A regression test reproducing the bug, seen failing, before any fix |
 | UI and glue (pages, wiring, configuration) | One end-to-end or integration scenario per acceptance criterion; unit tests only where logic hides |
-| Spike or prototype | Exempt while exploring; before merge it is either discarded or covered like the rules above |
+| Spike or prototype | Exempt while exploring; before merge, discarded or covered like the rules above |
 
 ## Loop
 
@@ -29,7 +30,7 @@ Tests land in the same commit as the code they cover, so every commit passes (AD
 
 ## Refactor-only ticket
 
-Structure changes, behaviour does not. Behaviour has to change: it is not this mode, split it out.
+Structure changes, behaviour does not; a behaviour change is split out.
 
 1. State the goal (what gets simpler) and the invariant (what callers observe: API, outputs, side
    effects, errors).
@@ -38,9 +39,9 @@ Structure changes, behaviour does not. Behaviour has to change: it is not this m
 3. Small steps (rename, extract, inline, move), tests after each: green or revert. One `refactor:`
    commit per step, each passing alone.
 4. A test that has to change means behaviour changed: revert, never edit it to get green.
-5. Features, fixes, dependency bumps and unrelated cleanup do not ride along: open a ticket.
+5. Nothing else rides along (feature, fix, bump, cleanup): open a ticket.
 
-Recipes and signs you left the mode: `${CLAUDE_SKILL_DIR}/refactor.md`.
+Recipes, signs you left the mode: `${CLAUDE_SKILL_DIR}/refactor.md`.
 
 ## Good tests
 
@@ -49,9 +50,9 @@ Recipes and signs you left the mode: `${CLAUDE_SKILL_DIR}/refactor.md`.
 - Real collaborators when cheap; fakes at boundaries (network, clock, payment provider), not mocks of
   your own internals.
 - Deterministic: no sleeps, no order dependence, fixed clocks and seeds.
-- Fixtures written by hand, synthetic; never copied from a real export or dump.
+- Fixtures synthetic, by hand, never copied from real data.
 
-Avoid: tautological tests that restate the implementation, asserting on private state, snapshot tests
-as the only check, tests written after the fact to reach coverage.
+Avoid: tests restating the implementation, asserting private state, snapshots as the only check,
+tests written after the fact for coverage.
 
 A flaky test is a bug: open an issue, never skip or delete it silently.

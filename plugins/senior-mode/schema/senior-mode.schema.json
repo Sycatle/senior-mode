@@ -130,6 +130,13 @@
         "minWeeklyDownloads": { "type": "integer", "minimum": 1, "description": "A new dependency fails check when its package had fewer downloads last week." }
       }
     },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "claudeMdLines": { "type": "integer", "minimum": 1, "description": "Most lines a tracked CLAUDE.md may have before check fails." }
+      }
+    },
     "project": {
       "type": "object",
       "description": "The Project board; written by setup github.",

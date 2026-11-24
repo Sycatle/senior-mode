@@ -133,6 +133,10 @@ case "${1:-}" in
     [ $# -eq 1 ] || usage
     secret_scan
     ;;
+  context-hygiene)
+    [ $# -eq 1 ] || usage
+    context_hygiene
+    ;;
   audit)
     [ $# -eq 1 ] || usage
     audit_scan

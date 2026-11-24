@@ -1006,7 +1006,7 @@ wip_check() {
 # `check` says what is missing. Prints `branch <name>` and `worktree <path>`.
 start() {
   [ $# -eq 1 ] && [[ $1 =~ ^[1-9][0-9]*$ ]] || usage
-  local issue=$1 slug info state title labels type common main name base branch path existing created=false cmd
+  local issue=$1 slug info state title labels type common main name base branch path existing created=false cmd dir
   local body target kind="ticket" key="" pat wf=false fresh=false
   slug=$(repo_slug)
   info=$(gh_retry issue view "$issue" --repo "$slug" --json title,labels,state,body) || die "cannot read issue #$issue"
@@ -1078,12 +1078,11 @@ start() {
   echo "worktree $path"
   [ "$wf" != true ] || echo "base $target"
   if [ "$created" = true ] || deps_missing "$path"; then
-    cmd=$(install_command "$path")
-    if [ -n "$cmd" ]; then
+    while IFS=$'\t' read -r dir cmd; do
       echo "senior-mode: installing dependencies: $cmd" >&2
-      (cd "$path" && bash -c "$cmd" </dev/null >&2) ||
-        echo "senior-mode: could not install dependencies in $path; run: $cmd" >&2
-    fi
+      (cd "$path/$dir" && bash -c "$cmd" </dev/null >&2) ||
+        echo "senior-mode: could not install dependencies in $path/$dir; run: $cmd" >&2
+    done < <(install_plan "$path")
   fi
   # The criteria of a feature or a fix become failing tests, the first commit of its new branch (#311). A project
   # with its own commit format (a detected workflow) writes its own commits.

@@ -3,6 +3,7 @@ id: NNNN
 title: <the decision, as a sentence>
 status: proposed
 spec: NNNN
+paths: []
 ---
 
 ## Context

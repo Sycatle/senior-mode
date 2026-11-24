@@ -40,7 +40,79 @@
     "ci": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "mode": { "type": "string", "enum": ["local", "actions"] } }
+      "properties": { "mode": { "type": "string", "enum": ["local", "actions", "existing"] } }
+    },
+    "adopt": {
+      "type": "object",
+      "description": "Written by setup repo.",
+      "additionalProperties": false,
+      "properties": { "kind": { "type": "string", "enum": ["evergreen", "legacy"] } }
+    },
+    "workflow": {
+      "type": "object",
+      "description": "What setup repo detected of the project's workflow; absent, senior-mode's defaults apply.",
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string", "enum": ["trunk", "integration", "gitflow", "release-branches"] },
+        "base": { "type": "string", "description": "The production branch." },
+        "integration": { "type": "string", "description": "The branch tickets start from and their pull requests target." },
+        "release": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "branches": { "type": "array", "items": { "type": "string" } },
+            "hotfix": { "type": "string" }
+          }
+        },
+        "branch": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pattern": { "type": "string", "description": "Branch name with {type}, {issue}, {key} and {slug}." },
+            "types": { "type": "object", "additionalProperties": { "type": "string" } }
+          }
+        },
+        "commit": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "format": { "type": "string", "enum": ["conventional", "ticket-prefix", "free"] },
+            "pattern": { "type": "string" },
+            "scopes": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "pr": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "template": { "type": "string" },
+            "title": { "type": "string", "enum": ["commit", "ticket", "free"] },
+            "link": { "type": "string", "description": "The keyword that links the issue, or none." }
+          }
+        },
+        "merge": { "type": "string", "enum": ["rebase", "squash", "merge"] },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+        "tracker": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "kind": { "type": "string" }, "key": { "type": "string" } }
+        },
+        "ci": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "jobs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": { "context": { "type": "string" }, "covers": { "type": "array", "items": { "type": "string" } } }
+              }
+            },
+            "required": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
     },
     "github": {
       "type": "object",

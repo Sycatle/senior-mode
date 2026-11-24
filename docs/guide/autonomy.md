@@ -152,6 +152,12 @@ Once a day (`notify.digest`, default true) `serve` posts `senior-mode status --s
 Project status update. The time of the last attempt is kept in `.git/senior-mode/serve/digest`: a
 failed post is tried again the next day.
 
+With `notify.digestAt` (`HH:MM`, local time) and a webhook, `serve` also sends once a day, after that time, a
+`{"event": "digest", ...}` to the webhook: the pull requests merged and the tickets done over the last 24
+hours, what waits for a human, the tokens and their estimated cost, the work in progress and the board drift
+(`reason` is the same in words, `digest` the facts). Nothing is sent when nothing was merged or closed and no token
+was used. The day of the last attempt is kept in `.git/senior-mode/serve/digest-at`.
+
 ## Untrusted external input
 
 Anyone can file an issue or send a pull request, so what comes from outside is data to judge, never

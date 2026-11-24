@@ -488,6 +488,49 @@ rm -f "$state/digest"
 SENIOR_MODE_NOW=1800200000 once || fail "K: serve failed: $(cat "$work/out")"
 [ "$(grep -c 'createProjectV2StatusUpdate' "$FIX/status-updates")" = 2 ] || fail "K: digest posted with notify.digest false"
 
+# K2: the digest of the day through the webhook (#309). Sent once a day after notify.digestAt, with the pull requests
+# merged and the cost of the tokens; nothing without activity, before the time, without a webhook or twice a day.
+export TZ=UTC
+digest_cfg='{"digestAt": "08:00", "webhook": "https://hooks.example/digest"}'
+digests() { grep -c '"event":"digest"' "$CURL_LOG"; }
+usage_line() { printf '{"ticket": 70, "role": "ticket", "at": "2027-01-15T06:00:00Z", "model": "claude-fable-5-2", "input": 1000000, "output": 0, "cacheRead": 0, "cacheWrite5m": 0, "cacheWrite1h": 0}\n' >"$repo/.git/senior-mode/usage.jsonl"; }
+rm -f "$repo/.git/senior-mode/usage.jsonl"
+config '{}' '{}' "$digest_cfg"
+board
+fresh
+: >"$CURL_LOG"
+once || fail "K2: serve failed: $(cat "$work/out")"
+[ "$(digests)" = 0 ] || fail "K2: a digest with no activity: $(cat "$CURL_LOG")"
+jq -c '.data.repository = {merged: {nodes: [{number: 300, title: "A change", mergedAt: "2027-01-15T07:00:00Z"}]}}' "$FIX/board.json" >"$FIX/board.tmp" &&
+  mv "$FIX/board.tmp" "$FIX/board.json"
+usage_line
+: >"$CURL_LOG"
+SENIOR_MODE_NOW=1799999000 once || fail "K2: serve failed: $(cat "$work/out")"
+[ "$(digests)" = 0 ] || fail "K2: a digest before digestAt: $(cat "$CURL_LOG")"
+fresh
+config '{}' '{}' '{"digestAt": "08:00"}'
+: >"$CURL_LOG"
+once || fail "K2: serve failed: $(cat "$work/out")"
+[ "$(digests)" = 0 ] || fail "K2: a digest without a webhook: $(cat "$CURL_LOG")"
+config '{}' '{}' "$digest_cfg"
+fresh
+: >"$CURL_LOG"
+once || fail "K2: serve failed: $(cat "$work/out")"
+[ "$(digests)" = 1 ] || fail "K2: no digest at digestAt: $(cat "$work/out")"
+grep -q 'https://hooks.example/digest' "$CURL_LOG" || fail "K2: webhook url not called: $(cat "$CURL_LOG")"
+jq -e '.event == "digest" and .repo == "acme/app" and .number == null and .url == null and .digest.merged == 1
+  and .digest.tokens.usd == 8 and .digest.tokens.input == 1000000 and (.digest.board | has("drift"))
+  and (.reason | test("Merged pull requests: 1")) and (.reason | test("Needs a human: nothing")) and (.reason | test("Token cost: \\$8 "))' \
+  <<<"$(sed -n 's/.* -d //p' "$CURL_LOG" | head -n 1)" >/dev/null || fail "K2: digest payload wrong: $(cat "$CURL_LOG")"
+[ "$(cat "$state/digest-at")" = 2027-01-15 ] || fail "K2: the day is not kept: $(cat "$state/digest-at" 2>&1)"
+: >"$CURL_LOG"
+once || fail "K2: serve failed: $(cat "$work/out")"
+[ "$(digests)" = 0 ] || fail "K2: a second digest the same day"
+SENIOR_MODE_NOW=1800086400 once || fail "K2: serve failed: $(cat "$work/out")"
+[ "$(digests)" = 1 ] || fail "K2: no digest the next day: $(cat "$work/out")"
+rm -f "$repo/.git/senior-mode/usage.jsonl"
+unset TZ
+
 # L: ready by rule (#272). A framing pull request (docs/...) merged since the last poll gets `ready --pr <n>`;
 # once a poll `ready` looks at the tickets agents filed. Pull requests merged before the last poll, or from another
 # branch, are not read. The first poll only sets the mark.

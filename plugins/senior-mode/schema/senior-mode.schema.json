@@ -308,7 +308,8 @@
       "properties": {
         "mention": { "type": "string" },
         "webhook": { "type": "string", "pattern": "^(https?://.+)?$" },
-        "digest": { "type": "boolean" }
+        "digest": { "type": "boolean" },
+        "digestAt": { "type": "string", "pattern": "^(([01][0-9]|2[0-3]):[0-5][0-9])?$", "description": "Local time (HH:MM) after which serve sends the daily digest to the notify webhook; off when empty." }
       }
     },
     "agent": {

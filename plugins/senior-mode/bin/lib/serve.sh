@@ -1095,6 +1095,48 @@ serve_digest() {
   fi
 }
 
+# The digest of the day through the webhook (#309). Once notify.digestAt (HH:MM, the local time of the daemon) has
+# passed and none was sent today, one JSON POST {event: "digest", repo, number: null, url: null, reason: <text>,
+# digest: {...}} to the notify webhook with, over the last 24 hours, the pull requests merged, the tickets that wait
+# for a human, the tokens and their estimated cost (#299) and the board (work in progress, drift). Nothing is sent
+# when nothing was merged or closed and no token was used, nor without a webhook. The day of the attempt is kept in
+# <serve dir>/digest-at: a failure waits for tomorrow and a restart does not send twice.
+# shellcheck disable=SC2016 # jq programs, not shell
+serve_digest_at() {
+  local at hook now day st usage digest text
+  at=$(config_get notify.digestAt)
+  hook=${SENIOR_MODE_NOTIFY_WEBHOOK:-$(config_get notify.webhook)}
+  [ -n "$at" ] && [ -n "$hook" ] || return 0
+  now=$(serve_now)
+  [[ ! $(date -d "@$now" +%H:%M 2>/dev/null || date -r "$now" +%H:%M) < $at ]] || return 0
+  day=$(date -d "@$now" +%F 2>/dev/null || date -r "$now" +%F)
+  [ "$(cat "$SERVE_DIR/digest-at" 2>/dev/null)" != "$day" ] || return 0
+  echo "$day" >"$SERVE_DIR/digest-at"
+  if ! st=$("$SELF" status --json --since 24h 2>/dev/null) || ! usage=$(retro_usage "$SERVE_COMMON" "$(iso_time $((now - 86400)))" ""); then
+    echo "serve: could not build the daily digest; trying again tomorrow" >&2
+    return 0
+  fi
+  digest=$(jq -c --argjson u "$usage" '{merged: .mergedPullRequests, done: [.done[] | {number, title}],
+    waiting: [.waiting[] | {kind, number, title, why}],
+    tokens: ($u.total | {input, output, cacheRead, cacheWrite: (.cacheWrite5m + .cacheWrite1h), usd, unpriced}),
+    board: {inProgress: (.inProgress | length), wip: .wip.limit, inReview: (.inReview | length), blocked: (.blocked | length),
+      drift: [.drift[] | {number, title, why}]}}' <<<"$st") || {
+    echo "serve: could not build the daily digest; trying again tomorrow" >&2
+    return 0
+  }
+  jq -e '.merged > 0 or (.done | length) > 0 or (.tokens.input + .tokens.output + .tokens.cacheRead + .tokens.cacheWrite) > 0' <<<"$digest" >/dev/null ||
+    return 0
+  text=$(jq -r 'def l($a): if ($a | length) == 0 then "none" else ($a | map("#\(.number) \(.title)") | join(", ")) end;
+    "Daily digest of senior-mode, last 24 hours",
+    "Merged pull requests: \(.merged)" + (if (.done | length) > 0 then " · done: \(l(.done))" else "" end),
+    "Needs a human: \(if (.waiting | length) == 0 then "nothing" else (.waiting | map("\(.kind) #\(.number) \(.title): \(.why)") | join("; ")) end)",
+    "Token cost: \(if .tokens.usd == null then "no price" else "$\(.tokens.usd * 100 | round / 100)" end) (\(.tokens.input + .tokens.output + .tokens.cacheRead + .tokens.cacheWrite) tokens)",
+    "Board: \(.board.inProgress) in progress (limit \(.board.wip)), \(.board.inReview) in review, \(.board.blocked) blocked, drift: \(l(.board.drift))"' <<<"$digest")
+  curl -fsS -m 10 -X POST -H 'Content-Type: application/json' "$hook" -d "$(jq -nc --arg r "$RUN_SLUG" --arg t "$text" --argjson d "$digest" \
+    '{event: "digest", repo: $r, number: null, url: null, reason: $t, digest: $d}')" >/dev/null ||
+    echo "notify: the webhook did not answer (digest)" >&2
+}
+
 # The loop (ADR 0017): the shared part of `run` (run_prepare, run_start, run_reap, run_finish...) with a poll
 # every serve.interval seconds instead of a batch. TERM and INT stop the launching and drain. State is under
 # <git common dir>/senior-mode/serve/. SENIOR_MODE_SERVE_ONCE=1 polls once, waits for its sessions and exits.
@@ -1139,6 +1181,7 @@ serve_loop() {
   while [ "$SERVE_TERM" = false ]; do
     serve_poll
     serve_digest
+    serve_digest_at
     [ -z "${SENIOR_MODE_SERVE_ONCE:-}" ] || break
     sleep "$interval" &
     sleeper=$!

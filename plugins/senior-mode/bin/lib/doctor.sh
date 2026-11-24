@@ -1,0 +1,230 @@
+# shellcheck shell=bash
+# `senior-mode doctor` (#316): diagnoses the installation and prints, for each failure, the command that fixes it.
+
+# Records one check: level ok|warn|fail, a name, what was found, and the fix when it is not ok.
+doctor_add() { # level name message [fix]
+  DOCTOR_CHECKS+=("$(jq -nc --arg l "$1" --arg n "$2" --arg m "$3" --arg f "${4:-}" \
+    '{level: $l, name: $n, message: $m} + (if $f != "" then {fix: $f} else {} end)')")
+}
+
+# git, jq, gh and claude on the PATH, their versions, and the version of the plugin.
+doctor_tools() {
+  local t v hint found="" plugin
+  for t in git jq gh claude; do
+    if command -v "$t" >/dev/null; then
+      v=$("$t" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1) || v=""
+      found="$found${found:+, }$t ${v:-?}"
+    else
+      case $t in
+        git) hint="install git: https://git-scm.com/downloads" ;;
+        jq) hint="install jq: https://jqlang.org/download/" ;;
+        gh) hint="install the GitHub CLI: https://cli.github.com" ;;
+        *) hint="install Claude Code: https://docs.claude.com/en/docs/claude-code/setup" ;;
+      esac
+      doctor_add fail "tool $t" "$t is not on the PATH" "$hint"
+    fi
+  done
+  plugin=$(jq -r '.version // empty' "$(plugin_root)/.claude-plugin/plugin.json" 2>/dev/null) || plugin=""
+  doctor_add ok versions "${found:-no tool found}; senior-mode plugin ${plugin:-of unknown version}"
+}
+
+# gh is logged in, with the scopes the board and the pull requests need (repo, project).
+doctor_gh() {
+  local out scopes line s missing=""
+  command -v gh >/dev/null || return 0
+  if ! out=$(gh_bound auth status 2>&1); then
+    doctor_add fail "gh auth" "gh is not logged in: $(head -n 1 <<<"$out")" "gh auth login --scopes repo,project,workflow"
+    return 0
+  fi
+  line=$(grep -i 'token scopes' <<<"$out" | head -n 1 || true)
+  if [ -z "$line" ]; then
+    doctor_add warn "gh scopes" "logged in, but gh does not list the scopes of the token (a token from the environment?)" "gh auth refresh -s repo -s project"
+    return 0
+  fi
+  scopes=$(tr -d "',*" <<<"${line#*:}")
+  for s in repo project; do
+    # shellcheck disable=SC2086 # the scopes are words
+    printf '%s\n' $scopes | grep -qx "$s" || missing="$missing${missing:+, }$s"
+  done
+  if [ -n "$missing" ]; then
+    doctor_add fail "gh scopes" "the token lacks the scope $missing" "gh auth refresh -s repo -s project"
+  else
+    doctor_add ok "gh auth" "logged in with the scopes repo and project"
+  fi
+}
+
+# Claude Code is logged in.
+doctor_claude() {
+  local out
+  command -v claude >/dev/null || return 0
+  out=$(net_bound 30 claude auth status 2>/dev/null </dev/null) || true
+  if jq -e '.loggedIn == true' <<<"$out" >/dev/null 2>&1; then
+    doctor_add ok "claude login" "logged in ($(jq -r '.authMethod // "unknown method"' <<<"$out"))"
+  elif jq -e '.loggedIn == false' <<<"$out" >/dev/null 2>&1; then
+    doctor_add fail "claude login" "Claude Code is not logged in" "claude auth login"
+  else
+    doctor_add warn "claude login" "could not read the login state of Claude Code" "claude auth status"
+  fi
+}
+
+# The commit-msg and pre-push hooks are where git looks for them, and are senior-mode's (or call it).
+doctor_hooks() {
+  local root path dir hook bad="" soft=""
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || { doctor_add fail "git hooks" "not inside a git repository" "cd into the repository"; return 0; }
+  path=$(git config core.hooksPath || true)
+  if [ -z "$path" ]; then
+    dir=$(git rev-parse --path-format=absolute --git-path hooks)
+  elif [[ $path == /* ]]; then
+    dir=$path
+  else
+    dir=$root/$path
+  fi
+  # pre-push is the gate (check before a push); commit-msg only keeps the subjects, which check also reads.
+  for hook in pre-push commit-msg; do
+    if [ ! -x "$dir/$hook" ]; then
+      [ "$hook" = pre-push ] && bad="$bad${bad:+, }$hook missing or not executable" || soft="$soft${soft:+, }$hook missing or not executable"
+    elif ! grep -Eq 'senior-mode|\.githooks' "$dir/$hook"; then
+      [ "$hook" = pre-push ] && bad="$bad${bad:+, }$hook is not senior-mode's and does not call it" ||
+        soft="$soft${soft:+, }$hook is not senior-mode's and does not call it"
+    fi
+  done
+  if [ -n "$bad" ]; then
+    doctor_add fail "git hooks" "in $dir: $bad${soft:+, $soft}" "senior-mode setup repo"
+  elif [ -n "$soft" ]; then
+    doctor_add warn "git hooks" "pre-push is in place in $dir; $soft" "senior-mode setup repo"
+  else
+    doctor_add ok "git hooks" "pre-push and commit-msg in $dir"
+  fi
+}
+
+# The fix to print for a finding of the configuration, from where it comes.
+doctor_config_fix() { # path layer message
+  local file
+  case $2 in
+    local) file=.claude/senior-mode.local.json ;;
+    organization) file="$(git rev-parse --git-common-dir)/senior-mode/organization.json" ;;
+    *) file=.claude/senior-mode.json ;;
+  esac
+  case $1 in
+    process.lifts) echo "make the ADR of the lift 'status: accepted' and merge it on the default branch, or remove the lift and choose the strict profile (a lift is read from $file)" ;;
+    process.profile) echo "set process.profile to strict or fast, or add .claude/senior-mode/profiles/<name>.json" ;;
+    overrides/*) echo "rename or delete the file under .claude/senior-mode/overrides/" ;;
+    *) case $3 in
+      *"did you mean"*) echo "edit $file: ${3##*did you mean }" ;;
+      *) echo "edit $file, then run senior-mode config validate" ;;
+    esac ;;
+  esac
+}
+
+# The config is valid: the findings of config validate (unknown keys with the closest one, values out of their
+# domain, deprecated keys, lifts, overrides), each with its fix. Leaves the resolved layers in DOCTOR_RES.
+doctor_config() {
+  local findings n w line level path layer msg
+  DOCTOR_RES=""
+  if ! git rev-parse --show-toplevel >/dev/null 2>&1 || [ ! -f "$(git rev-parse --show-toplevel)/.claude/senior-mode.json" ]; then
+    doctor_add fail config "no .claude/senior-mode.json here" "/senior-mode:setup (or: senior-mode setup repo)"
+    return 0
+  fi
+  if ! jq empty "$(git rev-parse --show-toplevel)/.claude/senior-mode.json" 2>/dev/null; then
+    doctor_add fail config ".claude/senior-mode.json is not valid JSON" "fix the syntax, or: senior-mode setup repo"
+    return 0
+  fi
+  DOCTOR_RES=$(config_resolve --validate) || { doctor_add fail config "the configuration cannot be read" "senior-mode config validate"; return 0; }
+  findings=$(jq -sc --argjson f "$(jq -c .findings <<<"$DOCTOR_RES")" '$f + .' <<<"$(override_findings)")
+  n=$(jq -r 'map(select(.level == "error")) | length' <<<"$findings")
+  w=$(jq -r 'map(select(.level == "warning")) | length' <<<"$findings")
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    level=$(jq -r .level <<<"$line")
+    path=$(jq -r '.path' <<<"$line")
+    layer=$(jq -r '.layer // "repository"' <<<"$line")
+    msg=$(jq -r '.message' <<<"$line")
+    doctor_add "$([ "$level" = error ] && echo fail || echo warn)" "config ${path:-(file)}" "$([ "$layer" = repository ] || echo "$layer: ")$msg" \
+      "$(doctor_config_fix "$path" "$layer" "$msg")"
+  done < <(jq -c '.[]' <<<"$findings")
+  [ "$n" -gt 0 ] || [ "$w" -gt 0 ] || doctor_add ok config "valid against the schema"
+}
+
+# The board of the config has its fields; the ruleset required by github.protection exists.
+doctor_github() {
+  local file missing protection slug n
+  file=$(git rev-parse --show-toplevel 2>/dev/null)/.claude/senior-mode.json
+  [ -f "$file" ] && jq empty "$file" 2>/dev/null || return 0
+  if jq -e '.project.id' "$file" >/dev/null 2>&1; then
+    missing=$(jq -r '[("Status", "Priority", "Size", "Severity") as $f | select((.project.fields // {}) | has($f) | not) | $f] | join(", ")' "$file")
+    if [ -n "$missing" ]; then
+      doctor_add fail "board fields" "the Project of the config lacks the fields $missing" "senior-mode setup github"
+    else
+      doctor_add ok "board fields" "Status, Priority, Size and Severity are in the config of Project #$(jq -r '.project.number // "?"' "$file")"
+    fi
+  else
+    doctor_add warn "board fields" "no Project board in the config" "senior-mode setup github"
+  fi
+  protection=$(jq -r '.github.protection // empty' "$file")
+  case $protection in
+    ruleset)
+      slug=$(repo_slug 2>/dev/null) || slug=""
+      command -v gh >/dev/null && [ -n "$slug" ] || return 0
+      if n=$(gh_bound api "repos/$slug/rulesets" --jq '[.[] | select(.name == "senior-mode" and .source_type == "Repository" and .enforcement == "active")] | length' 2>/dev/null); then
+        if [ "$n" -ge 1 ]; then
+          doctor_add ok ruleset "the senior-mode ruleset of $slug is active, as github.protection says"
+        else
+          doctor_add fail ruleset "github.protection is ruleset, but $slug has no active senior-mode ruleset" "senior-mode setup github"
+        fi
+      else
+        doctor_add warn ruleset "could not read the rulesets of $slug (gh api failed)" "gh auth status"
+      fi
+      ;;
+    none) doctor_add warn ruleset "github.protection is none: nothing enforces the default branch on the server (ci.mode local, the pre-push hook is the only gate)" "" ;;
+    *) doctor_add warn ruleset "github.protection is not set: setup github has not recorded the ruleset" "senior-mode setup github" ;;
+  esac
+}
+
+# What the repository customizes (spec 330 §6, what the layers, the overrides and the profiles provide): the profile, the
+# lifted gates with their ADR, the override files, and the layer values that differ from the defaults (the keys that
+# `setup` writes for every project, preset, checks, ci, github and project, do not count as customization).
+# shellcheck disable=SC2016 # a jq program, not shell
+doctor_customization() {
+  [ -n "${DOCTOR_RES:-}" ] || { echo '{"profile":"strict","lifts":[],"overrides":[],"values":[],"nothing":true}'; return 0; }
+  jq -c --argjson d "$DEFAULTS" --argjson ov "$(override_files | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t") | {file: .[0], mode: .[1], target: .[2]})')" '
+    def flat($p): if type == "object" then (to_entries[] | .key as $k | .value | flat($p + [$k])) else {path: $p, value: .} end;
+    ([.layers[] | select(.name != "defaults" and .name != "profile") | .name as $n
+      | (.config | del(.["$schema"], .process, .project, .github, .preset, .checks, .ci)) | flat([])
+      | select((try (.path as $q | $d | getpath($q)) catch null) != .value) | {layer: $n, key: (.path | join(".")), value: .value}]
+     + [.layers[] | select(.name == "profile") | .config | flat([]) | select((try (.path as $q | $d | getpath($q)) catch null) != .value)
+        | {layer: "profile", key: (.path | join(".")), value: .value}]) as $values
+    | {profile: .profile.name, origin: .profile.origin, chain: .profile.chain,
+       lifts: [.lifted[] | . + {status: "accepted"}], overrides: $ov, values: $values}
+    | . + {nothing: (.profile == "strict" and (.lifts | length) == 0 and (.overrides | length) == 0 and (.values | length) == 0)}' <<<"$DOCTOR_RES"
+}
+
+# `senior-mode doctor [--json]`: runs the checks, prints one line per result and the fix under each failure, then the
+# customization of the repository. Exit 1 when a check failed (a warning does not fail).
+doctor() {
+  local json=false out cust
+  [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = --json ]; } || usage
+  [ "${1:-}" != --json ] || json=true
+  DOCTOR_CHECKS=()
+  doctor_tools
+  doctor_gh
+  doctor_claude
+  doctor_hooks
+  doctor_config
+  doctor_github
+  cust=$(doctor_customization)
+  out=$(printf '%s\n' "${DOCTOR_CHECKS[@]}" | jq -sc --argjson c "$cust" '{ok: (map(.level == "fail") | any | not), checks: ., customization: $c}')
+  if $json; then
+    printf '%s\n' "$out"
+  else
+    jq -r '.checks[] | "\(if .level == "ok" then "ok   " elif .level == "warn" then "warn " else "FAIL " end) \(.name): \(.message)"
+        + (if .fix then "\n       fix: \(.fix)" else "" end)' <<<"$out"
+    echo
+    echo "Customization"
+    jq -r '.customization | if .nothing then "  nothing overridden" else (
+        "  profile: \(.profile)\(if .origin then " (\(.origin)\(if (.chain | length) > 1 then ", extends \(.chain[1:] | join(", "))" else "" end))" else "" end)",
+        (.lifts[] | "  LIFTED \(.rule): \(.adr) (\(.status), profile \(.profile))"),
+        (.overrides[] | "  override \(.target) (\(.mode)): .claude/senior-mode/overrides/\(.file)"),
+        (.values[] | "  \(.layer): \(.key) = \(.value | tojson)")) end' <<<"$out"
+  fi
+  jq -e '.ok' <<<"$out" >/dev/null
+}

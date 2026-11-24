@@ -16,6 +16,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `common.sh`: defaults, `die`, config (`config_get`), `gh_retry`, small shared helpers.
 - `config.sh`: the schema walker, `config validate`, the layers, `config_get`, `config explain`, overrides and process
   profiles (schema in `plugins/senior-mode/schema/`, shipped profiles in `plugins/senior-mode/profiles/`).
+- `doctor.sh`: `doctor` (installation checks, fixes, customization summary).
 - `board.sh`: Project items and fields, `issue create`, security alerts, `ready`, `pick`, `start`.
 - `release.sh`: `release` (release-please).
 - `check.sh`: `check`, spec drift, `security_verdict`, `publish`.

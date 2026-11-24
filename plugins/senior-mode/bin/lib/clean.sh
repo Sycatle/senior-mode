@@ -7,7 +7,7 @@ clean_act() {
   if [ "$CLEAN_DRY" = true ]; then
     echo "would remove $what"
     CLEAN_REMOVED=$((CLEAN_REMOVED + 1))
-  elif err=$("$@" 2>&1 </dev/null); then
+  elif fault_point during-clean && err=$("$@" 2>&1 </dev/null); then
     echo "removed $what"
     CLEAN_REMOVED=$((CLEAN_REMOVED + 1))
   else

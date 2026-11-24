@@ -22,6 +22,7 @@ mkdir -p "$work/stub" "$work/fix" "$work/home"
 cat >"$work/stub/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >>"$GH_LOG"
+[ ! -f "$FIX/gh-dead" ] || exec sleep 30
 jqf="" prev=""
 for a in "$@"; do [ "$prev" = --jq ] && jqf=$a; prev=$a; done
 respond() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
@@ -77,6 +78,12 @@ case "$*" in
     echo "{\"behind_by\": $(cat "$FIX/behind-$sha" 2>/dev/null || echo 0)}" | respond ;;
   "api repos/acme/app/pulls/"*"/commits"*) cat "$FIX/commits-$(sed -E 's#.*/pulls/([0-9]+)/commits.*#\1#' <<<"$*").json" | respond ;;
   "api repos/acme/app/pulls/"*"/files"*) cat "$FIX/files-$(sed -E 's#.*/pulls/([0-9]+)/files.*#\1#' <<<"$*")" 2>/dev/null || echo src/app.ts ;;
+  "api repos/acme/app/pulls -X POST"*)
+    # A pull request opened by serve (spec 373, section 2): recorded, and served by the head queries after it.
+    echo "$*" >>"$FIX/pr-created"
+    br=$(sed -E 's#.* head=([^ ]+) .*#\1#' <<<"${*//$'\n'/ }")
+    n=$(sed -E 's#^[a-z]+/([0-9]+)-.*#\1#' <<<"$br")
+    echo "[{\"number\": $((n + 100)), \"author_association\": \"OWNER\", \"head\": {\"sha\": \"sha$n\"}, \"labels\": []}]" >"$FIX/pulls-$n" ;;
   "api repos/acme/app/pulls/"[0-9]*) cat "$FIX/pull-$(sed -E 's#^api repos/acme/app/pulls/([0-9]+).*#\1#' <<<"$*").json" | respond ;;
   "api repos/acme/app/pulls?head="*)
     n=$(sed -E 's#.*head=acme:[a-z]+/([0-9]+)-.*#\1#' <<<"$*")
@@ -787,7 +794,11 @@ SENIOR_MODE_GH_TIMEOUT=1 once || fail "Y2: serve failed: $(cat "$work/out")"
 rm -f "$FIX/gh-hang"
 [ $((SECONDS - start)) -lt 60 ] || fail "Y2: the hanging gh call was not cut: $((SECONDS - start))s"
 grep -q 'cannot read the open pull requests; trying again at the next poll' "$work/out" || fail "Y2: not said: $(cat "$work/out")"
-started 64 || fail "Y2: the poll did not go on to launch #64: $(cat "$work/out")"
+# The cut is kept for the rest of the poll (spec 373, section 2): nothing that needs GitHub starts, and the next poll does.
+started 64 && fail "Y2: a ticket started in a poll where gh did not answer: $(cat "$work/out")"
+[ ! -e "$state/gh-down" ] || fail "Y2: the cut outlived serve: $(ls "$state")"
+once || fail "Y2: serve failed on the next poll: $(cat "$work/out")"
+started 64 || fail "Y2: the next poll did not launch #64: $(cat "$work/out")"
 
 # AA: a session that ends on a transient error (#377, #334) is resumed on the same model after a backoff, with no
 # failure counted, no escalation, no needs-human and no launch against sessionsPerHour; nothing else starts meanwhile.
@@ -1717,6 +1728,98 @@ once || fail "AE: serve failed: $(cat "$work/out")"
 [ ! -e "$state/limit-until.tmp.4999990" ] || fail "AE: the temporary file of a dead writer is left"
 [ -e "$state/held.tmp.$$" ] || fail "AE: the temporary file of a live writer was removed"
 rm -f "$state/held.tmp.$$"
+
+# AF: reconciliation (#379, spec 373 section 2). Whatever a dead serve left, the next poll reads it from GitHub and the disk.
+# AF1: a gh that never answers: the poll ends within serve.callTimeout plus the steps that need no GitHub, once, not once per call.
+config '{}' '{"callTimeout": 1}'
+board 100
+session 100-sonnet delivered pr
+fresh
+touch "$FIX/gh-dead"
+start=$SECONDS
+once || fail "AF1: serve failed: $(cat "$work/out")"
+rm -f "$FIX/gh-dead"
+[ $((SECONDS - start)) -lt 25 ] || fail "AF1: the poll did not end within the call timeout: $((SECONDS - start))s"
+[ "$(grep -c . "$GH_LOG")" -lt 8 ] || fail "AF1: every call waited for its own timeout: $(cat "$GH_LOG")"
+started 100 && fail "AF1: a ticket started with gh down"
+grep -q 'gh timed out after 1s' "$work/out" || fail "AF1: not said: $(cat "$work/out")"
+fresh
+once || fail "AF1: serve failed with gh back: $(cat "$work/out")"
+started 100 || fail "AF1: the next poll did not launch #100: $(cat "$work/out")"
+
+# AF2: a session that wrote `delivered` and ended while serve was down is read at the next start: the ticket goes In
+# review (o3), not back to Ready (o1).
+config '{}'
+items="[]"
+fitem 101 "In progress" '[]' "x"
+fboard
+fresh
+mkdir -p "$state"
+echo '#!/usr/bin/env bash' >"$state/101.sh"
+jq -nc '{ticket: 101, role: "ticket", model: "sonnet", branch: "feat/101-x", worktree: "/nonexistent", cwd: "", batch: "", pr: "", sha: "", started: 1799999000}' >"$state/101.meta"
+echo 4999994 >"$state/101.pgid"
+echo 0 >"$state/101.exit"
+echo delivered >"$state/101.outcome"
+echo '[{"number": 201, "author_association": "OWNER", "head": {"sha": "sha101"}, "labels": []}]' >"$FIX/pulls-101"
+once || fail "AF2: serve failed: $(cat "$work/out")"
+grep -q 'item-edit.*--single-select-option-id o3' "$GH_LOG" || fail "AF2: the delivered ticket is not In review: $(grep item-edit "$GH_LOG")"
+grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" && fail "AF2: the delivered ticket went back to Ready"
+outcome_of 101 delivered AF2
+grep -q 'taking over' "$work/out" || fail "AF2: the take-over is not said: $(cat "$work/out")"
+
+# AF3: the serve dir deleted. The ticket In progress whose worktree holds serve's marker and where nothing runs goes back
+# to Ready; the one In review is left to the pull request logic, nothing is done to it here.
+config '{}'
+items="[]"
+fitem 102 "In progress" '[]' "x"
+fitem 103 "In review" '[]' "x"
+fboard
+fresh
+git -C "$repo" worktree add -q -b feat/102-x "$work/wt102" main
+git -C "$work/wt102" rev-parse --absolute-git-dir | { read -r gd; echo 102 >"$gd/senior-mode-session"; }
+once || fail "AF3: serve failed: $(cat "$work/out")"
+grep -q 'issues/102' "$GH_LOG" || fail "AF3: #102 (worktree with the marker, no serve dir) not recovered: $(cat "$GH_LOG")"
+[ "$(grep -c 'item-edit.*--single-select-option-id o1' "$GH_LOG")" = 1 ] || fail "AF3: not exactly #102 set Ready: $(grep item-edit "$GH_LOG")"
+grep -q 'issues/103/' "$GH_LOG" && fail "AF3: #103, In review, was touched: $(cat "$GH_LOG")"
+git -C "$repo" worktree remove --force "$work/wt102" 2>/dev/null
+git -C "$repo" branch -D feat/102-x >/dev/null 2>&1
+
+# AF4: a pull request MERGED whose ticket is In review (serve died after the merge): the next poll sets it Done, with no
+# queued-<pr> file, and says so once.
+config '{}'
+items="[]"
+fitem 104 "In review" '[]' "x"
+fboard
+echo '[{"number": 204, "headRefName": "feat/104-x", "body": "Closes #104"}]' >"$FIX/merged-prs"
+fresh
+once || fail "AF4: serve failed: $(cat "$work/out")"
+grep -q 'item-edit.*--single-select-option-id o4' "$GH_LOG" || fail "AF4: #104 not set Done: $(cat "$GH_LOG")"
+[ ! -e "$state/queued-204" ] || fail "AF4: a queued file appeared"
+# An open pull request for the same ticket (a follow-up) keeps it In review.
+echo '[{"number": 205, "head": {"ref": "feat/104-y", "sha": "sha205"}, "author_association": "OWNER", "labels": [], "mergeable_state": "clean"}]' >"$FIX/open-prs.json"
+once || fail "AF4: serve failed: $(cat "$work/out")"
+grep -q 'item-edit.*--single-select-option-id o4' "$GH_LOG" && fail "AF4: a ticket with an open pull request was set Done"
+rm -f "$FIX/merged-prs" "$FIX/open-prs.json"
+
+# AF5: a pushed branch with commits, `delivered` and no pull request: serve opens one, and only one when its end is read
+# twice (the second read is the one of a serve that died after the pull request was opened).
+config '{}'
+board 105
+session 105-sonnet delivered "" "" commit
+fresh
+rm -f "$FIX/pr-created" "$FIX/pulls-105"
+once || fail "AF5: serve failed: $(cat "$work/out")"
+[ "$(grep -c . "$FIX/pr-created" 2>/dev/null)" = 1 ] || fail "AF5: not exactly one pull request opened: $(cat "$FIX/pr-created" 2>&1)"
+grep -q 'Closes #105' "$FIX/pr-created" || fail "AF5: the pull request does not close the ticket: $(cat "$FIX/pr-created")"
+git -C "$work/github.com/acme/app.git" rev-parse -q --verify refs/heads/feat/105-ticket-105 >/dev/null ||
+  [ -n "$(git -C "$work/github.com/acme/app.git" branch --list 'feat/105-*')" ] || fail "AF5: the branch was not pushed"
+items="[]"
+fitem 105 "In progress" '[]' "x"
+fboard
+rm -f "$state/105.json"
+once || fail "AF5: serve failed on the second read: $(cat "$work/out")"
+[ "$(grep -c . "$FIX/pr-created")" = 1 ] || fail "AF5: a second pull request was opened: $(cat "$FIX/pr-created")"
+outcome_of 105 delivered AF5
 
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

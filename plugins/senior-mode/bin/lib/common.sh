@@ -3,7 +3,7 @@ DEFAULTS='{
   "language": "en",
   "ci": { "mode": "local" },
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "merge": false, "escalate": true, "sessionTimeout": 90, "schedule": "02:00", "ticketsPerHour": 6, "sessionsPerHour": 0, "minMemoryMB": 1024, "userSettings": false, "minDiskMB": 2048, "startupSeconds": 30 },
-  "serve": { "interval": 60, "grace": 600, "breakerCooldown": 900, "breakerMax": 14400, "backoffBase": 30, "backoffMax": 900 },
+  "serve": { "interval": 60, "grace": 600, "breakerCooldown": 900, "breakerMax": 14400, "backoffBase": 30, "backoffMax": 900, "callTimeout": 60 },
   "notify": { "mention": "", "webhook": "", "digest": true, "digestAt": "", "batchMinutes": 60 },
   "agent": { "command": "claude" },
   "e2e": { "slots": 2 },
@@ -62,13 +62,38 @@ net_cut() {
   [ "$1" -eq 124 ] || [ "$1" -eq 137 ]
 }
 
-# gh for the calls of the daemon (#382): cut after SENIOR_MODE_GH_TIMEOUT seconds (default 60), so that a connection
-# that died half-way cannot stall serve. A cut is a transient failure: "timed out" on stderr, as gh_retry reads it.
+# gh for the calls of the daemon (#382): cut after serve.callTimeout seconds (GH_CALL_TIMEOUT, set by serve; default 60;
+# SENIOR_MODE_GH_TIMEOUT overrides it; a graphql call gets twice as much), so that a connection that died half-way cannot
+# stall serve. A cut is a transient failure: "timed out" on stderr, as gh_retry reads it. Under serve (GH_DOWN_FILE) the
+# first cut of a poll is kept: the other gh calls of that poll fail at once, so that the poll ends after one timeout plus
+# the steps that need no GitHub (spec 373, section 2).
 gh_bound() {
-  local rc=0 secs=${SENIOR_MODE_GH_TIMEOUT:-60}
+  local rc=0 secs=${SENIOR_MODE_GH_TIMEOUT:-${GH_CALL_TIMEOUT:-60}}
+  case " $* " in *" graphql "*) secs=$((secs * 2)) ;; esac
+  if [ -n "${GH_DOWN_FILE:-}" ] && [ -e "$GH_DOWN_FILE" ]; then
+    echo "gh timed out earlier in this poll; not called again" >&2
+    return 124
+  fi
   net_bound "$secs" gh "$@" || rc=$?
-  ! net_cut "$rc" || echo "gh timed out after ${secs}s" >&2
+  if net_cut "$rc"; then
+    echo "gh timed out after ${secs}s" >&2
+    [ -z "${GH_DOWN_FILE:-}" ] || state_put "$GH_DOWN_FILE" 1
+  fi
   return "$rc"
+}
+
+# A point of the life of a ticket where the chaos suite kills the process (spec 373, section 7): with SENIOR_MODE_TEST=1 and
+# SENIOR_MODE_FAULT=<name>[:<nth>], the <nth> (default 1) time the point <name> is passed the shell gets `kill -9`, as a power
+# cut would. The count is in fault-<name> of SENIOR_MODE_FAULT_DIR (default the serve dir), so a restart does not fire it
+# again. Nothing otherwise.
+fault_point() {
+  [ "${SENIOR_MODE_TEST:-}" = 1 ] && [ -n "${SENIOR_MODE_FAULT:-}" ] && [ "${SENIOR_MODE_FAULT%%:*}" = "$1" ] || return 0
+  local nth=1 file count
+  [[ $SENIOR_MODE_FAULT != *:* ]] || nth=${SENIOR_MODE_FAULT#*:}
+  file=${SENIOR_MODE_FAULT_DIR:-${SERVE_DIR:-${TMPDIR:-/tmp}}}/fault-$1
+  count=$(($(cat "$file" 2>/dev/null || echo 0) + 1))
+  echo "$count" >"$file"
+  [ "$count" -ne "$nth" ] || kill -9 $$
 }
 
 # git for the network calls of the daemon (fetch, push, ls-remote): cut after SENIOR_MODE_GIT_TIMEOUT seconds (default 120).
@@ -90,6 +115,8 @@ gh_retry() {
       [ -z "$out" ] || printf '%s\n' "$out"
       return 0
     fi
+    # A cut under serve is not tried again in the poll: GH_DOWN_FILE is there once gh did not answer.
+    [ -z "${GH_DOWN_FILE:-}" ] || [ ! -e "$GH_DOWN_FILE" ] || break
     grep -qiE 'unknown owner type|HTTP 5[0-9][0-9]|timeout|timed out|connection reset|unexpected EOF|secondary rate limit' "$err" &&
       [ "$attempt" -lt 4 ] || break
     sleep $((attempt * ${SENIOR_MODE_RETRY_DELAY:-1}))

@@ -618,11 +618,25 @@ blocker that no later poll lifts. A ticket whose Size cannot be read is only log
 
 ### After a crash
 
-When `serve` starts again after a crash or a restart, it looks at the tickets it launched (their `<n>.sh` is under
-`.git/senior-mode/serve/`) that are still In progress with no live session, without a `needs-human` label and
-whose end it never read. Each goes back to Ready and is picked again, its worktree and branch kept. The recoveries of a
-ticket are counted in `<n>.recovered`: when the count reaches `autonomy.maxConsecutiveFailures`, the ticket gets
-`needs-human` instead (an [alert](#alerts)). A session that is still alive is left alone.
+GitHub is the source of truth and the serve directory a cache: at each poll, before it launches anything, `serve`
+rebuilds its picture from both and repairs. Before it launches a session it writes `<n>.meta` (role, model, branch,
+worktree) and marks the worktree, so a restarted `serve` knows what it left.
+
+- A session that is still alive is taken over: it is tracked like one this `serve` started, until it ends.
+- A session that ended with a verdict (`delivered`, `failed: ...`) while `serve` was down is read like any end: a
+  delivered ticket goes In review, it does not go back to Ready.
+- A session with no verdict and nothing alive, whose ticket is In progress without a `needs-human` label, goes back to
+  Ready and is picked again, its worktree and branch kept. The recoveries of a ticket are counted in `<n>.recovered`:
+  when the count reaches `autonomy.maxConsecutiveFailures`, the ticket gets `needs-human` instead (an
+  [alert](#alerts)).
+- A session that said `delivered` with commits on its branch and no pull request gets its branch pushed (never forced)
+  and one pull request opened with `Closes #<n>`; a branch that has a pull request, open or not, is left alone.
+- A ticket In review whose pull request merged while `serve` was down (or died before it set the Status) is Done at the
+  next poll and its worktree is cleaned, with no `queued-<pr>` file needed.
+- With the whole serve directory deleted, a ticket In progress whose worktree holds the marker and where nothing runs
+  goes back to Ready; the tickets In review are read from GitHub.
+- A `gh` call is cut after `serve.callTimeout` seconds; the first cut of a poll ends the calls to GitHub of that poll,
+  which carries on with what needs none.
 
 The state files of `serve` survive a power cut or a kill. Each is written whole to `<file>.tmp.<pid>`, synced and
 moved into place, so a reader sees the old file or the new one; read-modify-write (the counts of `launches`, the
@@ -630,6 +644,29 @@ breaker, the hold) holds one `flock` on `state.lock`, which the kernel drops wit
 is not fatal: it is set aside as `<file>.corrupt-<epoch>` (kept 7 days, said once) and its default applies. At start,
 the temporary files of a write that a kill cut are removed. A `serve.pid` whose process is not a `senior-mode` is
 replaced; one that is refuses the second `serve`.
+
+### The watchdog
+
+At each poll `serve` looks at the activity of every live session: the worktree (`HEAD`, `git status`, the newest file
+modification), its process group (the CPU time of its processes and the children that are neither a shell, `claude`
+nor the slot wrapper) and the size of its log. A long test suite is *long*: its CPU and its children change at every
+poll. A session blocked on stdin, a deadlocked dev server or a socket that never answers is *hung*: nothing moves.
+
+- `autonomy.startupMinutes` (3): nothing at all moved since the launch.
+- `autonomy.stallMinutes` (20): nothing moved for that long. It is above the 10 minutes of the API client's request
+  timeout, so a model waiting for a slow answer is not stopped.
+- `autonomy.sessionTimeout` (90): the absolute bound, even for a session that is still active.
+
+The log says which signals were quiet. The session's process group gets `TERM`, then `KILL` after 2 seconds. The
+**first** stop of a ticket's session (`<n>.resumed`) is an interruption, not a failure: the ticket goes back to Ready and
+the session resumes on the same model after the transient backoff, with a fresh timer, told to continue from its worktree
+and its pull request; nothing is counted. The **second** is the ticket's: `needs-human` with the log path, counted for
+the circuit breaker. The timers belong to the running `serve`; one that starts again takes over a live session with a
+fresh timer.
+
+Every poll also removes what a session left behind: the processes of its group once it has ended (only when every one of
+them runs inside its worktree, so that a reused group number is never signalled), and a git `index.lock` over 10 minutes
+old with no `git` process in its repository.
 
 ### Session slots
 

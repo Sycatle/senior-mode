@@ -9,6 +9,7 @@ state_write() {
   local file=$1 tmp=$1.tmp.$$
   if cat >"$tmp"; then
     if command -v sync >/dev/null 2>&1; then sync "$tmp" 2>/dev/null || true; fi
+    fault_point during-state-write
     mv -f "$tmp" "$file" && return 0
   fi
   rm -f "$tmp"

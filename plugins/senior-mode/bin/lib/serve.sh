@@ -700,27 +700,128 @@ serve_batch() {
   state_get "$SERVE_DIR/$1.batch" '[0-9]+( [0-9]+)*' || echo "$1"
 }
 
-# After a crash or a restart (#272): a ticket serve launched (its <n>.sh is in the serve dir) whose session is
-# not one of this serve's, is still In progress and has no live session goes back to Ready, to be picked again
-# (its worktree and branch are kept). Once autonomy.maxConsecutiveFailures recoveries are used up it gets
-# needs-human instead. Left alone: a session still alive, a ticket whose end serve already read (its <n>.json is
-# newer than its <n>.sh), a ticket with needs-human. The recoveries are counted in <n>.recovered.
+# What became of the session of ticket $1 (its <n>.sh is in the serve dir), for serve_recover: `live` (its process group
+# is alive and left no exit file), `ended` (it left an exit file and a verdict, or its group is gone with a verdict: the
+# end can be read), `lost` (no verdict, nothing alive: its ticket is put back).
+serve_orphan() {
+  local n=$1 verdict=false
+  [ -z "$(head -n 1 "$SERVE_DIR/$n.outcome" 2>/dev/null)" ] || verdict=true
+  if [ -f "$SERVE_DIR/$n.exit" ]; then
+    [ "$verdict" = true ] && echo ended || echo lost
+  elif [ ! -f "$SERVE_DIR/$n.pgid" ]; then
+    echo lost
+  elif run_dead "$n"; then
+    [ "$verdict" = true ] && echo ended || echo lost
+  else
+    echo live
+  fi
+}
+
+# Whether a process runs inside the directory $1.
+serve_wt_busy() {
+  # One find and one awk, not a readlink per process: a busy host runs thousands of them. find may fail on a process
+  # that ends meanwhile, and awk reads to the end, so that pipefail sees neither.
+  # shellcheck disable=SC2016 # an awk program, not expanded here
+  { find /proc -maxdepth 2 -path '/proc/[0-9]*/cwd' -printf '%l\n' 2>/dev/null || true; } |
+    awk -v d="$1" '$0 == d || index($0, d "/") == 1 { found = 1 } END { exit !found }'
+}
+
+# The tickets of serve's sessions that the serve dir no longer knows (it was deleted): the worktrees of a ticket's branch
+# that hold serve's marker (run_mark) and where no process runs, as `<lead> <ticket>...` lines.
+serve_marked() {
+  local path branch gd
+  while IFS=$'\t' read -r path branch; do
+    [[ $branch =~ ^refs/heads/[a-z]+/([0-9]+)(-|$) ]] || continue
+    [ ! -e "$SERVE_DIR/${BASH_REMATCH[1]}.sh" ] || continue
+    gd=$(git -C "$path" rev-parse --absolute-git-dir 2>/dev/null) || continue
+    [ -f "$gd/senior-mode-session" ] || continue
+    ! serve_wt_busy "$path" || continue
+    printf '%s %s\n' "${BASH_REMATCH[1]}" "$(sed -n 1p "$gd/senior-mode-session")"
+  done < <(git worktree list --porcelain | awk '$1 == "worktree" {p = substr($0, 10)} $1 == "branch" {print p "\t" $2}')
+}
+
+# Takes over the session of ticket $1 from a serve that died, from its <n>.meta: the arrays run keeps for a session are
+# restored and the session is tracked like one this serve started. A session that ended is read like any end (run_reap).
+serve_adopt() {
+  local n=$1 meta m now
+  local -a f
+  meta=$(state_json "$SERVE_DIR/$n.meta") || return 1
+  mapfile -t f < <(jq -r '(.role // "ticket"), (.model // "sonnet"), (.branch // ""), (.worktree // ""), (.cwd // ""), (.batch // ""),
+    (.pr // ""), (.sha // ""), (.started // 0)' <<<"$meta")
+  RUN_ROLE[$n]=${f[0]}
+  RUN_MODEL[$n]=${f[1]}
+  RUN_BRANCH[$n]=${f[2]}
+  RUN_WT[$n]=${f[3]}
+  if [ -n "${f[4]}" ]; then RUN_CWD[$n]=${f[4]}; else unset 'RUN_CWD[$n]'; fi
+  if [ -n "${f[5]}" ]; then RUN_BATCH[$n]=${f[5]}; else unset 'RUN_BATCH[$n]'; fi
+  if [ "${f[0]}" = reviewer ]; then
+    SERVE_PR[$n]=${f[6]}
+    SERVE_SHA[$n]=${f[7]}
+  fi
+  [ "${f[0]}" != ticket ] || [ "${f[1]}" != opus ] || RUN_ESCALATED[$n]=true
+  now=$(serve_now)
+  if [[ ! ${f[8]} =~ ^[0-9]+$ ]] || [ "${f[8]}" -gt "$now" ]; then f[8]=$now; fi
+  RUN_STARTED[$n]=$((SECONDS - (now - f[8])))
+  for m in $(run_members "$n"); do
+    RUN_BRANCH[$m]=${f[2]}
+    RUN_WT[$m]=${f[3]}
+  done
+  # The session ended with a verdict but its script died before the exit file: the exit code is not known.
+  if [ ! -f "$SERVE_DIR/$n.exit" ] && run_dead "$n"; then state_put "$SERVE_DIR/$n.exit" 0; fi
+  running+=("$n")
+}
+
+# After a crash or a restart (#272, spec 373 section 2): a ticket serve launched (its <n>.sh is in the serve dir) whose
+# session is not one of this serve's. A session still alive, or ended with a verdict that nobody read (the end of a dead
+# serve), is adopted (serve_adopt) and read at once like any other. One with no verdict and nothing alive, whose ticket
+# is In progress, goes back to Ready, to be picked again (its worktree and branch are kept); once
+# autonomy.maxConsecutiveFailures recoveries are used up it gets needs-human instead. The recoveries are counted in
+# <n>.recovered. Left alone: a ticket whose end serve already read (its <n>.json is newer than its <n>.meta, else its
+# <n>.sh), a ticket with needs-human. With the serve dir lost, the tickets In progress whose worktree holds serve's marker
+# (serve_marked) and where nothing runs are put back the same way.
 serve_recover() {
-  local f n data count m
-  local -a cand=()
+  local f n data count m base role want adopted=false
+  local -a cand=() adopt=()
+  local -A marked=()
   for f in "$SERVE_DIR"/*.sh; do
     [ -e "$f" ] || continue
     n=$(basename "$f" .sh)
     [[ $n =~ ^[0-9]+$ ]] || continue
     [[ " ${running[*]-} " != *" $n "* ]] || continue
-    if [ -f "$SERVE_DIR/$n.json" ] && [ "$SERVE_DIR/$n.json" -nt "$f" ]; then continue; fi
-    if [ -f "$SERVE_DIR/$n.exit" ] || [ ! -f "$SERVE_DIR/$n.pgid" ] || run_dead "$n"; then cand+=("$n"); fi
+    base=$f
+    [ ! -f "$SERVE_DIR/$n.meta" ] || base=$SERVE_DIR/$n.meta
+    if [ -f "$SERVE_DIR/$n.json" ] && [ "$SERVE_DIR/$n.json" -nt "$base" ]; then continue; fi
+    role=$(jq -r '.role // "ticket"' "$SERVE_DIR/$n.meta" 2>/dev/null) || role=ticket
+    case $(serve_orphan "$n") in
+      live) [ ! -f "$SERVE_DIR/$n.meta" ] || adopt+=("$n") ;;
+      ended)
+        # A reviewer or an integrator ended: the pull request is looked at again, as it always was.
+        if [ -f "$SERVE_DIR/$n.meta" ] && { [ "$role" = ticket ] || [ "$role" = test-author ]; }; then adopt+=("$n"); else cand+=("$n"); fi
+        ;;
+      lost) cand+=("$n") ;;
+    esac
   done
-  [ ${#cand[@]} -gt 0 ] || return 0
+  while read -r n m; do
+    [ -n "$n" ] || continue
+    marked[$n]=${m:-$n}
+    cand+=("$n")
+  done < <(serve_marked)
+  [ $((${#cand[@]} + ${#adopt[@]})) -gt 0 ] || return 0
   if ! data=$(board_data false); then
     echo "serve: cannot read the board to recover tickets; trying again at the next poll" >&2
     return 0
   fi
+  for n in "${adopt[@]}"; do
+    role=$(jq -r '.role // "ticket"' "$SERVE_DIR/$n.meta" 2>/dev/null) || role=ticket
+    want="In progress"
+    case $role in reviewer | integrator) want="In review" ;; esac
+    jq -e --argjson n "$n" --arg s "$want" '.items[] | select(.number == $n and .open and .status == $s and (.labels | index("needs-human") | not))' \
+      <<<"$data" >/dev/null || continue
+    serve_adopt "$n" || continue
+    RUN_TITLE[$n]=$(jq -r --argjson n "$n" '.items[] | select(.number == $n) | .title' <<<"$data")
+    echo "serve: #$n: taking over the $role session of a serve that stopped"
+    adopted=true
+  done
   for n in "${cand[@]}"; do
     jq -e --argjson n "$n" '.items[] | select(.number == $n and .open and .status == "In progress" and (.labels | index("needs-human") | not))' \
       <<<"$data" >/dev/null || continue
@@ -730,7 +831,7 @@ serve_recover() {
       notify needs-human "$n" "serve found the ticket In progress with no live session $count times (autonomy.maxConsecutiveFailures); the session files are in $SERVE_DIR"
     else
       # A lost batch session puts every ticket of the batch back.
-      for m in $(serve_batch "$n"); do
+      for m in ${marked[$n]:-$(serve_batch "$n")}; do
         if (item_set "$m" Status Ready) >/dev/null; then
           echo "serve: #$m was In progress with no live session; back to Ready (recovery $count of $((RUN_MAXFAIL - 1)))"
         else
@@ -739,6 +840,7 @@ serve_recover() {
       done
     fi
   done
+  [ "$adopted" = false ] || run_reap
 }
 
 # Says why a pull request waits, once: the line is repeated only when the reason changes. $1 names the pull
@@ -886,6 +988,33 @@ serve_done() {
       RUN_NOT_DONE+=("#$m ${RUN_TITLE[$m]:-} (pull request #$pr)")
     fi
   done
+  fault_point after-done
+}
+
+# A pull request that merged while serve was down, or died before it set the Status (spec 373, section 2): a ticket In
+# review whose branch (or `Closes #<n>`) has a merged pull request and no open one is Done now, whether or not a queued-<pr>
+# file remembers it, and its worktree is cleaned. $1 is the board, $2 the open pull requests. Read from GitHub at every poll.
+# shellcheck disable=SC2016 # a jq program, not shell
+serve_merged_done() {
+  local data=$1 prs=$2 merged t pr moved=false d
+  merged=$(gh_retry pr list --repo "$RUN_SLUG" --state merged --limit 50 --json number,headRefName,body) || return 0
+  while IFS=$'\t' read -r t pr; do
+    [ -n "$t" ] || continue
+    # Done in this very poll (serve_queued): the board read above is older.
+    for d in "${RUN_MERGED[@]}"; do [[ $d == "#$t "* ]] && continue 2; done
+    serve_busy "$t" && continue
+    serve_done "$t" "$pr"
+    moved=true
+  done < <(jq -r --argjson d "$data" --argjson o "$prs" '
+      def ticket: try (capture("^[a-z]+/(?<n>[0-9]+)(-|$)") | .n | tonumber) catch null;
+      ([$o[] | .head.ref | ticket] | map(select(. != null))) as $open
+      | [.[] | . as $p
+          | ([($p.headRefName | ticket)] + [($p.body // "" | scan("(?i)(?:closes|fixes|resolves) #([0-9]+)") | .[0] | tonumber)])
+          | map(select(. != null))[] | {t: ., pr: $p.number}]
+      | map(select(. as $x | ($open | index($x.t) | not)
+          and any($d.items[]; .number == $x.t and .open and .status == "In review")))
+      | unique_by(.t)[] | [.t, .pr] | @tsv' <<<"$merged")
+  [ "$moved" = false ] || "$SELF" clean || echo "serve: clean failed; trying again later" >&2
 }
 
 # The pull requests queued for auto-merge (queued-<pr>: the head and the ticket): merged is read back, then
@@ -917,6 +1046,7 @@ serve_do_merge() {
   local t=$1 pr=$2 sha=$3 err="$SERVE_DIR/$1.merge" queued=false state method
   : >"$err"
   method=$(workflow_merge_flag "$RUN_ROOT")
+  fault_point before-merge
   if [ "$(serve_auto)" = true ] &&
     gh_bound pr merge "$pr" --auto "$method" --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$err"; then
     queued=true
@@ -924,6 +1054,7 @@ serve_do_merge() {
     serve_note "w$pr" "#$t ${RUN_TITLE[$t]:-}: pull request #$pr, the merge failed: $(head -n 1 "$err")"
     return 0
   fi
+  fault_point after-merge
   state=$(gh_retry pr view "$pr" -R "$RUN_SLUG" --json state --jq .state) || state=""
   if [ "$state" = MERGED ]; then
     serve_done "$t" "$pr"
@@ -1198,6 +1329,7 @@ serve_poll() {
   now=$(serve_now)
   RUN_STOP=""
   SERVE_HELD="" SERVE_GUARDS="" SERVE_WAIT=""
+  rm -f "$GH_DOWN_FILE"
   run_reap
   serve_report
   serve_breaker
@@ -1232,6 +1364,7 @@ serve_poll() {
   fi
   serve_queued
   if prs=$(gh_retry api "repos/$RUN_SLUG/pulls?state=open&per_page=100"); then
+    serve_merged_done "$data" "$prs"
     serve_prs "$data" "$prs"
   else
     echo "serve: cannot read the open pull requests; trying again at the next poll" >&2
@@ -1407,9 +1540,9 @@ serve_loop() {
   local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=() RUN_BATCH=()
   local -A SERVE_PR=() SERVE_SHA=() SERVE_SIZE=() SERVE_NOTED=()
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP="" RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_REQUIRED RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
-  local RUN_FAILS=0 RUN_STOP="" RUN_ON_EXIT=serve_end RUN_FINISH=serve_finish RUN_PROMPT=serve_prompt RUN_PROMPT_BATCH=serve_prompt_batch RUN_LAUNCH_LOG
+  local RUN_FAILS=0 RUN_STOP="" RUN_ON_EXIT=serve_end RUN_FINISH=serve_finish RUN_PROMPT=serve_prompt RUN_PROMPT_BATCH=serve_prompt_batch RUN_LAUNCH_LOG RUN_RECONCILE=1
   local SERVE_DIR SERVE_COMMON SERVE_TERM=false SERVE_PARALLEL SERVE_PER_HOUR SERVE_TICKETS_PER_HOUR SERVE_MIN_MEM SERVE_COOLDOWN SERVE_GRACE
-  local SERVE_BREAKER_MAX SERVE_BACKOFF_BASE SERVE_BACKOFF_MAX SERVE_MIN_DISK SERVE_STARTUP
+  local SERVE_BREAKER_MAX SERVE_BACKOFF_BASE SERVE_BACKOFF_MAX SERVE_MIN_DISK SERVE_STARTUP GH_CALL_TIMEOUT GH_DOWN_FILE
   local SERVE_HELD="" SERVE_GUARDS="" SERVE_WAIT=""
   run_prepare serve
   # ADR 0018: under serve everything green merges, unless the repository sets autonomy.merge itself.
@@ -1423,6 +1556,7 @@ serve_loop() {
   SERVE_BACKOFF_MAX=$(serve_int serve.backoffMax 1)
   SERVE_MIN_DISK=$(serve_int autonomy.minDiskMB 0)
   SERVE_STARTUP=$(serve_int autonomy.startupSeconds 0)
+  GH_CALL_TIMEOUT=$(serve_int serve.callTimeout 1)
   SERVE_PER_HOUR=$(serve_int autonomy.sessionsPerHour 0)
   SERVE_MIN_MEM=$(serve_int autonomy.minMemoryMB 0)
   SERVE_PARALLEL=$(serve_int autonomy.parallel 1)
@@ -1432,6 +1566,8 @@ serve_loop() {
   SERVE_DIR=$SERVE_COMMON/senior-mode/serve
   RUN_DIR=$SERVE_DIR
   RUN_LAUNCH_LOG=$SERVE_DIR/launches
+  GH_DOWN_FILE=$SERVE_DIR/gh-down
+  export GH_CALL_TIMEOUT GH_DOWN_FILE
   mkdir -p "$SERVE_DIR"
   old=$(state_num "$SERVE_DIR/serve.pid")
   if [ "$old" -gt 0 ] && kill -0 "$old" 2>/dev/null && [[ $(ps -o args= -p "$old" 2>/dev/null) == *senior-mode* ]]; then
@@ -1440,7 +1576,7 @@ serve_loop() {
   state_sweep "$SERVE_DIR"
   state_put "$SERVE_DIR/serve.pid" "$$"
   # shellcheck disable=SC2064 # expand now: SERVE_DIR is local and gone when the trap runs
-  trap "rm -f '$SERVE_DIR/serve.pid' '$SERVE_DIR/token'" EXIT
+  trap "rm -f '$SERVE_DIR/serve.pid' '$SERVE_DIR/token' '$SERVE_DIR/gh-down'" EXIT
   trap 'SERVE_TERM=true' INT TERM
   run_token_new
   "$SELF" clean || echo "senior-mode: clean failed; serve goes on" >&2

@@ -43,17 +43,20 @@ It shows what it will change on GitHub and waits for your yes. Then it creates t
 labels, merge rules, git hooks and the check list. Run it again at any time to repair. Then:
 
 ```
-/senior-mode:frame I want users to be able to export their invoices as PDF
+I want users to be able to export their invoices as PDF
 ```
+
+A request in plain words is enough: Claude sizes it, frames it and starts. `/senior-mode:frame` is
+the explicit form.
 
 You need [`gh`](https://cli.github.com/) logged in (`gh auth refresh -s project` for the board),
 `git` and `jq`. More in [Getting started](docs/guide/getting-started.md).
 
 ## A typical day
 
-1. **Frame.** `/senior-mode:frame` interviews you a few questions at a time, offers alternatives
-   with a recommendation, then writes the spec, the ADRs and tickets with acceptance criteria,
-   size, priority and milestone.
+1. **Frame.** A plain request ("I want...") is sized, then Claude interviews you a few questions at
+   a time and offers alternatives with a recommendation. A small change is delivered right away;
+   a bigger one gets a spec, ADRs and tickets with acceptance criteria, size, priority and milestone.
 2. **Build.** For each ticket: a branch, failing tests first, the code, small conventional commits.
    The checks run before each push and publish `senior-mode/ci`.
 3. **Review.** A `reviewer` agent with a fresh context reviews the PR against the spec and against

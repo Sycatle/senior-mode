@@ -26,11 +26,14 @@ Generated code and lockfiles do not count toward line estimates.
 
 | Size | Required |
 |---|---|
-| S | Branch and PR; no issue or spec. A bug fix still gets a regression test first. |
+| S | Branch and PR; no spec. A product request gets an issue through `frame`. A bug fix still gets a regression test first. |
 | M | Issue with acceptance criteria, light spec in `docs/specs/` (skill `spec`), TDD, PR closing the issue. |
-| L | `/senior-mode:frame`: alternatives, ADR(s) (skill `adr`), full spec, epic issue split into sub-issues of size M or less. A human accepts the spec and ADRs before implementation starts. |
+| L | skill `frame`: alternatives, ADR(s) (skill `adr`), full spec, epic issue split into sub-issues of size M or less. A human accepts the spec and ADRs before implementation starts. |
 
 ## Output
+
+A request to change the product starts here, then skill `frame`. A user-given size smaller than the
+criteria allow is refused with the criterion; a larger one is accepted.
 
 State the size and the criterion that decided it, in one line, in the project language
 (`senior-mode config get language`; without a config, the language of the request). Example:

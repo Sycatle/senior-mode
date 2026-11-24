@@ -7,18 +7,40 @@ gh issue list --state open --limit 200
 gh api 'repos/{owner}/{repo}/milestones?state=all' --paginate --jq '.[]|"\(.number) \(.state) \(.title)"'
 ```
 
+## A product request
+
+Starts the skill: a plain wish to change the product ("je veux", "on devrait", "ajoute", "I want", "we
+should", "add"), with or without the command. Does not: a question, a review request, a status
+request. A bug report about existing behaviour is not a product request either: it goes through skill
+`triage` and its regression test, not through framing.
+
+## Facts
+
+Besides the `scout` agent, read the open issues and milestones yourself (above). An idea that is an
+existing issue keeps that issue as the anchor.
+
 ## Size S
 
-An S issue needs no spec but must reach Ready, or it never gets picked. A new S idea with nobody to
-ask (headless) first becomes that issue, else `next` and `run` never see it: the `ops` agent runs
-`senior-mode issue create` as in "Tickets" with `--size S`, the type of the idea and its Given / When /
-Then criteria drafted from the idea. With a human, a new S idea only gets the offer to do the same.
+No spec. Ask the round of questions first (nobody to ask: take the recommended options and write them
+in the issue as assumed), then:
 
-1. `senior-mode item set <n> Size S`: it adds the issue to the board. Add `Priority "<option>"` only
+1. An existing issue is used as is; a new idea becomes one: the `ops` agent runs `senior-mode issue
+   create` as in "Tickets" with `--size S`, the type of the idea and the expected behaviour as Given /
+   When / Then criteria drafted from the idea and the answers.
+2. `senior-mode item set <n> Size S`: it adds the issue to the board. Add `Priority "<option>"` only
    when the user gave one.
-2. Read its acceptance criteria: each must be a testable Given / When / Then. Missing or vague:
-   draft them from the issue text and offer to add them to the issue body (headless: add them).
-3. Apply skill `ready`: it sets Status Ready, or says what is missing.
+3. Each criterion must be a testable Given / When / Then. Missing or vague: draft them from the issue
+   text and the answers and add them to the issue body.
+4. Apply skill `ready`: it sets Status Ready, or says what is missing.
+5. With a human: deliver it in this session. `go` cannot be invoked by the model, so read
+   `${CLAUDE_SKILL_DIR}/../go/SKILL.md` and follow its steps 4-9 for this issue: `senior-mode start`,
+   red test, green, pull request, review, merge only on a clear yes. Headless: stop at Ready, the daemon or `go`
+   delivers it.
+
+## Headless
+
+No question is asked. The recommended options are recorded as assumed in the issue or the spec. An L
+spec or an ADR stays `draft` / `proposed` and the anchor gets `needs-human`.
 
 ## Tickets
 

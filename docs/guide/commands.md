@@ -40,19 +40,29 @@ State: **Available.**
 /senior-mode:frame <the idea, in a sentence or two>
 ```
 
-- **Purpose.** Turn an idea into decisions, a spec, ADRs and Ready tickets. Its description names
-  "frame", "let's frame" and "cadrons"; typing the command is the sure way to start it.
-- **Asks you.** Rounds of 3 to 4 questions, recommended option first, only what the repository and
-  GitHub cannot answer. Then whether you accept the spec and ADRs.
+- **Purpose.** Size a request, then turn it into a delivered change (S) or into decisions, a spec,
+  ADRs and Ready tickets (M, L). A request in plain words is enough ("je veux", "on devrait",
+  "ajoute", "I want", "we should"): Claude starts `frame` by itself. A question, a review or a status
+  request is not a product request, and a bug report goes through `triage`. Typing the command is
+  the explicit form.
+- **Size.** Judged with the `triage` criteria and announced in one line with its reason, before any
+  work. A smaller size than the criteria allow is refused with the criterion that forbids it; a
+  larger one is accepted.
+- **Asks you.** Always one round of 3 to 4 questions, even for S, recommended option first, then only
+  what stays open and what the repository and GitHub cannot answer. For M and L, then whether you
+  accept the spec and ADRs. With nobody to ask (headless), the recommended options are taken and
+  recorded as assumed; an L spec and any ADR stay `draft` / `proposed`, with `needs-human`.
 - **Produces.** A spec in `docs/specs/` (light for M, full for L), ADRs in `docs/adr/`, tickets on
   the board as vertical slices (size, priority, milestone, Given/When/Then criteria, test seams,
   blockers; an epic with sub-issues for L), and a pull request with the documents. It works in its
   own worktree (`~/.local/share/senior-mode/worktrees/<repo>/frame-<slug>`) and branch `docs/<slug>` from `origin/main` (`senior-mode frame start`), so framings
   can run in parallel; the spec is named after its issue (`docs/specs/<issue>-<slug>.md`) and ADR
   numbers come from `origin/main`. Ends with at most five lines, then proactive suggestions.
-- **Limits.** A size S stops at once: it needs no framing. When the idea is an existing issue, `frame` first
-  puts it on the board with Size S, checks its criteria are testable and marks it Ready; in a headless
-  session a new S idea first becomes that issue, so `next` and `run` can deliver it. If the default branch has commits origin lacks, it
+- **Limits.** A size S needs no spec: `frame` creates its issue (or takes the existing one), puts it
+  on the board with Size S, checks its criteria are testable and marks it Ready, then delivers it in
+  the same session through the steps of `go` (red test, pull request, review, merge on a clear yes).
+  In a headless session it stops at Ready, so `go` and the daemon deliver it. An M or L ends with Ready
+  tickets, then "on enchaîne ?"; with the daemon running, Claude says the daemon takes them. If the default branch has commits origin lacks, it
   stops and asks you to push them first. During framing, edits outside `docs/` are
   denied, subagents included. Re-running is safe: an open issue with the same title is reused.
   Tickets stay in Backlog until the documents pull request is merged and the spec accepted.

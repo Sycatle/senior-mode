@@ -46,16 +46,20 @@ les labels, les règles de fusion, les hooks git et la liste des contrôles. Rel
 voulez pour réparer. Ensuite :
 
 ```
-/senior-mode:frame Je veux que les utilisateurs puissent exporter leurs factures en PDF
+Je veux que les utilisateurs puissent exporter leurs factures en PDF
 ```
+
+Une demande en mots simples suffit : Claude la dimensionne, la cadre et démarre. `/senior-mode:frame`
+en est la forme explicite.
 
 Il vous faut [`gh`](https://cli.github.com/) connecté (`gh auth refresh -s project` pour le board),
 `git` et `jq`. La suite dans [Getting started](docs/guide/getting-started.md) (en anglais).
 
 ## Une journée type
 
-1. **Cadrer.** `/senior-mode:frame` vous interroge quelques questions à la fois, propose des
-   alternatives avec une recommandation, puis écrit la spec, les ADR et des tickets avec critères
+1. **Cadrer.** Une demande simple (« Je veux... ») est dimensionnée, puis Claude vous interroge
+   quelques questions à la fois et propose des alternatives avec une recommandation. Un petit
+   changement est livré aussitôt ; un plus gros reçoit une spec, des ADR et des tickets avec critères
    d'acceptation, taille, priorité et jalon.
 2. **Construire.** Pour chaque ticket : une branche, les tests en échec d'abord, le code, de petits
    commits conventionnels. Les contrôles tournent avant chaque push et publient `senior-mode/ci`.

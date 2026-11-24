@@ -497,8 +497,9 @@ run_finish() {
 
 # An alert (#155): $1 the event (needs-human, failed or breaker), $2 the issue or pull request number (empty when
 # there is none: the breaker pause), $3 the reason. A number gets the needs-human label and a comment that mentions
-# notify.mention (the repository owner when empty); when notify.webhook is set, it gets a JSON POST
-# {event, repo, number, url, reason}. Never fatal: what cannot be sent is said on stderr.
+# notify.mention (the repository owner when empty); the webhook, SENIOR_MODE_NOTIFY_WEBHOOK when not empty (a URL
+# that is its own secret stays out of the tracked config, #522) else notify.webhook, gets a JSON POST
+# {event, repo, number, url, reason}. Never fatal: what cannot be sent is said on stderr, without the URL.
 notify() {
   local event=$1 n=$2 reason=$3 mention hook url=""
   mention=$(config_get notify.mention)
@@ -510,7 +511,7 @@ notify() {
     gh_bound api "repos/$RUN_SLUG/issues/$n/comments" -f body="@${mention#@} this needs a human ($event): $reason" >/dev/null ||
       echo "#$n: could not mention $mention" >&2
   fi
-  hook=$(config_get notify.webhook)
+  hook=${SENIOR_MODE_NOTIFY_WEBHOOK:-$(config_get notify.webhook)}
   [ -z "$hook" ] || curl -fsS -m 10 -X POST -H 'Content-Type: application/json' "$hook" -d "$(jq -nc --arg e "$event" \
     --arg r "$RUN_SLUG" --arg n "$n" --arg u "$url" --arg why "$reason" '{event: $e, repo: $r,
     number: (if $n == "" then null else ($n | tonumber) end), url: (if $u == "" then null else $u end), reason: $why}')" >/dev/null ||

@@ -424,6 +424,25 @@ fresh
 once || fail "J: serve failed: $(cat "$work/out")"
 grep -q 'issues/60/comments.*@bob' "$GH_LOG" || fail "J: notify.mention not used: $(cat "$GH_LOG")"
 [ ! -s "$CURL_LOG" ] || fail "J: curl called without notify.webhook: $(cat "$CURL_LOG")"
+# SENIOR_MODE_NOTIFY_WEBHOOK (#522) gives the webhook out of the tracked config and wins over the key; empty, the
+# key applies.
+session 60-sonnet "failed: it broke"
+: >"$CURL_LOG"
+fresh
+SENIOR_MODE_NOTIFY_WEBHOOK=https://env.example/alone once || fail "J: serve failed: $(cat "$work/out")"
+grep -q 'https://env.example/alone' "$CURL_LOG" || fail "J: the variable alone is not used: $(cat "$CURL_LOG")"
+config '{"escalate": false}' '{}' '{"webhook": "https://hooks.example/senior"}'
+session 60-sonnet "failed: it broke"
+: >"$CURL_LOG"
+fresh
+SENIOR_MODE_NOTIFY_WEBHOOK=https://env.example/wins once || fail "J: serve failed: $(cat "$work/out")"
+grep -q 'https://env.example/wins' "$CURL_LOG" || fail "J: the variable does not win over notify.webhook: $(cat "$CURL_LOG")"
+! grep -q 'hooks.example' "$CURL_LOG" || fail "J: notify.webhook called despite the variable: $(cat "$CURL_LOG")"
+session 60-sonnet "failed: it broke"
+: >"$CURL_LOG"
+fresh
+SENIOR_MODE_NOTIFY_WEBHOOK='' once || fail "J: serve failed: $(cat "$work/out")"
+grep -q 'https://hooks.example/senior' "$CURL_LOG" || fail "J: an empty variable hides notify.webhook: $(cat "$CURL_LOG")"
 # A timeout is a needs-human event; a failing webhook is said on stderr and serve goes on.
 config '{"sessionTimeout": 1}' '{}' '{"webhook": "https://hooks.example/senior"}'
 board 61

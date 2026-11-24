@@ -54,7 +54,10 @@ Before changing anything, setup:
 - **Project board.** It finds the Project linked to the repository (or one with the repository's
   name), or copies the "senior-mode template" Project (`board.template`), which brings the views, fields
   and built-in workflows; it makes the copy public when the repository is, then names any view or workflow
-  the copy lacks, and where to add it. An existing Project is never replaced: setup lists what the template
+  the copy lacks, and where to add it. A fine-grained token is bound to one owner and cannot read the
+  template of another owner, public as it is: setup then says so and stops; choose "Make a copy" on the
+  template's page into your owner, with the repository's name as title, and run setup again, which finds it
+  by title and sets its fields from a built-in list (or set `board.template` to a template you own). An existing Project is never replaced: setup lists what the template
   has and it lacks and points to `--upgrade`, which only adds the missing fields and options to the board
   (`--dry-run` lists them first), or to `--migrate`, which builds a new Project from the template with every item
   and field value of the old one (see [commands](commands.md)). It writes the Project's short description and README in the project `language`: what

@@ -115,6 +115,7 @@ case "$*" in
       [ ! -f "$FIX/workflows-fail" ] || { echo "HTTP 403: forbidden" >&2; exit 1; }
       respond <"$FIX/workflows-project.json"
     else
+      [ -z "${TPL_FIELDS_ERR:-}" ] || [ "$(jq -r '.id // empty' <<<"$v")" != PVT_TPL ] || { echo "$TPL_FIELDS_ERR" >&2; exit 1; }
       f=$FIX/fields-$(jq -r '.id // empty' <<<"$v").json; [ -f "$f" ] || f=$FIX/fields.json
       respond <"$f"
     fi ;;
@@ -1002,6 +1003,41 @@ echo '{"language": "fr", "board": {"template": "PVT_TPL"}}' >"$repo/.claude/seni
 upgrade && fail "--upgrade succeeds with no Project"
 grep -q "no Project to upgrade" "$work/err" || fail "no explanation: $(cat "$work/err")"
 logged "copyProjectV2" && fail "--upgrade copied the template"
+
+# A template this token cannot resolve (#527: a fine-grained token of another owner). The copy says why and what to do.
+unresolved="GraphQL: Could not resolve to a node with the global id of 'PVT_TPL' (resolveNode)"
+echo '{"projects": []}' >"$FIX/projects.json"
+(cd "$repo" && COPY_ERR=$unresolved "$cli" setup github) >"$work/out" 2>"$work/err" && fail "setup succeeds with no Project and no template"
+for want in "cannot be read with this token" "fine-grained token" "Make a copy" "with the title app" "board.template"; do
+  grep -qF -- "$want" "$work/err" || fail "unresolved template: no '$want': $(cat "$work/err")"
+done
+# A Project found by its title works without the template: its fields are set from the built-in list, the comparison is skipped.
+echo '{"projects": [{"number": 5, "title": "app"}]}' >"$FIX/projects.json"
+echo '{"number": 5, "id": "PVT_5"}' >"$FIX/project.json"
+echo '{"data": {"node": {"fields": {"nodes": [{}]}}}}' >"$FIX/fields.json"
+rm -f "$FIX/iteration.json"
+: >"$GH_LOG"
+(cd "$repo" && TEMPLATE_ERR=$unresolved TPL_FIELDS_ERR=$unresolved "$cli" setup github) >"$work/out" 2>"$work/err" ||
+  fail "setup fails on a found Project when the template is unreadable: $(cat "$work/err")"
+grep -q "cannot be read with this token" "$work/out" || fail "found Project: the unreadable template is not explained: $(cat "$work/out")"
+for f in Status Priority Size Severity Paths Start End Iteration; do
+  jq -e --arg f "$f" '.data.node.fields.nodes[] | select(.name == $f)' "$FIX/fields.json" >/dev/null || fail "found Project: field $f not created"
+done
+# --upgrade falls back to the built-in field list.
+jq -n '{data: {node: {fields: {nodes: [{}, {id: "F_Status", name: "Status", options: [{id: "O_todo", name: "Todo", color: "GRAY", description: ""}]}]}}}}' >"$FIX/fields.json"
+rm -f "$FIX/iteration.json"
+echo '{"language": "fr", "board": {"template": "PVT_TPL"}, "project": {"owner": "acme", "number": 5, "id": "PVT_UP"}}' >"$repo/.claude/senior-mode.json"
+: >"$GH_LOG"
+(cd "$repo" && TPL_FIELDS_ERR=$unresolved "$cli" setup github --upgrade) >"$work/out" 2>"$work/err" ||
+  fail "upgrade fails when the template is unreadable: $(cat "$work/err")"
+grep -q "built-in field list is used" "$work/out" || fail "upgrade: the fallback is not said: $(cat "$work/out")"
+for f in Priority Size Severity Paths Start End Iteration; do
+  jq -e --arg f "$f" '.data.node.fields.nodes[] | select(.name == $f)' "$FIX/fields.json" >/dev/null || fail "upgrade: field $f not created"
+done
+[ "$(opts Status)" = '["Todo","Ready","In progress","In review","Done"]' ] || fail "upgrade: Status options from the built-in list: $(opts Status)"
+(cd "$repo" && TPL_FIELDS_ERR="HTTP 401: Bad credentials" "$cli" setup github --upgrade) >/dev/null 2>"$work/err" &&
+  fail "upgrade succeeds on another error reading the template"
+grep -q "cannot read the template Project" "$work/err" || fail "another error is not reported: $(cat "$work/err")"
 
 [ "$failures" -eq 0 ] && echo "setup-github: all cases pass"
 exit "$failures"

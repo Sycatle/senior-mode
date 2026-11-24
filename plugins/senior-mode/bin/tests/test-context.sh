@@ -15,14 +15,18 @@ echo "$*" >>"$GH_LOG"
 [ -z "${GH_FAIL:-}" ] || exit 1
 case "$*" in
   *"issue view"*) printf '%s\n' "$GH_ISSUE" ;;
+  *"pr list"*) [ -z "${GH_PRS_FAIL:-}" ] || exit 1; printf '%s\n' "${GH_PRS:-[]}" ;;
+  *"pr view"*) cat "$GH_DIR/pr-$(sed -E 's/.*pr view ([0-9]+).*/\1/' <<<"$*").json" 2>/dev/null || exit 1 ;;
   *"api graphql"*) printf '%s\n' "${GH_PATHS:-}" ;;
 esac
 STUB
 chmod +x "$work/stub/gh"
-export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log"
+mkdir -p "$work/prs"
+export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" GH_DIR="$work/prs"
 # shellcheck disable=SC2016 # backticks are Markdown in the issue body
 export GH_ISSUE='{"number":12,"title":"Let people log in","state":"OPEN","projectItems":[{"status":{"name":"In progress"}}],"body":"## What this gives\nLogin.\n\nSpec: `docs/specs/0003-login.md` §2.\n\n## Acceptance criteria\n- Given a user with an account, when they log in, then they see their dashboard.\n- Given a wrong password, when they log in, then they see an error.\n\n## Technical detail\nSessions."}'
 
+issue12=$GH_ISSUE
 repo="$work/repo"
 git init -q -b main "$repo"
 mkdir -p "$repo/.claude" "$repo/docs/specs"
@@ -189,6 +193,93 @@ grep -qF "ee-billing" <<<"$out" && fail "the login briefing has the billing note
 rm -f "$repo/docs/vision.md"
 printf -- '---\nid: 0003\nstatus: accepted\n---\n' >"$repo/docs/specs/0003-login.md"
 unset GH_PATHS
+
+# The history of the Paths and the related work (#349).
+gc() { # file subject [date]: commits a change of the file on the current branch
+  local d=${3:-$(date -u +%FT%TZ)}
+  mkdir -p "$(dirname "$repo/$1")"
+  echo "$2" >>"$repo/$1"
+  git -C "$repo" add "$1"
+  GIT_AUTHOR_DATE=$d GIT_COMMITTER_DATE=$d git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "$2"
+}
+git -C "$repo" switch -q main
+gc src/auth/ancient.ts 'Revert "feat(auth): ancient login (#20)"' "$(date -u -d '120 days ago' +%FT12:00:00Z)"
+for n in 31 32 33 34 35 36 37; do gc "src/auth/f$n.ts" "feat(auth): change $n (#$n)"; done
+gc src/billing/r.ts "feat(billing): rounding (#38)"
+gc src/auth/tidy.ts "chore(auth): tidy up"
+gc src/auth/cookie.ts 'Revert "feat(auth): opaque cookie (#39)"'
+git -C "$repo" switch -q feat/12-login
+today=$(date -u +%F)
+export GH_ISSUE=$issue12
+printf 'The slug covered-slug is explained here.\n' >"$repo/docs/knowledge/zz-covered.md"
+pr() { # number body files-json comments-json reviews-json
+  jq -nc --argjson n "$1" --arg b "$2" --argjson f "$3" --argjson c "$4" --argjson r "$5" \
+    '{number: $n, body: $b, files: ($f | map({path: .})), comments: ($c | map({body: .})), reviews: ($r | map({body: .}))}'
+}
+GH_PRS=$(jq -sc '.' < <(
+  pr 37 $'## Decision\n\n- Tokens stay opaque\n\n## Notes\nx' '["src/auth/f37.ts"]' '["Nit. <!-- finding: unchecked-input -->","<!-- finding: covered-slug -->"]' '[]'
+  pr 36 $'### Decisions\nKeep cookies httpOnly\n' '["src/auth/f36.ts"]' '[]' '["<!-- finding: unchecked-input -->\n<!-- finding: covered-slug -->"]'
+  pr 34 'No heading here' '["src/auth/f34.ts"]' '["<!-- finding: single-slug -->"]' '[]'
+  pr 33 $'## Decision\n## Next\nx' '["src/auth/f33.ts"]' '[]' '[]'
+  pr 38 'Billing' '["src/billing/r.ts"]' '["<!-- finding: billing-slug -->"]' '[]'
+  pr 40 'Billing again' '["src/billing/r.ts"]' '["<!-- finding: billing-slug -->"]' '[]'
+))
+export GH_PRS
+jq -nc '{body: "## Decision\nFetched by number"}' >"$work/prs/pr-35.json"
+export GH_PATHS='{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"project":{"id":"P"},"fieldValueByName":{"text":"src/auth/**"}}]}}}}}'
+
+context "$repo"
+for want in "Recurring review findings" "- unchecked-input (on pull requests #36, #37)" "Reverted in the last 90 days:" \
+  "- $today feat(auth): opaque cookie (#39)" "History of these Paths" "- #37 $today feat(auth): change 37 | decision: Tokens stay opaque" \
+  "- #36 $today feat(auth): change 36 | decision: Keep cookies httpOnly" "- #35 $today feat(auth): change 35 | decision: Fetched by number" \
+  "- #34 $today feat(auth): change 34" "- #33 $today feat(auth): change 33"; do
+  grep -qF -- "$want" <<<"$out" || fail "history: missing '$want' in: $out"
+done
+for not in "covered-slug" "single-slug" "billing-slug" "ancient login" "change 32" "change 31" "rounding" "tidy up" "#38" "GitHub unreachable"; do
+  grep -qF -- "$not" <<<"$out" && fail "history: '$not' should not be in: $out"
+done
+grep -F -- "#34 $today" <<<"$out" | grep -q "decision:" && fail "a decision for a pull request with no Decision heading: $out"
+grep -F -- "#33 $today" <<<"$out" | grep -q "decision:" && fail "a decision for an empty Decision heading: $out"
+[ "$(grep -c -- '^- #[0-9]* 20' <<<"$out")" -eq 5 ] || fail "history is not 5 commits: $out"
+prev=Knowledge
+for next in "Recurring review" "Reverted in" "History of" "Current ticket"; do
+  [ "$(pos "$prev")" -lt "$(pos "$next")" ] || fail "'$prev' should come before '$next': $out"
+  prev=$next
+done
+first=$out
+context "$repo"
+[ "$out" = "$first" ] || fail "two runs with history differ"
+
+# The budget drops the history first, before the notes and the ADRs.
+full=$(wc -c <<<"$out")
+echo "{\"context\":{\"budget\":$(((full - 330) / 4))}}" >"$repo/.claude/senior-mode.json"
+context "$repo"
+[ "$(wc -c <<<"$out")" -le "$(((full - 330) / 4 * 4))" ] || fail "history: the briefing is over its budget: $(wc -c <<<"$out") bytes"
+grep -qF -- "- #33 $today" <<<"$out" && fail "the lowest class is kept first: $out"
+for want in "docs/adr/0010-sessions.md" "docs/knowledge/cc-deep.md" "Recurring review findings" "Given a wrong password"; do
+  grep -qF -- "$want" <<<"$out" || fail "history: '$want' dropped before the lowest class: $out"
+done
+tail -n 1 <<<"$out" | grep -Eq '^[0-9]+ items? omitted ' || fail "history: no omission line last: $out"
+echo '{}' >"$repo/.claude/senior-mode.json"
+
+# GitHub down: the history comes from git alone and one line says the review findings are omitted.
+GH_PRS_FAIL=1 context "$repo"
+for want in "- #37 $today feat(auth): change 37" "- #33 $today feat(auth): change 33" "- $today feat(auth): opaque cookie (#39)" \
+  "GitHub unreachable: review findings omitted"; do
+  grep -qF -- "$want" <<<"$out" || fail "offline history: missing '$want' in: $out"
+done
+for not in "decision: " "unchecked-input"; do
+  grep -qF -- "$not" <<<"$out" && fail "offline history: '$not' should not be in: $out"
+done
+# A failure of the pull requests alone is GitHub failing too.
+GH_PRS='' context "$repo"
+grep -qF -- "- #37 $today" <<<"$out" || fail "an empty answer loses the history: $out"
+# No Paths, no history.
+GH_PATHS='' context "$repo"
+grep -qF "History of these Paths" <<<"$out" && fail "history without Paths: $out"
+rm -f "$repo/docs/knowledge/zz-covered.md"
+echo '{}' >"$repo/.claude/senior-mode.json"
+unset GH_PRS GH_PATHS
 
 git -C "$repo" switch -q -c spike-oauth
 context "$repo"

@@ -858,6 +858,7 @@ setup_repo() {
     workflow_write "$file"
     workflow_say
   fi
+  deploy_apply "$root"
   fmt=$(jq -r '.workflow.commit.format // empty' "$file")
   # On a first setup `setup github` ran before `protected` existed: no block was written yet.
   ! jq -e '(.protected // []) | length > 0' "$file" >/dev/null || grep -qs '^# senior-mode:begin' "$root/.github/CODEOWNERS" ||

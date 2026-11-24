@@ -35,7 +35,7 @@ prints `dependabot.yml: untouched`.
 
 ## Questions
 
-Three, asked once, in the project language, plain words, never a key name. The recommended answer is first;
+Three (a fourth when `setup detect` lists `hosted previews`), asked once, in the project language, plain words, never a key name. The recommended answer is first;
 `senior-mode setup answers` takes each as a flag and keeps what the repository already holds, so a rerun
 asks only what changed.
 
@@ -48,6 +48,12 @@ asks only what changed.
    than `en` or `fr` is not a setup answer: keep the conversation in it and use `en`.
 3. May agents work alone: `--autonomy ask` (recommended: agents deliver pull requests, the user merges) or `alone`
    (the daemon merges what passed check and review). It maps to `autonomy.merge`.
+4. Only when `setup detect` prints `hosted previews: ...` (Vercel, Netlify, Cloudflare Pages): should every branch the
+   agents push start a preview deployment, which spends the platform's quotas? `--previews ready` (recommended: none
+   until the pull request is open, then one preview for the review, asked with `senior-mode preview`), `off` (none) or
+   `platform` (unchanged; what a rerun or a non-interactive setup keeps). It maps to `deploy.previews`; `setup repo`
+   writes the platform files (`vercel.json`, `netlify.toml`, `.claude/senior-mode/ignore-build.sh`) and, for Cloudflare
+   Pages, prints the dashboard steps: relay them. See docs/guide/configuration.md, "Hosted previews".
 
 Not asked, shown in the summary: the owner decides on risky changes (protected zones wait for the owner's approval,
 and no answer lifts that), checks `local` (`actions` spends the Actions budget: only on request), the work limits.

@@ -124,6 +124,13 @@
         "requiredChecks": { "type": "boolean", "description": "false keeps setup github from adding required status checks to the ruleset." }
       }
     },
+    "deploy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "previews": { "type": "string", "enum": ["platform", "ready", "off"], "description": "Hosted preview deployments (Vercel, Netlify, Cloudflare Pages) of the branches senior-mode pushes: platform leaves them to the platform, ready deploys one preview per pull request once senior-mode preview asks, off deploys none." }
+      }
+    },
     "security": {
       "type": "object",
       "additionalProperties": false,

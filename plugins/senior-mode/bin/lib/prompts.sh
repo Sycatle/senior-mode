@@ -19,7 +19,7 @@ Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode tea
    chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; open a pull request from the
    template with \`Closes #$1\`, the red run and the Self-review table (run the review checklist on your
    own diff first; one row per acceptance criterion, \`#$1.<k>\`, with a test name or a command and its
-   result as evidence); \`senior-mode publish\`;
+   result as evidence); \`senior-mode publish\`; \`senior-mode preview\` (it only acts when \`deploy.previews\` is \`ready\`);
    \`senior-mode item set $1 Status "In review"\`.
 4. The reviewer agent reviews the pull request in a fresh context (skill review) and sets
    senior-mode/review; when publish left senior-mode/security pending, the security agent reviews it
@@ -59,7 +59,7 @@ $list
    (they fail on the base and pass on the head; without that record the pull request is not ready; docs and
    chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; open ONE pull request from the template
    with one \`Closes #<n>\` line per ticket delivered (${closes%, }), the red runs and the Self-review table
-   (one row per acceptance criterion, \`#<n>.<k>\`, with its evidence); \`senior-mode publish\`;
+   (one row per acceptance criterion, \`#<n>.<k>\`, with its evidence); \`senior-mode publish\`; \`senior-mode preview\` (it only acts when \`deploy.previews\` is \`ready\`);
    \`senior-mode item set <n> Status "In review"\` for each ticket delivered.
 4. The reviewer agent reviews the pull request once, in a fresh context (skill review), and sets
    senior-mode/review; when publish left senior-mode/security pending, the security agent reviews it
@@ -105,7 +105,7 @@ $tests
    chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; open a pull request from the
    template with \`Closes #$1\`, the red run and the Self-review table (run the review checklist on your
    own diff first; one row per acceptance criterion, \`#$1.<k>\`, with a test name or a command and its
-   result as evidence); \`senior-mode publish\`;
+   result as evidence); \`senior-mode publish\`; \`senior-mode preview\` (it only acts when \`deploy.previews\` is \`ready\`);
    \`senior-mode item set $1 Status "In review"\`.
 4. Stop there. A reviewer session reviews the pull request from a fresh context and sets
    senior-mode/review: you never set it, never merge, never touch another ticket. You may be resumed on this
@@ -147,7 +147,7 @@ $list
    (they fail on the base and pass on the head; without that record the pull request is not ready; docs and
    chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; open ONE pull request from the template
    with one \`Closes #<n>\` line per ticket delivered (${closes%, }), the red runs and the Self-review table
-   (one row per acceptance criterion, \`#<n>.<k>\`, with its evidence); \`senior-mode publish\`;
+   (one row per acceptance criterion, \`#<n>.<k>\`, with its evidence); \`senior-mode publish\`; \`senior-mode preview\` (it only acts when \`deploy.previews\` is \`ready\`);
    \`senior-mode item set <n> Status "In review"\` for each ticket delivered.
 4. Stop there. A reviewer session reviews the pull request once, from a fresh context, and sets
    senior-mode/review: you never set it, never merge, never touch another ticket. You may be resumed on this

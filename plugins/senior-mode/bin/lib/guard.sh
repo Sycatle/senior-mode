@@ -616,7 +616,7 @@ red_tests() {
 
 # `senior-mode red-tests verify <issue>` (#306): the proof, for a feature or bug ticket the test-author did not
 # start, that its tests count. The test files the branch adds or changes since the default branch are carried to a
-# worktree at the merge base and the project's test command (commands.test, else the check named test) must fail there;
+# copy of the merge base and the project's test command (commands.test, else the check named test) must fail there;
 # on the head it must pass. The files are then listed in <git common dir>/senior-mode/runs/<issue>/red-verified, which
 # `run` and `serve` read next to red-tests (red_blocker). Unlike red-tests, that list does not make the files read-only.
 red_tests_verify() {
@@ -633,8 +633,12 @@ red_tests_verify() {
   done < <(git diff -z --no-renames --name-only --diff-filter=AM "$base...HEAD")
   [ -n "$files" ] || die "no test file added or changed on this branch since $base: a feature or a bug needs tests that fail without the change"
   mb=$(git merge-base "$base" HEAD) || die "no common ancestor with $base"
-  wt=$(mktemp -d)/base
-  git worktree add -q --detach "$wt" "$mb" || die "could not open a worktree at $mb"
+  # A plain export, not a worktree (#563): a session's sandbox keeps .git/worktrees read-only.
+  wt=$(mktemp -d)
+  git archive --format=tar "$mb" | tar -xf - -C "$wt" || {
+    rm -rf "$wt"
+    die "could not export $mb"
+  }
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     mkdir -p "$wt/$(dirname "$f")"
@@ -642,10 +646,10 @@ red_tests_verify() {
   done <<<"$files"
   [ ! -d "$root/node_modules" ] || ln -s "$root/node_modules" "$wt/node_modules"
   if (cd "$wt" && bash -c "$cmd") >/dev/null 2>&1; then
-    git worktree remove --force "$wt" 2>/dev/null || true
+    rm -rf "$wt"
     die "the tests pass on $base without the change: they must fail there (the test command is: $cmd)"
   fi
-  git worktree remove --force "$wt" 2>/dev/null || true
+  rm -rf "$wt"
   (cd "$root" && bash -c "$cmd") >/dev/null 2>&1 || die "the tests do not pass on the head (the test command is: $cmd)"
   mkdir -p "$common/senior-mode/runs/$n"
   printf '%s' "$files" >"$common/senior-mode/runs/$n/red-verified"

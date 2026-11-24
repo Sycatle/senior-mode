@@ -8,12 +8,14 @@ SELF=$(readlink -f "${BASH_SOURCE[0]}")
 LIB=$(dirname "$SELF")/lib
 
 usage() {
-  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish] | clean [--dry-run] [--days N] | statusline | retro [--since <dur> | --iteration [<name>]] [--json] | check [--pre-push] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions] [--migrate|--upgrade] [--dry-run] | setup repo [--command <name>=<command>]... | setup remove [--apply] | setup statusline"
+  die "usage: senior-mode config get <key> | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish] | clean [--dry-run] [--days N] | statusline | retro [--since <dur> | --iteration [<name>]] [--json] | check [--pre-push|--ci-only] | publish [commit] | release [--dry-run] | frame start <idea> | frame end | protected [--base <ref>] | red-tests record <issue> | slot -- <command>... | ready [--pr <n>] [--dry-run] | context | setup github [--ci local|actions|existing] [--migrate|--upgrade] [--dry-run] | setup repo [--command <name>=<command>]... [--dry-run] [--adopt] | setup remove [--apply] | setup statusline"
 }
 
 # The modules hold definitions only: function bodies and constants, no statement runs at load time.
 # shellcheck source=lib/common.sh
 . "$LIB/common.sh"
+# shellcheck source=lib/workflow.sh
+. "$LIB/workflow.sh"
 # shellcheck source=lib/board.sh
 . "$LIB/board.sh"
 # shellcheck source=lib/release.sh
@@ -26,6 +28,8 @@ usage() {
 . "$LIB/setup-board.sh"
 # shellcheck source=lib/setup.sh
 . "$LIB/setup.sh"
+# shellcheck source=lib/setup-workflow.sh
+. "$LIB/setup-workflow.sh"
 # shellcheck source=lib/setup-remove.sh
 . "$LIB/setup-remove.sh"
 # shellcheck source=lib/status.sh
@@ -43,6 +47,10 @@ usage() {
 
 # Never inherited: only `run` may hold one (see run_token_ok).
 unset RUN_TOKEN
+
+# The branch pattern of the project as a regex, for the jq programs that read a branch back to its ticket.
+SENIOR_MODE_BRANCH_RE=$(workflow_branch_re 2>/dev/null) || SENIOR_MODE_BRANCH_RE=""
+export SENIOR_MODE_BRANCH_RE
 
 case "${1:-}" in
   context)
@@ -94,7 +102,7 @@ case "${1:-}" in
     retro "$@"
     ;;
   check)
-    [ $# -eq 1 ] || { [ $# -eq 2 ] && [ "$2" = --pre-push ]; } || usage
+    [ $# -eq 1 ] || { [ $# -eq 2 ] && { [ "$2" = --pre-push ] || [ "$2" = --ci-only ]; }; } || usage
     check "${2:-}"
     ;;
   e2e-lock)

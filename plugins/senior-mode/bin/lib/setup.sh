@@ -130,6 +130,17 @@ setup_ruleset() {
   body=$(jq -c --argjson r "$2" '(.rules[] | select(.type == "pull_request") | .parameters.require_code_owner_review) = $r' \
     <<<"$RULESET")
   [ "${3:-true}" = true ] || body=$(jq -c '.rules |= map(select(.type != "required_status_checks"))' <<<"$body")
+  # A project that merges another way (workflow.merge) is not held to rebase and linear history; with an existing CI
+  # (ci.mode existing) its own required contexts stay next to ours.
+  if [ -n "${4:-}" ] && [ -f "$4" ]; then
+    body=$(jq -c --slurpfile c "$4" '($c[0].workflow.merge // "rebase") as $m
+      | (if $m == "rebase" then . else .rules |= map(select(.type != "required_linear_history")) end)
+      | (.rules[] | select(.type == "pull_request") | .parameters.allowed_merge_methods) = [$m]
+      | if $c[0].ci.mode == "existing" then
+          (.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks) |=
+            (. as $ours | $ours + [($c[0].ci.required // [])[] | {context: .} | select(.context | IN($ours[].context) | not)])
+        else . end' <<<"$body")
+  fi
   id=$(gh_retry api "repos/$1/rulesets" \
     --jq '[.[] | select(.name == "senior-mode" and .source_type == "Repository")][0].id // empty') || return 1
   if [ -n "$id" ]; then
@@ -196,6 +207,7 @@ setup_workflows() { # slug mode
     ! gh api "repos/$1/actions/secrets/RELEASE_PLEASE_TOKEN" >/dev/null 2>&1; then
     echo "releases: GitHub Actions may not open pull requests here, so the release job cannot open its PR; allow it in Settings > Actions > General, or store a token as the RELEASE_PLEASE_TOKEN secret"
   fi
+  [ "$2" != existing ] || echo "workflows: none disabled, none written (ci.mode existing: the project's CI stays as it is)"
   [ -z "$disabled" ] || echo "workflows: disabled $disabled (ci.mode local: checks run before each push; files kept; \`gh workflow enable <name>\` turns one back on, and senior-mode setup github --ci actions stops setup from disabling them again)"
 }
 
@@ -240,10 +252,10 @@ type:chore|ededed|Maintenance with no user-visible change'
 
 setup_github() {
   local root file slug owner name owner_type owner_node private template project number id how fields labels label color description err ci="" globs checks review=false codeowner codeowners_owns=false reason
-  local migrate=false dry=false upgrade=false
+  local migrate=false dry=false upgrade=false made merge ctx
   while [ $# -gt 0 ]; do
     case $1 in
-      --ci) [ "${2:-}" = local ] || [ "${2:-}" = actions ] || usage; ci=$2; shift 2 ;;
+      --ci) [ "${2:-}" = local ] || [ "${2:-}" = actions ] || [ "${2:-}" = existing ] || usage; ci=$2; shift 2 ;;
       --migrate) migrate=true; shift ;;
       --upgrade) upgrade=true; shift ;;
       --dry-run) dry=true; shift ;;
@@ -290,14 +302,28 @@ setup_github() {
 
   labels=$LABELS
   [ "$owner_type" = Organization ] || labels+=$'\n'$TYPE_LABELS
+  # The project's own labels that stand for ours (workflow.labels) are not created a second time.
+  made=""
   while IFS='|' read -r label color description; do
+    [ -n "$label" ] || continue
+    ! jq -e --arg l "$label" '(.workflow.labels // {}) | has($l)' "$file" >/dev/null || continue
     gh_retry label create "$label" --repo "$slug" --color "$color" --description "$description" --force >/dev/null
+    made+="${made:+ }$label"
   done <<<"$labels"
-  echo "labels: $(cut -d'|' -f1 <<<"$labels" | paste -sd' ' -)"
+  echo "labels: $made"
+  ! jq -e '(.workflow.labels // {}) | length > 0' "$file" >/dev/null ||
+    echo "labels: the project's own stand for $(jq -r '.workflow.labels | keys | join(" ")' "$file"), not created"
 
-  gh_retry repo edit "$slug" --enable-rebase-merge --enable-merge-commit=false --enable-squash-merge=false \
-    --delete-branch-on-merge >/dev/null
-  echo "merges: rebase only, branches deleted after merge"
+  merge=$(jq -r '.workflow.merge // "rebase"' "$file")
+  if [ "$merge" = rebase ]; then
+    gh_retry repo edit "$slug" --enable-rebase-merge --enable-merge-commit=false --enable-squash-merge=false \
+      --delete-branch-on-merge >/dev/null
+    echo "merges: rebase only, branches deleted after merge"
+  else
+    # The project's method (workflow.merge): the other methods the repository allows are kept.
+    gh_retry repo edit "$slug" "--enable-$merge-merge" --delete-branch-on-merge >/dev/null
+    echo "merges: $merge enabled (the repository's other methods are kept), branches deleted after merge"
+  fi
 
   globs=$(jq -c '.protected // []' "$file")
   jq -e 'type == "array" and all(type == "string")' <<<"$globs" >/dev/null ||
@@ -320,12 +346,17 @@ setup_github() {
   fi
 
   # Before the workflows: a refused ruleset forces ci.mode local, which decides what happens to them.
-  if err=$(setup_ruleset "$slug" "$review" "$checks" 2>&1 >/dev/null); then
+  if err=$(setup_ruleset "$slug" "$review" "$checks" "$file" 2>&1 >/dev/null); then
     setup_protection "$file" ruleset
-    if [ "$checks" = true ]; then
-      echo "default branch: ruleset senior-mode, pull requests only, rebase, senior-mode/ci, senior-mode/review and senior-mode/security on an up-to-date branch, linear history; admins may bypass with gh pr merge --admin; other protection untouched"
+    ctx="senior-mode/ci, senior-mode/review and senior-mode/security"
+    jq -e '.ci.mode == "existing" and ((.ci.required // []) | length) > 0' "$file" >/dev/null &&
+      ctx+=" next to $(jq -r '.ci.required | join(", ")' "$file")"
+    if [ "$merge" != rebase ] && [ "$checks" = true ]; then
+      echo "default branch: ruleset senior-mode, pull requests only, $merge merges, $ctx on an up-to-date branch, no linear history requirement; admins may bypass with gh pr merge --admin; other protection untouched"
+    elif [ "$checks" = true ]; then
+      echo "default branch: ruleset senior-mode, pull requests only, rebase, $ctx on an up-to-date branch, linear history; admins may bypass with gh pr merge --admin; other protection untouched"
     else
-      echo "default branch: ruleset senior-mode, pull requests only, rebase, linear history; github.requiredChecks is false, so it requires no status check (senior-mode/ci, senior-mode/review and senior-mode/security are not required, and a required_status_checks rule it had is removed); admins may bypass with gh pr merge --admin; other protection untouched"
+      echo "default branch: ruleset senior-mode, pull requests only, $merge merges$([ "$merge" != rebase ] || echo ", linear history"); github.requiredChecks is false, so it requires no status check (senior-mode/ci, senior-mode/review and senior-mode/security are not required, and a required_status_checks rule it had is removed); admins may bypass with gh pr merge --admin; other protection untouched"
     fi
     [ "$review" = false ] || echo "code owners: a pull request touching a protected zone needs the owner's approval, and GitHub never lets an author approve their own pull request; agents act as the owner (#175 gives them an identity of their own), so merging one is the owner's call by hand, with gh pr merge --admin"
   elif ruleset_refused <<<"$err"; then
@@ -358,9 +389,9 @@ place() { # template destination label
 
 # Installs or refreshes one of our scripts in .githooks/ (marked "# senior-mode:" on its second
 # line); a file of the project's own with that name is kept.
-githooks_install() { # root source label
+githooks_install() { # root source label [name]
   local dest
-  dest=$1/.githooks/$(basename "$2")
+  dest=$1/.githooks/${4:-$(basename "$2")}
   if [ -e "$dest" ] && ! grep -q '^# senior-mode:' "$dest"; then
     echo "$3: yours kept"
   elif ! cmp -s "$2" "$dest" || [ ! -x "$dest" ]; then
@@ -371,14 +402,38 @@ githooks_install() { # root source label
   fi
 }
 
-# Installs or refreshes the senior-mode git hooks; a hook of the project's own is kept.
-setup_githooks() {
-  local root=$1 tpl=$2 hook path
+# Whether the project has issue forms or templates of its own: a file in .github/ISSUE_TEMPLATE/ or an
+# ISSUE_TEMPLATE.md that is not one of senior-mode's (never replaced, so a rerun still counts ours as ours).
+setup_own_issue_templates() { # root templates
+  local f t ours
+  for f in "$1"/.github/ISSUE_TEMPLATE/* "$1"/.github/ISSUE_TEMPLATE.md "$1"/ISSUE_TEMPLATE.md; do
+    [ -f "$f" ] || continue
+    ours=false
+    for t in "$2"/*/ISSUE_TEMPLATE/*.yml; do ! cmp -s "$f" "$t" || ours=true; done
+    [ "$ours" = true ] || return 0
+  done
+  return 1
+}
+
+# Installs or refreshes the senior-mode git hooks; a hook of the project's own is kept. $3 is what owns the project's
+# commit-msg hook when it is not ours (workflow_hook_owner): ours is then installed as `commit-subjects`, a script
+# the `commit subjects` check runs, and core.hooksPath is not taken over.
+setup_githooks() { # root templates [owner]
+  local root=$1 tpl=$2 owner=${3:-} hook path
   for hook in commit-msg pre-push; do
-    githooks_install "$root" "$tpl/githooks/$hook" "git hook $hook"
+    if [ "$hook" = commit-msg ] && [ -n "$owner" ]; then
+      echo "git hook commit-msg: yours kept ($owner)"
+      githooks_install "$root" "$tpl/githooks/commit-msg" "git hook commit-subjects" commit-subjects
+    else
+      githooks_install "$root" "$tpl/githooks/$hook" "git hook $hook"
+    fi
   done
   path=$(git -C "$root" config core.hooksPath || true)
-  if [ -z "$path" ]; then
+  if [ -n "${WF_ADOPTING:-}" ]; then
+    echo "git hooks: wired by a later setup repo, once the adoption pull request is merged"
+  elif [ -z "$path" ] && [ -n "$owner" ]; then
+    echo "git hooks: core.hooksPath left alone ($owner owns the hooks); call .githooks/pre-push from there"
+  elif [ -z "$path" ]; then
     git -C "$root" config core.hooksPath .githooks
   elif [ "$path" != .githooks ]; then
     echo "git hooks: core.hooksPath is $path; call .githooks/commit-msg and .githooks/pre-push from there"
@@ -596,7 +651,7 @@ toml_version() {
 # installs the dependencies of a new worktree, which has no check.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_repo() {
-  local root file tpl pname preset lang name commands='{}' detected out ours guard
+  local root file tpl pname preset lang name commands='{}' detected out ours guard owner subjects="" cmdmap dry=false adopt=false fwd=() fmt
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   tpl=$(cd "$(dirname "$SELF")/.." && pwd)
@@ -607,20 +662,49 @@ setup_repo() {
   detected=$(preset_detect "$root" "$pname") || die "could not read package.json"
   tpl=$tpl/templates
   while [ $# -gt 0 ]; do
+    case $1 in
+      --dry-run) dry=true; shift; continue ;;
+      --adopt) adopt=true; shift; continue ;;
+    esac
     [ "$1" = --command ] && [[ ${2:-} == ?*=?* ]] || usage
     jq -e --arg k "${2%%=*}" '.commands + ["install"] | index($k)' "$preset" >/dev/null ||
       die "unknown command ${2%%=*}; expected one of $(jq -r '.commands + ["install"] | join(", ")' "$preset")"
     commands=$(jq -c --arg k "${2%%=*}" --arg v "${2#*=}" '.[$k] = $v' <<<"$commands")
+    fwd+=("$1" "$2")
     shift 2
   done
+  [ "$dry" = false ] || [ "$adopt" = false ] || usage
+  [ ! -f "$file" ] || jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; fix or remove it, then run setup again"
+  # What the project already does (spec 409): read first, nothing written yet.
+  cmdmap='{}'
+  [ ! -f "$file" ] || cmdmap=$(jq -c '.commands // {}' "$file")
+  cmdmap=$(jq -nc --argjson d "$detected" --argjson e "$cmdmap" --argjson c "$commands" '($d.commands // {}) + $e + $c')
+  [ -n "${WF_DONE:-}" ] || workflow_detect "$root" "$cmdmap" "$tpl"
+  if [ "$dry" = true ] || [ "$adopt" = true ]; then
+    local cur=$file
+    [ -f "$cur" ] || { cur=$(mktemp); echo '{}' >"$cur"; }
+    workflow_settle "$cur"
+    workflow_say
+    if [ "$dry" = true ]; then
+      echo
+      echo "config: would write"
+      workflow_merged "$cur" | jq '{workflow, adopt, ci}' | jq 'with_entries(select(.value != null))'
+      [ "$cur" = "$file" ] || rm -f "$cur"
+      echo "dry run: nothing changed"
+      return 0
+    fi
+    [ "$cur" = "$file" ] || rm -f "$cur"
+    workflow_adopt_pr "$root" "$(workflow_report)" ${fwd[@]+"${fwd[@]}"}
+    return 0
+  fi
   mkdir -p "$root/.claude"
   [ -f "$file" ] || echo '{}' >"$file"
-  jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; fix or remove it, then run setup again"
   lang=$(jq -r '.language // "en"' "$file")
   [ -d "$tpl/$lang" ] || lang=en
   name=$(basename "$root")
 
-  setup_githooks "$root" "$tpl"
+  owner=$(workflow_hook_owner "$root")
+  setup_githooks "$root" "$tpl" "$owner"
   # The environment guard: only when envGuard.forbidden lists something. The check stays when the
   # key is removed later, and then reports itself skipped.
   guard=false
@@ -633,6 +717,7 @@ setup_repo() {
   # The commit subjects check runs our commit-msg hook; a project's own hook may not understand it.
   ours=false
   ! grep -q '^# senior-mode:' "$root/.githooks/commit-msg" 2>/dev/null || ours=true
+  [ -z "$owner" ] || { ours=false; subjects=".githooks/commit-subjects --branch"; }
   out=0
   json_update "$file" '.preset = $pn | .commands = ($d.commands // {}) + (.commands // {}) + $c
     | if $d.framework then .framework = $d.framework else . end | .commands as $all
@@ -645,13 +730,19 @@ setup_repo() {
     | if has("protected") then .
       else (($p[0].protected // []) + ($p[0].frameworks[.framework // ""].protected // [])) as $g
         | if ($g | length) > 0 then .protected = $g else . end end' \
-    --argjson c "$commands" --argjson ours "$ours" --argjson guard "$guard" --slurpfile p "$preset" --arg pn "$pname" \
+    --argjson c "$commands" --argjson ours "$ours" --arg sub "$subjects" --argjson guard "$guard" --slurpfile p "$preset" --arg pn "$pname" \
     --argjson d "$detected" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
   echo "preset: $pname$(jq -r --argjson d "$detected" '[if $d.typescript == true then "TypeScript"
     elif $d.typescript == false then "JavaScript" else empty end, .framework // empty]
     | select(length > 0) | " (\(join(", ")))"' "$file")"
   echo "checks: $(jq -r '[.checks[].name] | join(", ")' "$file")"
+  if [ -z "${WF_DONE:-}" ] || [ -n "${WF_ADOPTING:-}" ]; then
+    workflow_settle "$file"
+    workflow_write "$file"
+    workflow_say
+  fi
+  fmt=$(jq -r '.workflow.commit.format // empty' "$file")
   # On a first setup `setup github` ran before `protected` existed: no block was written yet.
   ! jq -e '(.protected // []) | length > 0' "$file" >/dev/null || grep -qs '^# senior-mode:begin' "$root/.github/CODEOWNERS" ||
     echo "CODEOWNERS: the protected zones are not owned yet; rerun senior-mode setup github to write .github/CODEOWNERS"
@@ -666,8 +757,12 @@ setup_repo() {
   else
     place "$tpl/$lang/pull_request_template.md" "$root/.github/pull_request_template.md" "pull request template"
   fi
-  place "$tpl/$lang/ISSUE_TEMPLATE/feature.yml" "$root/.github/ISSUE_TEMPLATE/feature.yml" "issue form feature"
-  place "$tpl/$lang/ISSUE_TEMPLATE/bug.yml" "$root/.github/ISSUE_TEMPLATE/bug.yml" "issue form bug"
+  if setup_own_issue_templates "$root" "$tpl"; then
+    echo "issue forms: the project's own are kept, senior-mode writes none"
+  else
+    place "$tpl/$lang/ISSUE_TEMPLATE/feature.yml" "$root/.github/ISSUE_TEMPLATE/feature.yml" "issue form feature"
+    place "$tpl/$lang/ISSUE_TEMPLATE/bug.yml" "$root/.github/ISSUE_TEMPLATE/bug.yml" "issue form bug"
+  fi
   # The system overview the docs skill keeps current (spec 0001 §8); never overwritten.
   place "$tpl/$lang/architecture.md" "$root/docs/architecture.md" "docs/architecture.md"
   # Other workflows are left as they are; local mode disables them on GitHub (setup github).
@@ -682,7 +777,9 @@ setup_repo() {
   [ "$out" -ne 1 ] || die "could not update .claude/settings.json"
   [ "$out" -ne 0 ] || echo "settings: senior-mode permissions added to .claude/settings.json"
 
-  if [ ! -e "$root/release-please-config.json" ]; then
+  if [ "$fmt" = free ]; then
+    echo "releases: commits are free-form, so no release-please configuration is written"
+  elif [ ! -e "$root/release-please-config.json" ]; then
     # Without a previous release, release-please would start at 1.0.0: a new project starts at 0.1.0.
     # A package.json version counts as the last release, so the manifest holds it and the next
     # release bumps it (initial-version would publish it again).

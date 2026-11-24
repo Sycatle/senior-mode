@@ -133,8 +133,20 @@ sha256() {
 file_owner() { stat -c %u "$1" 2>/dev/null || stat -f %u "$1"; }
 file_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 
-# The default branch to compare with: origin's HEAD, else the usual names, remote first.
-default_branch() {
+# A value of the `workflow` object of .claude/senior-mode.json (the detected branch model, commit and pull request
+# format, ci, spec 409): $1 a dotted key, $2 the checkout (default: this one). Strings raw, anything else as JSON;
+# nothing when the key, the object or the file is absent, so a project that never ran detection reads as today.
+workflow_get() {
+  local root=${2:-} file
+  [ -n "$root" ] || root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  file=$root/.claude/senior-mode.json
+  [ -f "$file" ] || return 0
+  jq -r --argjson p "$(jq -nc --arg k "workflow.$1" '$k | split(".")')" \
+    'getpath($p) // empty | if type == "string" then . else tojson end' "$file" 2>/dev/null || true
+}
+
+# The repository's own default branch: origin's HEAD, else the usual names, remote first.
+repo_default_branch() {
   local ref b
   if ref=$(git symbolic-ref --short -q refs/remotes/origin/HEAD); then
     printf '%s\n' "$ref"
@@ -147,6 +159,22 @@ default_branch() {
     fi
   done
   return 1
+}
+
+# The branch tickets start from, pull requests target and `check` compares with: the detected integration branch
+# (workflow.integration) when it exists, else the repository's default branch.
+default_branch() {
+  local integration b
+  integration=$(workflow_get integration)
+  if [ -n "$integration" ]; then
+    for b in "origin/$integration" "$integration"; do
+      if git rev-parse -q --verify "$b^{commit}" >/dev/null; then
+        printf '%s\n' "$b"
+        return 0
+      fi
+    done
+  fi
+  repo_default_branch
 }
 
 # Lowercase ASCII words of a title joined by dashes, at most 40 characters cut at a word; a leading

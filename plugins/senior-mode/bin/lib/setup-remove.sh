@@ -38,7 +38,7 @@ remove_block() { # root file begin end apply
 remove_files() { # root apply
   local root=$1 apply=$2 tpl f path same lang new
   tpl=$(cd "$(dirname "$SELF")/.." && pwd)/templates
-  for f in commit-msg pre-push env-guard.sh; do
+  for f in commit-msg commit-subjects pre-push env-guard.sh; do
     [ -f "$root/.githooks/$f" ] || continue
     if grep -q '^# senior-mode:' "$root/.githooks/$f"; then remove_file "$root" ".githooks/$f" "$apply"
     else echo "kept: .githooks/$f (yours)"

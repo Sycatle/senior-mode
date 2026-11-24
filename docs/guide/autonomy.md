@@ -668,6 +668,19 @@ Every poll also removes what a session left behind: the processes of its group o
 them runs inside its worktree, so that a reused group number is never signalled), and a git `index.lock` over 10 minutes
 old with no `git` process in its repository.
 
+### The chaos suite
+
+`plugins/senior-mode/bin/tests/test-chaos.sh` runs `serve` against stubs of `gh`, `claude` and `tmux` (a stateful board,
+pull requests and merges, a remote that is a bare repository) through the faults of a real night: the network down, 502s, a
+signed-out `gh`, a failing startup, the usage limit, a full disk, a red `main`, state files cut in half, a hung or busy
+session, an orphan process, a deleted state directory, a second daemon. Every case must end with each ticket Done or
+`needs-human`, never a pull request merged twice or opened twice, no worktree left for a ticket that is not waiting for a
+human, and no change at the polls after that. The sweep adds a `kill -9` at every point of a ticket's life: with
+`SENIOR_MODE_TEST=1` and `SENIOR_MODE_FAULT=<name>[:<nth>]`, the code kills its own shell the `<nth>` time it passes the
+`fault_point <name>` of that name (`after-meta`, `after-launch`, `after-exit-read`, `after-push`, `after-pr-create`,
+`before-merge`, `after-merge`, `after-done`, `during-state-write`, `during-clean`). A fault point that is in the code and
+not in the sweep fails the suite. Without `SENIOR_MODE_TEST=1` a fault point does nothing.
+
 ### Session slots
 
 Parallel sessions must not collide on a port, a database or a cache. `run` starts every ticket session

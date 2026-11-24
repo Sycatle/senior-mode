@@ -57,6 +57,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `board.template` | the senior-mode template Project | Id of the Project that `setup github` copies (`copyProjectV2`, without draft issues) when the repository has none, and that `setup github --migrate` builds the new board from. Set the id of your own template, for instance an organization's; the copy brings its views, fields and built-in workflows. A fine-grained token bound to another owner cannot read the default one: setup says what to do, and `--upgrade` then uses a built-in list of its fields |
 | `vision.maxLines` | `100` | Lines `docs/vision.md` may have; `check` fails above it (a positive whole number). See [`docs/vision.md`](commands.md#frame) |
 | `knowledge.maxLines` | `40` | Lines the body of a [knowledge note](#knowledge-notes) may have; `check` fails above it (a positive whole number) |
+| `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |
 | `docs.extra` | none | Extra living documents the `docs` skill keeps current after a merge: a list of `{ "path", "purpose" }`; its changes are flagged for human review. Add it yourself |
 | `context.claudeMdLines` | `80` | Most lines a tracked `CLAUDE.md` may have before `check` fails (context hygiene); a whole number from 1 |
 | `wip` | `1` | Open tickets In progress at once: `senior-mode start` refuses another and names the one to finish first; `status` shows the count when it is over. A [run](autonomy.md#run) is bounded by `autonomy.parallel` instead, and is the only caller that skips `wip`: it proves itself with a token, so setting `SENIOR_MODE_RUN=1` by hand does not |
@@ -425,6 +426,33 @@ kind: pitfall
 
 `senior-mode check` runs a `knowledge` step when `docs/knowledge/` exists and fails, naming the file and the key, on a note
 that breaks one of these rules; a repository with no such directory sees nothing.
+
+## Architecture rules
+
+`architecture.rules` lists rules that `senior-mode check` enforces (the `architecture` step, run when the list is not empty):
+
+```json
+"architecture": { "rules": [
+  { "id": "ui-not-db", "forbidImport": { "from": "src/ui/**", "to": "src/db/**" }, "why": "ui goes through services" },
+  { "id": "file-size", "maxLines": 500, "paths": ["src/**"] },
+  { "id": "no-console", "banned": "console\\.log", "paths": ["src/**"] }
+] }
+```
+
+A rule has an `id` and exactly one kind; one without an `id`, with an unknown kind or without its parts is a configuration error that fails `check`.
+
+- `forbidImport`: a file under `from` fails when one of its imports resolves under `to`. Relative imports are resolved from the file, aliases and `baseUrl` from the `compilerOptions` of `tsconfig.json` (or `jsconfig.json`), Python modules (`from a.b import c`, relative ones too) from the root, Go imports below the module path of `go.mod`; JavaScript and TypeScript, Python and Go files are read.
+- `maxLines`: a file matched by `paths` with more lines fails (reported at the first line over the limit).
+- `banned`: a line of a text file matched by `paths` that matches the extended regular expression fails.
+- `why` (optional) is appended to the message. A failure reads `<id>: <file>:<line>: <message>`.
+
+Existing violations are recorded in `.claude/architecture-baseline.json`, a ratchet written by hand once:
+
+```json
+{ "violations": [ { "rule": "file-size", "file": "src/old/big.ts" }, { "rule": "no-console", "file": "src/app.ts", "count": 3 } ] }
+```
+
+`count` (1 when absent) is how many violations of the rule the file may keep. `check` fails only on the violations beyond it (all those of the rule in the file are listed). An entry that no longer violates, or that allows more than what is left, is a warning; `senior-mode check --update-baseline` removes or lowers it, and never adds one: a new violation is refused (exit 1) and the file keeps what it had.
 
 ## Presets
 

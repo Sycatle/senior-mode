@@ -21,6 +21,7 @@ DEFAULTS='{
   "docs": { "extra": [] },
   "vision": { "maxLines": 100 },
   "knowledge": { "maxLines": 40 },
+  "architecture": { "rules": [] },
   "github": { "protection": "", "requiredChecks": true }
 }'
 die() {

@@ -193,6 +193,45 @@ vision_brief() {
   [ -z "$nongoals" ] || printf 'Non-goals (an idea that contradicts one is quoted and asked, never framed):\n%s\n' "$nongoals"
 }
 
+# The context the agents load, kept lean and true (#314, #335): each tracked CLAUDE.md within
+# `context.claudeMdLines` lines (default 80), each tracked SKILL.md within 3072 bytes, and the `paths` of an ADR
+# front matter, when it has one, a list of strings (`paths: ["src/billing/**"]`). Those fail. A path cited
+# in a CLAUDE.md between backticks that no longer exists is a warning. Runs as its own process
+# (`senior-mode context-hygiene`).
+context_hygiene() {
+  local root max f n fm raw bad="" tok
+  root=$(git rev-parse --show-toplevel)
+  max=$(config_get context.claudeMdLines 2>/dev/null) || max=""
+  [ -n "$max" ] && [ "$max" != null ] || max=80
+  [[ $max =~ ^[1-9][0-9]*$ ]] || die "context.claudeMdLines must be a whole number from 1, not $max"
+  while IFS= read -r f; do
+    [ -f "$root/$f" ] || continue
+    n=$(wc -l <"$root/$f")
+    [ "$n" -le "$max" ] || bad+="$f: $n lines, over context.claudeMdLines ($max)"$'\n'
+    # Paths between backticks with a slash inside (a bare name like `lib/` or `x.sh` is shorthand, not a
+    # path): no space, no glob, no placeholder; relative to the root or to the file.
+    while IFS= read -r tok; do
+      [ -e "$root/$tok" ] || [ -e "$root/$(dirname "$f")/$tok" ] || echo "warning: $f cites $tok, which does not exist"
+    done < <(grep -oE '`[^` ]+`' "$root/$f" | tr -d '`' | grep -E '^[A-Za-z0-9_.][A-Za-z0-9_.-]*/[A-Za-z0-9_./-]*[A-Za-z0-9_-]$' |
+      grep -v '://' | sort -u)
+  done < <(git -C "$root" ls-files -- 'CLAUDE.md' '**/CLAUDE.md')
+  while IFS= read -r f; do
+    n=$(wc -c <"$root/$f" 2>/dev/null) || continue
+    [ "$n" -le 3072 ] || bad+="$f: $n bytes, over 3072"$'\n'
+  done < <(git -C "$root" ls-files -- 'SKILL.md' '**/SKILL.md')
+  while IFS= read -r f; do
+    fm=$(awk 'NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { exit } NR > 1 { print }' "$root/$f" 2>/dev/null) || continue
+    grep -q '^paths:' <<<"$fm" || continue
+    raw=$(sed -n 's/^paths:[[:space:]]*//p' <<<"$fm" | head -n 1)
+    jq -e 'type == "array" and all(.[]; type == "string")' <<<"$raw" >/dev/null 2>&1 ||
+      bad+="$f: paths must be a list of strings, like [\"src/billing/**\"], not $raw"$'\n'
+  done < <(git -C "$root" ls-files -- 'docs/adr/*.md')
+  [ -z "$bad" ] || {
+    printf '%s' "$bad"
+    return 1
+  }
+}
+
 # The warning of `check` about suppressions the branch adds (#437): a lint or type check silenced, a test
 # skipped. One line per added line, `file:line` and the text. Never fails: review judges each one, and a
 # suppression with its reason written next to it is legitimate. Markdown is prose, not code: left out.
@@ -274,9 +313,10 @@ check() {
   fi
   # The secret scan is not configurable: it runs first, on every preset. The dependency audit follows, and
   # `audit: false` turns it off (ADR 0015). The new dependencies are looked up on their registries (#302). The
-  # `config` step reads the configuration against its schema (#317).
-  names=("secret scan" "dependency audit" "new dependencies" "config")
-  cmds=("$(printf '%q' "$SELF") secret-scan" "$(printf '%q' "$SELF") audit" "$(printf '%q' "$SELF") deps" "$(printf '%q' "$SELF") config validate")
+  # `config` step reads the configuration against its schema (#317); the context hygiene follows (#314).
+  names=("secret scan" "dependency audit" "new dependencies" "config" "context hygiene")
+  cmds=("$(printf '%q' "$SELF") secret-scan" "$(printf '%q' "$SELF") audit" "$(printf '%q' "$SELF") deps" "$(printf '%q' "$SELF") config validate"
+    "$(printf '%q' "$SELF") context-hygiene")
   # docs/vision.md is checked when it exists (#342).
   if [ -f "$root/docs/vision.md" ]; then
     names+=("vision")

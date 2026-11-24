@@ -49,10 +49,10 @@ grep -q setup "$work/out" || fail "no-checks message does not mention setup"
 
 config '{"checks":[{"name":"lint","run":"true"},{"name":"tests","run":"echo all good"}]}'
 run check || fail "check fails although every check passes: $(cat "$work/out")"
-grep -q "6/6 checks passed" "$work/out" || fail "summary missing: $(cat "$work/out")"
+grep -q "7/7 checks passed" "$work/out" || fail "summary missing: $(cat "$work/out")"
 : >"$GH_LOG"
 run publish || fail "publish fails after a passing check: $(cat "$work/out")"
-grep -q -- "api repos/acme/app/statuses/$(sha) -f state=success -f context=senior-mode/ci -f description=6/6 checks passed" "$GH_LOG" ||
+grep -q -- "api repos/acme/app/statuses/$(sha) -f state=success -f context=senior-mode/ci -f description=7/7 checks passed" "$GH_LOG" ||
   fail "success status not published as expected: $(cat "$GH_LOG")"
 
 config '{"checks":[{"name":"lint","run":"true"},{"name":"tests","run":"echo boom; exit 3"}]}'
@@ -70,7 +70,7 @@ config '{"checks":[{"name":"lint db","run":"echo \"skipped: tool not installed\"
 run check || fail "a skipped check fails the run: $(cat "$work/out")"
 grep -q "^skip  lint db: tool not installed ([0-9.]*s)$" "$work/out" || fail "skip reason not shown: $(cat "$work/out")"
 grep -q "^ok    tests ([0-9.]*s)$" "$work/out" || fail "the other check lost its ok: $(cat "$work/out")"
-grep -q "6/6 checks passed" "$work/out" || fail "a skipped check is not counted as passed: $(cat "$work/out")"
+grep -q "7/7 checks passed" "$work/out" || fail "a skipped check is not counted as passed: $(cat "$work/out")"
 
 # docs/vision.md (#342): no file, nothing reported; with one, `## Goals` with entries G1, G2... and `## Non-goals`
 # are required and the file stays within vision.maxLines (default 100).
@@ -81,7 +81,7 @@ grep -q "vision" "$work/out" && fail "vision reported with no file: $(cat "$work
 vision '# Vision' '' '## Goals' '' '- G1: people can log in' '- **G2** people can pay' '' '## Non-goals' '' '- No mobile app' '' '## Constraints' '' '- EU hosting'
 run check || fail "check fails on a valid vision: $(cat "$work/out")"
 grep -q "^ok    vision" "$work/out" || fail "valid vision not reported ok: $(cat "$work/out")"
-grep -q "6/6 checks passed" "$work/out" || fail "vision not counted: $(cat "$work/out")"
+grep -q "7/7 checks passed" "$work/out" || fail "vision not counted: $(cat "$work/out")"
 vision '# Vision' '' '## Goals' '' '- G1: people can log in'
 run check && fail "check passes without ## Non-goals"
 grep -q "FAIL  vision" "$work/out" || fail "vision failure not reported: $(cat "$work/out")"
@@ -379,6 +379,30 @@ for want in "src/s.ts:2: // eslint-disable-next-line" "src/s.ts:3: console.log(a
 done
 grep -q "suppression added: src/s.ts:[16]:" "$work/out" && fail "a line without suppression is listed: $(cat "$work/out")"
 grep -q "suppression added: src/notes.md" "$work/out" && fail "Markdown is listed: $(cat "$work/out")"
+
+# Context hygiene (#314, #335): an oversized CLAUDE.md or SKILL.md, or an ADR whose paths is no list of
+# strings, fails; a dead path cited in a CLAUDE.md is a warning; a bare name is not a path.
+run context-hygiene || fail "context hygiene fails on a clean repo: $(cat "$work/out")"
+printf 'See %s.\n' "\`src/s.ts\`, \`docs/gone.md\`, \`lib/\` and \`x.sh\`" >"$repo/CLAUDE.md"
+commit -m "docs: claude"
+run context-hygiene || fail "a dead path fails the hygiene: $(cat "$work/out")"
+grep -q "warning: CLAUDE.md cites docs/gone.md, which does not exist" "$work/out" || fail "dead path not warned: $(cat "$work/out")"
+grep -qE "cites (src/s.ts|lib/|x.sh)" "$work/out" && fail "a live path or a bare name is warned: $(cat "$work/out")"
+seq 81 | sed 's/^/line /' >>"$repo/CLAUDE.md"
+commit -m "docs: long claude"
+run context-hygiene && fail "a CLAUDE.md over 80 lines passes"
+grep -q "CLAUDE.md: 82 lines, over context.claudeMdLines (80)" "$work/out" || fail "long CLAUDE.md not named: $(cat "$work/out")"
+config '{"audit":false,"context":{"claudeMdLines":100},"checks":[{"name":"lint","run":"true"}]}'
+run context-hygiene || fail "context.claudeMdLines is not read: $(cat "$work/out")"
+mkdir -p "$repo/skills/big" "$repo/docs/adr"
+head -c 3100 /dev/zero | tr '\0' x >"$repo/skills/big/SKILL.md"
+printf -- '---\nid: 0001\npaths: src/**\n---\n' >"$repo/docs/adr/0001-a.md"
+printf -- '---\nid: 0002\npaths: ["src/**"]\n---\n' >"$repo/docs/adr/0002-b.md"
+commit -m "docs: skill and adrs"
+run context-hygiene && fail "an oversized SKILL.md or a bad ADR paths passes"
+grep -q "skills/big/SKILL.md: 3100 bytes, over 3072" "$work/out" || fail "big SKILL.md not named: $(cat "$work/out")"
+grep -q "docs/adr/0001-a.md: paths must be a list of strings" "$work/out" || fail "bad ADR paths not named: $(cat "$work/out")"
+grep -q "0002-b.md" "$work/out" && fail "a good ADR paths is named: $(cat "$work/out")"
 
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

@@ -119,6 +119,7 @@ case $(sed -n 3p "$fx") in
     echo "$$ $!" >"$FIX/pids-$n"
     wait ;;
   slow) sleep 2 ;;
+  busy) for i in $(seq 14); do echo "$i" >>busy.txt; sleep 0.3; done; rm -f busy.txt ;;
   flaky*:*)
     # flaky:<message> dies once, flaky<k>:<message> k times (the count is in $FIX/flaky-done-<n>-<model>).
     spec=$(sed -n 3p "$fx")
@@ -487,6 +488,8 @@ board 61
 session 61-sonnet "" "" hang
 touch "$FIX/curl-fails"
 fresh
+# The watchdog stops a session once and resumes it; this is the second stop, the ticket's own.
+mkdir -p "$state" && echo 1 >"$state/61.resumed"
 SENIOR_MODE_TIMEOUT_UNIT=1 once || fail "J: serve failed with a failing webhook: $(cat "$work/out")"
 rm -f "$FIX/curl-fails"
 grep -q '"event":"decisions"' "$CURL_LOG" || fail "J: no decisions event: $(cat "$CURL_LOG")"
@@ -894,7 +897,7 @@ rm -f "$FIX/claude-80-sonnet"
 fresh
 SENIOR_MODE_NOW=1800000000 once || fail "AA: serve failed: $(cat "$work/out")"
 [ "$(cat "$state/80.transient" 2>/dev/null)" = 1 ] || fail "AA: a session with no output at startup is not a transient end: $(cat "$work/out")"
-[ ! -e "$state/80.json" ] && ! grep -q 'issues/80/' "$GH_LOG" || fail "AA: a session with no output at startup counted as a failure"
+{ [ ! -e "$state/80.json" ] && ! grep -q 'issues/80/' "$GH_LOG"; } || fail "AA: a session with no output at startup counted as a failure"
 
 # AB: a disk problem (#377, spec 373 section 1): the session's end cleans (logs over 7 days), probes again and, still
 # red, holds every launch with the exact cause, one alert, no failure, no needs-human; the cheap probes run at each
@@ -958,7 +961,7 @@ grep -q 'the probe is red' "$work/out" || fail "AB: gh auth probe not red: $(cat
 rm -f "$FIX/gh-auth-bad"
 session 74-sonnet delivered pr
 SENIOR_MODE_NOW=1800000122 once || fail "AB: serve failed: $(cat "$work/out")"
-[ ! -e "$state/held" ] && started 74 || fail "AB: not resumed once gh answers: $(cat "$work/out")"
+{ [ ! -e "$state/held" ] && started 74; } || fail "AB: not resumed once gh answers: $(cat "$work/out")"
 # --resume lifts a hold and the breaker's pause by hand, and sets the trips to 0.
 printf '%s\n%s\n' 1800009999 "paused by a test" >"$state/paused"
 echo "2 1800000000" >"$state/breaker"
@@ -1723,7 +1726,7 @@ SENIOR_MODE_NOW=1800000030 once || fail "AE: serve failed on the next poll: $(ca
 grep -q 'could not be read' "$work/out" && fail "AE: a file set aside is said again: $(cat "$work/out")"
 # A temporary file of a write that a kill cut stays out of the way and is removed at the next start.
 echo partial >"$state/limit-until.tmp.4999990"
-echo done >"$state/held.tmp.$$"
+echo "done" >"$state/held.tmp.$$"
 once || fail "AE: serve failed: $(cat "$work/out")"
 [ ! -e "$state/limit-until.tmp.4999990" ] || fail "AE: the temporary file of a dead writer is left"
 [ -e "$state/held.tmp.$$" ] || fail "AE: the temporary file of a live writer was removed"
@@ -1820,6 +1823,64 @@ rm -f "$state/105.json"
 once || fail "AF5: serve failed on the second read: $(cat "$work/out")"
 [ "$(grep -c . "$FIX/pr-created")" = 1 ] || fail "AF5: a second pull request was opened: $(cat "$FIX/pr-created")"
 outcome_of 105 delivered AF5
+
+
+# AG: the watchdog (#384, spec 373 section 4). The minutes are seconds here (SENIOR_MODE_TIMEOUT_UNIT=1). A session on which
+# nothing moves is stopped; the first stop is an interruption (the ticket goes back to Ready, resumes after the backoff, no
+# failure counted), the second is needs-human. A session that works is left alone. What an ended session left behind is
+# killed, and so is a stale git index.lock.
+export SENIOR_MODE_TIMEOUT_UNIT=1
+config '{"startupMinutes": 1, "stallMinutes": 1}'
+board 110
+session 110-sonnet "" "" hang
+fresh
+start=$SECONDS
+once || fail "AG: serve failed: $(cat "$work/out")"
+[ $((SECONDS - start)) -lt 60 ] || fail "AG: the hung session was not stopped: $((SECONDS - start))s"
+grep -q '#110: the session is stopped, hung at startup' "$work/out" || fail "AG: the stop is not said: $(cat "$work/out")"
+read -r -a pids <"$FIX/pids-110"
+for p in "${pids[@]}"; do ! kill -0 "$p" 2>/dev/null || fail "AG: the hung session is still running (pid $p)"; done
+grep -q 'issues/110/labels' "$GH_LOG" && fail "AG: the first stop is needs-human: $(cat "$GH_LOG")"
+grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" || fail "AG: the ticket is not back to Ready: $(grep item-edit "$GH_LOG")"
+[ "$(cat "$state/110.resumed")" = 1 ] || fail "AG: the stop is not counted: $(cat "$state/110.resumed" 2>&1)"
+grep -q 'was stopped' "$state/110.prompt" || fail "AG: the resumed session is not told: $(cat "$state/110.prompt")"
+[ ! -e "$state/paused" ] || fail "AG: the first stop counted for the breaker"
+SENIOR_MODE_NOW=1800003600 once || fail "AG: serve failed: $(cat "$work/out")"
+started 110 || fail "AG: the ticket did not resume: $(cat "$CLAUDE_LOG")"
+grep -q 'issues/110/labels.*needs-human' "$GH_LOG" || fail "AG: the second stop is not needs-human: $(cat "$GH_LOG")"
+grep -q 'issues/110/comments' "$GH_LOG" || fail "AG: no comment on the second stop"
+# A session that works, with a child that comes and goes, runs past the stall delay and is left alone.
+config '{"startupMinutes": 1, "stallMinutes": 2}'
+board 111
+session 111-sonnet delivered pr "busy"
+fresh
+once || fail "AG: serve failed: $(cat "$work/out")"
+grep -q 'is stopped' "$work/out" && fail "AG: a session that works was stopped: $(cat "$work/out")"
+outcome_of 111 delivered AG
+# What the session left behind is killed at the next poll, and only that.
+config '{}'
+board 112
+session 112-sonnet delivered pr
+printf 'sleep 300 &\necho $! >"%s/orphan-112"\ndisown\n' "$FIX" >"$FIX/after-112"
+fresh
+once || fail "AG: serve failed: $(cat "$work/out")"
+orphan=$(cat "$FIX/orphan-112")
+kill -0 "$orphan" 2>/dev/null || fail "AG: the process of the session ended at once, nothing to kill"
+rm -f "$FIX/after-112"
+once || fail "AG: serve failed: $(cat "$work/out")"
+! kill -0 "$orphan" 2>/dev/null || fail "AG: the process the session left behind is still running"
+grep -q 'its session left behind' "$work/out" || fail "AG: the kill is not said: $(cat "$work/out")"
+# An index.lock over 10 minutes old, with no git running, goes; a recent one stays.
+: >"$repo/.git/index.lock"
+touch -d '20 minutes ago' "$repo/.git/index.lock"
+once || fail "AG: serve failed: $(cat "$work/out")"
+[ ! -e "$repo/.git/index.lock" ] || fail "AG: the stale index.lock is still there"
+grep -q 'removed the stale' "$work/out" || fail "AG: not said: $(cat "$work/out")"
+: >"$repo/.git/index.lock"
+once || fail "AG: serve failed: $(cat "$work/out")"
+[ -e "$repo/.git/index.lock" ] || fail "AG: a recent index.lock was removed"
+rm -f "$repo/.git/index.lock"
+unset SENIOR_MODE_TIMEOUT_UNIT
 
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

@@ -309,6 +309,8 @@
         "minMemoryMB": { "type": "integer", "minimum": 0 },
         "minDiskMB": { "type": "integer", "minimum": 0 },
         "startupSeconds": { "type": "integer", "minimum": 0, "description": "Seconds after which a session that died at once counts as a startup death." },
+        "startupMinutes": { "type": "integer", "minimum": 1, "description": "Minutes of nothing at all after which the watchdog stops a session." },
+        "stallMinutes": { "type": "integer", "minimum": 1, "description": "Minutes without any change after which the watchdog stops a session." },
         "userSettings": { "type": "boolean", "description": "Whether run and serve sessions load the owner's user-level Claude Code configuration." }
       }
     },

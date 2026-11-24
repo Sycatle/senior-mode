@@ -216,7 +216,7 @@ serve_settled() {
     echo "#$n: the API answers again after $count transient ends"
     notify recovered "" "#$n: the session ran again after $count transient ends in a row"
   fi
-  rm -f "$SERVE_DIR/$n.transient" "$SERVE_DIR/$n.retry" "$SERVE_DIR/$n.model" "$SERVE_DIR/startup-streak" \
+  rm -f "$SERVE_DIR/$n.transient" "$SERVE_DIR/$n.resumed" "$SERVE_DIR/$n.retry" "$SERVE_DIR/$n.model" "$SERVE_DIR/startup-streak" \
     "$SERVE_DIR/launch-backoff-until" "$SERVE_DIR/limit-streak"
 }
 
@@ -1331,6 +1331,8 @@ serve_poll() {
   SERVE_HELD="" SERVE_GUARDS="" SERVE_WAIT=""
   rm -f "$GH_DOWN_FILE"
   run_reap
+  wd_orphans
+  wd_locks
   serve_report
   serve_breaker
   if SERVE_HELD=$(serve_hold "$now"); then
@@ -1538,7 +1540,8 @@ serve_loop() {
   local interval old sleeper
   local -a running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_REVIEWED=() RUN_NOT_REVIEW=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
   local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=() RUN_BATCH=()
-  local -A SERVE_PR=() SERVE_SHA=() SERVE_SIZE=() SERVE_NOTED=()
+  local -A SERVE_PR=() SERVE_SHA=() SERVE_SIZE=() SERVE_NOTED=() WD_TICK=() WD_START=() WD_SIG=() WD_BASE=() WD_AT=()
+  local RUN_WATCH=wd_watch SERVE_STALL SERVE_STARTUP_MIN
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP="" RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_REQUIRED RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP="" RUN_ON_EXIT=serve_end RUN_FINISH=serve_finish RUN_PROMPT=serve_prompt RUN_PROMPT_BATCH=serve_prompt_batch RUN_LAUNCH_LOG RUN_RECONCILE=1
   local SERVE_DIR SERVE_COMMON SERVE_TERM=false SERVE_PARALLEL SERVE_PER_HOUR SERVE_TICKETS_PER_HOUR SERVE_MIN_MEM SERVE_COOLDOWN SERVE_GRACE
@@ -1556,6 +1559,8 @@ serve_loop() {
   SERVE_BACKOFF_MAX=$(serve_int serve.backoffMax 1)
   SERVE_MIN_DISK=$(serve_int autonomy.minDiskMB 0)
   SERVE_STARTUP=$(serve_int autonomy.startupSeconds 0)
+  SERVE_STALL=$(serve_int autonomy.stallMinutes 1)
+  SERVE_STARTUP_MIN=$(serve_int autonomy.startupMinutes 1)
   GH_CALL_TIMEOUT=$(serve_int serve.callTimeout 1)
   SERVE_PER_HOUR=$(serve_int autonomy.sessionsPerHour 0)
   SERVE_MIN_MEM=$(serve_int autonomy.minMemoryMB 0)

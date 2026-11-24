@@ -351,8 +351,8 @@ pr_external() {
 # files GitHub would merge.
 run_blocker() {
   local pr=$1 sha=$2 missing="" base files zones gaps reason need='["senior-mode/ci", "senior-mode/review", "senior-mode/security"]'
-  # A profile that lifts the independent review (an accepted ADR, process.lifts) drops its status from the bounds.
-  [ "$(config_get process.gates.review 2>/dev/null)" != false ] || need='["senior-mode/ci", "senior-mode/security"]'
+  # A profile that lifts the independent review (an accepted ADR, process.lifts) drops its status from the bounds, but not for a hotfix (#322).
+  if [ "$(config_get process.gates.review 2>/dev/null)" = false ] && ! pr_hotfix "$RUN_SLUG" "$3"; then need='["senior-mode/ci", "senior-mode/security"]'; fi
   if [ "$RUN_MERGE" != true ]; then
     echo "merging is off (autonomy.merge)"
   elif pr_external "$3"; then
@@ -410,6 +410,7 @@ run_merge() {
     if gh_bound pr merge "$pr" "$(workflow_merge_flag "$RUN_ROOT")" --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
       RUN_PRS+=("#$pr")
       serve_backmerge "$n" "$pr"
+      hotfix_release "$n" "$pr"
       for m in "${all[@]}"; do
         RUN_MERGED+=("#$m ${RUN_TITLE[$m]} (pull request #$pr)")
         if (item_set "$m" Status Done) >/dev/null; then

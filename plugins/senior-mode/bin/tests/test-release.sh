@@ -11,6 +11,9 @@ fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 mkdir -p "$work/stub"
 cat >"$work/stub/gh" <<'STUB'
 #!/usr/bin/env bash
+case "$*" in
+  "api repos/acme/app/releases/latest --jq .tag_name") [ -n "${LATEST:-}" ] || exit 1; echo "$LATEST"; exit 0 ;;
+esac
 [ "$*" = "auth token" ] || { echo "unexpected: gh $*" >&2; exit 1; }
 [ -z "${NO_AUTH:-}" ] || { echo "not logged in" >&2; exit 1; }
 echo ghs_secret
@@ -70,6 +73,13 @@ NO_AUTH=1 release && fail "runs without a gh login"
 [ -s "$LOG" ] && fail "npx called without a token"
 
 release --now && fail "unknown option accepted"
+
+# --patch (#322): the next patch of the latest release, for the release pull request only.
+LATEST=v1.4.9 release --patch || fail "release --patch failed: $(cat "$work/err")"
+grep '^npx' "$LOG" | sed -n 1p | grep -q -- '--release-as' && fail "--release-as reached github-release"
+grep '^npx' "$LOG" | sed -n 2p | grep -q -- 'release-pr .*--release-as 1.4.10 (in' || fail "no patch version for release-pr: $(cat "$LOG")"
+release --patch && fail "release --patch without a latest release"
+LATEST=nightly release --patch && fail "release --patch of a tag with no version"
 
 rm "$repo/release-please-config.json"
 release && fail "runs without release-please-config.json"

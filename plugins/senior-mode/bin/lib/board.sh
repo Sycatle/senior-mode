@@ -437,7 +437,7 @@ pr_closed_tickets() {
 # file or a fixture.
 diff_countable() {
   case $1 in
-    *.lock | package-lock.json | */package-lock.json | npm-shrinkwrap.json | */npm-shrinkwrap.json | pnpm-lock.yaml | */pnpm-lock.yaml | \
+    docs/incidents/* | *.lock | package-lock.json | */package-lock.json | npm-shrinkwrap.json | */npm-shrinkwrap.json | pnpm-lock.yaml | */pnpm-lock.yaml | \
       bun.lockb | */bun.lockb | go.sum | */go.sum | *.min.js | *.min.css | *.map | *.snap | *.pb.go | *_pb2.py | *.generated.* | *_generated.* | \
       dist/* | */dist/* | generated/* | */generated/* | __generated__/* | */__generated__/* | \
       fixtures/* | */fixtures/* | fixture/* | */fixture/* | __fixtures__/* | */__fixtures__/* | testdata/* | */testdata/* | \
@@ -480,7 +480,7 @@ self_review_gaps() {
 }
 
 delivery_blocker() {
-  local slug=$1 pr=$2 pull=$3 files=$4 tickets=() n missing="" msgs size cfg budget total=0 lines=0 path changed sizes="" gaps outside spike
+  local slug=$1 pr=$2 pull=$3 files=$4 tickets=() n missing="" msgs size cfg budget total=0 lines=0 path changed sizes="" gaps outside spike hot hotfix=false
   mapfile -t tickets < <(pr_closed_tickets "$(jq -r '.body // ""' <<<"$pull")")
   [ "${#tickets[@]}" -gt 0 ] || return 0
   # A spike (#321) ends in a note, an ADR or framed tickets, never in code: only docs/ may change.
@@ -517,7 +517,17 @@ delivery_blocker() {
       return 0
     }
   for n in "${tickets[@]}"; do
-    size=$( (item_get "$n" Size) 2>/dev/null) || size=""
+    hot=$(ticket_hotfix "$slug" "$n") || {
+      echo "the labels of #$n could not be read"
+      return 0
+    }
+    # A hotfix (#322) is held to the S budget, whatever its Size.
+    if [ "$hot" = yes ]; then
+      hotfix=true
+      size=S
+    else
+      size=$( (item_get "$n" Size) 2>/dev/null) || size=""
+    fi
     [ -n "$size" ] || {
       echo "the Size of #$n is unknown"
       return 0
@@ -529,7 +539,10 @@ delivery_blocker() {
     }
     total=$((total + budget))
     sizes+=${sizes:+, }"#$n $size"
+    [ "$hot" != yes ] || sizes+=" hotfix"
   done
+  # The whole pull request of a hotfix is capped at one S, not at the sum of its tickets.
+  [ "$hotfix" != true ] || total=$(jq -r '.S' <<<"$cfg")
   while IFS=$'\t' read -r path changed; do
     [[ ${changed:-} =~ ^[0-9]+$ ]] || continue
     ! diff_countable "$path" || lines=$((lines + changed))
@@ -826,11 +839,11 @@ pick_free() {
 }
 
 # Batches (#189): the picked tickets in order, each with `batch`, the numbers of the tickets delivered
-# together with it (itself included), or null. Only Ready S tickets with Paths, and no spike (#321), are batched, and only
+# together with it (itself included), or null. Only Ready S tickets with Paths, and no spike (#321) nor hotfix (#322), are batched, and only
 # with a ticket whose Paths overlap one already in the batch; at most $cap per batch. A ticket joins the
-# first batch that takes it, else starts one.
+# first batch that takes it, else starts one. A hotfix (#322) is delivered alone.
 # shellcheck disable=SC2016 # a jq program, not shell
-BATCH_DEF='def batchable: .size == "S" and (globs | length) > 0 and ((.labels // []) | index("type:spike") | not);
+BATCH_DEF='def batchable: .size == "S" and (globs | length) > 0 and ((.labels // []) | index("type:spike") | not) and ((.labels // []) | index("hotfix") | not);
   def grouped($cap): reduce .[] as $t ([]; ([range(0; length) as $i | select($t | batchable)
       | select((.[$i] | length) < $cap and (.[$i][0] | batchable) and any(.[$i][]; overlap(globs; $t | globs))) | $i] | first) as $at
     | if $at == null then . + [[$t]] else .[$at] += [$t] end);
@@ -1040,9 +1053,10 @@ start() {
   info=$(gh_retry issue view "$issue" --repo "$slug" --json title,labels,state,body) || die "cannot read issue #$issue"
   state=$(jq -r '.state' <<<"$info")
   [ "$state" = OPEN ] || die "issue #$issue is ${state,,}"
-  run_token_ok || wip_check "$issue"
   title=$(jq -r '.title' <<<"$info")
   labels=$(jq -r '.labels[].name' <<<"$info")
+  # A hotfix (#322) jumps the queue: the work-in-progress limit does not hold it back.
+  run_token_ok || grep -qx hotfix <<<"$labels" || wip_check "$issue"
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
   main=${common%/.git}
   ! workflow_active "$main" || wf=true

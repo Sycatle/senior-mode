@@ -259,6 +259,16 @@ said 'pull request #310 is not ready: it closes 3 tickets and no commit referenc
 said '#301|#302,' && fail "H: a referenced ticket is named as missing: $(cat "$work/out")"
 delivery 310 $'Closes #301\nCloses #302\nCloses #303' $'feat: a\n\nRefs #301' $'feat: b\n\nCloses #302' $'feat: c\n\nRefs #303'
 ready --pr 310 || fail "H: a batch with one commit per ticket is not ready: $(cat "$work/out")"
+# A hotfix (#322) is held to the S budget, whatever its Size; its incident note is not counted.
+size 306 M
+echo '{"labels": [{"name": "hotfix"}]}' >"$FIX/issue-306.json"
+delivery 307 "Closes #306" "fix: m"
+changes 307 src/a.sh:400 docs/incidents/2026-11-24-306-down.md:60
+ready --pr 307 && fail "H: a hotfix over the S budget is ready"
+said 'pull request #307 is not ready: 400 changed lines, 100 over the size budget of 300 \(limits.diffLines: #306 S hotfix\)' || fail "H: the hotfix budget is not said: $(cat "$work/out")"
+changes 307 src/a.sh:250 docs/incidents/2026-11-24-306-down.md:60
+ready --pr 307 || fail "H: a hotfix within the S budget is not ready: $(cat "$work/out")"
+rm -f "$FIX/issue-306.json"
 # #3010 is not #301: a reference is the whole number.
 delivery 311 $'Closes #301\nCloses #302' $'feat: a\n\nRefs #3010' $'feat: b\n\nRefs #302'
 changes 311 src/a.sh:1

@@ -700,5 +700,90 @@ changed_in "$d" src/a.ts
 prun "$d"
 grep -q '^FAIL  lint \[full\]' "$work/out" || fail "a customised lint is not run in full: $(cat "$work/out")"
 
+# Packages (#418): with `packages` recorded, check runs the packages the diff affects and their dependents, not the
+# others, and says so; a file outside every package, --all and the push gate run everything.
+m=$work/mono
+git init -q -b main "$m"
+git -C "$m" remote add origin https://github.com/acme/app.git
+mkdir -p "$m/.claude" "$m/node_modules"
+export PK_LOG="$work/pk.log"
+pkcfg() { # the commands append "<verb> <package>" to the log
+  jq -nc --arg l "$PK_LOG" '{audit: false, checks: [{name: "lint", run: ("echo root lint >> " + $l)}, {name: "test", run: ("echo root test >> " + $l)},
+    {name: "docs", run: ("echo docs >> " + $l)}],
+    packages: (["api", "shared", "web"] | map({key: ("packages/" + .), value: {preset: "node",
+      commands: ({lint: ("echo lint " + . + " >> " + $l)} + (if . == "web" then {} else {test: ("echo test " + . + " >> " + $l)} end)),
+      deps: (if . == "api" then ["packages/shared"] else [] end)}}) | from_entries)}' >"$m/.claude/senior-mode.json"
+}
+pkcfg
+printf '{"name":"root","workspaces":["packages/*"]}\n' >"$m/package.json"
+for n in api shared web; do
+  mkdir -p "$m/packages/$n"
+  printf '{"name":"@x/%s"}\n' "$n" >"$m/packages/$n/package.json"
+  echo 1 >"$m/packages/$n/index.js"
+done
+printf '{"name":"@x/api","dependencies":{"@x/shared":"1"}}\n' >"$m/packages/api/package.json"
+echo 1 >"$m/pnpm-lock.yaml"
+git -C "$m" add -A && git -C "$m" -c user.name=t -c user.email=t@t commit -q -m "chore: base"
+git -C "$m" checkout -q -b feat/3-z
+mkdir -p "$work/offline"
+printf '#!/usr/bin/env bash\nexit 6\n' >"$work/offline/curl"
+chmod +x "$work/offline/curl"
+# curl cannot reach a registry: a dependency a manifest adds is not looked up.
+pkrun() { : >"$PK_LOG"; (cd "$m" && PATH="$work/offline:$PATH" "$cli" check "$@") >"$work/out" 2>&1; }
+pkcommit() { git -C "$m" add -A && git -C "$m" -c user.name=t -c user.email=t@t commit -q -m "$1"; }
+pklog() { paste -sd, "$PK_LOG"; }
+echo 2 >"$m/packages/shared/index.js"
+pkcommit "feat: shared"
+pkrun || fail "packages: check fails: $(cat "$work/out")"
+[ "$(pklog)" = "lint api,lint shared,test api,test shared,docs" ] ||
+  fail "packages: a diff in shared runs shared and its dependent api, not web, and the repository-wide checks: $(pklog)"
+grep -q '^packages: 2 of 3 packages: api, shared$' "$work/out" || fail "packages: the selection is not said: $(cat "$work/out")"
+grep -q 'checks passed; 2 of 3 packages: api, shared$' "$work/out" || fail "packages: the summary does not name the packages: $(cat "$work/out")"
+grep -q '^ok    lint \[packages/api\]' "$work/out" || fail "packages: a package line does not name the package: $(cat "$work/out")"
+: >"$GH_LOG"
+(cd "$m" && "$cli" publish) >"$work/out" 2>&1 || fail "packages: publish fails: $(cat "$work/out")"
+grep -q -- "-f context=senior-mode/ci -f description=.*; 2 of 3 packages: api, shared" "$GH_LOG" || fail "packages: senior-mode/ci does not carry the packages: $(cat "$GH_LOG")"
+# A package no affected package defines a command for is skipped, not failed: web has no test.
+git -C "$m" reset -q --hard main
+echo 2 >"$m/packages/web/index.js" && pkcommit "feat: web"
+pkrun || fail "packages: web only: $(cat "$work/out")"
+[ "$(pklog)" = "lint web,docs" ] || fail "packages: a diff in web runs web only: $(pklog)"
+grep -q '^skip  test: no affected package has a test command' "$work/out" || fail "packages: no package with a test not said: $(cat "$work/out")"
+grep -q '^packages: 1 of 3 packages: web$' "$work/out" || fail "packages: web selection not said: $(cat "$work/out")"
+# A file outside every package selects all, and the checks run as they are.
+echo 2 >"$m/pnpm-lock.yaml"
+pkcommit "chore: lock"
+pkrun || fail "packages: lockfile: $(cat "$work/out")"
+[ "$(pklog)" = "root lint,root test,docs" ] || fail "packages: a lockfile does not select all: $(pklog)"
+grep -q 'every package: a changed file lies outside every package: pnpm-lock.yaml' "$work/out" || fail "packages: reason not said: $(cat "$work/out")"
+grep -q 'checks passed; 3 of 3 packages: api, shared, web$' "$work/out" || fail "packages: all not said: $(cat "$work/out")"
+# check --all runs everything whatever the diff; the push gate too.
+git -C "$m" reset -q --hard main && echo 3 >"$m/packages/web/index.js" && pkcommit "feat: web again"
+pkrun --all || fail "packages: --all: $(cat "$work/out")"
+[ "$(pklog)" = "root lint,root test,docs" ] || fail "packages: --all does not run the root checks: $(pklog)"
+grep -q '^packages: 3 of 3 packages: api, shared, web (every package: check --all)$' "$work/out" || fail "packages: --all not said: $(cat "$work/out")"
+pkrun --pre-push </dev/null || fail "packages: pre-push: $(cat "$work/out")"
+[ "$(pklog)" = "root lint,root test,docs" ] || fail "packages: the push gate does not run in full: $(pklog)"
+grep -q 'packages' "$work/out" && fail "packages: the push gate mentions packages: $(cat "$work/out")"
+# A dependency a pull request adds in a manifest is followed: web gains shared, shared changes, web runs.
+git -C "$m" reset -q --hard main
+printf '{"name":"@x/web","dependencies":{"@x/shared":"1"}}\n' >"$m/packages/web/package.json"
+echo 4 >"$m/packages/shared/index.js"
+pkcommit "feat: web uses shared"
+pkrun || fail "packages: added dependency: $(cat "$work/out")"
+[ "$(pklog)" = "lint api,lint shared,lint web,test api,test shared,docs" ] || fail "packages: a dependency added by the diff is not followed: $(pklog)"
+grep -q '^packages: 3 of 3 packages: api, shared, web$' "$work/out" || fail "packages: added dependency selection: $(cat "$work/out")"
+# The base's own edges count too: the recorded dependencies lack api -> shared, the base's manifest has it, the diff
+# removes it and changes shared: api still runs.
+git -C "$m" checkout -q main
+jq 'del(.packages["packages/api"].deps)' "$m/.claude/senior-mode.json" >"$work/c.json" && cp "$work/c.json" "$m/.claude/senior-mode.json"
+pkcommit "chore: record no deps"
+git -C "$m" checkout -q -b feat/5-v
+printf '{"name":"@x/api"}\n' >"$m/packages/api/package.json"
+echo 5 >"$m/packages/shared/index.js"
+pkcommit "feat: api drops shared"
+pkrun || fail "packages: removed dependency: $(cat "$work/out")"
+grep -qx 'lint api' "$PK_LOG" || fail "packages: a dependency removed by the diff is not followed: $(pklog)"
+
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

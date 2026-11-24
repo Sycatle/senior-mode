@@ -648,12 +648,13 @@ assertion_free_tests() {
 }
 
 # The files the branch changes against the default branch, committed or not (new files included, deleted ones left
-# out), one per line from the repository root. Fails when there is no default branch to compare with.
+# out unless $2 is `deleted`), one per line from the repository root. Fails when there is no default branch to compare with.
 changed_files() {
-  local base mb
+  local base mb filter=(--diff-filter=d)
+  [ "${2:-}" != deleted ] || filter=()
   base=$(default_branch) && mb=$(git -C "$1" merge-base "$base" HEAD) || return 1
   {
-    git -C "$1" -c core.quotePath=false diff --name-only --no-renames --diff-filter=d "$mb" || return 1
+    git -C "$1" -c core.quotePath=false diff --name-only --no-renames ${filter[@]+"${filter[@]}"} "$mb" || return 1
     git -C "$1" -c core.quotePath=false ls-files --others --exclude-standard
   } | LC_ALL=C sort -u
 }
@@ -708,18 +709,23 @@ ci_job_states() {
 # the result recorded for publish is that of the checks run here, publish reads the jobs again. With --changed (#339)
 # each check that has a `changed` variant (`checks[].changed`, or the preset's) runs on the files the branch changed
 # against the default branch, committed or not; the others run in full, and each line says which; that run is not
-# recorded either, and the push gate (--pre-push, publish) refuses it. With --update-baseline only the architecture
-# baseline is rewritten (see architecture_check).
+# recorded either, and the push gate (--pre-push, publish) refuses it. With `packages` in the config (#323), a run
+# limited to what the diff affects (#418, packages_select) replaces each check named like a command of the packages by
+# the command of every selected package, run in its directory, and says "3 of 12 packages" in the recorded description;
+# --all, a file outside every package or --pre-push run the checks as they are. With --update-baseline only the
+# architecture baseline is rewritten (see architecture_check).
 check() {
   local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp ci_only=false jobs="[]" job
   local waiting="" ci_failed="" st url free pre_push=false changed=false update=false a label vext vcmd preset nbuiltin vc
-  local changed_list="" sel
+  local changed_list="" sel all=false pk="" pkdesc="" pdir pcmd found idx
+  local -a bases=()
   local -A variant=()
   for a in "$@"; do
     case $a in
       --pre-push) pre_push=true ;;
       --ci-only) ci_only=true ;;
       --changed) changed=true ;;
+      --all) all=true ;;
       --update-baseline) update=true ;;
       *) usage ;;
     esac
@@ -772,6 +778,7 @@ check() {
     cmds+=("$(printf '%q' "$SELF") architecture-check")
   fi
   nbuiltin=${#names[@]}
+  bases=("${names[@]}")
   if [ "$changed" = true ]; then
     if changed_list=$(changed_files "$root"); then
       preset=$(project_preset "$root")
@@ -780,18 +787,43 @@ check() {
       changed=false
     fi
   fi
+  # The packages a diff affects (#418); the push gate runs everything.
+  if [ "$(jq '.packages // {} | length' "$file")" -gt 0 ] && [ "$pre_push" = false ]; then
+    pk=$(packages_select "$root" "$file" "$all")
+    pkdesc=$(packages_say "$pk")
+    echo "packages: $pkdesc$(jq -r 'if .why != "" then " (every package: \(.why))" else "" end' <<<"$pk")"
+    pkdesc="; $pkdesc"
+    [ "$(jq -r '.all' <<<"$pk")" = false ] || pk=""
+  fi
   for ((i = 0; i < count; i++)); do
     name=$(jq -r ".checks[$i].name" "$file")
+    if [ -n "$pk" ] && jq -e --arg n "$name" '[.packages[].commands[$n]] | any(. != null)' "$file" >/dev/null; then
+      found=false
+      while IFS=$'\t' read -r pdir pcmd; do
+        found=true
+        names+=("$name [$pdir]")
+        bases+=("$name")
+        cmds+=("cd $(printf '%q' "$pdir") && $pcmd")
+      done < <(jq -r --arg n "$name" --argjson pk "$pk" '.packages as $p | $pk.run[] | select($p[.].commands[$n] != null) | [., $p[.].commands[$n]] | @tsv' "$file")
+      if [ "$found" = false ]; then
+        names+=("$name")
+        bases+=("$name")
+        cmds+=("echo 'skipped: no affected package has a $name command'")
+      fi
+      continue
+    fi
     names+=("$name")
+    bases+=("$name")
     cmds+=("$(jq -r ".checks[$i].run" "$file")")
+    idx=$((${#names[@]} - 1))
     [ "$changed" = true ] || continue
     vc=$(jq -r ".checks[$i].changed // empty" "$file")
     if [ -n "$vc" ]; then
       [[ $vc == *'{files}'* ]] || die "checks[$i].changed ($name) must hold the {files} placeholder"
-      variant[$((nbuiltin + i))]=$'.\t'$vc
+      variant[$idx]=$'.\t'$vc
     elif [[ $name =~ ^(lint|test)$ ]]; then
       vc=$(preset_changed "$root" "$preset" "$name" "$(jq -r ".checks[$i].run" "$file")") || vc=""
-      [ -z "$vc" ] || variant[$((nbuiltin + i))]=$vc
+      [ -z "$vc" ] || variant[$idx]=$vc
     fi
   done
   count=${#names[@]}
@@ -803,7 +835,7 @@ check() {
   for ((i = 0; i < count; i++)); do
     name=${names[i]}
     cmd=${cmds[i]}
-    job=$(jq -r --arg n "$name" '[.[] | select(.covers | index($n))][0].context // empty' <<<"$jobs")
+    job=$(jq -r --arg n "${bases[i]}" '[.[] | select(.covers | index($n))][0].context // empty' <<<"$jobs")
     if [ -n "$job" ]; then
       passed=$((passed + 1))
       echo "skip  $name: covered by $job (ci-only)"
@@ -828,7 +860,7 @@ check() {
     runtmp=$rundir/tmp
     # End-to-end suites are heavy: parallel tickets share e2e.slots of them per machine. Their lock is
     # machine-wide, so only the suite gets the private TMPDIR, not the lock (its fallback directory is in TMPDIR).
-    if [ "$name" = e2e ]; then
+    if [ "${bases[i]}" = e2e ]; then
       cmd="$(printf '%q' "$SELF") e2e-lock -- env TMPDIR=$(printf '%q' "$runtmp") bash -c $(printf '%q' "$cmd")"
       runtmp=${TMPDIR:-/tmp}
     fi
@@ -874,6 +906,7 @@ check() {
   else
     state=failure description="failed: $failed"
   fi
+  description=${description:0:$((140 - ${#pkdesc}))}$pkdesc
   description=${description:0:140}
   # The jobs of the project's CI that cover checks, on this commit.
   if [ "$jobs" != "[]" ]; then

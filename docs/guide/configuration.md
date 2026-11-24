@@ -35,7 +35,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `lsp` | unset | The answer to the language server proposal of `setup repo`: `true` when you enable it in Claude Code, `false` when you decline; once set, in either value, setup stops proposing it (`senior-mode setup answers --lsp yes\|no`). Setup installs nothing |
 | `preset` | detected | `node` with a `package.json`, else `go`, `rust` or `python` from their manifest, else `generic`; a stored value wins |
 | `commands` | detected or asked | `lint`, `typecheck`, `test`, `build`, and `e2e` for node; `format` for python and rust; `install` (no check), the command `senior-mode start` runs in a new worktree: the lockfile's `npm ci`, `pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile` or `bun install --frozen-lockfile` for node, `uv sync` or `poetry install` for python, `go mod download`, `cargo fetch`; change it with `setup repo --command install=...` |
-| `packages` | none | The packages of a monorepo, by directory: `{ "packages/api": { "preset": "node", "commands": { ... }, "deps": ["packages/shared"] } }`, written by `setup repo` from the manifests of npm, pnpm and yarn workspaces (`workspaces`, `pnpm-workspace.yaml`), a Cargo workspace (`members` and `exclude`, path dependencies) and Go (every tracked `go.mod`, or the `use` of a `go.work`; `require` and local `replace` between them). The commands run in the package directory; `install` runs once at the root, except for Go, once per module. A rerun reads `preset`, `commands` and `deps` again without changing what you edited, and writes no key for a repository without a workspace. Which packages `check` runs is #418 |
+| `packages` | none | The packages of a monorepo, by directory: `{ "packages/api": { "preset": "node", "commands": { ... }, "deps": ["packages/shared"] } }`, written by `setup repo` from the manifests of npm, pnpm and yarn workspaces (`workspaces`, `pnpm-workspace.yaml`), a Cargo workspace (`members` and `exclude`, path dependencies) and Go (every tracked `go.mod`, or the `use` of a `go.work`; `require` and local `replace` between them). The commands run in the package directory; `install` runs once at the root, except for Go, once per module. A rerun reads `preset`, `commands` and `deps` again without changing what you edited, and writes no key for a repository without a workspace. With `packages`, `check` runs [only the packages the diff affects](#affected-packages) |
 | `framework` | none | `next` when Next.js is a dependency; the node preset then adds `middleware.*`, `src/middleware.*`, `proxy.*` and `src/proxy.*` to `protected` |
 | `envGuard.forbidden` | none | Strings, or `/regex/` patterns, that must never appear on an agent machine; turns on the `env guard` check |
 | `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks) |
@@ -459,6 +459,24 @@ Existing violations are recorded in `.claude/architecture-baseline.json`, a ratc
 ```
 
 `count` (1 when absent) is how many violations of the rule the file may keep. `check` fails only on the violations beyond it (all those of the rule in the file are listed). An entry that no longer violates, or that allows more than what is left, is a warning; `senior-mode check --update-baseline` removes or lowers it, and never adds one: a new violation is refused (exit 1) and the file keeps what it had.
+
+## Affected packages
+
+With `packages` in the config (a monorepo, see [keys](#keys-the-plugin-reads-today)), `senior-mode check` runs the packages
+the branch's diff affects, not all of them. The affected set is every package that owns a file of the diff against the default
+branch (committed or not, deleted files included; a file belongs to the deepest package that contains it) and the packages that
+depend on them, transitively. The dependencies are the union of the recorded `deps`, those of the manifests at `HEAD` and those
+of the manifests at the merge base, so a dependency a branch adds, or removes in the same diff, is followed.
+
+A check whose name is a command of a package (`lint`, `typecheck`, `test`, `build`, `e2e`...) is replaced by that command in
+each affected package, run in its directory and listed as `ok    lint [packages/api]`; a package without that command is left out,
+and when no affected package has it the check is skipped. The other checks (secret scan, audit, docs, commit subjects, your own)
+always run. The run says `packages: 3 of 12 packages: api, shared, web`, and the same words end the description of
+`senior-mode/ci` (`14/14 checks passed; 3 of 12 packages: api, shared, web`).
+
+Every package runs, with the checks as configured (the root commands), when the diff has a file outside every package (a root
+config, a lockfile, a workflow, this config), when it is empty or cannot be told (no default branch), and with
+`senior-mode check --all`. `check --pre-push` is the full check too. A repository with no `packages` key is checked as before.
 
 ## Changed checks
 

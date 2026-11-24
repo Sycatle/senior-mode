@@ -33,14 +33,23 @@ clean_state() {
       MERGED) CLEAN_WHY="pull request #$n merged" ;;
       CLOSED) CLEAN_WHY="pull request #$n closed" ;;
     esac
-  elif [[ $1 =~ ^[a-z]+/([0-9]+)(-|$) ]]; then
-    issue=${BASH_REMATCH[1]}
+  elif issue=$(workflow_branch_issue "$1") && [ -n "$issue" ]; then
     state=$(gh_retry issue view "$issue" --repo "$CLEAN_SLUG" --json state 2>/dev/null | jq -r .state 2>/dev/null) || state=""
     [ "$state" != CLOSED ] || CLEAN_WHY="issue #$issue closed, no pull request"
   fi
   if [ -n "$CLEAN_WHY" ]; then
     CLEAN_KEEP=$(clean_guard "$1")
     [ -z "$CLEAN_KEEP" ] || CLEAN_WHY=""
+  fi
+}
+
+# The issue of the branch $1 when `start` makes such a branch: `<type>/<issue>-...` with a type feat, fix or chore, or
+# the branch pattern of the project (hotfix branches included) when it has a detected workflow.
+clean_ticket_issue() {
+  if workflow_active; then
+    workflow_branch_issue "$1"
+  elif [[ $1 =~ ^(feat|fix|chore)/([0-9]+)(-|$) ]]; then
+    printf '%s\n' "${BASH_REMATCH[2]}"
   fi
 }
 
@@ -57,8 +66,8 @@ clean_guard() {
     echo "base of pull request #$n"
   elif jq -e --arg b "$1" 'any(.[]; . == $b)' <<<"$CLEAN_PROTECTED" >/dev/null; then
     echo "protected"
-  elif [[ $1 =~ ^(feat|fix|chore)/([0-9]+)(-|$) ]]; then
-    ! jq -e --argjson n "${BASH_REMATCH[2]}" 'index($n)' <<<"$CLEAN_PROGRESS" >/dev/null || echo "ticket #${BASH_REMATCH[2]} is In progress"
+  elif n=$(clean_ticket_issue "$1") && [ -n "$n" ]; then
+    ! jq -e --argjson n "$n" 'index($n)' <<<"$CLEAN_PROGRESS" >/dev/null || echo "ticket #$n is In progress"
   elif [[ ! $1 =~ ^docs/[a-z0-9]+(-[a-z0-9]+)*$ ]] || [ ${#1} -gt 45 ]; then
     echo "not a branch senior-mode makes"
   elif [ "$CLEAN_PROT_KNOWN" != true ]; then

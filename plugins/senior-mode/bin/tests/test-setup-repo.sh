@@ -338,5 +338,37 @@ setup "$act"
 [ "$(cat "$wf")" = "name: Mine" ] || fail "an existing senior-mode workflow was replaced"
 grep -q "workflow senior-mode.yml: kept" "$work/out" || fail "kept workflow not reported: $(cat "$work/out")"
 
+# The language server of the stack is proposed, never installed, and not again once answered (#341).
+for pair in "node:package.json:typescript-language-server:typescript-lsp" "python:pyproject.toml:pyright:pyright-lsp" \
+  "go:go.mod:gopls:gopls-lsp" "rust:Cargo.toml:rust-analyzer:rust-analyzer-lsp"; do
+  IFS=: read -r pname manifest server plugin <<<"$pair"
+  d="$work/lsp-$pname"
+  git init -q -b main "$d"
+  if [ "$manifest" = package.json ]; then echo '{"name": "x"}' >"$d/$manifest"; else : >"$d/$manifest"; fi
+  setup "$d"
+  grep -q "^lsp: the language server for $pname is $server " "$work/out" || fail "$pname: no proposal: $(cat "$work/out")"
+  grep -q "claude plugin install $plugin@claude-plugins-official" "$work/out" || fail "$pname: no enabling command"
+  [ ! -e "$d/.lsp.json" ] || fail "$pname: setup wrote .lsp.json"
+  [ "$(jq 'has("lsp")' "$d/.claude/senior-mode.json")" = false ] || fail "$pname: proposing recorded an answer"
+  (cd "$d" && "$cli" setup answers --lsp no) >/dev/null 2>"$work/err" || fail "$pname: answers --lsp no: $(cat "$work/err")"
+  [ "$(jq '.lsp' "$d/.claude/senior-mode.json")" = false ] || fail "$pname: lsp not recorded"
+  setup "$d"
+  ! grep -q '^lsp:' "$work/out" || fail "$pname: proposed again after an answer"
+  (cd "$d" && "$cli" config validate) >/dev/null 2>&1 || fail "$pname: lsp key rejected by the schema"
+done
+d="$work/lsp-yes"
+git init -q -b main "$d"
+: >"$d/go.mod"
+setup "$d"
+(cd "$d" && "$cli" setup answers --lsp yes) >/dev/null 2>&1
+[ "$(jq '.lsp' "$d/.claude/senior-mode.json")" = true ] || fail "lsp yes not recorded"
+setup "$d"
+! grep -q '^lsp:' "$work/out" || fail "proposed again after yes"
+(cd "$d" && "$cli" setup answers --lsp maybe) >/dev/null 2>&1 && fail "accepted an unknown lsp answer"
+d="$work/lsp-generic"
+git init -q -b main "$d"
+setup "$d"
+! grep -q '^lsp:' "$work/out" || fail "generic preset got a language server proposal"
+
 [ "$failures" -eq 0 ] && echo "setup-repo: all cases pass"
 exit "$failures"

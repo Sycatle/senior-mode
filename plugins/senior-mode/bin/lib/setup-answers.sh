@@ -110,17 +110,19 @@ the secret scan, the protected zones, the bash guard, no force push, a green che
 EOF
 }
 
-# `senior-mode setup answers [--strictness strict|fast] [--language en|fr] [--autonomy ask|alone] [--dry-run]`.
+# `senior-mode setup answers [--strictness strict|fast] [--language en|fr] [--autonomy ask|alone] [--lsp yes|no] [--dry-run]`.
+# `--lsp` records the answer to the language server proposal of `setup repo` (#341); left out, the key is untouched.
 # An answer left out keeps the value of the repository, else takes the recommended one. Prints one summary (what was
 # detected, what each answer changes, the defaults that apply) and writes it unless --dry-run.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_answers() {
-  local root file facts strict="" lang="" auto="" dry=false rec_lang cur_strict cur_auto adr="" write=false
+  local root file facts strict="" lang="" auto="" lsp="" dry=false rec_lang cur_strict cur_auto adr="" write=false
   while [ $# -gt 0 ]; do
     case $1 in
       --strictness) [ "${2:-}" = strict ] || [ "${2:-}" = fast ] || usage; strict=$2; shift 2 ;;
       --language) [ "${2:-}" = en ] || [ "${2:-}" = fr ] || usage; lang=$2; shift 2 ;;
       --autonomy) [ "${2:-}" = ask ] || [ "${2:-}" = alone ] || usage; auto=$2; shift 2 ;;
+      --lsp) [ "${2:-}" = yes ] || [ "${2:-}" = no ] || usage; lsp=$2; shift 2 ;;
       --dry-run) dry=true; shift ;;
       *) usage ;;
     esac
@@ -167,6 +169,7 @@ setup_answers() {
   else
     echo "  agents alone: no (recommended): agents deliver pull requests, you merge. Writes autonomy.merge false."
   fi
+  [ -z "$lsp" ] || echo "  language server: $lsp: $([ "$lsp" = yes ] && echo 'you enable it in Claude Code' || echo 'not proposed again'); setup installs nothing. Writes lsp."
   echo "Defaults (documented in docs/guide/configuration.md, change them in .claude/senior-mode.json)"
   echo "  risky changes: you decide; a pull request that touches a protected zone waits for your approval, and no answer lifts that."
   jq -nr --argjson d "$DEFAULTS" '"  checks: \($d.ci.mode), before each push (free); setup github --ci actions also runs them on GitHub Actions and spends its budget",
@@ -179,13 +182,13 @@ setup_answers() {
 
   mkdir -p "$root/.claude"
   [ -f "$file" ] || echo '{}' >"$file"
-  json_update "$file" '.language = $l | .autonomy.merge = ($a == "alone")
+  json_update "$file" '.language = $l | .autonomy.merge = ($a == "alone") | if $lsp == "" then . else .lsp = ($lsp == "yes") end
     | if $s == "fast" then .process.profile = "fast"
         | .process.lifts = ([(.process.lifts // [])[] | select((type == "object" and .rule == "review") | not)] + [{rule: "review", adr: $adr}])
       else del(.process.profile) | .process.lifts = [(.process.lifts // [])[] | select((type == "object" and .rule == "review") | not)]
         | if (.process.lifts | length) == 0 then del(.process.lifts) else . end
         | if (.process | length) == 0 then del(.process) else . end end' \
-    --arg l "$lang" --arg a "$auto" --arg s "$strict" --arg adr "$adr" || [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
+    --arg l "$lang" --arg a "$auto" --arg s "$strict" --arg adr "$adr" --arg lsp "$lsp" || [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
   echo "written: .claude/senior-mode.json"
   if [ "$write" = true ]; then
     mkdir -p "$root/docs/adr"

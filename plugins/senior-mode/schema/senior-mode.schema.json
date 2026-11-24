@@ -8,6 +8,7 @@
   "properties": {
     "$schema": { "type": "string", "description": "This schema, for the editor." },
     "language": { "type": "string", "enum": ["en", "fr"], "description": "Language of the templates and of what Claude writes for you." },
+    "lsp": { "type": "boolean", "description": "The answer to the language server proposal of setup: `true` when you enable it in Claude Code, `false` when you decline. Any value stops the proposal." },
     "preset": {
       "type": "string",
       "enum": ["node", "generic", "python", "go", "rust", "typescript"],

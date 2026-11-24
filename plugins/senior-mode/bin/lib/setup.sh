@@ -658,6 +658,29 @@ preset_detect() {
   esac
 }
 
+# The language server of a preset and the plugin that enables it in Claude Code (#341), as
+# `<server>|<install of the server>|<plugin>`; nothing for generic. Setup prints it and installs nothing.
+lsp_server() { # preset
+  case $1 in
+    node) echo 'typescript-language-server|npm install -g typescript typescript-language-server|typescript-lsp' ;;
+    python) echo 'pyright|npm install -g pyright|pyright-lsp' ;;
+    go) echo 'gopls|go install golang.org/x/tools/gopls@latest|gopls-lsp' ;;
+    rust) echo 'rust-analyzer|rustup component add rust-analyzer|rust-analyzer-lsp' ;;
+  esac
+}
+
+# The proposal of the language server of the stack, unless the owner answered (`lsp` in the config at $2, any value).
+lsp_propose() { # preset config-file
+  local line server rest
+  line=$(lsp_server "$1")
+  [ -n "$line" ] || return 0
+  ! jq -e 'has("lsp")' "$2" >/dev/null 2>&1 || return 0
+  server=${line%%|*} rest=${line#*|}
+  echo "lsp: the language server for $1 is $server (on your PATH: ${rest%%|*})"
+  echo "lsp: enable it in Claude Code with: claude plugin install ${rest#*|}@claude-plugins-official"
+  echo "lsp: nothing was installed; answer with senior-mode setup answers --lsp yes (you enable it) or no (not proposed again)"
+}
+
 # The changed variant (#339) a preset gives the check $3 (lint or test) of the project at $1 when its command $4 is
 # the one the preset detected: `<regex of the files it takes><TAB><command with {files}>`, nothing when the preset
 # has none for it (the check then runs in full). node narrows to the files through the linter and the test runner
@@ -845,6 +868,7 @@ setup_repo() {
   [ "$pname" != node ] || jq -r --argjson d "$detected" '["lint", "typecheck", "test", "build"] - (.commands | keys)
     - (if $d.typescript then [] else ["typecheck"] end)
     | select(length > 0) | "missing: \(join(", ")) (no script; propose tools, never install without a yes)"' "$file"
+  lsp_propose "$pname" "$file"
 
   setup_claude_md "$root" "$tpl/$lang" "$name"
   setup_gitignore "$root"

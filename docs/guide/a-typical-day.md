@@ -2,17 +2,22 @@
 
 A walk-through from an idea to a merged pull request, step by step, and which command runs each part.
 
-`frame` and `next` run a whole flow. Without them, you ask Claude for each step in plain words, and
-the skills, agents and hooks keep the work disciplined. The daily commands
-`next` and `status` chain these steps with you; `run` does it without you.
+`frame` and `go` run a whole flow. Without them, you ask Claude for each step in plain words, and
+the skills, agents and hooks keep the work disciplined. `go` and `status` chain these steps with you;
+`go auto` does it without you.
 
 ## 1. Frame the idea
 
+A request in plain words is enough; `/senior-mode:frame` is the explicit form of the same thing:
+
 ```
-/senior-mode:frame show a warning when an invoice is overdue
+I want a warning when an invoice is overdue
 ```
 
-- Claude sizes the idea (skill [`triage`](skills.md#triage)).
+- Claude sizes the idea (skill [`triage`](skills.md#triage)) and announces the size with its reason.
+  A smaller size than the criteria allow is refused; a larger one is accepted.
+- For an S, one round of questions, then Claude creates the issue and delivers it in the session
+  (steps 3 to 6 below); the rest of this step is for M and L.
 - The [`scout`](agents.md#scout) agent reads the repository; Claude reads your open issues and
   milestones. You are never asked what the code can answer.
 - You answer short rounds of questions (skill [`grill`](skills.md#grill)). If an option depends on
@@ -124,4 +129,4 @@ senior-mode release
 | Steps 3 to 7, without you | `/senior-mode:go auto` starts the daemon, which delivers Ready tickets and merges within guardrails; `go` then shows what it does |
 | Weekly cleanup | `status` offers the retro once a week: the facts of the week and up to three process changes to approve |
 
-Note: Claude's session greeting and the end of `frame` mention "go": it starts `/senior-mode:go`.
+Note: Claude's session greeting and the end of `frame` mention "go": it starts `/senior-mode:go`. After an M or L, Claude asks "on enchaîne ?"; when the daemon runs, it says the daemon takes the tickets.

@@ -33,3 +33,9 @@ are needed at known moments rather than chosen. The owner decided on 2026-11-23 
   `due`), and its text output a line for each.
 - The discipline skills and the agents are unchanged: they were never advertised as commands.
 - Someone who types `/senior-mode:next` or `/senior-mode:run` during the transition is told the new name.
+
+## Note (2026-11-24, #517)
+
+`frame` is now also started by a plain request ("je veux", "on devrait", "I want"), with no command: it sizes the
+request with `triage`, asks one round of questions, then delivers an S in the session or tickets an M or L. It is still
+the same verb, so the surface stays at three; `/senior-mode:frame` remains the explicit form.

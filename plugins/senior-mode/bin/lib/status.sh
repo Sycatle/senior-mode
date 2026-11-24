@@ -5,7 +5,7 @@ context() {
   local root branch issue json spec status criteria
   cat <<'ROUTER'
 senior-mode is active: framing, specs and ADRs, test-driven delivery, atomic Conventional Commits, GitHub Project board.
-The user needs /senior-mode:frame, /senior-mode:go and /senior-mode:status; "go" or "enchaîne" runs /senior-mode:go. Disciplines load by themselves; ask the scout agent for codebase facts.
+The user needs /senior-mode:frame, /senior-mode:go and /senior-mode:status; "go" or "enchaîne" runs /senior-mode:go. A plain request to change the product ("je veux", "on devrait", "I want") is enough: size it with triage and frame it, no command needed. Disciplines load by themselves; ask the scout agent for codebase facts.
 A secret seen by accident in a tool output is never repeated in a reply, a file, a commit, an issue or a pull request: report it so a human rotates it.
 ROUTER
   # Spec 0001 §10, "Sessions without a human": the one rule, stated where a run session starts.

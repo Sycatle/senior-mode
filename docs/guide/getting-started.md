@@ -133,16 +133,18 @@ interruption. See [commands](commands.md) for the full list.
 
 ## Your first framing
 
-Run `frame` with your idea in a sentence or two:
+Say what you want in a sentence or two. A request in plain words is enough; `/senior-mode:frame`
+is the explicit form:
 
 ```
-/senior-mode:frame let customers export their invoices as CSV
+I want customers to export their invoices as CSV
 ```
 
-Claude first sizes the idea (S, M or L). A size S needs no framing, and Claude says so. For M and L,
-it reads the repository and your open issues, then asks you a few rounds of 3 to 4 questions, each
-with a recommended answer. It writes a spec and, for hard-to-reverse choices, ADRs. It asks you to
-accept them, creates the tickets on the board and opens a pull request with the documents.
+Claude first sizes the request (S, M or L) and says why, then asks one round of 3 to 4 questions,
+each with a recommended answer. A size S needs no spec: Claude creates its issue and delivers it in
+the session. For M and L, it reads the repository and your open issues, asks what stays open, writes
+a spec and, for hard-to-reverse choices, ADRs. It asks you to accept them, creates the tickets on the
+board, opens a pull request with the documents, then asks "on enchaîne ?".
 
 While framing, Claude may only write under `docs/`. Starting another senior-mode command ends the
 framing session; so does `! senior-mode frame end`.

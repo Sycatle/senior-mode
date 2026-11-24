@@ -23,7 +23,7 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
 
   | Size | Criteria | Ceremony |
   |---|---|---|
-  | S | One module, under ~50 lines, no new dependency, no change to an existing interface, easy to undo | Branch and PR; a bug fix still gets a regression test |
+  | S | One module, under ~50 lines, no new dependency, no change to an existing interface, easy to undo | Branch and PR, an issue for a product request; a bug fix still gets a regression test |
   | M | Bounded feature or refactor, under ~400 lines, may add a dependency | Issue, light spec, tests first, PR |
   | L | New subsystem, data migration or model, auth, money, irreversible or cross-cutting change, a changed public interface others depend on, or over ~400 lines | `frame`: ADRs, full spec, epic split into tickets of size M or less; a human accepts first |
 
@@ -140,5 +140,5 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
 
 ## Commands are skills too
 
-`setup`, `frame`, `next`, `run`, `status` and `retro` are also skills, but they only run when you type
-them. See [Commands](commands.md).
+`setup`, `frame`, `next`, `run`, `status` and `retro` are also skills. Only `frame` also starts on a plain
+request; the others run when you type them. See [Commands](commands.md).

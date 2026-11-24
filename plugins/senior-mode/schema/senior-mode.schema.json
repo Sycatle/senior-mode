@@ -156,7 +156,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "claudeMdLines": { "type": "integer", "minimum": 1, "description": "Most lines a tracked CLAUDE.md may have before check fails." }
+        "claudeMdLines": { "type": "integer", "minimum": 1, "description": "Most lines a tracked CLAUDE.md may have before check fails." },
+        "budget": { "type": "integer", "minimum": 1, "description": "Tokens (bytes / 4) the session briefing may take; the router and the ticket are never dropped." }
       }
     },
     "project": {
@@ -209,7 +210,10 @@
     "knowledge": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "maxLines": { "type": "integer", "minimum": 1, "description": "Most lines of the body of a note in docs/knowledge." } }
+      "properties": {
+        "maxLines": { "type": "integer", "minimum": 1, "description": "Most lines of the body of a note in docs/knowledge." },
+        "staleMonths": { "type": "integer", "minimum": 1, "description": "Months after which a note's verified date makes the briefing call it stale." }
+      }
     },
     "retro": {
       "type": "object",

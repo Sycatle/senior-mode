@@ -182,6 +182,11 @@
       "additionalProperties": false,
       "properties": { "maxLines": { "type": "integer", "minimum": 1 } }
     },
+    "knowledge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "maxLines": { "type": "integer", "minimum": 1, "description": "Most lines of the body of a note in docs/knowledge." } }
+    },
     "limits": {
       "type": "object",
       "additionalProperties": false,

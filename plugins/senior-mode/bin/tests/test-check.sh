@@ -380,6 +380,71 @@ done
 grep -q "suppression added: src/s.ts:[16]:" "$work/out" && fail "a line without suppression is listed: $(cat "$work/out")"
 grep -q "suppression added: src/notes.md" "$work/out" && fail "Markdown is listed: $(cat "$work/out")"
 
+# Knowledge notes (#333): with no docs/knowledge nothing is reported; a note needs paths, verified, origin and kind,
+# a kebab-case name and a body within knowledge.maxLines; every problem names the file and the key.
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
+run check || fail "check fails with no notes: $(cat "$work/out")"
+grep -qi "knowledge" "$work/out" && fail "notes reported with no docs/knowledge: $(cat "$work/out")"
+today=$(date -u +%Y-%m-%d)
+note() { # file, then the lines of the file
+  mkdir -p "$repo/docs/knowledge"
+  local f=$1
+  shift
+  printf '%s\n' "$@" >"$repo/docs/knowledge/$f"
+}
+note money-rounding.md '---' 'paths: ["src/billing/**", "src/lib/money.ts"]' "verified: $today" 'origin: "#312"' 'kind: pitfall' '---' '' '# Imports order' '' 'money.ts patches Intl.NumberFormat.'
+run check || fail "a valid note fails the check: $(cat "$work/out")"
+grep -q "^ok    knowledge " "$work/out" || fail "valid note not reported ok: $(cat "$work/out")"
+for o in retro docs/spikes/321-queue.md; do
+  note money-rounding.md '---' 'paths: ["src/**"]' 'verified: 2026-01-31' "origin: $o" 'kind: howto' '---' 'Body.'
+  run check || fail "origin $o refused: $(cat "$work/out")"
+done
+for k in paths verified origin kind; do
+  note bad-note.md '---' 'paths: ["a/**"]' "verified: $today" 'origin: retro' 'kind: context' '---' 'Body.'
+  sed -i "/^$k:/d" "$repo/docs/knowledge/bad-note.md"
+  run check && fail "a note without $k passes"
+  grep -q "^      docs/knowledge/bad-note.md: missing key $k$" "$work/out" || fail "missing $k not named: $(cat "$work/out")"
+done
+note bad-note.md '---' 'paths: ["a/**"]' "verified: $today" 'origin: retro' 'kind: opinion' '---' 'Body.'
+run check && fail "an unknown kind passes"
+grep -q "bad-note.md: kind must be pitfall, convention, howto or context, not opinion" "$work/out" || fail "kind not named: $(cat "$work/out")"
+note bad-note.md '---' 'paths: ["a/**"]' 'verified: 2999-01-01' 'origin: retro' 'kind: context' '---' 'Body.'
+run check && fail "a future verified date passes"
+grep -q "bad-note.md: verified 2999-01-01 is in the future" "$work/out" || fail "future date not named: $(cat "$work/out")"
+note bad-note.md '---' 'paths: ["a/**"]' 'verified: 2026-02-31' 'origin: retro' 'kind: context' '---' 'Body.'
+run check && fail "an impossible date passes"
+grep -q "bad-note.md: verified must be a date" "$work/out" || fail "bad date not named: $(cat "$work/out")"
+note bad-note.md '---' 'paths: []' "verified: $today" 'origin: retro' 'kind: context' '---' 'Body.'
+run check && fail "empty paths pass"
+grep -q "bad-note.md: paths is empty" "$work/out" || fail "empty paths not named: $(cat "$work/out")"
+note bad-note.md '---' 'paths: a/**' "verified: $today" 'origin: retro' 'kind: context' '---' 'Body.'
+run check && fail "paths that is no list passes"
+grep -q "bad-note.md: paths must be a list of globs" "$work/out" || fail "paths not a list: $(cat "$work/out")"
+note bad-note.md '---' 'paths: ["a/**"]' "verified: $today" 'origin: someone' 'kind: context' '---' 'Body.'
+run check && fail "an unknown origin passes"
+grep -q "bad-note.md: origin must be" "$work/out" || fail "origin not named: $(cat "$work/out")"
+note bad-note.md 'no front matter at all'
+run check && fail "a note with no front matter passes"
+grep -q "bad-note.md: missing key paths" "$work/out" || fail "no front matter not reported: $(cat "$work/out")"
+rm "$repo/docs/knowledge/bad-note.md"
+long=(--- 'paths: ["a/**"]' "verified: $today" 'origin: retro' 'kind: context' ---)
+for i in $(seq 1 41); do long+=("line $i"); done
+note long-note.md "${long[@]}"
+run check && fail "a body of 41 lines passes"
+grep -q "long-note.md: body has 41 lines, over knowledge.maxLines (40)" "$work/out" || fail "limit not said: $(cat "$work/out")"
+config '{"audit":false,"knowledge":{"maxLines":41},"checks":[{"name":"lint","run":"true"}]}'
+run check || fail "a body of exactly knowledge.maxLines fails: $(cat "$work/out")"
+config '{"audit":false,"knowledge":{"maxLines":10},"checks":[{"name":"lint","run":"true"}]}'
+run check && fail "knowledge.maxLines is not read"
+grep -q "(10)" "$work/out" || fail "custom limit not said: $(cat "$work/out")"
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
+rm "$repo/docs/knowledge/long-note.md"
+note Bad_Name.md '---' 'paths: ["a/**"]' "verified: $today" 'origin: retro' 'kind: context' '---' 'Body.'
+run check && fail "a file name that is no slug passes"
+grep -q "Bad_Name.md: file name is not a kebab-case slug" "$work/out" || fail "slug not named: $(cat "$work/out")"
+rm -rf "$repo/docs/knowledge"
+run check || fail "check fails once the notes are gone: $(cat "$work/out")"
+
 # Context hygiene (#314, #335): an oversized CLAUDE.md or SKILL.md, or an ADR whose paths is no list of
 # strings, fails; a dead path cited in a CLAUDE.md is a warning; a bare name is not a path.
 run context-hygiene || fail "context hygiene fails on a clean repo: $(cat "$work/out")"

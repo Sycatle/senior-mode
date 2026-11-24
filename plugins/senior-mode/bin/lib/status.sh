@@ -739,7 +739,11 @@ RETRO_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" el
   sec("Check failures (\(.checkFailures | length))"; [.checkFailures[] | "\(.commit): \(.description)"]),
   sec("Repository hygiene (\(.hygiene | hygiene_lines | length))"; .hygiene | hygiene_lines),
   sec("Estimates against reality"; [.sizes[] | select(.over) | "#\(.number) \(.size): \(.lines) lines, the size allows about \(.limit)"]
-    + (if (.sizes | length) > 0 and all(.sizes[]; .over | not) then ["all within their size"] else [] end)),
+    + (if (.sizes | length) > 0 and all(.sizes[]; .over | not) then ["all within their size"] else [] end)
+    + [.calibration[] | (def st($u): if . == null then "n/a" else "\(.median)\($u) (\(.min)-\(.max))" end;
+        "\(.size): \(.count) ticket\(if .count > 1 then "s" else "" end), median hours \(.hours | st("h")), lines \(.lines | st("")), tokens \(.tokens | st(""))")]
+    + [.calibration[] | .size as $s | .outliers[] | "far outside \($s): #\(.number) \(.title): \(.why | join(", "))"]
+    + [.calibration[] | select(.recalibrate) | "recalibrate: \(.recalibrate)"]),
   (def tok: if . >= 1000000 then "\(. / 100000 | round / 10)M" elif . >= 1000 then "\(. / 100 | round / 10)k" else tostring end;
    def cost: (if .usd == null then "no price" elif .usd > 0 and .usd < 0.01 then "<$0.01" else "$\(.usd * 100 | round / 100)" end)
      + (if .usd != null and (.unpriced | length) > 0 then " (no price for \(.unpriced | join(", ")))" else "" end);
@@ -747,6 +751,27 @@ RETRO_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" el
    sec("Token use (estimated at the API prices of \(.usage.prices.date))";
      [.usage.tickets[] | (if .ticket == null then "run" else "#\(.ticket)" end) as $t | .roles[] | "\($t) \(.role): \(line)"]
      + (if (.usage.tickets | length) > 0 then ["total: \(.usage.total | line)"] else [] end)))'
+
+# Each size against its delivered tickets (#313): count, then median and spread (min, max) of cycle hours,
+# changed lines and tokens (the ledger of #299: every kind of token of every role). A ticket is far outside its
+# size when it holds more than 1.5 times the lines the size allows, or took more than three times the median
+# hours of its size (three measured at least). A size with three tickets or more, most of them over its line
+# budget, gets a recalibration hint; the retro skill weighs the hint across iterations.
+# shellcheck disable=SC2016 # a jq program, not shell
+CALIBRATION_JQ='def med: sort | if length == 0 then null else ((.[(length - 1) / 2 | floor] + .[length / 2 | floor]) / 2) end;
+  def stat: if length == 0 then null else {median: med, min: min, max: max} end;
+  (.usage.tickets | map(select(.ticket != null) | {key: (.ticket | tostring),
+    value: (.input + .output + .cacheRead + .cacheWrite5m + .cacheWrite1h)}) | from_entries) as $tok
+  | [.done[] | select(.size | IN("S", "M", "L")) | . + {tokens: $tok[(.number | tostring)]}] as $d
+  | {"S": 50, "M": 400} as $limit
+  | [$d | group_by(.size)[] | .[0].size as $s | ([.[].cycleHours | select(. != null)]) as $hs
+    | {size: $s, count: length, hours: ($hs | stat), lines: ([.[].lines | select(. != null)] | stat),
+       tokens: ([.[].tokens | select(. != null)] | stat),
+       outliers: [.[] | ([if $limit[$s] and .lines != null and .lines > $limit[$s] * 1.5 then "\(.lines) lines" else empty end]
+           + [if ($hs | length) >= 3 and .cycleHours != null and .cycleHours > 3 * ($hs | med) then "\(.cycleHours)h" else empty end]) as $why
+         | select($why | length > 0) | {number, title, why: $why}],
+       recalibrate: (if $limit[$s] and length >= 3 and ([.[] | select(.lines != null and .lines > $limit[$s] * 1.5)] | length) * 2 > length
+         then "most \($s) tickets exceed about \($limit[$s]) lines: size such work up, or split it" else null end)}]'
 
 # senior-mode retro [--since <dur> | --iteration [<name>]] [--json]
 # The facts of the weekly review (default period: 7 days; --iteration: the current iteration, or the one named, of the
@@ -808,6 +833,7 @@ retro() {
     --arg repo "$slug" "$RETRO_JQ" <<<"$board") || die "could not build the retro"
   usage=$(retro_usage "$root" "$since_iso" "$until_iso") || die "could not read the token ledger"
   data=$(jq -c --argjson h "$hygiene" --argjson u "$usage" '. + {hygiene: $h, usage: $u}' <<<"$data")
+  data=$(jq -c ". + {calibration: ($CALIBRATION_JQ)}" <<<"$data") || die "could not compare the sizes"
   if [ "$json" = true ]; then
     printf '%s\n' "$data"
   else

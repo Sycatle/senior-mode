@@ -192,6 +192,9 @@ issue "Tidy things" '{"name": "type:task"}'
 branch_is 91 chore/91-tidy-things
 issue "Bump deps" '{"name": "type:chore"}'
 branch_is 92 chore/92-bump-deps
+# A spike (#321) works on a chore branch: a note is no feature, and the guards know that type.
+issue "Can we use OAuth?" '{"name": "type:spike"}'
+branch_is 84 chore/84-can-we-use-oauth
 issue "No label here" ''
 branch_is 93 feat/93-no-label-here
 

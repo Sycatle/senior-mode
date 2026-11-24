@@ -452,7 +452,7 @@ command, not a model, applies these bounds:
   `senior-mode setup github` is rerun.
 - **Batches:** `senior-mode pick` groups Ready S tickets whose Paths overlap, at most 3 per batch
   (and `limits.prLines` / 50, an S being about 50 lines); M and L tickets and tickets without Paths are
-  never batched. `run` and `serve` start a batch as one session: one worktree (on the branch of its
+  never batched, nor is a `type:spike` ticket. `run` and `serve` start a batch as one session: one worktree (on the branch of its
   first ticket), every ticket In progress, a prompt that asks one commit and one `Closes #n` per
   ticket and one pull request, which one review covers. The session writes one outcome line per
   ticket (`#n delivered`, `#n outgrown: ...`, `#n failed: ...`). A ticket that fails goes back alone
@@ -562,6 +562,8 @@ request that closes no ticket is held to neither.
   files and fixtures are left out) must not exceed the budget of the Size of its ticket,
   [`limits.diffLines`](configuration.md#keys-the-plugin-reads-today) (S 300, M 800, L 2000); a batch sums the budgets of its tickets.
   The answer says by how much it is over.
+- **Spike** (#321): the pull request of a `type:spike` ticket may change files under `docs/` only (the note, an ADR,
+  the framed tickets); any other file is named and the pull request is not ready.
 
 Under `serve` a pull request that is not ready is not merged: it gets `needs-human` with the numbers, like any
 blocker that no later poll lifts. A ticket whose Size cannot be read is only logged and retried.

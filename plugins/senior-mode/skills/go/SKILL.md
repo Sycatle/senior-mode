@@ -33,6 +33,8 @@ Argument: $ARGUMENTS (a ticket number, `auto`, or empty). Answer in the project 
    no `needs-human`: `ops` agent, `gh pr merge <pr> --rebase --delete-branch`, `senior-mode item set
    <n> Status Done`. Then skill `docs` without waiting. Offer the next ticket.
 
+A `type:spike` ticket delivers a note, not code (reference "Delivering").
+
 A security risk met outside the ticket is filed (`senior-mode issue create --severity ...`,
 reference "Delivering"), never fixed in this pull request.
 

@@ -170,6 +170,18 @@ run_open() {
   done
 }
 
+# The timebox of a spike (#321): its minutes in <n>.timebox when the ticket is type:spike and its body has a
+# `Timebox: <N>m` or `<N>h` line, else no file. A token budget is in the prompt and the body, not enforced here.
+run_timebox() {
+  local n=$1 t v
+  rm -f "$RUN_DIR/$n.timebox"
+  t=$(gh_retry issue view "$n" --repo "$RUN_SLUG" --json labels,body 2>/dev/null) || return 0
+  jq -e '[.labels[]?.name] | index("type:spike")' <<<"$t" >/dev/null 2>&1 || return 0
+  v=$(jq -r '.body // ""' <<<"$t" | sed -nE 's/^Timebox: ([1-9][0-9]*)([mh])$/\1 \2/p' | head -n 1)
+  [ -n "$v" ] || return 0
+  if [ "${v#* }" = h ]; then echo $((${v% *} * 60)); else echo "${v% *}"; fi >"$RUN_DIR/$n.timebox"
+}
+
 # Opens the ticket (run_open), then launches its session on Sonnet with the prompt of RUN_PROMPT (run's own
 # by default); a batch gets the prompt of RUN_PROMPT_BATCH (run's own by default): serve sets both, for a session
 # that cannot set senior-mode/review (#305).
@@ -177,6 +189,7 @@ run_start() {
   local model=sonnet
   run_open "$1" || return 1
   rm -f "$RUN_DIR/$1.batch"
+  run_timebox "$1"
   # A session that a transient error interrupted (serve_transient) resumes on its model, with its prompt as it was.
   if [ -s "$RUN_DIR/$1.model" ] && [ -s "$RUN_DIR/$1.prompt" ]; then
     model=$(cat "$RUN_DIR/$1.model")
@@ -269,6 +282,40 @@ run_vanished() {
   local n=$1
   run_halt "$n" "the session ended without leaving its exit code" "$RUN_DIR/$n-${RUN_MODEL[$n]}.log" \
     "An autonomous senior-mode run found this ticket's session gone" "The session log is"
+}
+
+# A spike that reached its timebox (#321) is not a failure: its session is killed, the notes it left under
+# docs/spikes are put in a comment, the ticket is labelled needs-human and recorded as delivered, and the circuit
+# breaker does not count it. A person decides: keep the note, frame tickets, or drop it.
+run_spike_stop() {
+  local n=$1 minutes notes="" f reason
+  minutes=$(cat "$RUN_DIR/$n.timebox")
+  reason="timebox reached ($minutes minute$([ "$minutes" -eq 1 ] || echo s))"
+  run_kill "$n" "#$n"
+  if [ -d "${RUN_WT[$n]}" ]; then
+    while IFS= read -r f; do
+      [ -f "${RUN_WT[$n]}/$f" ] || continue
+      notes+="
+### \`$f\`
+
+$(head -n 60 "${RUN_WT[$n]}/$f")
+"
+    done < <({ git -C "${RUN_WT[$n]}" diff --name-only "$RUN_BASE...HEAD" -- docs/spikes
+      git -C "${RUN_WT[$n]}" ls-files -m -o --exclude-standard -- docs/spikes; } 2>/dev/null | sort -u)
+  fi
+  [ -n "$notes" ] || notes="
+The session left no note under docs/spikes. Its log is \`$RUN_DIR/$n-${RUN_MODEL[$n]}.log\`."
+  gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
+    echo "#$n: could not label the ticket needs-human" >&2
+  gh_bound api "repos/$RUN_SLUG/issues/$n/comments" -f body="An autonomous senior-mode run stopped this spike: $reason.
+
+What it found so far:
+$notes
+The branch \`${RUN_BRANCH[$n]}\` is kept in the worktree \`${RUN_WT[$n]}\`. A person decides what happens next: keep the note, frame tickets from it, or drop the spike." \
+    >/dev/null || echo "#$n: could not comment on the ticket" >&2
+  run_record "$n" delivered "$reason"
+  RUN_WAITING+=("#$n ${RUN_TITLE[$n]}: spike stopped, $reason (branch ${RUN_BRANCH[$n]} kept)")
+  notify needs-human "$n" "$reason"
 }
 
 # A session that outlived autonomy.sessionTimeout: killed with its process group (the group of a tmux
@@ -743,6 +790,9 @@ run_reap() {
     if [ -f "$RUN_DIR/$n.exit" ]; then
       if [ -n "${RUN_ON_EXIT:-}" ] && "$RUN_ON_EXIT" "$n"; then continue; fi
       "${RUN_FINISH:-run_finish}" "$n" && continue
+    elif [ -f "$RUN_DIR/$n.timebox" ] && [ $((SECONDS - RUN_STARTED[$n])) -ge $(($(cat "$RUN_DIR/$n.timebox") * ${SENIOR_MODE_TIMEOUT_UNIT:-60})) ]; then
+      run_spike_stop "$n"
+      continue
     elif [ $((SECONDS - RUN_STARTED[$n])) -ge $((RUN_TIMEOUT * ${SENIOR_MODE_TIMEOUT_UNIT:-60})) ]; then
       run_timeout "$n"
       continue

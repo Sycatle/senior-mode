@@ -128,12 +128,13 @@ advisory() {
 # An open issue with the same title is reused, so a run cut short can be repeated (spec 0001 §7):
 # its body, fields, milestone, label and links converge to the arguments, its Status only with --status.
 issue_create() {
-  local title="" body="" size="" priority="" severity="" status="" milestone="" type="" parent="" paths=""
+  local title="" body="" size="" priority="" severity="" status="" milestone="" type="" parent="" paths="" timebox=""
   local kind="" path="" rule="" details="" sid="" text private no_advisory=""
   local blockers=() edits=() file slug found number url b fields implied have
   while [ $# -gt 0 ]; do
     case $1 in -h | --help)
-      echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> [--priority <option>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <file|-> | --no-advisory]] [--status <option>] [--milestone <title>] [--type feature|bug|task|chore] [--paths <globs>] [--blocked-by <n>]... [--parent <n>]"
+      echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> [--priority <option>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <file|-> | --no-advisory]] [--status <option>] [--milestone <title>] [--type feature|bug|task|chore|spike] [--timebox <N>m|<N>h|<N>[k] tokens] [--paths <globs>] [--blocked-by <n>]... [--parent <n>]"
+      echo "--timebox is the timebox of a spike (--type spike needs it, no other type takes it): a duration or a token budget, written to the body as the line Timebox: <value>."
       echo "--paths is a comma-separated list of the globs the ticket touches (the board field Paths: tickets whose paths overlap never run at the same time)."
       echo "--priority is required unless --severity is critical (P0) or high (P1). --kind, --path and --rule go together and need --severity."
       return 0 ;;
@@ -157,6 +158,7 @@ issue_create() {
       --status) status=$2 ;;
       --milestone) milestone=$2 ;;
       --type) type=$2 ;;
+      --timebox) timebox=$2 ;;
       --paths) paths=$2 ;;
       --blocked-by) blockers+=("$2") ;;
       --parent) parent=$2 ;;
@@ -182,7 +184,14 @@ issue_create() {
     [ "$details" != - ] || [ "$body" != - ] || die "--body-file and --details-file cannot both read stdin"
   fi
   [ -z "$no_advisory" ] || [ -z "$details" ] || die "--no-advisory and --details-file exclude each other"
-  case $type in "" | feature | bug | task | chore) ;; *) die "unknown type $type (feature, bug, task, chore)" ;; esac
+  case $type in "" | feature | bug | task | chore | spike) ;; *) die "unknown type $type (feature, bug, task, chore, spike)" ;; esac
+  # A spike (#321) is timeboxed: a duration (45m, 2h) or a token budget (200000 tokens, 200k tokens); only a spike has one.
+  if [ "$type" = spike ]; then
+    [[ $timebox =~ ^([1-9][0-9]*[mh]|[1-9][0-9]*k?\ tokens)$ ]] ||
+      die "a spike needs --timebox, a duration (45m, 2h) or a token budget (200k tokens), not '$timebox'"
+  else
+    [ -z "$timebox" ] || die "--timebox is for --type spike"
+  fi
   if [ -n "$paths" ]; then
     case $paths in *$'\n'*) die "--paths cannot hold a newline" ;; esac
     paths=$(printf '%s' "$paths" | sed -E 's/[[:space:]]*,[[:space:]]*/,/g; s/^[[:space:],]+//; s/[[:space:],]+$//; s/,+/,/g')
@@ -227,13 +236,15 @@ issue_create() {
     printf '%s\n\nsecurity-id: %s\n' "$text" "$sid" >"$body"
   fi
   # What an unattended session files ends with `filed-by: agent`: `ready` applies its stricter rule to it (#154).
-  if [ -n "${SENIOR_MODE_RUN:-}" ]; then
+  # The timebox of a spike is a line of its body, `Timebox: <value>`, read by the daemon (#321).
+  if [ -n "${SENIOR_MODE_RUN:-}$timebox" ]; then
     if [ -z "$sid" ]; then
       text=$(cat "$body")
       body=$(mktemp)
       printf '%s\n' "$text" >"$body"
     fi
-    printf '\nfiled-by: agent\n' >>"$body"
+    [ -z "$timebox" ] || printf '\nTimebox: %s\n' "$timebox" >>"$body"
+    [ -z "${SENIOR_MODE_RUN:-}" ] || printf '\nfiled-by: agent\n' >>"$body"
   fi
 
   # The number of an open issue with this title, then its type labels other than the asked one.
@@ -263,7 +274,7 @@ issue_create() {
     echo "#$number $title (created)"
     status=${status:-Backlog}
   fi
-  [ -z "$sid${SENIOR_MODE_RUN:-}" ] || rm -f "$body"
+  [ -z "$sid${SENIOR_MODE_RUN:-}$timebox" ] || rm -f "$body"
   [ -z "$status" ] || fields=(Status "$status" "${fields[@]}")
   item_set "$number" "${fields[@]}"
   for b in ${blockers[@]+"${blockers[@]}"}; do
@@ -437,15 +448,30 @@ diff_countable() {
 # What stops the pull request $2 of $1 (owner/name) from being ready to merge on account of the tickets it
 # closes, in one phrase, or nothing. $3 is its REST object and $4 its changed files as `<path>\t<changed lines>`
 # lines. Starts with "not ready: " when the pull request itself is at fault (#297, #303):
+# - it closes a spike ticket (label type:spike) and changes a file outside docs/ (#321);
 # - it closes several tickets and some are named by no commit (`Refs #n` or `Closes #n`): one commit per ticket;
 # - its changed lines, lockfiles, generated and fixture files left out, exceed the sum of the budgets
 #   (limits.diffLines) of the Size of the tickets it closes.
 # A pull request that closes no ticket, or one, with a commit of its own, is only held to the second rule.
 # Other phrases say what could not be read.
 delivery_blocker() {
-  local slug=$1 pr=$2 pull=$3 files=$4 tickets=() n missing="" msgs size cfg budget total=0 lines=0 path changed sizes=""
+  local slug=$1 pr=$2 pull=$3 files=$4 tickets=() n missing="" msgs size cfg budget total=0 lines=0 path changed sizes="" outside spike
   mapfile -t tickets < <(pr_closed_tickets "$(jq -r '.body // ""' <<<"$pull")")
   [ "${#tickets[@]}" -gt 0 ] || return 0
+  # A spike (#321) ends in a note, an ADR or framed tickets, never in code: only docs/ may change.
+  outside=$(printf '%s\n' "$files" | cut -f1 | grep -v '^$' | grep -v '^docs/' | paste -sd, - | sed 's/,/, /g') || outside=""
+  if [ -n "$outside" ]; then
+    for n in "${tickets[@]}"; do
+      spike=$(gh_retry issue view "$n" --repo "$slug" --json labels) || {
+        echo "the type of #$n could not be read"
+        return 0
+      }
+      ! jq -e '[.labels[]?.name] | index("type:spike") != null' <<<"$spike" >/dev/null || {
+        echo "not ready: #$n is a spike and its pull request changes code outside docs/ ($outside)"
+        return 0
+      }
+    done
+  fi
   if [ "${#tickets[@]}" -gt 1 ]; then
     msgs=$(gh_retry api "repos/$slug/pulls/$pr/commits" --paginate --jq '.[].commit.message') || {
       echo "its commits could not be read"
@@ -734,11 +760,11 @@ pick_free() {
 }
 
 # Batches (#189): the picked tickets in order, each with `batch`, the numbers of the tickets delivered
-# together with it (itself included), or null. Only Ready S tickets with Paths are batched, and only
+# together with it (itself included), or null. Only Ready S tickets with Paths, and no spike (#321), are batched, and only
 # with a ticket whose Paths overlap one already in the batch; at most $cap per batch. A ticket joins the
 # first batch that takes it, else starts one.
 # shellcheck disable=SC2016 # a jq program, not shell
-BATCH_DEF='def batchable: .size == "S" and (globs | length) > 0;
+BATCH_DEF='def batchable: .size == "S" and (globs | length) > 0 and ((.labels // []) | index("type:spike") | not);
   def grouped($cap): reduce .[] as $t ([]; ([range(0; length) as $i | select($t | batchable)
       | select((.[$i] | length) < $cap and (.[$i][0] | batchable) and any(.[$i][]; overlap(globs; $t | globs))) | $i] | first) as $at
     | if $at == null then . + [[$t]] else .[$at] += [$t] end);
@@ -934,7 +960,7 @@ start() {
   labels=$(jq -r '.labels[].name' <<<"$info")
   case $(sed -n 's/^type://p' <<<"$labels" | head -1) in
     bug) type=fix ;;
-    task | chore) type=chore ;;
+    task | chore | spike) type=chore ;;
     *) type=feat ;;
   esac
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"

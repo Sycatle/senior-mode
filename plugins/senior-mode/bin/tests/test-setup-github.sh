@@ -186,7 +186,7 @@ logged '"name":"critical","color":"RED"' || fail "Severity created without its c
 logged 'dataType: TEXT' || fail "Paths not created as a text field: $(cat "$GH_LOG")"
 grep -q 'Severity, Paths; ids cached' "$work/out" || fail "output does not mention Paths: $(cat "$work/out")"
 logged '"name":"P0 now","color":"RED"' || fail "created fields without their colours"
-for label in needs-human needs-info blocked security triage qualified type:feature type:bug type:task type:chore; do
+for label in needs-human needs-info blocked security triage qualified type:feature type:bug type:task type:chore type:spike; do
   logged "label create $label" || fail "label $label not created"
 done
 logged "--enable-rebase-merge --enable-merge-commit=false --enable-squash-merge=false --delete-branch-on-merge" ||

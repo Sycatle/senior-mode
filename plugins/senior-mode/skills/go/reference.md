@@ -37,5 +37,7 @@
   --rule <rule>`. The same kind, path and rule print the open issue instead of filing it twice. A
   critical risk in a public repository also needs `--details-file <f>` (a private advisory
   holds the details, the issue never does).
+- A `type:spike` ticket is research: a note under `docs/spikes/`, an ADR or framed tickets, no code outside `docs/`,
+  and stop at its `Timebox:` line (say so and hand over what is known). Its branch is `chore/`; it is never batched.
 - After a merge, `docs` runs once; a `docs/after-pr-*` pull request is never documented in turn.
 - Close the day with a short count: merged, waiting for the user, next ticket.

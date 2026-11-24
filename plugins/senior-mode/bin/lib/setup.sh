@@ -236,7 +236,8 @@ qualified|0e8a16|Qualified by a collaborator: serve may pick it though its autho
 TYPE_LABELS='type:feature|a2eeef|New capability for users
 type:bug|d73a4a|Something does not work as specified
 type:task|c5def5|Work that is neither a feature nor a bug
-type:chore|ededed|Maintenance with no user-visible change'
+type:chore|ededed|Maintenance with no user-visible change
+type:spike|d4c5f9|Timeboxed research: a note, an ADR or framed tickets, never merged code'
 
 setup_github() {
   local root file slug owner name owner_type owner_node private template project number id how fields labels label color description err ci="" globs checks review=false codeowner codeowners_owns=false reason

@@ -38,10 +38,14 @@ run_entry() {
 # as user settings no longer enable it. Login credentials are not settings and still work. autonomy.userSettings true
 # brings the user's configuration back. Another agent than claude gets only SENIOR_MODE_PLUGIN_DIR, as before.
 run_session_flags() {
-  local plugin=${SENIOR_MODE_PLUGIN_DIR:-}
+  local plugin=${SENIOR_MODE_PLUGIN_DIR:-} f strict=true
+  local managed=${SENIOR_MODE_MANAGED_MCP-"/etc/claude-code/managed-mcp.json:/Library/Application Support/ClaudeCode/managed-mcp.json"}
   SESSION_FLAGS=()
   if [ "$(config_get agent.command)" = claude ] && [ "$(config_get autonomy.userSettings)" != true ]; then
-    SESSION_FLAGS+=(--setting-sources project,local --strict-mcp-config)
+    # claude refuses --strict-mcp-config under a managed MCP config, which already rules the MCP servers alone (#540).
+    while IFS= read -r -d: f; do [ ! -f "$f" ] || strict=false; done <<<"$managed:"
+    SESSION_FLAGS+=(--setting-sources project,local)
+    [ "$strict" = false ] || SESSION_FLAGS+=(--strict-mcp-config)
     [ ! -f "$1/.mcp.json" ] || SESSION_FLAGS+=(--mcp-config "$1/.mcp.json")
     plugin=${plugin:-$(dirname "$(dirname "$SELF")")}
   fi

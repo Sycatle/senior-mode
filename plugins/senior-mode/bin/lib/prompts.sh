@@ -14,7 +14,9 @@ Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode tea
 2. The test-author agent writes failing tests from the acceptance criteria and records the red run;
    the implementer agent makes them pass (skills tdd, verify, commit): tests land in the same commit
    as the code they cover.
-3. \`senior-mode check\` passes on a clean tree; push the branch; open a pull request from the
+3. A \`type:feature\` or \`type:bug\` ticket needs its tests proven: once they are committed, \`senior-mode red-tests verify $1\`
+   (they fail on the base and pass on the head; without that record the pull request is not ready; docs and
+   chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; open a pull request from the
    template with \`Closes #$1\`, the red run and the Self-review table (run the review checklist on your
    own diff first; one row per acceptance criterion, \`#$1.<k>\`, with a test name or a command and its
    result as evidence); \`senior-mode publish\`;
@@ -53,7 +55,9 @@ $list
 2. One ticket after the other: the test-author agent writes failing tests from its acceptance criteria and
    records the red run; the implementer agent makes them pass (skills tdd, verify, commit). One commit per
    ticket, tests in the same commit as the code they cover, its message ending with \`Refs #<n>\`.
-3. \`senior-mode check\` passes on a clean tree; push the branch; open ONE pull request from the template
+3. A \`type:feature\` or \`type:bug\` ticket needs its tests proven: once they are committed, \`senior-mode red-tests verify <n>\`
+   (they fail on the base and pass on the head; without that record the pull request is not ready; docs and
+   chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; open ONE pull request from the template
    with one \`Closes #<n>\` line per ticket delivered (${closes%, }), the red runs and the Self-review table
    (one row per acceptance criterion, \`#<n>.<k>\`, with its evidence); \`senior-mode publish\`;
    \`senior-mode item set <n> Status "In review"\` for each ticket delivered.
@@ -96,7 +100,9 @@ questions: decide within the ticket, its spec and the project's rules, or give u
 Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode team:
 1. Read the ticket (\`gh issue view $1\`), its spec and its acceptance criteria.
 $tests
-3. \`senior-mode check\` passes on a clean tree; push the branch; open a pull request from the
+3. A \`type:feature\` or \`type:bug\` ticket needs its tests proven: once they are committed, \`senior-mode red-tests verify $1\`
+   (they fail on the base and pass on the head; without that record the pull request is not ready; docs and
+   chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; open a pull request from the
    template with \`Closes #$1\`, the red run and the Self-review table (run the review checklist on your
    own diff first; one row per acceptance criterion, \`#$1.<k>\`, with a test name or a command and its
    result as evidence); \`senior-mode publish\`;
@@ -137,7 +143,9 @@ $list
 2. One ticket after the other: the test-author agent writes failing tests from its acceptance criteria and
    records the red run; the implementer agent makes them pass (skills tdd, verify, commit). One commit per
    ticket, tests in the same commit as the code they cover, its message ending with \`Refs #<n>\`.
-3. \`senior-mode check\` passes on a clean tree; push the branch; open ONE pull request from the template
+3. A \`type:feature\` or \`type:bug\` ticket needs its tests proven: once they are committed, \`senior-mode red-tests verify <n>\`
+   (they fail on the base and pass on the head; without that record the pull request is not ready; docs and
+   chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; open ONE pull request from the template
    with one \`Closes #<n>\` line per ticket delivered (${closes%, }), the red runs and the Self-review table
    (one row per acceptance criterion, \`#<n>.<k>\`, with its evidence); \`senior-mode publish\`;
    \`senior-mode item set <n> Status "In review"\` for each ticket delivered.
@@ -213,6 +221,24 @@ stay as they are. Then \`senior-mode check\` on a clean tree, push the branch, \
 
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME: \`delivered\` once the fixes are pushed
 and published, \`outgrown: <reason>\` if the findings need more than this ticket, or \`failed: <reason>\`.
+PROMPT
+}
+
+# The task of a ticket session resumed once because its pull request $4 has no red-tests record (#306): $5 is why.
+serve_red_prompt() {
+  cat <<PROMPT
+You are the ticket session (SENIOR_MODE_ROLE=ticket) of senior-mode serve on $RUN_SLUG, resumed on ticket
+#$1 ("$2"), in this worktree, on branch $3. Nobody will answer questions.
+
+Pull request #$4 cannot merge: ${5#not ready: }. A feature or bug pull request carries tests that fail without
+the change and pass with it. Add or fix the tests so that they do, commit them, then run
+\`senior-mode red-tests verify $1\` (it runs the test command on the base with your test files, where it must
+fail, then on the head, where it must pass) until it records them. Change no production code unless a test
+shows a bug in it. Then \`senior-mode check\` on a clean tree, push the branch, \`senior-mode publish\`,
+\`senior-mode item set $1 Status "In review"\`. You never set senior-mode/review and never merge.
+
+Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME: \`delivered\` once the tests are pushed and
+published, \`outgrown: <reason>\`, or \`failed: <reason>\` when no test can fail without the change.
 PROMPT
 }
 

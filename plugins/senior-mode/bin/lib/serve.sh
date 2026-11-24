@@ -825,6 +825,8 @@ serve_merge() {
     # github.protection local (ADR 0032): GitHub has no up-to-date rule to report it, run_blocker does.
     state=behind
   elif [ -n "$reason" ]; then
+    # Red tests missing (#306): the ticket session is resumed once to prove them; a second time is a person's.
+    case $reason in "not ready: no red-tests record"*) serve_red_retry "$t" "$pr" "$ref" "$reason" && return 0 ;; esac
     serve_note "w$pr" "#$t ${RUN_TITLE[$t]:-}: pull request #$pr, $reason"
     serve_permanent "$reason" && serve_stuck "$t" "$pr" "$reason"
     return 1
@@ -851,6 +853,22 @@ serve_merge() {
       ;;
   esac
   serve_do_merge "$t" "$pr" "$sha"
+}
+
+# A pull request with no red-tests record for a feature or bug ticket $1 (#306, $4 says which): the ticket session
+# resumes once on its branch to prove its tests (senior-mode red-tests verify). Returns 0 when it did, 1 when it
+# already had its retry (or none can start): the caller then leaves the pull request to a person.
+serve_red_retry() {
+  local t=$1 pr=$2 reason=$4
+  [ ! -f "$SERVE_DIR/red-retry-$t" ] || return 1
+  serve_can_launch || return 1
+  RUN_ROLE[$t]=ticket
+  unset 'RUN_CWD[$t]'
+  run_open "$t" || return 1
+  : >"$SERVE_DIR/red-retry-$t"
+  serve_red_prompt "$t" "${RUN_TITLE[$t]:-}" "${RUN_BRANCH[$t]}" "$pr" "$reason" >"$RUN_DIR/$t.prompt"
+  echo "#$t: pull request #$pr has no red-tests record; the ticket session resumes once to prove its tests"
+  if run_launch "$t" sonnet; then running+=("$t"); else return 1; fi
 }
 
 # Changes requested on the pull request $2 (branch $3) of ticket $1: the ticket session resumes on the same

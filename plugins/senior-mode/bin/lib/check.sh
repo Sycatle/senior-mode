@@ -251,6 +251,70 @@ suppressions_warn() {
     }' || true
 }
 
+# Whether the path $2 is a test file of the preset $1 (#306): the files whose added cases `check` reads for assertions
+# and that `red-tests verify` carries to the base. The generic preset has the usual folders and names.
+test_file() {
+  local base=${2##*/}
+  case $1 in
+    node) [[ $base =~ \.(test|spec)\.[cm]?[jt]sx?$ ]] || [[ $2 == */__tests__/* || $2 == __tests__/* ]] && [[ $base =~ \.[cm]?[jt]sx?$ ]] ;;
+    python) [[ $base == test_*.py || $base == *_test.py ]] ;;
+    go) [[ $base == *_test.go ]] ;;
+    rust) [[ $2 == tests/*.rs || $2 == */tests/*.rs ]] ;;
+    *) [[ $2 == test/* || $2 == tests/* || $2 == */test/* || $2 == */tests/* || $base == test-* || $base == *_test.* || $base == *.test.* ]] ;;
+  esac
+}
+
+# The test cases the branch adds that assert nothing (#306), as `file:line: text` lines. Per preset, a case starts at a
+# line that matches CASE and runs to the next one; it asserts when a line of it matches ASSERT. A case is added when its
+# first line is. A preset with no known syntax (generic) is not read.
+assertion_free_tests() {
+  local base root preset case_re assert_re skip_re="^$" f added
+  base=$(default_branch) || return 0
+  root=$(git rev-parse --show-toplevel) || return 0
+  preset=$(project_preset "$root")
+  case $preset in
+    node)
+      case_re='^[[:space:]]*(it|test)(\.[a-zA-Z]+)*[([]'
+      assert_re='expect|assert|[.]should|fail[(]|toMatchSnapshot|t[.](is|true|false|deepEqual|throws|notThrows|snapshot)[(]'
+      skip_re='[.](todo|skip)[(]'
+      ;;
+    python)
+      case_re='^[[:space:]]*(async[[:space:]]+)?def[[:space:]]+test'
+      assert_re='assert|pytest[.](raises|fail|warns)|[.]fail[(]'
+      ;;
+    go)
+      case_re='^func[[:space:]]+Test[A-Za-z0-9_]*[(]'
+      assert_re='t[.](Error|Errorf|Fatal|Fatalf|Fail|FailNow)[(]|assert[.]|require[.]|cmp[.]Diff'
+      ;;
+    rust)
+      case_re='^[[:space:]]*#\[(tokio::)?test'
+      assert_re='assert|panic!|unreachable!|should_panic|[.]unwrap[(]|[.]expect[(]|[)][?]'
+      ;;
+    *) return 0 ;;
+  esac
+  while IFS= read -r -d '' f; do
+    test_file "$preset" "$f" || continue
+    added=$(git -c core.quotePath=false diff -U0 --no-color --no-ext-diff --no-renames "$base...HEAD" -- "$f" |
+      sed -nE 's/^@@ -[0-9,]+ \+([0-9]+)(,([0-9]+))? @@.*/\1 \3/p' | awk '{ c = ($2 == "" ? 1 : $2); for (i = 0; i < c; i++) printf "%d ", $1 + i }')
+    git show "HEAD:$f" 2>/dev/null | CASE_RE=$case_re ASSERT_RE=$assert_re SKIP_RE=$skip_re ADDED=$added FILE=$f awk '
+      BEGIN { n = split(ENVIRON["ADDED"], a, " "); for (i = 1; i <= n; i++) add[a[i]] = 1 }
+      { line[NR] = $0 }
+      END {
+        for (i = 1; i <= NR; i++) if (line[i] ~ ENVIRON["CASE_RE"] && line[i] !~ ENVIRON["SKIP_RE"]) starts[++k] = i
+        for (j = 1; j <= k; j++) {
+          s = starts[j]; e = (j < k ? starts[j + 1] - 1 : NR)
+          if (!(s in add)) continue
+          ok = 0
+          for (i = s; i <= e && !ok; i++) if (line[i] ~ ENVIRON["ASSERT_RE"]) ok = 1
+          if (ok) continue
+          text = line[s]; if (text ~ /^[[:space:]]*#\[/ && s < NR) text = line[s + 1]
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
+          printf "%s:%d: %s\n", ENVIRON["FILE"], s, substr(text, 1, 100)
+        }
+      }'
+  done < <(git diff -z --no-renames --name-only --diff-filter=AM "$base...HEAD" 2>/dev/null)
+}
+
 # The jobs of the project's own CI that cover a check, as JSON ([{context, covers}]): those of workflow.ci.jobs when
 # ci.mode is existing (ADR 0022), none otherwise. $1 is the config file.
 ci_jobs() {
@@ -288,7 +352,7 @@ ci_job_states() {
 # the result recorded for publish is that of the checks run here, publish reads the jobs again.
 check() {
   local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp ci_only=false jobs="[]" job
-  local waiting="" ci_failed="" st url
+  local waiting="" ci_failed="" st url free
   file=$(config_file)
   unset SENIOR_MODE_CHANGED_FILES
   [ "${1:-}" != --ci-only ] || ci_only=true
@@ -377,6 +441,15 @@ check() {
   rm -f "$scope"
   spec_drift_warn
   suppressions_warn
+  # An added test case with no assertion (#306): a warning locally, an error in a run or serve session.
+  free=$(assertion_free_tests)
+  if [ -n "$free" ] && [ "${SENIOR_MODE_RUN:-}" = 1 ]; then
+    echo "FAIL  assertion-free tests (a test case that asserts nothing proves nothing)"
+    sed 's/^/      /' <<<"$free"
+    failed="${failed:+$failed, }assertion-free tests"
+  elif [ -n "$free" ]; then
+    sed 's/^/warn  test case with no assertion: /' <<<"$free"
+  fi
   if [ -z "$failed" ]; then
     state=success description="$passed/$count checks passed"
   else

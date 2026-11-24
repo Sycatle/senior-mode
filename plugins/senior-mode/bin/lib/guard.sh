@@ -597,7 +597,11 @@ protected_match() {
 # session with SENIOR_MODE_ROLE=ticket. Written once: later commits are the implementer's, so run it between
 # the two sessions. A deleted file is not a red test.
 red_tests() {
-  [ $# -eq 2 ] && [ "$1" = record ] && [[ $2 =~ ^[0-9]+$ ]] || usage
+  [ $# -eq 2 ] && [[ $1 == record || $1 == verify ]] && [[ $2 =~ ^[0-9]+$ ]] || usage
+  [ "$1" = record ] || {
+    red_tests_verify "$2"
+    return
+  }
   local common base list files
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
   base=$(default_branch) || die "no default branch to compare with"
@@ -608,4 +612,85 @@ red_tests() {
   mkdir -p "${list%/*}"
   printf '%s\n' "$files" >"$list.tmp" && mv "$list.tmp" "$list"
   echo "red-tests: $(wc -l <"$list" | tr -d ' ') file(s) recorded for #$2 in $list"
+}
+
+# `senior-mode red-tests verify <issue>` (#306): the proof, for a feature or bug ticket the test-author did not
+# start, that its tests count. The test files the branch adds or changes since the default branch are carried to a
+# worktree at the merge base and the project's test command (commands.test, else the check named test) must fail there;
+# on the head it must pass. The files are then listed in <git common dir>/senior-mode/runs/<issue>/red-verified, which
+# `run` and `serve` read next to red-tests (red_blocker). Unlike red-tests, that list does not make the files read-only.
+red_tests_verify() {
+  local n=$1 common base root file cmd preset files="" f mb wt
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
+  root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
+  base=$(default_branch) || die "no default branch to compare with"
+  file=$(config_file)
+  cmd=$(jq -r '.commands.test // ([.checks[]? | select(.name == "test" or .name == "tests")][0].run) // empty' "$file")
+  [ -n "$cmd" ] || die "no test command: set commands.test in .claude/senior-mode.json"
+  preset=$(project_preset "$root")
+  while IFS= read -r -d '' f; do
+    ! test_file "$preset" "$f" || files+="$f"$'\n'
+  done < <(git diff -z --no-renames --name-only --diff-filter=AM "$base...HEAD")
+  [ -n "$files" ] || die "no test file added or changed on this branch since $base: a feature or a bug needs tests that fail without the change"
+  mb=$(git merge-base "$base" HEAD) || die "no common ancestor with $base"
+  wt=$(mktemp -d)/base
+  git worktree add -q --detach "$wt" "$mb" || die "could not open a worktree at $mb"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    mkdir -p "$wt/$(dirname "$f")"
+    git show "HEAD:$f" >"$wt/$f"
+  done <<<"$files"
+  [ ! -d "$root/node_modules" ] || ln -s "$root/node_modules" "$wt/node_modules"
+  if (cd "$wt" && bash -c "$cmd") >/dev/null 2>&1; then
+    git worktree remove --force "$wt" 2>/dev/null || true
+    die "the tests pass on $base without the change: they must fail there (the test command is: $cmd)"
+  fi
+  git worktree remove --force "$wt" 2>/dev/null || true
+  (cd "$root" && bash -c "$cmd") >/dev/null 2>&1 || die "the tests do not pass on the head (the test command is: $cmd)"
+  mkdir -p "$common/senior-mode/runs/$n"
+  printf '%s' "$files" >"$common/senior-mode/runs/$n/red-verified"
+  echo "red-tests: $(grep -c . <<<"$files") test file(s) fail on $base and pass on the head, recorded for #$n"
+}
+
+# What stops the pull request $2 of $1 (owner/name) from being ready on account of the red tests of the tickets it closes
+# (#306), or nothing: under run and serve, a feature or bug ticket (label type:feature or type:bug; docs, chore and the
+# rest are exempt) needs a record, red-tests (test-author) or red-verified (red_tests_verify), in the common git
+# directory of the checkout $4; and every file the record lists must be in the pull request. $3 is the pull request
+# body. Starts with "not ready: " when the pull request is at fault.
+red_blocker() {
+  local slug=$1 pr=$2 body=$3 root=$4 n labels kind common rec missing="" f changed
+  common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+    echo "the red tests could not be read: no git directory"
+    return 0
+  }
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    labels=$(gh_retry issue view "$n" --repo "$slug" --json labels --jq '[.labels[]?.name] | join(" ")') || {
+      echo "the type of #$n could not be read"
+      return 0
+    }
+    case " $labels " in
+      *" type:feature "*) kind=feature ;;
+      *" type:bug "*) kind=bug ;;
+      *) continue ;;
+    esac
+    rec=$common/senior-mode/runs/$n/red-tests
+    [ -f "$rec" ] || rec=$common/senior-mode/runs/$n/red-verified
+    if [ ! -f "$rec" ]; then
+      missing+=${missing:+, }"#$n ($kind)"
+      continue
+    fi
+    changed=$(gh_retry api "repos/$slug/pulls/$pr/files" --paginate --jq '.[].filename') || {
+      echo "its changed files could not be read"
+      return 0
+    }
+    while IFS= read -r f; do
+      [ -z "$f" ] || grep -qxF -- "$f" <<<"$changed" || {
+        echo "not ready: the red tests of #$n include $f, which the pull request does not carry"
+        return 0
+      }
+    done <"$rec"
+  done < <(pr_closed_tickets "$body")
+  [ -z "$missing" ] ||
+    echo "not ready: no red-tests record for $missing: the added tests must fail on the base and pass on the head (senior-mode red-tests verify <ticket>)"
 }

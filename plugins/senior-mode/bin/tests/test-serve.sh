@@ -68,7 +68,7 @@ case "$*" in
   "issue view "*)
     n=$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*")
     jq -c --argjson n "$n" '.data.node.items.nodes[] | select(.content.number == $n) | .content
-      | {title, state, labels: .labels.nodes}' "$FIX/board.json" ;;
+      | {title, state, labels: .labels.nodes}' "$FIX/board.json" | respond ;;
   "project item-add"*) echo "ITEM_$(sed -E 's#.*/issues/([0-9]+).*#\1#' <<<"$*")" ;;
   "project item-edit"*) ;;
   "auth status"*) [ ! -f "$FIX/gh-auth-bad" ] ;;
@@ -1391,6 +1391,48 @@ mkdir -p "$state"
 echo '{"ticket": 95, "outcome": "delivered", "escalated": true, "model": "opus"}' >"$state/95.json"
 once || fail "AC: serve failed: $(cat "$work/out")"
 grep -q '^app-review-95 opus run=1 role=reviewer$' "$CLAUDE_LOG" || fail "AC: crossModel false does not keep Opus: $(cat "$CLAUDE_LOG")"
+
+# AD: a feature or bug pull request needs a red-tests record (#306). Without one the ticket session resumes once to
+# prove its tests, then the pull request is needs-human; with a record (red-tests or red-verified) it merges; a chore, or
+# a ticket with no type, needs none.
+config '{}'
+sha96=$(mkbranch feat/96-x f96.txt)
+sha97=$(mkbranch feat/97-x f97.txt)
+sha98=$(mkbranch feat/98-x f98.txt)
+boardx "96:In review:S:P1 next:type:feature" "97:In review:S:P1 next:type:chore" "98:In review:S:P1 next:type:bug"
+prs_reset
+for n in 96 97 98; do size_item "$n" S; done
+PRBODY="Closes #96" pr 196 feat/96-x "$sha96" clean
+PRBODY="Closes #97" pr 197 feat/97-x "$sha97" clean
+PRBODY="Closes #98" pr 198 feat/98-x "$sha98" clean
+for x in "$sha96" "$sha97" "$sha98"; do green "$x"; done
+session 96-sonnet-ticket delivered pr:196
+fresh
+once || fail "AD: serve failed: $(cat "$work/out")"
+grep -q '^app-96 sonnet run=1 role=ticket$' "$CLAUDE_LOG" || fail "AD: the feature ticket session did not resume: $(cat "$CLAUDE_LOG")"
+grep -q 'red-tests verify 96' "$state/96.prompt" || fail "AD: the retry prompt does not name the proof: $(cat "$state/96.prompt")"
+grep -q '^pr merge 196' "$GH_LOG" && fail "AD: a feature pull request with no red tests was merged"
+[ -f "$state/red-retry-96" ] || fail "AD: the retry is not counted"
+grep -q 'issues/196/labels' "$GH_LOG" && fail "AD: needs-human before the retry"
+once || fail "AD: serve failed: $(cat "$work/out")"
+grep -q '^app-96 ' "$CLAUDE_LOG" && fail "AD: a second retry: $(cat "$CLAUDE_LOG")"
+grep -q 'issues/196/labels.*needs-human' "$GH_LOG" || fail "AD: no needs-human after the retry: $(cat "$GH_LOG")"
+grep -q 'Waiting for a human.*pull request #196, not ready: no red-tests record for #96 (feature)' "$work/out" || fail "AD: not reported: $(cat "$work/out")"
+grep -q '^pr merge 197' "$GH_LOG" || fail "AD: a chore pull request needs no red tests: $(grep '^pr ' "$GH_LOG")"
+# A bug ticket whose tests were verified merges; a recorded file the pull request lacks does not.
+mkdir -p "$repo/.git/senior-mode/runs/98"
+echo f98.txt >"$repo/.git/senior-mode/runs/98/red-verified"
+printf 'f98.txt\n' >"$FIX/files-198"
+once || fail "AD: serve failed: $(cat "$work/out")"
+grep -q '^pr merge 198' "$GH_LOG" || fail "AD: a verified bug pull request is not merged: $(cat "$work/out") $(cat "$GH_LOG")"
+echo other.txt >"$repo/.git/senior-mode/runs/98/red-verified"
+prs_reset
+PRBODY="Closes #98" pr 198 feat/98-x "$sha98" clean
+green "$sha98"
+once || fail "AD: serve failed: $(cat "$work/out")"
+grep -q '^pr merge 198' "$GH_LOG" && fail "AD: merged with a red test the pull request does not carry"
+grep -q 'the red tests of #98 include other.txt' "$work/out" || fail "AD: the missing red test is not named: $(cat "$work/out")"
+rm -f "$FIX/files-198" "$FIX"/item-*.json
 
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

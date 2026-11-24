@@ -404,5 +404,38 @@ grep -q "skills/big/SKILL.md: 3100 bytes, over 3072" "$work/out" || fail "big SK
 grep -q "docs/adr/0001-a.md: paths must be a list of strings" "$work/out" || fail "bad ADR paths not named: $(cat "$work/out")"
 grep -q "0002-b.md" "$work/out" && fail "a good ADR paths is named: $(cat "$work/out")"
 
+git -C "$repo" rm -q -f CLAUDE.md skills/big/SKILL.md docs/adr/0001-a.md
+commit -m "chore: drop the hygiene fixtures"
+# Assertion-free test cases (#306): an added case with no assertion is a warning, and an error in a run or serve session
+# (SENIOR_MODE_RUN=1). Per preset: node, python, go, rust. A case that asserts, a todo and a file that is no test are not listed.
+config '{"audit":false,"preset":"node","checks":[{"name":"lint","run":"true"}]}'
+printf 'it("a", () => {\n  expect(1).toBe(1);\n});\nit("b", () => {\n  run();\n});\ntest.todo("c");\n' >"$repo/src/a.test.ts"
+printf 'def test_a():\n    assert 1\n\ndef test_b():\n    run()\n' >"$repo/src/test_b.py"
+printf 'package a\nfunc TestA(t *testing.T) {\n\tif x() { t.Errorf("no") }\n}\nfunc TestB(t *testing.T) {\n\trun()\n}\n' >"$repo/src/b_test.go"
+mkdir -p "$repo/tests"
+printf '#[test]\nfn a() { assert_eq!(1, 1); }\n#[test]\nfn b() { run(); }\n' >"$repo/tests/c.rs"
+printf 'it("d", () => { run(); });\n' >"$repo/src/helper.ts"
+commit -m "feat: tests"
+run check || fail "an assertion-free test fails a local check: $(cat "$work/out")"
+grep -qF 'warn  test case with no assertion: src/a.test.ts:4: it("b"' "$work/out" || fail "assertion-free case not listed: $(cat "$work/out")"
+# Another preset's files are not read.
+grep -q "no assertion: src/test_b.py\|no assertion: src/b_test.go\|no assertion: tests/c.rs" "$work/out" && fail "a file of another preset is read under node: $(cat "$work/out")"
+grep -q "no assertion: src/a.test.ts:1:\|no assertion: src/a.test.ts:7:\|no assertion: src/helper.ts\|no assertion: src/b_test.go:2:" "$work/out" &&
+  fail "a case that asserts, a todo or a non-test file is listed: $(cat "$work/out")"
+(cd "$repo" && SENIOR_MODE_RUN=1 "$cli" check) >"$work/out" 2>&1 && fail "an assertion-free test passes under run and serve"
+grep -q "FAIL  assertion-free tests" "$work/out" || fail "the error is not named: $(cat "$work/out")"
+config '{"audit":false,"preset":"python","checks":[{"name":"lint","run":"true"}]}'
+run check || fail "check fails: $(cat "$work/out")"
+grep -qF "warn  test case with no assertion: src/test_b.py:4: def test_b" "$work/out" || fail "python case not listed: $(cat "$work/out")"
+grep -q "src/test_b.py:1:" "$work/out" && fail "a python case that asserts is listed: $(cat "$work/out")"
+config '{"audit":false,"preset":"go","checks":[{"name":"lint","run":"true"}]}'
+run check || fail "check fails: $(cat "$work/out")"
+grep -qF "warn  test case with no assertion: src/b_test.go:5: func TestB" "$work/out" || fail "go case not listed: $(cat "$work/out")"
+grep -q "src/b_test.go:2:" "$work/out" && fail "a go case that asserts is listed: $(cat "$work/out")"
+config '{"audit":false,"preset":"rust","checks":[{"name":"lint","run":"true"}]}'
+run check || fail "check fails: $(cat "$work/out")"
+grep -qF "warn  test case with no assertion: tests/c.rs:3: fn b()" "$work/out" || fail "rust case not listed: $(cat "$work/out")"
+grep -q "tests/c.rs:1:" "$work/out" && fail "a rust case that asserts is listed: $(cat "$work/out")"
+
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

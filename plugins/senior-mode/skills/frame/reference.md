@@ -85,6 +85,14 @@ the anchor; every slice takes `--parent <epic>`. A chosen milestone that is clos
 (`-X PATCH .../milestones/<n> -f state=open`); one absent from the facts is created first with
 `gh api repos/{owner}/{repo}/milestones -f title=<title>`.
 
+## Spikes
+
+An open technical question that blocks a decision becomes a spike ticket, not a guess in a spec:
+`senior-mode issue create ... --type spike --timebox <30m|2h|20k tokens>` (the timebox is required, and refused for
+other types). The body states the question and what a good answer lets the team decide. A spike ends in a note under
+`docs/spikes/`, an ADR or framed tickets; its pull request changes `docs/` only, `ready` refuses any other file. A
+duration timebox is enforced by the daemon, which stops the session, comments the notes found and sets `needs-human`.
+
 ## ADR numbers
 
 Parallel framings must not share numbers. Write each ADR under a provisional name; when committing,

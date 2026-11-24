@@ -452,7 +452,7 @@ command, not a model, applies these bounds:
   `senior-mode setup github` is rerun.
 - **Batches:** `senior-mode pick` groups Ready S tickets whose Paths overlap, at most 3 per batch
   (and `limits.prLines` / 50, an S being about 50 lines); M and L tickets and tickets without Paths are
-  never batched. `run` and `serve` start a batch as one session: one worktree (on the branch of its
+  never batched, nor is a `type:spike` ticket. `run` and `serve` start a batch as one session: one worktree (on the branch of its
   first ticket), every ticket In progress, a prompt that asks one commit and one `Closes #n` per
   ticket and one pull request, which one review covers. The session writes one outcome line per
   ticket (`#n delivered`, `#n outgrown: ...`, `#n failed: ...`). A ticket that fails goes back alone
@@ -568,6 +568,8 @@ request that closes no ticket is held to neither.
   cell starting with `#<ticket>.<k>` (`<k>` alone for a single ticket), its last cell the evidence: a test name,
   or a command and its result. A missing row or an empty evidence (`-`, `TODO`, `n/a`) is named. A ticket with
   no acceptance criteria needs no row. It adds to the independent review, never replaces it (ADR 0019).
+- **Spike** (#321): the pull request of a `type:spike` ticket may change files under `docs/` only (the note, an ADR,
+  the framed tickets); any other file is named and the pull request is not ready.
 
 Under `serve` a pull request that is not ready is not merged: it gets `needs-human` with the numbers, like any
 blocker that no later poll lifts. A ticket whose Size cannot be read is only logged and retried.

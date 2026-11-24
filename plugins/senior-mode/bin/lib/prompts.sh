@@ -8,7 +8,9 @@ You are one ticket session of an autonomous senior-mode run on $RUN_SLUG. Nobody
 questions: decide within the ticket, its spec and the project's rules, or give up as described below.
 
 Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode team:
-1. Read the ticket (\`gh issue view $1\`), its spec and its acceptance criteria.
+1. Read the ticket (\`gh issue view $1\`), its spec and its acceptance criteria. A \`type:spike\` ticket is
+   research: deliver a note under docs/spikes/, an ADR or framed tickets, no code outside docs/, and stop at
+   its \`Timebox:\` line (the run stops the session when a duration is reached).
 2. The test-author agent writes failing tests from the acceptance criteria and records the red run;
    the implementer agent makes them pass (skills tdd, verify, commit): tests land in the same commit
    as the code they cover.

@@ -13,7 +13,10 @@ cat >"$work/stub/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >>"$GH_LOG"
 [ -z "${GH_FAIL:-}" ] || exit 1
-case "$*" in *"issue view"*) printf '%s\n' "$GH_ISSUE" ;; esac
+case "$*" in
+  *"issue view"*) printf '%s\n' "$GH_ISSUE" ;;
+  *"api graphql"*) printf '%s\n' "${GH_PATHS:-}" ;;
+esac
 STUB
 chmod +x "$work/stub/gh"
 export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log"
@@ -25,6 +28,7 @@ git init -q -b main "$repo"
 mkdir -p "$repo/.claude" "$repo/docs/specs"
 printf -- '---\nid: 0003\nstatus: accepted\n---\n' >"$repo/docs/specs/0003-login.md"
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: start"
+git -C "$repo" remote add origin https://github.com/o/r.git
 
 context() { # dir -> $out; fails the test on a non-zero exit
   (cd "$1" && "$cli" context) >"$work/out" 2>"$work/err" || fail "context exited non-zero in $1: $(cat "$work/err")"
@@ -78,6 +82,67 @@ git -C "$repo" switch -q feat/12-login
 rm -rf "$repo/docs/vision.md"
 context "$repo"
 grep -qi "vision" <<<"$out" && fail "vision mentioned with no file: $out"
+
+# The specs, ADRs and notes that govern the ticket's Paths (#338): from the board field Paths, else the spec's.
+mkdir -p "$repo/docs/adr" "$repo/docs/knowledge"
+adr() { printf -- '---\nid: %s\ntitle: %s\nstatus: %s\n%s---\n' "$1" "$2" "$3" "$4" >"$repo/docs/adr/$1-$5.md"; }
+adr 0010 "Sessions are stateless" accepted 'paths: ["src/auth/session/**"]
+' sessions
+adr 0011 "Old session store" superseded 'paths: ["src/auth/**"]
+' old-store
+adr 0012 "Errors are values" accepted '' errors
+adr 0013 "Billing rounding" accepted 'paths: ["src/billing/**"]
+' billing
+printf -- '---\nid: 100\ntitle: Authentication\nstatus: accepted\npaths: ["src/auth/**"]\n---\n' >"$repo/docs/specs/0100-auth.md"
+printf -- '---\nid: 101\ntitle: Old authentication\nstatus: superseded\npaths: ["src/auth/**"]\n---\n' >"$repo/docs/specs/0101-old-auth.md"
+note() { # slug paths kind days-ago heading
+  printf -- '---\npaths: %s\nverified: %s\norigin: "#1"\nkind: %s\n---\n\n# %s\n\nBody.\n' "$2" "$(date -u -d "$4 days ago" +%F)" "$3" "$5" >"$repo/docs/knowledge/$1.md"
+}
+note aa-conv '["src/auth/**"]' convention 83 "Tokens are opaque"
+note bb-pit '["src/auth/**"]' pitfall 30 "Logout must clear the cookie twice"
+note cc-deep '["src/auth/session/token.ts"]' howto 40 "Rotating the signing key"
+note dd-newer '["src/auth/**"]' context 10 "Why sessions expire at midnight"
+note ee-billing '["src/billing/**"]' pitfall 5 "Money rounds half to even"
+note ff-old '["src/auth/**"]' context 240 "The legacy login flow"
+printf -- '---\nid: 3\nstatus: accepted\nadrs: ["0012"]\n---\n' >"$repo/docs/specs/0003-login.md"
+export GH_PATHS='{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"project":{"id":"P"},"fieldValueByName":{"text":"src/auth/**"}}]}}}}}'
+
+context "$repo"
+for want in "docs/specs/0100-auth.md" "docs/adr/0010-sessions.md" "docs/adr/0012-errors.md" "docs/knowledge/aa-conv.md" \
+  "docs/knowledge/bb-pit.md" "docs/knowledge/cc-deep.md" "docs/knowledge/dd-newer.md"; do
+  grep -qF "$want" <<<"$out" || fail "'$want' not in the briefing: $out"
+done
+for not in "0101-old-auth" "0011-old-store" "0013-billing" "ee-billing"; do
+  grep -qF "$not" <<<"$out" && fail "'$not' is in the briefing: $out"
+done
+pos() { grep -nF -- "$1" <<<"$out" | head -n 1 | cut -d: -f1; }
+for pair in "0010-sessions 0100-auth" "0100-auth cc-deep" "cc-deep Current ticket"; do
+  a=${pair%% *} b=${pair#* }
+  [ "$(pos "$a")" -lt "$(pos "$b")" ] || fail "'$a' should come before '$b': $out"
+done
+# Ranked by the literal prefix of the overlap, then pitfalls, then the newest verified, then the name.
+for pair in "cc-deep bb-pit" "bb-pit dd-newer" "dd-newer aa-conv" "aa-conv ff-old"; do
+  a=${pair%% *} b=${pair#* }
+  [ "$(pos "$a")" -lt "$(pos "$b")" ] || fail "'$a' should be ranked before '$b': $out"
+done
+first=$out
+context "$repo"
+[ "$out" = "$first" ] || fail "two runs differ"
+
+# With no Paths, the briefing holds the router, the ticket and its spec (the spec's adrs are not listed either).
+GH_PATHS='' context "$repo"
+grep -qF "docs/adr/" <<<"$out" && fail "an ADR with no Paths: $out"
+grep -qF "docs/knowledge/" <<<"$out" && fail "a note with no Paths: $out"
+grep -qF "docs/specs/0003-login.md (accepted)" <<<"$out" || fail "the ticket's spec is missing with no Paths: $out"
+# The Paths of the spec stand in for the board's.
+printf -- '---\nid: 3\nstatus: accepted\npaths: ["src/billing/**"]\n---\n' >"$repo/docs/specs/0003-login.md"
+GH_PATHS='' context "$repo"
+grep -qF "docs/knowledge/ee-billing.md" <<<"$out" || fail "the spec's paths are not used: $out"
+grep -qF "docs/adr/0013-billing.md" <<<"$out" || fail "the ADR of the spec's paths is missing: $out"
+grep -qF "aa-conv" <<<"$out" && fail "a note outside the spec's paths: $out"
+
+printf -- '---\nid: 0003\nstatus: accepted\n---\n' >"$repo/docs/specs/0003-login.md"
+unset GH_PATHS
 
 git -C "$repo" switch -q -c spike-oauth
 context "$repo"

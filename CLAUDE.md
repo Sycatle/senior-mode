@@ -28,7 +28,8 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `workflow.sh`: reading the detected `workflow` (branch pattern, base, merge flag, PR gaps) for start, run, serve, status, clean.
 - `setup-answers.sh`: `setup detect` and `setup answers` (the three questions: detection, profile, config layers).
 - `setup-remove.sh`: `setup remove` (files through a pull request, ruleset, labels, workflows).
-- `status.sh`: `context`, `status`, hygiene, health, `retro`, `statusline`.
+- `status.sh`: `status`, hygiene, health, `retro`, `statusline`.
+- `context.sh`: `context` (the session briefing: selection, ranking and budget of specs, ADRs and notes).
 - `retro-learn.sh`: failure causes and improvement tickets of `retro`.
 - `skeleton.sh`: red test skeletons of `start` and their `ready` check.
 - `clean.sh`: `clean` (branches, worktrees).

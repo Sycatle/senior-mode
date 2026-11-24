@@ -178,8 +178,10 @@ grep -q "the copy lacks" "$work/out" && fail "a copy that has everything reporte
 logged "project link 7 --owner acme --repo acme/app" || fail "Project not linked"
 [ "$(cfg .project.number)/$(cfg .project.id)/$(cfg .project.owner)" = 7/PVT_NEW/acme ] || fail "project not cached: $(cfg .project)"
 [ "$(cfg .language)" = fr ] || fail "other config keys lost"
-[ "$(cfg '.project.fields.Status.options | keys_unsorted | join(",")')" = "Backlog,Ready,In progress,In review,Done" ] ||
+# GitHub's Todo keeps its name (#556) and stands for Backlog in the cache.
+[ "$(cfg '.project.fields.Status.options | keys_unsorted | join(",")')" = "Todo,Ready,In progress,In review,Done,Backlog" ] ||
   fail "Status options: $(cfg .project.fields.Status.options)"
+logged '"name":"Backlog"' && fail "Todo renamed Backlog: $(cat "$GH_LOG")"
 [ "$(cfg '.project.fields.Status.options | [.Backlog, ."In progress", .Done] | join(",")')" = O_todo,O_prog,O_done ] ||
   fail "existing Status options not kept by id: $(cfg .project.fields.Status.options)"
 [ "$(cfg '.project.fields.Priority.options | keys_unsorted | join(",")')" = "P0 now,P1 next,P2 later,P3 someday" ] ||

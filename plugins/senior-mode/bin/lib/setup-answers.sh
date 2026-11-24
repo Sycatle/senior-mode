@@ -42,7 +42,7 @@ github_detect() { # slug
     | .rulesets = (if .visibility == "public" then "yes" elif .plan == "free" then "no" elif .plan == "unknown" then "unknown" else "yes" end)'
 }
 
-# Everything setup detects, as JSON: {stack: {preset, framework, typescript}, github, language: {code, source}}.
+# Everything setup detects, as JSON: {stack: {preset, framework, typescript}, github, deploy: {platforms}, language: {code, source}}.
 setup_facts() { # root
   local root=$1 pname detected gh="" lang
   pname=$(project_preset "$root")
@@ -50,9 +50,10 @@ setup_facts() { # root
   if git -C "$root" remote get-url origin >/dev/null 2>&1; then gh=$(github_detect "$(repo_slug)"); fi
   [ -n "$gh" ] || gh='{"visibility":"unknown","ownerType":"unknown","plan":"unknown","rulesets":"unknown"}'
   lang=$(language_detect "$root")
-  jq -nc --arg p "$pname" --argjson d "$detected" --argjson g "$gh" --arg l "$lang" '{
+  jq -nc --arg p "$pname" --argjson d "$detected" --argjson g "$gh" --arg l "$lang" --arg h "$(deploy_platforms "$root")" '{
     stack: {preset: $p, framework: ($d.framework // null), typescript: ($d.typescript // null)},
     github: $g,
+    deploy: {platforms: ($h | split("\n") | map(select(. != "")))},
     language: {code: ($l | split("|")[0] | if . == "" then null else . end), source: ($l | split("|")[1] // null)}}'
 }
 
@@ -70,6 +71,7 @@ setup_detect() {
   jq -r '"stack: \(.stack.preset)\([.stack.framework, (if .stack.typescript == true then "TypeScript" elif .stack.typescript == false then "JavaScript" else null end)] | map(select(. != null)) | if length > 0 then " (\(join(", ")))" else "" end)",
     "repository: \(.github.visibility), owned by \(if .github.ownerType == "Organization" then "an organization" elif .github.ownerType == "User" then "a user" else "unknown" end), plan \(.github.plan)",
     "branch rules: \(if .github.rulesets == "yes" then "GitHub enforces a ruleset on this repository" elif .github.rulesets == "no" then "not enforced: GitHub offers no ruleset on a private repository of a Free plan" else "unknown" end)",
+    (if (.deploy.platforms | length) > 0 then "hosted previews: \(.deploy.platforms | join(", "))" else empty end),
     "language: \(if .language.code then "\(.language.code) (from \(.language.source))" else "not found, ask or read the conversation" end)"' <<<"$facts"
 }
 
@@ -116,13 +118,14 @@ EOF
 # detected, what each answer changes, the defaults that apply) and writes it unless --dry-run.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_answers() {
-  local root file facts strict="" lang="" auto="" lsp="" dry=false rec_lang cur_strict cur_auto adr="" write=false
+  local root file facts strict="" lang="" auto="" lsp="" prev="" dry=false rec_lang cur_strict cur_auto cur_prev=platform adr="" write=false hosts
   while [ $# -gt 0 ]; do
     case $1 in
       --strictness) [ "${2:-}" = strict ] || [ "${2:-}" = fast ] || usage; strict=$2; shift 2 ;;
       --language) [ "${2:-}" = en ] || [ "${2:-}" = fr ] || usage; lang=$2; shift 2 ;;
       --autonomy) [ "${2:-}" = ask ] || [ "${2:-}" = alone ] || usage; auto=$2; shift 2 ;;
       --lsp) [ "${2:-}" = yes ] || [ "${2:-}" = no ] || usage; lsp=$2; shift 2 ;;
+      --previews) [ "${2:-}" = platform ] || [ "${2:-}" = ready ] || [ "${2:-}" = off ] || usage; prev=$2; shift 2 ;;
       --dry-run) dry=true; shift ;;
       *) usage ;;
     esac
@@ -138,7 +141,9 @@ setup_answers() {
     cur_strict=$(jq -r '.process.profile // "strict"' "$file")
     jq -e '.autonomy.merge == true' "$file" >/dev/null && cur_auto=alone
     rec_lang=$(jq -r '.language // empty' "$file")
+    cur_prev=$(jq -r '.deploy.previews // "platform"' "$file")
   fi
+  hosts=$(jq -r '.deploy.platforms | join(", ")' <<<"$facts")
   [ -n "${rec_lang:-}" ] || rec_lang=$(jq -r '.language.code // "en"' <<<"$facts")
   [ "$rec_lang" = en ] || [ "$rec_lang" = fr ] || rec_lang=en
   [ -n "$strict" ] || strict=$cur_strict
@@ -170,6 +175,14 @@ setup_answers() {
     echo "  agents alone: no (recommended): agents deliver pull requests, you merge. Writes autonomy.merge false."
   fi
   [ -z "$lsp" ] || echo "  language server: $lsp: $([ "$lsp" = yes ] && echo 'you enable it in Claude Code' || echo 'not proposed again'); setup installs nothing. Writes lsp."
+  # Asked only when a hosted platform is detected; a rerun without the flag keeps the stored answer (platform at first).
+  if [ -n "$hosts" ] || [ -n "$prev" ]; then
+    case ${prev:-$cur_prev} in
+      ready) echo "  previews: ready (recommended): ${hosts:-the platform} builds no senior-mode branch until a pull request asks for its one preview (senior-mode preview). Writes deploy.previews; setup repo applies it." ;;
+      off) echo "  previews: off: ${hosts:-the platform} builds no senior-mode branch at all. Writes deploy.previews; setup repo applies it." ;;
+      *) echo "  previews: platform (kept; ready recommended to save deployment quotas): ${hosts:-the platform} keeps deploying every branch senior-mode pushes. Nothing changes until you answer." ;;
+    esac
+  fi
   echo "Defaults (documented in docs/guide/configuration.md, change them in .claude/senior-mode.json)"
   echo "  risky changes: you decide; a pull request that touches a protected zone waits for your approval, and no answer lifts that."
   jq -nr --argjson d "$DEFAULTS" '"  checks: \($d.ci.mode), before each push (free); setup github --ci actions also runs them on GitHub Actions and spends its budget",
@@ -189,6 +202,10 @@ setup_answers() {
         | if (.process.lifts | length) == 0 then del(.process.lifts) else . end
         | if (.process | length) == 0 then del(.process) else . end end' \
     --arg l "$lang" --arg a "$auto" --arg s "$strict" --arg adr "$adr" --arg lsp "$lsp" || [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
+  if [ -n "$prev" ]; then
+    json_update "$file" 'if $p == "platform" then del(.deploy.previews) | if (.deploy // {}) == {} then del(.deploy) else . end else .deploy.previews = $p end' \
+      --arg p "$prev" || [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
+  fi
   echo "written: .claude/senior-mode.json"
   if [ "$write" = true ]; then
     mkdir -p "$root/docs/adr"

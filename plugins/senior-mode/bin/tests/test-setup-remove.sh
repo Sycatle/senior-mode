@@ -50,7 +50,10 @@ logged() { grep -qF -- "$1" "$GH_LOG"; }
 # A repository set up by senior-mode, with what its owner added: an edited architecture overview, a CLAUDE.md section, a
 # CODEOWNERS entry, a setting and a hook of their own, a deleted-and-edited template left as it is.
 mkdir -p "$repo/.claude"
-echo '{"language": "en"}' >"$repo/.claude/senior-mode.json"
+echo '{"language": "en", "deploy": {"previews": "ready"}}' >"$repo/.claude/senior-mode.json"
+echo '{"git": {"deploymentEnabled": {"dev": false}}}' >"$repo/vercel.json"
+printf '[build]\n  ignore = "exit 7"\n' >"$repo/netlify.toml"
+cp "$repo/netlify.toml" "$work/netlify.orig"
 (cd "$repo" && "$cli" setup repo --command test=true --command lint=true) >"$work/setup.out" 2>&1 || fail "setup repo failed: $(cat "$work/setup.out")"
 printf '# app\n\nMy own notes.\n\n' >"$work/claude.head"
 { cat "$work/claude.head"; sed -n '/^<!-- senior-mode:principles/,$p' "$repo/CLAUDE.md"; } >"$work/claude.new" && mv "$work/claude.new" "$repo/CLAUDE.md"
@@ -85,6 +88,7 @@ snapshot() { (cd "$repo" && git status --porcelain && git worktree list && git c
 snapshot >"$work/before"
 remove || fail "dry run failed: $(cat "$work/err")"
 for want in "would remove: .githooks/commit-msg" "would remove: .githooks/pre-push" "would remove: .claude/senior-mode.json" "would remove: .github/workflows/senior-mode-audit.yml" \
+  "would remove: the preview settings of vercel.json" "would remove: the ignore step of netlify.toml" "would remove: .claude/senior-mode/ignore-build.sh" \
   "would remove: .github/pull_request_template.md" "would remove: .github/ISSUE_TEMPLATE/feature.yml" "would remove: .github/ISSUE_TEMPLATE/bug.yml" \
   "would remove: the senior-mode block of CLAUDE.md" "would remove: the senior-mode block of .github/CODEOWNERS" \
   "would remove: the senior-mode permissions and status line of .claude/settings.json" "would remove: ruleset senior-mode" \
@@ -119,6 +123,9 @@ for f in .githooks/commit-msg .githooks/pre-push .claude/senior-mode.json .githu
   tree_has main "$f" || fail "$f gone from main before the pull request is merged"
 done
 tree_has "$b" .githooks/post-commit || fail "a hook of the owner removed"
+! tree_has "$b" .claude/senior-mode/ignore-build.sh || fail "the ignore script is still in the removal branch"
+[ "$(git -C "$origin" show "$b:vercel.json" | jq -c .)" = '{"git":{"deploymentEnabled":{"dev":false}}}' ] || fail "vercel.json not restored: $(git -C "$origin" show "$b:vercel.json")"
+[ "$(git -C "$origin" show "$b:netlify.toml")" = "$(cat "$work/netlify.orig")" ] || fail "netlify.toml not restored: $(git -C "$origin" show "$b:netlify.toml")"
 tree_has "$b" docs/architecture.md || fail "an edited architecture overview removed"
 tree_has "$b" release-please-config.json || fail "release-please config removed"
 tree_has "$b" .claude/settings.json || fail "the settings of the owner removed with ours"

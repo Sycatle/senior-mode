@@ -55,6 +55,7 @@ remove_files() { # root apply
     else echo "kept: $path (edited since setup, or not senior-mode's)"
     fi
   done
+  deploy_restore "$root" "$apply" true
   remove_file "$root" .github/workflows/senior-mode.yml "$apply"
   remove_file "$root" .github/workflows/senior-mode-audit.yml "$apply"
   remove_block "$root" CLAUDE.md '^<!-- senior-mode:principles' '^<!-- /senior-mode:principles -->' "$apply"

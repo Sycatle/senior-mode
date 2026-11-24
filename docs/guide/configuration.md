@@ -51,6 +51,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `egress.allow` | `[]` | Hosts the [Bash guard](autonomy.md#bash-guard-guard-bashsh) lets an agent send a local file to (`curl -T`, `-d @file`, `-F f=@file`, `wget --post-file`), for instance your own artifact server; anything else is denied. Host names only, compared without case |
 | `github.protection` | written by setup | `ruleset` when the `senior-mode` ruleset protects the default branch; `local` when GitHub refused it (private repository on a Free plan): the branch is not protected on the server, so `run` and `serve` themselves require the three `senior-mode/*` statuses on the head (whatever `github.requiredChecks` says) and a branch up to date with the base before they merge, and an [audit workflow](autonomy.md#audit-of-direct-pushes) reports a push outside a pull request; `none` (write it yourself to opt out) merges nothing on its own ([ADR 0032](../adr/0032-local-protection-on-github-free.md)) |
 | `github.requiredChecks` | `true` | `false` keeps `setup github` from adding required status checks: the `senior-mode` ruleset then has no `required_status_checks` rule (one it already had is removed, a check added by hand included), and setup says so. `run` and `serve` then wait for no `senior-mode/*` status before merging (the other bounds hold: protection, `needs-human`, protected zones, external pull requests). For a repository that delivers as [ADR 0016](../adr/0016-this-repository-delivery.md) describes, with `senior-mode check` green as the only gate. Only `true` or `false` |
+| `deploy.previews` | `"platform"` | Whether Vercel, Netlify and Cloudflare Pages deploy the branches senior-mode pushes, see [Hosted previews](#hosted-previews). `platform` leaves the platform as it is, `ready` deploys one preview per pull request once `senior-mode preview` asks, `off` deploys none; `setup answers --previews` writes it and `setup repo` applies it |
 | `review.sections` | none | Project review checklists, see [below](#project-review-sections) |
 | `review.crossModel` | `true` | Whether the reviewer session of [`serve`](autonomy.md#session-roles) runs on another model than the one that implemented the ticket: Opus, or `review.otherModel` when the ticket ended on Opus (an [escalation](autonomy.md) still applies on top). The model is written at the start of the description of `senior-mode/review`. `false` keeps the reviewer on Opus whatever the implementer used. Only `true` or `false` |
 | `review.otherModel` | `sonnet` | The model the reviewer runs on when `review.crossModel` is on and the implementer ended on Opus (an alias such as `sonnet`) |
@@ -498,6 +499,23 @@ directories, CI workflows, Dockerfiles and `infra/`; never lockfiles), used by t
 The node preset reports the language: TypeScript when `typescript` is a dependency or a tsconfig
 exists, else JavaScript (no typecheck expected). A missing linter or test runner is reported, and
 Claude proposes one (Biome, Vitest) in a separate commit, only on your yes.
+
+## Hosted previews
+
+Every push to a ticket branch (and each rebase, fixup or `-r2` branch) can start a preview deployment that counts against the quotas of Vercel, Netlify or Cloudflare Pages. `deploy.previews` lets the owner stop that, with no secret and no platform token. `setup detect` lists the platforms it finds; `setup answers --previews platform|ready|off` stores the answer (recommended: `ready`; without the flag the stored value stays, `platform` at first, so a non-interactive setup changes nothing); `setup repo` applies it and, set back to `platform`, takes its edits out again. A work branch is one that matches the branch pattern of the project (`workflow.branch.pattern`, by default `<type>/<issue>-<slug>`); the default branch, the platform's production context and the branches of people deploy as before.
+
+- `platform`: nothing is written; a platform file senior-mode edited earlier is restored.
+- `off`: no deployment of a work branch.
+- `ready`: no deployment of a work branch either, except one: `senior-mode preview`, run once the pull request is open, pushes its head to `preview/<branch>` and that ref deploys. The head and its statuses do not change, so the review stands. No platform exposes whether a pull request is ready to a build step without a token, so the ready signal is that ref. `preview` also deletes the `preview/*` refs whose branch is gone.
+
+| Platform | Mechanism (nothing written when `platform`) |
+|---|---|
+| Vercel | `git.deploymentEnabled` of `vercel.json` ([docs](https://vercel.com/docs/project-configuration/git-configuration)): the work-branch globs set to `false` (and `preview/**` to `true` under `ready`), added only where the key is absent. No deployment is created at all, unlike an ignored build step, whose canceled builds still count as deployments ([docs](https://vercel.com/docs/project-configuration/project-settings#ignored-build-step)). An existing `ignoreCommand` is not touched. `vercel.ts` is code: setup prints the keys to add |
+| Netlify | `[build] ignore` of `netlify.toml` ([docs](https://docs.netlify.com/configure-builds/ignore-builds/)) runs `.claude/senior-mode/ignore-build.sh`; a command of the project's own stays, composed as `<ours> \|\| (<yours>)`, and a build is skipped when either says so. An ignore command that is not one quoted string is left alone and setup says so. Under `ready`, branch deploys must be on for `preview/*` |
+| Cloudflare Pages | No repository file controls it ([docs](https://developers.cloudflare.com/pages/configuration/branch-build-controls/)): setup prints the dashboard steps, Preview branch `None` under `off`, `Custom branches` with Include `preview/*` under `ready` |
+| Any other host | Call `.claude/senior-mode/ignore-build.sh` from its ignore step: it exits 0 to skip a build and 1 to build, reading the branch from `BRANCH`, `VERCEL_GIT_COMMIT_REF`, `CF_PAGES_BRANCH`, `GITHUB_REF_NAME` or `CI_COMMIT_REF_NAME` |
+
+`setup remove` takes the settings and the script out; JSON formatting of `vercel.json` may be normalised. Vercel keys that setup added are listed in the script (`# vercel-key:`), which is how they are told from yours.
 
 ## Git hooks
 

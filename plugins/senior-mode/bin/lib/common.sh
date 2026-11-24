@@ -23,7 +23,8 @@ DEFAULTS='{
   "knowledge": { "maxLines": 40 },
   "retro": { "repeat": 3 },
   "architecture": { "rules": [] },
-  "github": { "protection": "", "requiredChecks": true }
+  "github": { "protection": "", "requiredChecks": true },
+  "deploy": { "previews": "platform" }
 }'
 die() {
   echo "senior-mode: $*" >&2

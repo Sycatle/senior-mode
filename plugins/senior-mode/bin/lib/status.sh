@@ -1,41 +1,4 @@
 # shellcheck shell=bash
-# What a session needs at start (SessionStart hook, spec 0001 §15): a short router and, on a ticket
-# branch <type>/<issue>-<slug>, the ticket, its Status, its spec and acceptance criteria. Never fails.
-context() {
-  local root branch issue json spec status criteria
-  cat <<'ROUTER'
-senior-mode is active: framing, specs and ADRs, test-driven delivery, atomic Conventional Commits, GitHub Project board.
-The user needs /senior-mode:frame, /senior-mode:go and /senior-mode:status; "go" or "enchaîne" runs /senior-mode:go. A plain request to change the product ("je veux", "on devrait", "I want") is enough: size it with triage and frame it, no command needed. Disciplines load by themselves; ask the scout agent for codebase facts.
-A secret seen by accident in a tool output is never repeated in a reply, a file, a commit, an issue or a pull request: report it so a human rotates it.
-ROUTER
-  # Spec 0001 §10, "Sessions without a human": the one rule, stated where a run session starts.
-  [ -z "${SENIOR_MODE_RUN:-}" ] || echo "Unattended run: nobody answers questions. Take the recommended option for reversible choices; never accept an L spec or an ADR, never touch a protected zone: label needs-human and stop with a report."
-  root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
-  if [ ! -f "$root/.claude/senior-mode.json" ]; then
-    echo "This repository is not set up for senior-mode; /senior-mode:setup adopts it."
-    return 0
-  fi
-  overrides_context || true
-  vision_brief "$root" || true
-  branch=$(git symbolic-ref --short -q HEAD) || return 0
-  issue=$(workflow_branch_issue "$branch")
-  [ -n "$issue" ] || return 0
-  echo
-  if ! json=$(gh issue view "$issue" --json number,title,state,body,projectItems 2>/dev/null); then
-    echo "Current ticket: #$issue, branch $branch; details not loaded (GitHub unreachable)."
-    return 0
-  fi
-  jq -r --arg b "$branch" '"Current ticket: #\(.number) \(.title) (\(.state | ascii_downcase), Status: \(.projectItems[0].status.name // "not on the board")), branch \($b)"' <<<"$json"
-  spec=$(jq -r .body <<<"$json" | grep -oE 'docs/specs/[A-Za-z0-9._-]+\.md' | head -1) || true
-  if [ -n "$spec" ]; then
-    status=$(sed -nE 's/^status: *//p' "$root/$spec" 2>/dev/null | head -1) || true
-    echo "Spec: $spec (${status:-file not found})"
-  fi
-  criteria=$(jq -r .body <<<"$json" | awk '/^## / { on = /Acceptance criteria/; next } on && /^- /' |
-    head -6 | cut -c1-200)
-  [ -z "$criteria" ] || printf 'Acceptance criteria:\n%s\n' "$criteria"
-}
-
 # The repository hygiene (#226), from a board_data result (whole lists of open pull requests and branches):
 # - stale: open pull requests with no activity for $days days;
 # - branches: remote branches with no pull request at all, leaving out the default branch, a branch that

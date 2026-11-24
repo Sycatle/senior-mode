@@ -572,8 +572,9 @@ run_finish() {
 # notify.mention (the repository owner when empty); the webhook, SENIOR_MODE_NOTIFY_WEBHOOK when not empty (a URL
 # that is its own secret stays out of the tracked config, #522) else notify.webhook, gets a JSON POST
 # {event, repo, number, url, reason}. Never fatal: what cannot be sent is said on stderr, without the URL.
+# Under serve a needs-human event is a question: it is queued, and serve_questions sends the queue as one POST (#308).
 notify() {
-  local event=$1 n=$2 reason=$3 mention hook url=""
+  local event=$1 n=$2 reason=$3 mention url=""
   mention=$(config_get notify.mention)
   mention=${mention:-${RUN_SLUG%%/*}}
   if [ -n "$n" ]; then
@@ -583,11 +584,23 @@ notify() {
     gh_bound api "repos/$RUN_SLUG/issues/$n/comments" -f body="@${mention#@} this needs a human ($event): $reason" >/dev/null ||
       echo "#$n: could not mention $mention" >&2
   fi
+  if [ "$event" = needs-human ] && [ -n "$n" ] && [ -n "${SERVE_DIR:-}" ]; then
+    jq -nc --argjson at "$(serve_now)" --arg n "$n" --arg u "$url" --arg why "$reason" '{at: $at, number: ($n | tonumber), url: $u, reason: $why}' \
+      >>"$SERVE_DIR/questions"
+    return 0
+  fi
+  notify_post "$event" "$n" "$url" "$reason"
+}
+
+# The webhook of an alert (see notify): the JSON POST {event, repo, number, url, reason}, plus the extra fields of $5, a
+# JSON object, when given. Does nothing without a webhook.
+notify_post() {
+  local hook
   hook=${SENIOR_MODE_NOTIFY_WEBHOOK:-$(config_get notify.webhook)}
-  [ -z "$hook" ] || curl -fsS -m 10 -X POST -H 'Content-Type: application/json' "$hook" -d "$(jq -nc --arg e "$event" \
-    --arg r "$RUN_SLUG" --arg n "$n" --arg u "$url" --arg why "$reason" '{event: $e, repo: $r,
-    number: (if $n == "" then null else ($n | tonumber) end), url: (if $u == "" then null else $u end), reason: $why}')" >/dev/null ||
-    echo "notify: the webhook did not answer ($event)" >&2
+  [ -z "$hook" ] || curl -fsS -m 10 -X POST -H 'Content-Type: application/json' "$hook" -d "$(jq -nc --arg e "$1" \
+    --arg r "$RUN_SLUG" --arg n "$2" --arg u "$3" --arg why "$4" --argjson x "${5:-{\}}" '{event: $e, repo: $r,
+    number: (if $n == "" then null else ($n | tonumber) end), url: (if $u == "" then null else $u end), reason: $why} + $x')" >/dev/null ||
+    echo "notify: the webhook did not answer ($1)" >&2
 }
 
 # After merges, one session brings the living docs up to date, on its own branch and pull request. It is

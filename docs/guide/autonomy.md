@@ -144,6 +144,11 @@ labelled `needs-human` (a session that timed out, vanished or was stopped) or th
 A pull request that `serve` can never merge (see above) gets the same, once.
 When `notify.webhook` is set, each alert is also sent as a JSON `POST`
 `{"event", "repo", "number", "url", "reason"}`, where `event` is `needs-human`, `failed`, `breaker` or `environment` (the pause of an environment problem, also without a ticket).
+Under `serve`, the `needs-human` alerts are batched: the label and the comment are put at once, but the webhook gets one
+`POST` `{"event": "decisions", "repo", "number": null, "url": null, "reason", "count", "items": [{"at", "number", "url", "reason"}]}` for
+all the questions raised, once the oldest has waited `notify.batchMinutes` (default 60; `0` sends at each poll), so at most one per
+window. `reason` is plain text, control characters stripped and 300 characters at most. The queue is `.git/senior-mode/serve/questions`.
+`failed`, `breaker` and `environment` are never batched, nor is `run`. `status` lists the same questions under "Decisions".
 The circuit breaker's pause has no ticket: it is only sent to the webhook (`number` and `url` are
 `null`) and written on stderr. A webhook that does not answer is reported on stderr and never stops
 `serve`.
@@ -365,7 +370,7 @@ review is requested. A conflict starts an Opus `integrator` session on `<branch>
 `needs-human`), whose pull request supersedes and closes the old one. An M ticket without recorded red tests gets a
 `test-author` session before its ticket session. A pull request that can never merge on its own (`autonomy.merge`
 off, `github.protection` none, a protected zone, a pull request that is not ready) gets `needs-human` on itself and its ticket, a comment with the reason
-and one [alert](#alerts), then is left alone and listed by `status` under "Waiting for a human"; a blocker that a
+and one [alert](#alerts), then is left alone and listed by `status` under "Decisions"; a blocker that a
 later poll may lift (a status not green yet, an unknown merge state) is only logged and retried. The usage limit and
 the breaker hold the launches, not the merges.
 

@@ -639,7 +639,8 @@ BOARD_QUERY='query($project: ID!, $owner: String!, $name: String!, $after: Strin
       fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
         ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } }
       content { ... on Issue { number title url state closedAt updatedAt authorAssociation labels(first: 20) { nodes { name } }
-        milestone { title dueOn } blockedBy(first: 20) { nodes { number state } } } } } } } }
+        milestone { title dueOn } blockedBy(first: 20) { nodes { number state } }
+        comments(last: 1) { nodes { body authorAssociation } } } } } } } }
   repository(owner: $owner, name: $name) @include(if: $repo) {
     latestRelease { tagName publishedAt }
     defaultBranchRef { name }
@@ -647,6 +648,7 @@ BOARD_QUERY='query($project: ID!, $owner: String!, $name: String!, $after: Strin
       nodes { '"$HYGIENE_BRANCH_FIELDS"' } }
     pullRequests(states: OPEN, first: 50) { pageInfo { hasNextPage endCursor }
       nodes { '"$HYGIENE_PR_FIELDS"' url labels(first: 10) { nodes { name } }
+      comments(last: 1) { nodes { body authorAssociation } }
       commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 30) { nodes { __typename
         ... on StatusContext { context state } ... on CheckRun { name conclusion } } } } } } } } }
     closed: issues(states: CLOSED, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title closedAt stateReason } }
@@ -754,14 +756,16 @@ board_data() {
     def failing: [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
       | select((.state // "") | IN("FAILURE", "ERROR")) // select((.conclusion // "") | IN("FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE"))
       | .context // .name];
+    def lastc($n): ($n.comments.nodes[0] // null) | if . then {body, assoc: .authorAssociation} else null end;
     (.[0].data.repository // {}) as $r
     | {items: [.[].data.node.items.nodes[] | select(.content.number != null) | .updatedAt as $moved | .id as $iid | (.isArchived // false) as $arch | .content as $c
         | {number: $c.number, title: $c.title, url: $c.url, open: ($c.state == "OPEN"), itemId: $iid, archived: $arch, closedAt: $c.closedAt,
            status: single("Status"), priority: single("Priority"), size: single("Size"), severity: single("Severity"), paths: (text("Paths") // ""),
            labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation, milestone: $c.milestone.title, due: $c.milestone.dueOn,
            updated: ([$c.updatedAt, $moved] | map(select(. != null)) | max),
-           blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number]}],
-       prs: [$r.pullRequests.nodes[]? | {number, title, url, branch: .headRefName, labels: [.labels.nodes[].name], failing: failing}],
+           blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number], last: lastc($c)}],
+       prs: [$r.pullRequests.nodes[]? | {number, title, url, branch: .headRefName, labels: [.labels.nodes[].name], failing: failing,
+         updated: .updatedAt, last: lastc(.)}],
        branches: [$r.branches.nodes[]?.name],
        hygiene: {base: $r.defaultBranchRef.name, prs: [$r.pullRequests.nodes[]? | hpr], branches: [$r.branches.nodes[]? | hbr],
          prsMore: more($r.pullRequests.pageInfo // {}), branchesMore: more($r.branches.pageInfo // {})},

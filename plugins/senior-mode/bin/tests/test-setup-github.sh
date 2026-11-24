@@ -44,7 +44,12 @@ case "$*" in
   "api -X PUT repos/acme/app/vulnerability-alerts"*) sec_limit alerts ;;
   "api -X PUT repos/acme/app/automated-security-fixes"*) sec_limit fixes ;;
   "api -X PATCH repos/acme/app -f"*) sec_limit scanning ;;
-  "workflow list"*) if [ -f "$FIX/workflows.json" ]; then respond <"$FIX/workflows.json"; else echo '[]' | respond; fi ;;
+  "api repos/acme/app/contents/.github/workflows"*)
+    [ -n "${WORKFLOW_FILES:-}" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    echo '[{"name": "ci.yml"}]' ;;
+  "workflow list"*)
+    [ -z "${WORKFLOWS_ERR:-}" ] || { echo "$WORKFLOWS_ERR" >&2; exit 1; }
+    if [ -f "$FIX/workflows.json" ]; then respond <"$FIX/workflows.json"; else echo '[]' | respond; fi ;;
   "workflow disable"* | "workflow enable"*) ;;
   "api repos/acme/app/actions/permissions/workflow"*) respond <"$FIX/actions-permissions.json" ;;
   "api repos/acme/app/actions/secrets/RELEASE_PLEASE_TOKEN"*)
@@ -75,7 +80,9 @@ case "$*" in
         + (if $v.options then {options: ($v.options | map(. + {id: ("O_" + .name)}))} else {dataType: ($v.type // $dt)} end)]' \
         "$FIX/fields.json" >"$FIX/f" && mv "$FIX/f" "$FIX/fields.json"
     elif grep -q 'configuration { duration' <<<"$body"; then
-      if [ -f "$FIX/iteration.json" ]; then cat "$FIX/iteration.json"; else echo '{"data": {"node": {"field": null}}}'; fi
+      # A board without the field: GitHub answers an error, not null (#536).
+      if [ -f "$FIX/iteration.json" ]; then cat "$FIX/iteration.json"
+      else echo "gh: Could not resolve to a Unions::ProjectV2FieldConfiguration with the name Iteration." >&2; exit 1; fi
     elif grep -q updateProjectV2Field <<<"$body"; then
       jq --argjson v "$v" '(.data.node.fields.nodes[] | select(.id == $v.field)
         | .options) = ($v.options | map(.id //= ("O_" + .name)))' "$FIX/fields.json" >"$FIX/f" &&
@@ -525,6 +532,14 @@ grep -q "workflows: disabled CI, senior-mode" "$work/out" || fail "disabled work
 grep -q "gh workflow enable" "$work/out" || fail "no way back given: $(cat "$work/out")"
 grep -q "setup github --ci actions" "$work/out" || fail "no lasting way back given: $(cat "$work/out")"
 [ "$(cfg .ci.mode)" = null ] || fail "ci.mode written without --ci"
+
+# #536: a token without the Actions permission. Nothing to disable on the default branch: setup goes on;
+# workflows there: it stops and names the permission.
+WORKFLOWS_ERR="HTTP 403: Resource not accessible by personal access token" setup
+grep -q "workflows: none on the default branch, nothing to disable" "$work/out" || fail "403 with no workflow not said: $(cat "$work/out")"
+(cd "$repo" && WORKFLOWS_ERR="HTTP 403: Resource not accessible by personal access token" WORKFLOW_FILES=1 "$cli" setup github) >"$work/out" 2>"$work/err" &&
+  fail "setup went on though workflows it cannot disable are on the default branch"
+grep -q "needs the Actions permission" "$work/err" || fail "missing permission not named: $(cat "$work/err")"
 
 # --ci actions: stored, nothing disabled, and our own workflow turned back on.
 jq '(.[] | select(.id == 14) | .state) = "disabled_manually"' "$FIX/workflows.json" >"$work/w" && mv "$work/w" "$FIX/workflows.json"

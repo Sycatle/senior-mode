@@ -1,0 +1,10 @@
+{
+  "name": "knowledge-pitfall",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "lint": "node tools/sort-imports.js --check",
+    "fix": "node tools/sort-imports.js"
+  }
+}

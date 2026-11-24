@@ -50,6 +50,8 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
   first; when coverage is weak, write characterization tests that pin today's behaviour and commit
   them before any change; then small steps, tests after each, one `refactor:` commit per step.
   A test that has to change means behaviour changed: revert. Features and fixes do not ride along.
+- **Pitfall.** A step retried twice over a constraint the code does not show becomes a
+  [knowledge note](configuration.md#knowledge-notes) in the pull request (at most 2, none otherwise).
 - **When.** Before writing or changing production code, for every bug fix, and for "refactor",
   "refacto", "nettoie".
 

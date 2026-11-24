@@ -63,6 +63,11 @@ Makes the failing tests pass with the simplest code, refactors, and commits atom
 changes a test to make it pass. It runs `senior-mode check` before reporting. It stops and reports
 when the work outgrows the ticket's size, or after two failed attempts at the same problem.
 
+When it retried a step twice or more because of a constraint the code does not show, its pull request also
+carries a [knowledge note](configuration.md#knowledge-notes) with `origin` set to its ticket: at most 2 notes
+(the most useful), none without such a pitfall, and an existing note with the same `paths` and `kind` is edited
+and re-verified instead of duplicated. `evals/knowledge/run.sh` measures it on a fixture ticket.
+
 ADR 0004 plans a retry on Opus with high effort after two failed attempts. The agent stops as
 planned, but the retry is the caller's job: `run` retries a failed ticket once on Opus
 (`autonomy.escalate`, [ADR 0014](../adr/0014-model-escalation-in-runs.md)); in other sessions, ask

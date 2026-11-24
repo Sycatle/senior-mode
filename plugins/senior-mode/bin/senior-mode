@@ -26,6 +26,8 @@ usage() {
 . "$LIB/release.sh"
 # shellcheck source=lib/check.sh
 . "$LIB/check.sh"
+# shellcheck source=lib/skeleton.sh
+. "$LIB/skeleton.sh"
 # shellcheck source=lib/guard.sh
 . "$LIB/guard.sh"
 # shellcheck source=lib/setup-board.sh

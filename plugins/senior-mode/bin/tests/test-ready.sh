@@ -23,6 +23,9 @@ case "$*" in
     # The Size of a ticket (item_get) or the board.
     if grep -q projectItems <<<"$q"; then cat "$FIX/item-$(jq -r '.variables.number' <<<"$q").json"; else cat "$FIX/board.json"; fi ;;
   "pr view "*) n=$(sed -E 's#^pr view ([0-9]+) .*#\1#' <<<"$*"); respond <"$FIX/pr-$n.json" ;;
+  "api -H Accept: application/vnd.github.raw repos/acme/app/contents/"*)
+    f=${4#repos/acme/app/contents/}; f=$FIX/content-$(sed 's#[/?].*##; s#^$#x#' <<<"$f")-$(basename "${f%%\?*}")
+    if [ -f "$f" ]; then cat "$f"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
   "api repos/acme/app/pulls/"*"/files"*) respond <"$FIX/files-$(sed -E 's#.*/pulls/([0-9]+)/files.*#\1#' <<<"$*").json" ;;
   "api repos/acme/app/pulls/"*"/commits"*) respond <"$FIX/commits-$(sed -E 's#.*/pulls/([0-9]+)/commits.*#\1#' <<<"$*").json" ;;
   "api repos/acme/app/pulls/"*) respond <"$FIX/pull-${2##*/}.json" ;;
@@ -324,6 +327,38 @@ delivery 322 $'Closes #330\nCloses #331' $'docs: note\n\nRefs #330' $'feat: code
 changes 322 docs/spikes/oauth.md:40 src/a.sh:10
 ready --pr 322 && fail "J: a batch with a spike and code is ready"
 said '#330 is a spike' || fail "J: the spike of a batch is not named: $(cat "$work/out")"
+
+# K: red skeletons (#311). A file of the pull request named after a ticket that still says "not implemented", or
+# that skips a test, keeps the ticket from being ready; a finished one, or one the head no longer has, does not.
+size 341 S
+printf '{"body": "## Acceptance criteria\\n- Given a, then b.\\n"}' >"$FIX/issue-341.json"
+skeleton_pr() { # pull-request files...
+  local n=$1
+  shift
+  delivery "$n" "Closes #341" "feat: a"
+  jq -nc --arg b "Closes #341" '{number: 0, body: $b, head: {sha: "abc123"}}' >"$FIX/pull-$n.json"
+  changes "$n" "$@"
+}
+content() { printf '%s\n' "$2" >"$FIX/content-${1%%/*}-${1##*/}"; }
+selfreview=$'\n\n## Self-review\n\n| Criterion | Evidence |\n|---|---|\n| 1 Given a | t |\n'
+skeleton_pr 340 src/a.sh:10 tests/ticket-341.test.ts:12
+content tests/ticket-341.test.ts 'it("Given a, then b", () => { expect("not implemented").toBe("implemented"); });'
+ready --pr 340 && fail "K: an unimplemented skeleton is ready"
+said 'pull request #340 is not ready: a red skeleton is still unimplemented or skipped in tests/ticket-341.test.ts \(#341\)' ||
+  fail "K: the skeleton is not named: $(cat "$work/out")"
+content tests/ticket-341.test.ts 'it.skip("Given a, then b", () => { expect(1).toBe(1); });'
+ready --pr 340 && fail "K: a skipped skeleton is ready"
+content tests/ticket-341.test.ts 'it("Given a, then b", () => { expect(add(1, 1)).toBe(2); });'
+delivery 340 $'Closes #341'"$selfreview" "feat: a"
+jq -nc --arg b $'Closes #341'"$selfreview" '{number: 0, body: $b, head: {sha: "abc123"}}' >"$FIX/pull-340.json"
+ready --pr 340 || fail "K: a finished skeleton is not ready: $(cat "$work/out")"
+# Another ticket's number is no match: ticket-3410 is not the skeleton of #341.
+content tests/ticket-3410.test.ts 'it("x", () => { expect("not implemented").toBe("implemented"); });'
+changes 340 src/a.sh:10 tests/ticket-3410.test.ts:12
+ready --pr 340 || fail "K: the skeleton of #3410 held #341: $(cat "$work/out")"
+# A skeleton the head no longer has is not read.
+changes 340 src/a.sh:10 tests/ticket-341.test.ts:0 tests/ticket_341_test.go:3
+ready --pr 340 || fail "K: a removed skeleton held the ticket: $(cat "$work/out")"
 
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

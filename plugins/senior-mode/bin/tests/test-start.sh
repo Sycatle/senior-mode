@@ -350,5 +350,68 @@ for bad in "abc|q|a" "310||a" "310|q|" "0|q|a"; do
 done
 (cd "$work" && "$cli" frame decide 310 q a) >"$work/out" 2>"$work/err" && fail "frame decide ran outside a repository"
 
+# #311: the Given/When/Then criteria of the body become failing test skeletons, the first commit of a new branch.
+body=$'## Context\n\nx\n\n## Acceptance criteria\n\n- Given a user, when she signs in, then she sees "home".\n- [ ] Given a bad token,\n  when it is sent, then the API says 401.\n- When nothing is said, then nothing happens.\n\n```\n- Given code, it is not read\n```\n'
+GH_ISSUE=$(jq -nc --arg b "$body" '{title: "feat: skeletons", state: "OPEN", labels: [{name: "type:feature"}], body: $b}')
+start 311 || fail "start with criteria failed: $(cat "$work/err")"
+sk=$wt/311
+[ "$(git -C "$sk" rev-list --count origin/main..HEAD)" -eq 1 ] || fail "skeletons are not one first commit: $(git -C "$sk" log --oneline origin/main..HEAD)"
+git -C "$sk" log -1 --format=%B | grep -qx 'Refs #311' || fail "skeleton commit does not name the ticket"
+[ -z "$(git -C "$sk" status --porcelain)" ] || fail "skeleton left the worktree dirty: $(git -C "$sk" status --porcelain)"
+grep -q '^skeleton tests/ticket-311.test.js (2 failing cases, first commit)' "$work/out" || fail "skeleton line: $(cat "$work/out")"
+[ "$(grep -c '^it(' "$sk/tests/ticket-311.test.js")" -eq 2 ] || fail "one case per Given criterion, none for the fence or a bare When: $(cat "$sk/tests/ticket-311.test.js")"
+grep -qF 'it("Given a user, when she signs in, then she sees \"home\".", () => {' "$sk/tests/ticket-311.test.js" || fail "a case is not named after its criterion: $(cat "$sk/tests/ticket-311.test.js")"
+grep -qF 'it("Given a bad token, when it is sent, then the API says 401.", () => {' "$sk/tests/ticket-311.test.js" || fail "a continuation line is not folded: $(cat "$sk/tests/ticket-311.test.js")"
+grep -q 'not implemented' "$sk/tests/ticket-311.test.js" || fail "a skeleton does not fail"
+# Rerunning adds nothing; a ticket with no criterion, or no feature or fix, gets no skeleton.
+start 311 || fail "rerun with a skeleton failed"
+[ "$(git -C "$sk" rev-list --count origin/main..HEAD)" -eq 1 ] || fail "rerun added a commit"
+GH_ISSUE=$(jq -nc '{title: "feat: plain", state: "OPEN", labels: [{name: "type:feature"}], body: "## Acceptance criteria\n\n- It works.\n"}')
+start 312 || fail "start without criteria failed: $(cat "$work/err")"
+[ "$(git -C "$wt/312" rev-list --count origin/main..HEAD)" -eq 0 ] || fail "a ticket with no Given criterion got a commit"
+GH_ISSUE=$(jq -nc --arg b "$body" '{title: "chore: tidy", state: "OPEN", labels: [{name: "type:chore"}], body: $b}')
+start 313 || fail "start of a chore failed: $(cat "$work/err")"
+[ "$(git -C "$wt/313" rev-list --count origin/main..HEAD)" -eq 0 ] || fail "a chore got a skeleton"
+# A commit the project refuses (a hook) leaves nothing behind and does not stop start.
+GH_ISSUE=$(jq -nc --arg b "$body" '{title: "feat: hooked", state: "OPEN", labels: [{name: "type:feature"}], body: $b}')
+mkdir -p "$work/hooks"
+printf '#!/bin/sh\nexit 1\n' >"$work/hooks/commit-msg"
+chmod +x "$work/hooks/commit-msg"
+git -C "$repo" config core.hooksPath "$work/hooks"
+start 314 || fail "start with a refusing hook failed: $(cat "$work/err")"
+git -C "$repo" config --unset core.hooksPath
+grep -q 'could not commit the test skeletons' "$work/err" || fail "a refused commit is not said: $(cat "$work/err")"
+[ -z "$(git -C "$wt/314" status --porcelain)" ] || fail "a refused skeleton left files: $(git -C "$wt/314" status --porcelain)"
+unset GH_ISSUE
+
+# The skeleton of each preset names its cases after the criteria and fails.
+skel() { bash -c 'source "$1/lib/common.sh"; source "$1/lib/skeleton.sh"; shift; skeleton_render "$@"' _ "$(dirname "$cli")" "$@"; }
+crit=$'Given a user, when she signs in, then 100% of "x" works\nGiven b, when c, then d'
+skel python 7 py <<<"$crit" >"$work/t_py.py"
+grep -q '^def test_ticket7_1_given_a_user_when_she_signs_in_th' "$work/t_py.py" || fail "python case name: $(cat "$work/t_py.py")"
+if command -v python3 >/dev/null; then
+  python3 -m pytest --version >/dev/null 2>&1 && { (cd "$work" && python3 -m pytest -q t_py.py >/dev/null 2>&1) && fail "a python skeleton passes"; }
+  python3 -m py_compile "$work/t_py.py" 2>/dev/null || fail "python skeleton does not compile"
+fi
+skel go 7 go <<<"$crit" >"$work/t_go.go"
+grep -q '^func TestTicket7_2_given_b_when_c_then_d(t \*testing.T) {' "$work/t_go.go" || fail "go case name: $(cat "$work/t_go.go")"
+grep -q '^package tests' "$work/t_go.go" || fail "go package: $(cat "$work/t_go.go")"
+skel rust 7 rs <<<"$crit" >"$work/t_rs.rs"
+grep -q '^fn ticket_7_2_given_b_when_c_then_d() {' "$work/t_rs.rs" || fail "rust case name: $(cat "$work/t_rs.rs")"
+grep -q '#\[test\]' "$work/t_rs.rs" || fail "rust test attribute"
+skel node 7 ts <<<"$crit" >"$work/t_ts.ts"
+grep -q '^import { expect, it } from "vitest";' "$work/t_ts.ts" || fail "vitest import: $(cat "$work/t_ts.ts")"
+skel node 7 js <<<"$crit" >"$work/t_js.js"
+grep -q 'vitest' "$work/t_js.js" && fail "a jest skeleton imports vitest"
+skel generic 7 sh <<<"$crit" >"$work/t.sh"
+bash -n "$work/t.sh" || fail "bash skeleton does not parse: $(cat "$work/t.sh")"
+bash "$work/t.sh" >"$work/t.out" 2>&1 && fail "a bash skeleton passes"
+grep -q '^FAIL: Given b, when c, then d: not implemented' "$work/t.out" || fail "bash skeleton output: $(cat "$work/t.out")"
+[ "$(grep -c 'not implemented' "$work/t.out")" -eq 2 ] || fail "bash skeleton does not fail once per criterion: $(cat "$work/t.out")"
+if command -v go >/dev/null; then
+  mkdir -p "$work/gomod/tests" && printf 'module x\n\ngo 1.21\n' >"$work/gomod/go.mod" && cp "$work/t_go.go" "$work/gomod/tests/ticket_7_test.go"
+  (cd "$work/gomod" && go test ./... >/dev/null 2>&1) && fail "a go skeleton passes"
+fi
+
 [ "$failures" -eq 0 ] && echo "start: all cases pass"
 exit "$failures"

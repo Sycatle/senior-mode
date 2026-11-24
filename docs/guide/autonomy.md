@@ -586,6 +586,10 @@ request that closes no ticket is held to neither.
   cell starting with `#<ticket>.<k>` (`<k>` alone for a single ticket), its last cell the evidence: a test name,
   or a command and its result. A missing row or an empty evidence (`-`, `TODO`, `n/a`) is named. A ticket with
   no acceptance criteria needs no row. It adds to the independent review, never replaces it (ADR 0019).
+- **Red skeletons** (#311): `senior-mode start` turns each Given/When/Then criterion of the ticket into a failing test
+  (see [`start`](commands.md#the-senior-mode-script)); a file of the pull request named after a closed ticket
+  (`ticket-<n>`, `ticket_<n>`) that still says `not implemented`, or skips a test (`.skip(`, `.todo(`, `xit(`,
+  `@pytest.mark.skip`, `t.Skip(`, `#[ignore]`, `todo!`), is named and the pull request is not ready.
 - **Red tests** (#306), under `run` and `serve` only: a pull request that closes a `type:feature` or `type:bug` ticket needs a
   record for it, `red-tests` (the `test-author` session of an M ticket) or `red-verified` (`senior-mode red-tests verify <n>`):
   its added tests fail on the base and pass on the head, and every file the record lists is in the pull request.

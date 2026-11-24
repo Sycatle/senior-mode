@@ -71,7 +71,10 @@ A commit-msg hook of the project's own is kept, and ours goes to `.githooks/comm
 2. If it says `created from the skeleton`, fill it from the scout agent's commands, code map and
    pitfalls. If the repository has an `AGENTS.md`, `CLAUDE.md` imports it (`@AGENTS.md`): keep the
    instructions there and never copy them. If it reports over 80 lines, propose cuts.
-3. Offer the status line.
+3. If it prints `lsp:` lines, relay them (server, the command that enables it in Claude Code; nothing is installed)
+   and ask whether the user enables it. Record the answer: `senior-mode setup answers --lsp yes|no`; it is not
+   proposed again. Run the enabling command yourself only on a yes.
+4. Offer the status line.
 
 `setup repo` adds `.claude/agent-memory/` to `.gitignore` (printed once). The agents' project memory
 is written in the checkout the session runs in, never in a pull request, so it is kept on the machine

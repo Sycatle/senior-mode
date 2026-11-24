@@ -32,6 +32,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | Key | Default | Used for |
 |---|---|---|
 | `language` | `en` | Language of the templates (`en` or `fr`) and of what Claude writes for you; setup proposes the language of your `CLAUDE.md` or conversation and writes it before the templates (`senior-mode setup answers --language`) |
+| `lsp` | unset | The answer to the language server proposal of `setup repo`: `true` when you enable it in Claude Code, `false` when you decline; once set, in either value, setup stops proposing it (`senior-mode setup answers --lsp yes\|no`). Setup installs nothing |
 | `preset` | detected | `node` with a `package.json`, else `go`, `rust` or `python` from their manifest, else `generic`; a stored value wins |
 | `commands` | detected or asked | `lint`, `typecheck`, `test`, `build`, and `e2e` for node; `format` for python and rust; `install` (no check), the command `senior-mode start` runs in a new worktree: the lockfile's `npm ci`, `pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile` or `bun install --frozen-lockfile` for node, `uv sync` or `poetry install` for python, `go mod download`, `cargo fetch`; change it with `setup repo --command install=...` |
 | `framework` | none | `next` when Next.js is a dependency; the node preset then adds `middleware.*`, `src/middleware.*`, `proxy.*` and `src/proxy.*` to `protected` |

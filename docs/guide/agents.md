@@ -46,8 +46,9 @@ what it could not verify. Used during framing when an option depends on outside 
 
 Designs before code. It compares at least two real alternatives for each hard-to-reverse choice,
 writes the spec and ADRs, and splits work into vertical slices of size S or M with their blockers.
-It writes only under `docs/` (by instruction; during `frame` a hook also enforces it). It keeps
-recurring design findings in its project memory.
+It writes only under `docs/` (by instruction; during `frame` a hook also enforces it). Its project
+memory is a draft, not the record: `retro` promotes each entry to a [knowledge note](configuration.md#knowledge-notes)
+or drops it.
 
 ## `test-author`
 
@@ -78,9 +79,9 @@ Claude to retry on Opus.
 Judges a pull request it did not write, from an empty context. It reads the diff, the linked issue
 and spec, and the tests, applies the [`review`](skills.md#review) skill, posts one comment and sets
 the status `senior-mode/review`; it is the only role that may (`SENIOR_MODE_ROLE=reviewer`, see
-[Session roles](autonomy.md#session-roles)). It cannot edit files. It keeps recurring findings in its project
-memory (in `.claude/agent-memory/`, git-ignored by `setup repo`: it stays on the machine and `retro`
-reads it there).
+[Session roles](autonomy.md#session-roles)). It cannot edit files. Its project memory (in `.claude/agent-memory/`,
+git-ignored by `setup repo`: it stays on the machine) is a draft, not the record: `retro` reads it there and
+promotes each entry to a [knowledge note](configuration.md#knowledge-notes) or drops it.
 
 Each finding of its review ends with `<!-- finding: <slug> -->`, the slug stable for the same rule on the same
 area. When a finding's slug is already on an earlier merged pull request that changed files under the same

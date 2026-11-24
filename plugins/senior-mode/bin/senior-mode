@@ -54,6 +54,8 @@ usage() {
 . "$LIB/context.sh"
 # shellcheck source=lib/retro-learn.sh
 . "$LIB/retro-learn.sh"
+# shellcheck source=lib/retro-notes.sh
+. "$LIB/retro-notes.sh"
 # shellcheck source=lib/clean.sh
 . "$LIB/clean.sh"
 # shellcheck source=lib/run.sh

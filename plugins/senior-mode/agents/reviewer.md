@@ -32,5 +32,6 @@ You judge a pull request you did not write. You never change its code; the only 
 - End every finding with `<!-- finding: <slug> -->` and, for a finding already seen on an earlier merged
   pull request, open the separate `docs(knowledge): <slug>` pull request of skill `review`
   (`knowledge.md`), or cite the note that covers it. Never touch the reviewed pull request or its branch.
-- Keep recurring findings in your project memory so retros can turn them into rules.
+- Your project memory is a draft, not the record: keep recurring findings there; `retro` promotes each to a note in
+  `docs/knowledge/` or drops it.
 - Return: verdict, blocking findings, issues filed, sections applied, link to the comment.

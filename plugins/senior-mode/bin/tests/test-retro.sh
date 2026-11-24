@@ -161,7 +161,7 @@ touch -d "20 days ago" "$checks/ccccccc3333333333333333333333333333333333"
 } >"$repo/.git/senior-mode/usage.jsonl"
 
 run() { : >"$GH_LOG"; rm -f "$FIX/cause-labels"; : >"$FIX/board-bodies"; : >"$FIX/history-bodies"; : >"$FIX/status-updates"; (cd "$repo" && "$cli" "$@") >"$work/out" 2>"$work/err"; }
-json() { jq -c "$1" "$work/out"; }
+json() { if [ "$1" = -r ]; then jq -r "$2" "$work/out"; else jq -c "$1" "$work/out"; fi; }
 
 run retro --json || fail "retro --json failed: $(cat "$work/err")"
 [ "$(grep -c '^api ' "$GH_LOG")" -eq 8 ] || fail "retro makes $(grep -c '^api ' "$GH_LOG") gh calls, wanted 8 (the two alert lists, board, history, the status update, three cause labels)"
@@ -459,6 +459,55 @@ grep -q 'disabled on this repository' "$work/err" || fail "alerts error not said
 grep -q 'Done in the last' "$work/out" || fail "retro gave no report after an alerts error"
 echo '[]' >"$FIX/dependabot.json"; echo '[]' >"$FIX/secret-scanning.json"
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
+
+# #340: the notes to merge or delete and the agents' drafts. Facts only: nothing is written in the repository.
+mkdir -p "$repo/docs/knowledge" "$repo/src/billing" "$repo/.claude/agent-memory/reviewer" "$repo/.claude/agent-memory/architect"
+touch "$repo/src/billing/money.js" "$repo/src/app.js"
+knote() { # <slug> <paths-json> <kind> <origin> <verified>
+  printf -- '---\npaths: %s\nverified: %s\norigin: "%s"\nkind: %s\n---\n\n# %s\n\nBody.\n' "$2" "$5" "$4" "$3" "$1" >"$repo/docs/knowledge/$1.md"
+}
+knote rounding '["src/billing/**", "src/app.js"]' pitfall '#41' 2026-10-01
+knote rounding-again '["src/app.js", "src/billing/**"]' pitfall '#57, #41' 2026-09-01
+knote rounding-howto '["src/app.js", "src/billing/**"]' howto '#60' 2026-11-01
+knote lonely '["src/billing/money.js"]' convention 'retro' 2026-11-01
+knote moved '["src/old/**"]' pitfall '#70' 2026-11-01
+knote moved-too '["src/old/**"]' pitfall '#71' 2026-11-01
+knote broken '["src/billing/**"]' nonsense '#72' 2026-11-01
+printf -- '---\nkind: pitfall\n---\n' >"$repo/docs/knowledge/no-paths.md"
+echo '.claude/agent-memory/' >>"$repo/.git/info/exclude"
+git -C "$repo" add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "docs: notes"
+printf 'A finding.\n' >"$repo/.claude/agent-memory/reviewer/recurring.md"
+printf -- '- [Recurring](recurring.md)\n' >"$repo/.claude/agent-memory/reviewer/MEMORY.md"
+printf 'A design habit.\n' >"$repo/.claude/agent-memory/architect/habits.md"
+git -C "$repo" worktree add -q "$work/wt" -b feat/1-x
+mkdir -p "$work/wt/.claude/agent-memory/reviewer"
+printf 'Another.\n' >"$work/wt/.claude/agent-memory/reviewer/other.md"
+run retro --json || fail "retro with notes failed: $(cat "$work/err")"
+[ "$(json .knowledge.notes)" -eq 8 ] || fail "knowledge notes: $(json .knowledge)"
+[ "$(json '.knowledge.merges | length')" -eq 1 ] || fail "knowledge merges: $(json .knowledge.merges)"
+[ "$(json '.knowledge.merges[0] | [.kind, .notes, .keep, .origin, .verified]')" = \
+  '["pitfall",["docs/knowledge/rounding-again.md","docs/knowledge/rounding.md"],"docs/knowledge/rounding-again.md","#41, #57","2026-09-01"]' ] ||
+  fail "knowledge merge: $(json '.knowledge.merges[0]')"
+[ "$(json '.knowledge.deletes | map(.note)')" = '["docs/knowledge/moved-too.md","docs/knowledge/moved.md"]' ] ||
+  fail "knowledge deletes: $(json .knowledge.deletes)"
+[ "$(json '.knowledge.drafts | map(.agent) | sort')" = '["architect","reviewer","reviewer"]' ] || fail "knowledge drafts: $(json .knowledge.drafts)"
+[ "$(json '.knowledge.drafts[] | select(.file | endswith("recurring.md")) | .index | endswith("reviewer/MEMORY.md")')" = true ] ||
+  fail "a draft lacks its MEMORY.md index: $(json .knowledge.drafts)"
+[ "$(json '.knowledge.drafts | map(.file | endswith("MEMORY.md")) | any')" = false ] || fail "MEMORY.md is a draft: $(json .knowledge.drafts)"
+[ "$(json -r '.knowledge.date')" = "$(date -u +%F)" ] || fail "knowledge date: $(json .knowledge.date)"
+run retro || fail "plain retro with notes failed: $(cat "$work/err")"
+for want in "Knowledge (8 notes, 3 agent drafts)" "merge: docs/knowledge/rounding-again.md, docs/knowledge/rounding.md" \
+  "delete: docs/knowledge/moved.md" "draft: architect:"; do
+  grep -qF -- "$want" "$work/out" || fail "plain retro lacks '$want': $(cat "$work/out")"
+done
+[ -z "$(git -C "$repo" status --porcelain)" ] || fail "retro wrote in the repository: $(git -C "$repo" status --porcelain)"
+grep -qE 'pr create|git push' "$GH_LOG" && fail "retro opened a pull request by itself: $(cat "$GH_LOG")"
+git -C "$repo" worktree remove --force "$work/wt"
+rm -rf "$repo/docs" "$repo/src" "$repo/.claude/agent-memory"
+git -C "$repo" reset -q --hard HEAD~1
+run retro --json || fail "retro without notes failed: $(cat "$work/err")"
+[ "$(json '.knowledge | [.notes, (.merges | length), (.deletes | length), (.drafts | length)]')" = "[0,0,0,0]" ] || fail "knowledge with no notes: $(json .knowledge)"
 
 # Errors.
 run retro --since soon && fail "accepted --since soon"

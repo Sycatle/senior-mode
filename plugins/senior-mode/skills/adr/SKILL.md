@@ -23,6 +23,8 @@ commit message is enough there.
 - At least two real alternatives with their trade-offs, including "do nothing" when it is credible.
 - Consequences include the bad ones.
 - Link both ways: the spec lists the ADR in `adrs`, the ADR names its spec.
+- `paths`: the globs of the code the decision governs (`["src/billing/**"]`), derived from the spec or the
+  diff, asked when unclear; a list of strings, `senior-mode check` refuses anything else.
 - Write in the project language, plain words; a non-developer must understand the Decision section.
 
 ## Status

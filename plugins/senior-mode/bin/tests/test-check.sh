@@ -445,6 +445,82 @@ grep -q "Bad_Name.md: file name is not a kebab-case slug" "$work/out" || fail "s
 rm -rf "$repo/docs/knowledge"
 run check || fail "check fails once the notes are gone: $(cat "$work/out")"
 
+# Architecture rules (#337): forbidImport (relative, aliased, Python and Go imports), maxLines and banned fail the check
+# naming rule, file and line; a baseline tolerates the existing violations, warns about the fixed ones and
+# --update-baseline only removes; a rule with no id or an unknown kind is a configuration error.
+mkdir -p "$repo/arch/ui" "$repo/arch/db" "$repo/arch/lib"
+printf 'import a from "./local";\nimport { q } from "../db/x";\n' >"$repo/arch/ui/a.ts"
+printf 'import b from "@/db/x";\nexport const k = 1;\n' >"$repo/arch/ui/b.ts"
+printf 'import os\nfrom arch.db import x\n' >"$repo/arch/ui/c.py"
+printf 'package ui\n\nimport (\n\t"fmt"\n\t"example.com/app/arch/db"\n)\n' >"$repo/arch/ui/d.go"
+printf 'export const x = 1;\n' >"$repo/arch/db/x.ts"
+printf 'import { z } from "./z";\n' >"$repo/arch/lib/clean.ts"
+printf 'one\ntwo\nthree\nfour\nfive\n' >"$repo/arch/lib/big.txt"
+printf 'console.log("a");\nconst ok = 1;\n  console.log("b");\n' >"$repo/arch/lib/noisy.ts"
+printf '// a comment\n{"compilerOptions": {\n  "paths": {"@/*": ["./arch/*"]}}}\n' >"$repo/tsconfig.json"
+printf 'module example.com/app\n' >"$repo/go.mod"
+commit -m "feat: arch fixtures"
+rules='{"id":"ui-not-db","forbidImport":{"from":"arch/ui/**","to":"arch/db/**"},"why":"ui goes through services"}'
+cfg() { config "{\"audit\":false,\"checks\":[{\"name\":\"lint\",\"run\":\"true\"}],\"architecture\":{\"rules\":[$1]}}"; }
+cfg "$rules"
+run check && fail "a forbidden import passes"
+for want in "ui-not-db: arch/ui/a.ts:2: imports ../db/x, which resolves under arch/db/\*\* (ui goes through services)" \
+  "ui-not-db: arch/ui/b.ts:1: imports @/db/x" "ui-not-db: arch/ui/c.py:2: imports arch.db" "ui-not-db: arch/ui/d.go:5: imports example.com/app/arch/db"; do
+  grep -q -- "$want" "$work/out" || fail "violation not reported: $want: $(cat "$work/out")"
+done
+grep -q "arch/ui/a.ts:1:\|c.py:1:\|d.go:4:" "$work/out" && fail "an import that is allowed is reported: $(cat "$work/out")"
+grep -q "^FAIL  architecture " "$work/out" || fail "step not named: $(cat "$work/out")"
+cfg '{"id":"ui-not-db","forbidImport":{"from":"arch/lib/**","to":"arch/db/**"}}'
+run check || fail "a rule with no violation fails: $(cat "$work/out")"
+grep -q "^ok    architecture " "$work/out" || fail "architecture not reported ok: $(cat "$work/out")"
+cfg '{"id":"size","maxLines":3,"paths":["arch/lib/**"],"why":"small files"},{"id":"no-console","banned":"console\\.log","paths":["arch/lib/**"]}'
+run check && fail "maxLines and banned pass"
+grep -q "size: arch/lib/big.txt:4: has 5 lines, over the limit of 3 (small files)" "$work/out" || fail "maxLines: $(cat "$work/out")"
+grep -q 'no-console: arch/lib/noisy.ts:1: matches banned /console\\.log/: console.log("a");' "$work/out" || fail "banned line 1: $(cat "$work/out")"
+grep -q "no-console: arch/lib/noisy.ts:3: " "$work/out" || fail "banned line 3: $(cat "$work/out")"
+grep -q "no-console: arch/lib/clean.ts" "$work/out" && fail "a clean file is reported"
+# The baseline: what it lists is tolerated, the rest fails; a fixed entry is a warning.
+cfg '{"id":"size","maxLines":3,"paths":["arch/lib/**"]},{"id":"no-console","banned":"console\\.log","paths":["arch/lib/**"]}'
+printf '{"violations":[{"rule":"size","file":"arch/lib/big.txt"},{"rule":"no-console","file":"arch/lib/noisy.ts","count":2}]}\n' >"$repo/.claude/architecture-baseline.json"
+run check || fail "baselined violations fail: $(cat "$work/out")"
+printf 'console.log("c");\n' >>"$repo/arch/lib/noisy.ts"
+run check && fail "a violation beyond the baseline passes"
+grep -q "no-console: arch/lib/noisy.ts:4: .*(the baseline allows 2)" "$work/out" || fail "the new violation is not named: $(cat "$work/out")"
+printf 'console.log("a");\n' >"$repo/arch/lib/noisy.ts"
+printf 'one\n' >"$repo/arch/lib/big.txt"
+run check || fail "a fixed violation fails the check: $(cat "$work/out")"
+grep -q "warning: architecture baseline: size in arch/lib/big.txt no longer violates, remove it" "$work/out" || fail "fixed entry not warned: $(cat "$work/out")"
+grep -q "warning: architecture baseline: no-console in arch/lib/noisy.ts has 1 violations, the baseline allows 2" "$work/out" || fail "lowerable entry not warned: $(cat "$work/out")"
+run check --update-baseline || fail "--update-baseline fails with nothing to add: $(cat "$work/out")"
+[ "$(jq -c '.violations' "$repo/.claude/architecture-baseline.json")" = '[{"rule":"no-console","file":"arch/lib/noisy.ts","count":1}]' ] ||
+  fail "baseline not pruned: $(cat "$repo/.claude/architecture-baseline.json")"
+# It never adds: a new violation is refused, the file keeps its entries.
+printf 'console.log("z");\n' >"$repo/arch/lib/new.ts"
+before=$(cat "$repo/.claude/architecture-baseline.json")
+run check --update-baseline && fail "--update-baseline accepts a new violation"
+grep -q "no-console: arch/lib/new.ts:1: " "$work/out" || fail "the refused violation is not named: $(cat "$work/out")"
+[ "$(cat "$repo/.claude/architecture-baseline.json")" = "$before" ] || fail "the baseline grew: $(cat "$repo/.claude/architecture-baseline.json")"
+rm "$repo/arch/lib/new.ts"
+printf 'x\n' >"$repo/arch/lib/noisy.ts"
+run check --update-baseline || fail "--update-baseline: $(cat "$work/out")"
+[ "$(jq -c '.violations' "$repo/.claude/architecture-baseline.json")" = '[]' ] || fail "the fixed entry stays: $(cat "$repo/.claude/architecture-baseline.json")"
+rm "$repo/.claude/architecture-baseline.json"
+run check --update-baseline && fail "--update-baseline creates a baseline"
+[ ! -e "$repo/.claude/architecture-baseline.json" ] || fail "--update-baseline created the file"
+# A rule with no id, an unknown kind, two kinds or no part is a configuration error.
+for bad in '{"maxLines":3,"paths":["a"]}|needs an id' '{"id":"r","forbidImpurt":{"from":"a","to":"b"}}|rule r: unknown kind or key "forbidImpurt"' \
+  '{"id":"r","maxLines":3,"banned":"x","paths":["a"]}|rule r: has several kinds' '{"id":"r","forbidImport":{"from":"a"}}|rule r: forbidImport needs a from and a to' \
+  '{"id":"r","maxLines":3}|rule r: needs paths' '{"id":"r"}|rule r: has no kind' '{"id":"r","banned":"x","paths":["a"]},{"id":"r","banned":"y","paths":["a"]}|rule r: the id is used twice'; do
+  cfg "${bad%%|*}"
+  run check && fail "a bad rule passes: ${bad%%|*}"
+  grep -q "configuration error: .*${bad#*|}" "$work/out" || fail "configuration error not said for ${bad%%|*}: $(cat "$work/out")"
+done
+cfg '{"id":"r","banned":"(","paths":["arch/**"]}'
+run check && fail "a banned that is no regular expression passes"
+grep -q "banned is not a valid regular expression" "$work/out" || fail "bad regular expression not said: $(cat "$work/out")"
+rm -rf "$repo/arch" "$repo/tsconfig.json" "$repo/go.mod"
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
+
 # Context hygiene (#314, #335): an oversized CLAUDE.md or SKILL.md, or an ADR whose paths is no list of
 # strings, fails; a dead path cited in a CLAUDE.md is a warning; a bare name is not a path.
 run context-hygiene || fail "context hygiene fails on a clean repo: $(cat "$work/out")"

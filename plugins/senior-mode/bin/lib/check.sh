@@ -251,6 +251,280 @@ knowledge_check() {
   [ -z "$problems" ] || { printf '%s' "$problems"; return 1; }
 }
 
+# The path $1 without its `.` and `..` segments; a `..` past the root is dropped.
+path_norm() {
+  local seg out=() parts
+  IFS=/ read -ra parts <<<"$1"
+  for seg in "${parts[@]}"; do
+    case $seg in
+      '' | .) ;;
+      ..) [ "${#out[@]}" -eq 0 ] || out=("${out[@]:0:${#out[@]}-1}") ;;
+      *) out+=("$seg") ;;
+    esac
+  done
+  (IFS=/ && printf '%s\n' "${out[*]}")
+}
+
+# The imports of the file $1 in the language $2 (js, py or go), as `line<TAB>specifier` rows. A Python
+# specifier is dotted, with its leading dots when relative, and `from a import b` gives `a` and `a.b`.
+import_specs() {
+  local q="'" re
+  case $2 in
+    js)
+      re="(from[[:space:]]*|import[[:space:]]*\\(?[[:space:]]*|require[[:space:]]*\\([[:space:]]*)[\"$q][^\"$q]+[\"$q]"
+      grep -noE "$re" "$1" | sed -E "s/^([0-9]+):.*[\"$q]([^\"$q]+)[\"$q]\$/\\1\\t\\2/" || true
+      ;;
+    py)
+      awk '
+        function emit(spec) { if (spec != "") print NR "\t" spec }
+        function names(list, mod,    a, n, i, nm) {
+          sub(/#.*$/, "", list); gsub(/[()]/, "", list)
+          n = split(list, a, ",")
+          for (i = 1; i <= n; i++) {
+            nm = a[i]; sub(/[[:space:]]+as[[:space:]].*$/, "", nm); gsub(/^[[:space:]]+|[[:space:]]+$/, "", nm)
+            if (mod == "") emit(nm)
+            else if (nm ~ /^[A-Za-z_][A-Za-z0-9_]*$/) emit(mod (mod ~ /\.$/ ? "" : ".") nm)
+          }
+        }
+        /^[[:space:]]*from[[:space:]]+[.A-Za-z0-9_]+[[:space:]]+import[[:space:]]/ {
+          line = $0; sub(/^[[:space:]]*from[[:space:]]+/, "", line)
+          mod = line; sub(/[[:space:]].*$/, "", mod); emit(mod)
+          sub(/^[^[:space:]]+[[:space:]]+import[[:space:]]+/, "", line); names(line, mod)
+        }
+        /^[[:space:]]*import[[:space:]]+[A-Za-z_]/ { line = $0; sub(/^[[:space:]]*import[[:space:]]+/, "", line); names(line, "") }' "$1"
+      ;;
+    go)
+      awk '
+        /^[[:space:]]*import[[:space:]]*\(/ { blk = 1; next }
+        blk && /^[[:space:]]*\)/ { blk = 0; next }
+        (blk || /^[[:space:]]*import[[:space:]]+([A-Za-z_.]+[[:space:]]+)?"/) && match($0, /"[^"]+"/) {
+          print NR "\t" substr($0, RSTART + 1, RLENGTH - 2) }' "$1"
+      ;;
+  esac
+}
+
+# The repository paths the import $2 of the file $1 (language $3) can name, one per line: a relative specifier from
+# the directory of the file, an alias or a `baseUrl` import as the tsconfig says, a dotted Python module from the
+# root, a Go import below the module path. $ARCH_ALIASES (`pattern<TAB>target` rows), $ARCH_BASEURL and $ARCH_GOMOD
+# are set by architecture_check, which this runs under.
+import_targets() {
+  local file=$1 spec=$2 lang=$3 pat target rest dots mod i
+  case $lang in
+    js)
+      if [[ $spec == .* ]]; then
+        path_norm "$(dirname "$file")/$spec"
+        return
+      fi
+      while IFS=$'\t' read -r pat target; do
+        [ -n "$pat" ] || continue
+        if [[ $pat == *'*' ]]; then
+          [[ $spec == "${pat%\*}"* ]] || continue
+          rest=${spec#"${pat%\*}"}
+          path_norm "$ARCH_BASEURL/${target%\*}$rest"
+        elif [ "$pat" = "$spec" ]; then
+          path_norm "$ARCH_BASEURL/$target"
+        fi
+      done <<<"$ARCH_ALIASES"
+      [ -z "$ARCH_BASEURL" ] || path_norm "$ARCH_BASEURL/$spec"
+      ;;
+    py)
+      dots=${spec%%[!.]*}
+      mod=${spec#"$dots"}
+      mod=${mod//./\/}
+      if [ -n "$dots" ]; then
+        rest=$(dirname "$file")
+        for ((i = 1; i < ${#dots}; i++)); do rest=$(dirname "$rest"); done
+        path_norm "$rest/$mod"
+      else
+        path_norm "$mod"
+      fi
+      ;;
+    go)
+      [ -n "$ARCH_GOMOD" ] || return 0
+      if [ "$spec" = "$ARCH_GOMOD" ]; then echo .; elif [[ $spec == "$ARCH_GOMOD/"* ]]; then path_norm "${spec#"$ARCH_GOMOD/"}"; fi
+      ;;
+  esac
+}
+
+# The names a path $1 can have as an import: itself, as a directory, with each extension, as the index of a directory.
+path_variants() {
+  local e
+  printf '%s\n' "$1" "$1/"
+  for e in ts tsx js jsx mjs cjs mts cts vue svelte py go; do printf '%s.%s\n' "$1" "$e"; done
+  for e in ts tsx js jsx; do printf '%s/index.%s\n' "$1" "$e"; done
+  printf '%s/__init__.py\n' "$1"
+}
+
+# What is wrong with the architecture rules $1 (a JSON list), one problem per line; nothing when they are fine.
+# shellcheck disable=SC2016 # a jq program, not shell
+architecture_rules_errors() {
+  jq -r '
+    def kinds: ["forbidImport", "maxLines", "banned"];
+    def str: type == "string" and length > 0;
+    if type != "array" then "architecture.rules must be a list of rules"
+    else
+      (to_entries[] | .key as $i | .value as $r
+        | if ($r | type) != "object" then "architecture.rules[\($i)] must be an object"
+          else (if ($r.id | str) then "rule \($r.id)" else "architecture.rules[\($i)]" end) as $l
+            | (if ($r.id | str) then empty else "\($l): needs an id" end),
+              (($r | keys) - (kinds + ["id", "paths", "why"]) | .[] | "\($l): unknown kind or key \"\(.)\" (a rule has an id and exactly one of \(kinds | join(", ")))"),
+              ([kinds[] | select(. as $k | $r | has($k))]) as $k
+              | (if ($k | length) == 0 and ((($r | keys) - ["id", "paths", "why"]) | length) == 0
+                  then "\($l): has no kind (one of \(kinds | join(", ")))"
+                  elif ($k | length) > 1 then "\($l): has several kinds (\($k | join(", "))), a rule has exactly one" else empty end),
+              (if ($r | has("forbidImport")) and (($r.forbidImport | type) != "object" or ($r.forbidImport.from | str | not) or ($r.forbidImport.to | str | not))
+                then "\($l): forbidImport needs a from and a to glob" else empty end),
+              (if ($r | has("maxLines")) and (($r.maxLines | type) != "number" or $r.maxLines < 1 or ($r.maxLines | floor) != $r.maxLines)
+                then "\($l): maxLines must be a positive whole number" else empty end),
+              (if ($r | has("banned")) and ($r.banned | str | not) then "\($l): banned must be a regular expression" else empty end),
+              (if ($r | has("maxLines") or has("banned")) and (($r.paths | type) != "array" or ($r.paths | length) == 0 or ($r.paths | any(.[]; str | not)))
+                then "\($l): needs paths, a non-empty list of globs" else empty end)
+          end),
+      ([.[] | select(type == "object") | .id | select(str)] | group_by(.) | .[] | select(length > 1) | "rule \(.[0]): the id is used twice")
+    end' <<<"$1"
+}
+
+# The violations of the architecture rules $2 (a JSON list, already valid) in the repository $1, as
+# `rule<TAB>file<TAB>line<TAB>message` rows. A `forbidImport` rule reads the imports of the files under `from`
+# (JavaScript and TypeScript, Python, Go) and resolves them; `maxLines` and `banned` read the files `paths` matches.
+# Fails (after printing why) when a `banned` expression is not a regular expression.
+architecture_violations() {
+  local root=$1 rules=$2 files i n id kind from to why msg globs matched f line spec lang recs c v max re hits
+  local ARCH_ALIASES="" ARCH_BASEURL="" ARCH_GOMOD="" cfg cleaned
+  files=$(git -C "$root" -c core.quotePath=false ls-files -co --exclude-standard)
+  for cfg in tsconfig.json jsconfig.json; do
+    [ -f "$root/$cfg" ] || continue
+    cleaned=$(sed -E 's#^[[:space:]]*//.*$##' "$root/$cfg")
+    ARCH_BASEURL=$(jq -r '.compilerOptions.baseUrl // empty' <<<"$cleaned" 2>/dev/null) || ARCH_BASEURL=""
+    ARCH_ALIASES=$(jq -r '(.compilerOptions.paths // {}) | to_entries[] | [.key, (.value[0] // "")] | @tsv' <<<"$cleaned" 2>/dev/null) || ARCH_ALIASES=""
+    break
+  done
+  [ ! -f "$root/go.mod" ] || ARCH_GOMOD=$(sed -n 's/^module[[:space:]]\{1,\}//p' "$root/go.mod" | head -n 1 | tr -d '\r"')
+  n=$(jq 'length' <<<"$rules")
+  for ((i = 0; i < n; i++)); do
+    id=$(jq -r ".[$i].id" <<<"$rules")
+    why=$(jq -r ".[$i].why // empty" <<<"$rules")
+    why=${why:+ ($why)}
+    kind=$(jq -r ".[$i] | if has(\"forbidImport\") then \"forbidImport\" elif has(\"maxLines\") then \"maxLines\" else \"banned\" end" <<<"$rules")
+    if [ "$kind" = forbidImport ]; then
+      from=$(jq -c ".[$i].forbidImport | [.from]" <<<"$rules")
+      to=$(jq -c ".[$i].forbidImport | [.to]" <<<"$rules")
+      recs=$(mktemp)
+      while IFS= read -r f; do
+        [ -f "$root/$f" ] || continue
+        case $f in
+          *.ts | *.tsx | *.js | *.jsx | *.mjs | *.cjs | *.mts | *.cts | *.vue | *.svelte) lang=js ;;
+          *.py) lang=py ;;
+          *.go) lang=go ;;
+          *) continue ;;
+        esac
+        while IFS=$'\t' read -r line spec; do
+          while IFS= read -r c; do
+            [ -n "$c" ] || continue
+            while IFS= read -r v; do printf '%s\t%s\t%s\t%s\n' "$f" "$line" "$spec" "$v"; done < <(path_variants "$c")
+          done < <(import_targets "$f" "$spec" "$lang")
+        done < <(import_specs "$root/$f" "$lang")
+      done < <(protected_match "$from" <<<"$files") >"$recs"
+      matched=$(cut -f4 "$recs" | sort -u | protected_match "$to")
+      awk -F'\t' 'BEGIN { while ((getline l < ARGV[1]) > 0) ok[l] = 1; ARGV[1] = "" } ($4 in ok) { print $1 "\t" $2 "\t" $3 }' \
+        <(printf '%s\n' "$matched") "$recs" | LC_ALL=C sort -u |
+        while IFS=$'\t' read -r f line spec; do
+          printf '%s\t%s\t%s\timports %s, which resolves under %s%s\n' "$id" "$f" "$line" "$spec" "$(jq -r '.[0]' <<<"$to")" "$why"
+        done
+      rm -f "$recs"
+    else
+      globs=$(jq -c ".[$i].paths" <<<"$rules")
+      if [ "$kind" = maxLines ]; then max=$(jq -r ".[$i].maxLines" <<<"$rules"); else re=$(jq -r ".[$i].banned" <<<"$rules"); fi
+      while IFS= read -r f; do
+        [ -f "$root/$f" ] && grep -Iq . "$root/$f" 2>/dev/null || continue
+        if [ "$kind" = maxLines ]; then
+          line=$(awk 'END { print NR }' "$root/$f")
+          [ "$line" -le "$max" ] || printf '%s\t%s\t%s\t%s\n' "$id" "$f" "$((max + 1))" "has $line lines, over the limit of $max$why"
+        else
+          hits=$(grep -nIE -e "$re" -- "$root/$f" 2>&1) || {
+            [ $? -ne 2 ] || { echo "rule $id: banned is not a valid regular expression: $re" >&2; return 2; }
+            continue
+          }
+          while IFS= read -r msg; do
+            printf '%s\t%s\t%s\t%s\n' "$id" "$f" "${msg%%:*}" "matches banned /$re/: $(cut -c1-80 <<<"${msg#*:}" | sed 's/^[[:space:]]*//')$why"
+          done <<<"$hits"
+        fi
+      done < <(protected_match "$globs" <<<"$files")
+    fi
+  done
+}
+
+# The architecture rules of the config (`architecture.rules`, #337, spec 325 §6.2) as a check. The violations that
+# .claude/architecture-baseline.json lists ({"violations": [{"rule", "file", "count"}]}, count 1 when absent: how many
+# of the rule's violations the file may keep) are tolerated; any other fails, naming rule, file and line. A baseline
+# entry that no longer violates, or less than it allows, is a warning. A rule with no id, an unknown kind or a missing
+# part is a configuration error. With --update-baseline the baseline is rewritten without what is fixed, and no
+# violation is ever added to it: the new ones are refused (exit 1).
+architecture_check() {
+  local root rules errs base update=false rows bad="" key line rule file cnt allowed count out
+  local -A found=() allow=() first=()
+  [ "${1:-}" != --update-baseline ] || update=true
+  root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
+  rules=$(config_get architecture.rules 2>/dev/null) || rules='[]'
+  if [ "$rules" = "[]" ] && [ "$update" = false ]; then
+    echo "skipped: no architecture.rules"
+    return 0
+  fi
+  errs=$(architecture_rules_errors "$rules")
+  base=$root/.claude/architecture-baseline.json
+  if [ -f "$base" ]; then
+    errs+=${errs:+$'\n'}$(jq -r 'if (type == "object" and (.violations | type) == "array"
+        and all(.violations[]; type == "object" and (.rule | type) == "string" and (.file | type) == "string"
+          and ((.count // 1) | type == "number" and . >= 1 and floor == .)))
+      then empty else ".claude/architecture-baseline.json must be {\"violations\": [{\"rule\", \"file\", \"count\"}]}" end' "$base" 2>&1 ||
+      echo ".claude/architecture-baseline.json is not valid JSON")
+  fi
+  if [ -n "$errs" ]; then
+    printf 'configuration error: %s\n' "$errs"
+    return 1
+  fi
+  if [ "$update" = true ] && [ ! -f "$base" ]; then
+    echo "no .claude/architecture-baseline.json: --update-baseline only removes entries, it cannot create the file"
+    return 1
+  fi
+  rows=$(architecture_violations "$root" "$rules") || return 1
+  while IFS=$'\t' read -r rule file line _; do
+    [ -n "$rule" ] || continue
+    key=$rule$'\t'$file
+    found[$key]=$((${found[$key]:-0} + 1))
+  done <<<"$rows"
+  if [ -f "$base" ]; then
+    while IFS=$'\t' read -r rule file cnt; do
+      allow[$rule$'\t'$file]=$cnt
+    done < <(jq -r '.violations[] | [.rule, .file, (.count // 1)] | @tsv' "$base")
+  fi
+  # Entries to keep (lowered to what is left) and the warnings about the ones that are too generous.
+  out=""
+  for key in "${!allow[@]}"; do
+    allowed=${allow[$key]}
+    count=${found[$key]:-0}
+    IFS=$'\t' read -r rule file <<<"$key"
+    if [ "$count" -eq 0 ]; then
+      echo "warning: architecture baseline: $rule in $file no longer violates, remove it (senior-mode check --update-baseline)"
+    else
+      [ "$count" -ge "$allowed" ] || echo "warning: architecture baseline: $rule in $file has $count violations, the baseline allows $allowed (senior-mode check --update-baseline)"
+      out+=$(jq -nc --arg r "$rule" --arg f "$file" --argjson c "$((count < allowed ? count : allowed))" '{rule: $r, file: $f, count: $c}')$'\n'
+    fi
+  done
+  # Violations beyond the baseline: every violation of a rule in a file that has more than the baseline allows.
+  while IFS=$'\t' read -r rule file line msg; do
+    [ -n "$rule" ] || continue
+    key=$rule$'\t'$file
+    [ "${found[$key]}" -gt "${allow[$key]:-0}" ] || continue
+    bad+="$rule: $file:$line: $msg${allow[$key]:+ (the baseline allows ${allow[$key]})}"$'\n'
+  done <<<"$rows"
+  if [ "$update" = true ]; then
+    jq -s '{violations: (. | sort_by(.rule, .file))}' <<<"$out" >"$base.tmp" && mv "$base.tmp" "$base"
+    echo "architecture baseline: rewritten with $(printf '%s' "$out" | grep -c '^' || true) entries; a new violation is never added to it"
+  fi
+  [ -z "$bad" ] || { printf '%s' "$bad"; return 1; }
+}
+
 # The context the agents load, kept lean and true (#314, #335): each tracked CLAUDE.md within
 # `context.claudeMdLines` lines (default 80), each tracked SKILL.md within 3072 bytes, and the `paths` of an ADR
 # front matter, when it has one, a list of strings (`paths: ["src/billing/**"]`). Those fail. A path cited
@@ -407,10 +681,16 @@ ci_job_states() {
 # can narrow itself to them does; that run is not recorded, because publish needs a full one. With --ci-only (ADR 0022,
 # ci.mode existing) the checks that a job of the project's CI covers are not run again: the state of that job on HEAD
 # is read instead (ok, `wait <context>` with status 2 while it runs or has not started, FAIL with the URL of its run);
-# the result recorded for publish is that of the checks run here, publish reads the jobs again.
+# the result recorded for publish is that of the checks run here, publish reads the jobs again. With --update-baseline
+# only the architecture baseline is rewritten (see architecture_check).
 check() {
   local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp ci_only=false jobs="[]" job
   local waiting="" ci_failed="" st url free
+  if [ "${1:-}" = --update-baseline ]; then
+    [ $# -eq 1 ] || usage
+    architecture_check --update-baseline
+    return
+  fi
   file=$(config_file)
   unset SENIOR_MODE_CHANGED_FILES
   [ "${1:-}" != --ci-only ] || ci_only=true
@@ -439,7 +719,8 @@ check() {
   names=("secret scan" "dependency audit" "new dependencies" "config" "context hygiene")
   cmds=("$(printf '%q' "$SELF") secret-scan" "$(printf '%q' "$SELF") audit" "$(printf '%q' "$SELF") deps" "$(printf '%q' "$SELF") config validate"
     "$(printf '%q' "$SELF") context-hygiene")
-  # docs/vision.md is checked when it exists (#342), the knowledge notes when docs/knowledge does (#333).
+  # docs/vision.md is checked when it exists (#342), the knowledge notes when docs/knowledge does (#333), the
+  # architecture rules when the config has some (#337).
   if [ -f "$root/docs/vision.md" ]; then
     names+=("vision")
     cmds+=("$(printf '%q' "$SELF") vision-check")
@@ -447,6 +728,10 @@ check() {
   if [ -d "$root/docs/knowledge" ]; then
     names+=("knowledge")
     cmds+=("$(printf '%q' "$SELF") knowledge-check")
+  fi
+  if [ "$(config_get architecture.rules 2>/dev/null || echo '[]')" != "[]" ]; then
+    names+=("architecture")
+    cmds+=("$(printf '%q' "$SELF") architecture-check")
   fi
   for ((i = 0; i < count; i++)); do
     names+=("$(jq -r ".checks[$i].name" "$file")")

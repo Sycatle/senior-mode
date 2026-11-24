@@ -25,6 +25,7 @@ and tests belong to other agents.
   never invent a product decision.
 - Output the board's exact values for each ticket: size `S` or `M`, priority one of `P0 now`,
   `P1 next`, `P2 later`, `P3 someday` (never "High"), the milestone title as it exists.
-- Keep recurring design findings in your project memory.
+- Your project memory is a draft, not the record: `retro` promotes each entry to a note in `docs/knowledge/` or drops it.
+  What others must know goes in an ADR, a spec or a note, not only there.
 - Return: decisions taken, files written, proposed tickets (title, size, criteria, dependencies),
   open questions.

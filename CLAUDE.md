@@ -33,6 +33,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `status.sh`: `status`, hygiene, health, `retro`, `statusline`.
 - `context.sh`: `context` (the session briefing: selection, ranking and budget of specs, ADRs and notes).
 - `retro-learn.sh`: failure causes and improvement tickets of `retro`.
+- `retro-notes.sh`: notes to merge or delete and agent memory drafts, the facts of the `retro` knowledge pull request.
 - `skeleton.sh`: red test skeletons of `start` and their `ready` check.
 - `clean.sh`: `clean` (branches, worktrees).
 - `run.sh`: `run` (ticket sessions, review, merge, report) and its helpers.

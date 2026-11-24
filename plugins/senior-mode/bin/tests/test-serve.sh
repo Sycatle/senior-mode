@@ -1029,6 +1029,7 @@ second=$(grep -n '^app-63 sonnet run=1 role=ticket$' "$CLAUDE_LOG" | cut -d: -f1
 { [ -n "$first" ] && [ -n "$second" ] && [ "$first" -lt "$second" ]; } || fail "U: test-author then ticket expected: $(cat "$CLAUDE_LOG")"
 grep -qx 'tests-63.txt' "$repo/.git/senior-mode/runs/63/red-tests" || fail "U: the red tests are not recorded: $(cat "$repo/.git/senior-mode/runs/63/red-tests" 2>&1)"
 grep -q 'written and committed already' "$state/63.prompt" || fail "U: the ticket prompt does not tell about the red tests"
+grep -q 'red-tests verify' "$state/63.prompt" && fail "U: the prompt asks to verify tests the test-author recorded (#563)"
 grep -q '^app-64 sonnet run=1 role=ticket$' "$CLAUDE_LOG" && fail "U: a ticket session after a failed test-author"
 outcome_of 64 failed M
 grep -c 'item-edit.*--single-select-option-id o0' "$GH_LOG" | grep -qx 1 || fail "U: #64 is not back in Backlog: $(grep item-edit "$GH_LOG")"

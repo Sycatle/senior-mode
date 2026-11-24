@@ -79,10 +79,13 @@ grep -q 'pass on .*main.* without the change' "$work/err" || fail "the weak test
 printf '[ -f impl.txt ]\n' >"$vrepo/tests/t.sh"
 echo ok >"$vrepo/impl.txt"
 vg add -A && vg commit -m "feat: impl"
+# A session's sandbox keeps .git/worktrees read-only (#563): verify needs no worktree.
+mkdir -p "$vrepo/.git/worktrees" && chmod a-w "$vrepo/.git/worktrees"
 out=$(verify 9) || fail "verify failed: $(cat "$work/err")"
+chmod u+w "$vrepo/.git/worktrees"
 [ "$(cat "$vlist")" = "tests/t.sh" ] || fail "the verified list is wrong: $(cat "$vlist" 2>/dev/null)"
 grep -q 'fail on .*main.* and pass on the head' <<<"$out" || fail "verify does not say what it proved: $out"
-[ "$(git -C "$vrepo" worktree list | wc -l)" -eq 1 ] || fail "the base worktree is left behind"
+[ "$(git -C "$vrepo" worktree list | wc -l)" -eq 1 ] || fail "a base worktree is left behind"
 # A test that fails on the head too.
 vg switch -q -c feat/10-broken main
 mkdir -p "$vrepo/tests"

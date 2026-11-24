@@ -81,14 +81,19 @@ EOF
 # The prompt of a ticket session under serve (role ticket, ADR 0017): it delivers up to a pull request with
 # senior-mode/ci and senior-mode/security published; the reviewer and the integrator are other sessions.
 serve_prompt() {
-  local tests nl=$'\n' wf
+  local tests prove nl=$'\n' wf
   wf=$(workflow_prompt_block "$1")
   if [ -f "$SERVE_COMMON/senior-mode/runs/$1/red-tests" ]; then
     tests="2. The failing tests are written and committed already, by a test-author session; they are recorded
    and read-only for you (the guard denies editing, moving or deleting them). The implementer agent makes them
    pass (skills tdd, verify, commit) and may add tests of its own. A red test that is wrong stays as it is:
    say so in the pull request."
+    # That record proves the tests already (red_blocker, #563): no red-tests verify.
+    prove="3. "
   else
+    prove="3. A \`type:feature\` or \`type:bug\` ticket needs its tests proven: once they are committed, \`senior-mode red-tests verify $1\`
+   (they fail on the base and pass on the head; without that record the pull request is not ready; docs and
+   chore tickets are exempt). Then "
     tests="2. The test-author agent writes failing tests from the acceptance criteria and records the red run;
    the implementer agent makes them pass (skills tdd, verify, commit): tests land in the same commit
    as the code they cover."
@@ -100,9 +105,7 @@ questions: decide within the ticket, its spec and the project's rules, or give u
 Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode team:
 1. Read the ticket (\`gh issue view $1\`), its spec and its acceptance criteria.
 $tests
-3. A \`type:feature\` or \`type:bug\` ticket needs its tests proven: once they are committed, \`senior-mode red-tests verify $1\`
-   (they fail on the base and pass on the head; without that record the pull request is not ready; docs and
-   chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; open a pull request from the
+${prove}\`senior-mode check\` passes on a clean tree; push the branch; open a pull request from the
    template with \`Closes #$1\`, the red run and the Self-review table (run the review checklist on your
    own diff first; one row per acceptance criterion, \`#$1.<k>\`, with a test name or a command and its
    result as evidence); \`senior-mode publish\`; \`senior-mode preview\` (it only acts when \`deploy.previews\` is \`ready\`);

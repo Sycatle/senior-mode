@@ -36,7 +36,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `commands` | detected or asked | `lint`, `typecheck`, `test`, `build`, and `e2e` for node; `format` for python and rust; `install` (no check), the command `senior-mode start` runs in a new worktree: the lockfile's `npm ci`, `pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile` or `bun install --frozen-lockfile` for node, `uv sync` or `poetry install` for python, `go mod download`, `cargo fetch`; change it with `setup repo --command install=...` |
 | `framework` | none | `next` when Next.js is a dependency; the node preset then adds `middleware.*`, `src/middleware.*`, `proxy.*` and `src/proxy.*` to `protected` |
 | `envGuard.forbidden` | none | Strings, or `/regex/` patterns, that must never appear on an agent machine; turns on the `env guard` check |
-| `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order |
+| `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks) |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, even an empty one; `senior-mode protected` and the reviewer read it, and `setup github` maps it to [CODEOWNERS](autonomy.md#code-owners) |
 | `ci.mode` | `local` | `local`, `actions` or `existing` (the project's own CI is reused, see [CI mode](#ci-mode)) |
 | `workflow.ci.jobs`, `workflow.ci.required` | detected | With `ci.mode` `existing`: the jobs of the project's CI that cover a check (`{ "context", "covers" }`, one per job) and its required status contexts; setup writes both, see [Following the project's workflow](#following-the-projects-workflow) |
@@ -453,6 +453,31 @@ Existing violations are recorded in `.claude/architecture-baseline.json`, a ratc
 ```
 
 `count` (1 when absent) is how many violations of the rule the file may keep. `check` fails only on the violations beyond it (all those of the rule in the file are listed). An entry that no longer violates, or that allows more than what is left, is a warning; `senior-mode check --update-baseline` removes or lowers it, and never adds one: a new violation is refused (exit 1) and the file keeps what it had.
+
+## Changed checks
+
+`senior-mode check --changed` is for the loop of a session: it takes the files the branch changed against the default
+branch (committed or not, new files included, deleted ones left out) and runs each check that has a `changed` variant on
+those files only; a check without one runs in full, and every line says which (`[changed: 3 files]` or `[full]`). The secret
+scan, the dependency audit and the other steps of `check` always run in full. A variant with no file to take (a
+documentation-only change for a linter) is skipped. The exit status is that of the checks, as for `check`, but the run is not
+recorded: the push gate stays the full `check`, and `check --pre-push --changed` and `publish --changed` are refused.
+
+```json
+{ "name": "lint", "run": "npm run lint", "changed": "npx eslint {files}" }
+```
+
+`{files}` stands for the changed files, quoted for the shell. A check with no `changed` of its own, named `lint` or `test`
+and running the command the preset detected, gets the preset's variant:
+
+| Preset | `lint` | `test` |
+|---|---|---|
+| `node` | `eslint` or `biome check` on the JavaScript and TypeScript files, when the dependencies name one | `vitest related --run` or `jest --findRelatedTests` on them, which find the tests that import them |
+| `python` | `ruff check` or `flake8` on the `.py` files | `pytest` on the `.py` files (a run that collects no test is not a failure) |
+| `go` | `go vet` (and `golangci-lint run`) on the packages of the `.go` files | `go test` on those packages |
+| `rust` | `cargo clippy` in each crate that holds a changed `.rs` or `.toml` file | `cargo test` in those crates |
+
+A project that changed the command of a check (`setup repo --command lint=...`) keeps it in full unless it adds its own `changed`.
 
 ## Presets
 

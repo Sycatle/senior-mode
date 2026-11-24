@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # Packages of a monorepo (spec 327 §10, #323): `setup repo` finds the npm, pnpm and yarn workspaces, the Cargo
 # workspace and the Go modules of a repository and records them under `packages` in .claude/senior-mode.json.
+# `check` then runs only the packages a diff affects (#418): packages_select.
 
 # Lexically normalizes the relative path $1 ("a/b/../c" is "a/c", the root is "."); nothing when it leaves the root.
 packages_norm() {
@@ -198,4 +199,58 @@ install_plan() {
   [ ! -f "$file" ] || jq -r '(.packages // {}) | to_entries[]
     | select(.key != "." and .value.preset == "go" and (.value.commands.install // "") != "")
     | "\(.key)\t\(.value.commands.install)"' "$file" 2>/dev/null || true
+}
+
+# The dependencies between the packages of the base commit $2, as {dir: [dir]}: its manifests are read again, so that
+# the graph of a pull request is the union of its base's and its head's (a dependency it adds cannot hide).
+packages_base_graph() { # root commit
+  local root=$1 mb=$2 tmp f
+  tmp=$(mktemp -d)
+  git -C "$tmp" init -q
+  while IFS= read -r f; do
+    mkdir -p "$tmp/$(dirname "$f")"
+    git -C "$root" show "$mb:$f" >"$tmp/$f" 2>/dev/null || true
+  done < <(git -C "$root" ls-tree -r --name-only "$mb" 2>/dev/null | grep -E '(^|/)(package\.json|pnpm-workspace\.yaml|Cargo\.toml|go\.mod|go\.work)$' || true)
+  packages_detect "$tmp" | jq -c 'map_values(.deps)'
+  rm -rf "$tmp"
+}
+
+# The packages `check` runs, from the project $1 and its config file $2, as JSON {total, all, why, run}: every package
+# when $3 is true (`check --all`), when the changed files cannot be told or are none, or when one lies outside every
+# package (a root config, a lockfile, a workflow): `all` is then true and the checks run as they are; else the packages that own a changed file and their dependents,
+# transitively, over the union of the recorded, head and base dependencies. A file belongs to the deepest package.
+packages_select() { # root config all
+  local root=$1 file=$2 all=$3 files mb base graph="{}"
+  if [ "$all" = true ]; then
+    jq -c '(.packages // {} | keys) as $k | {total: ($k | length), all: true, why: "check --all", run: $k}' "$file"
+    return 0
+  fi
+  if base=$(default_branch) && mb=$(git -C "$root" merge-base "$base" HEAD) && files=$(changed_files "$root" deleted); then
+    graph=$(jq -sc 'reduce .[] as $g ({}; reduce ($g | keys[]) as $k (.; .[$k] = ((.[$k] // []) + $g[$k] | unique)))' \
+      <(jq -c '(.packages // {}) | map_values(.deps // [])' "$file") \
+      <(packages_detect "$root" | jq -c 'map_values(.deps)') <(packages_base_graph "$root" "$mb")) || graph="{}"
+  else
+    files=""
+    mb=""
+  fi
+  jq -nc --argjson pk "$(jq -c '.packages // {}' "$file")" --argjson g "$graph" --arg mb "$mb" \
+    --argjson files "$(jq -R . <<<"$files" | jq -sc 'map(select(. != ""))')" '
+    ($pk | keys) as $keys
+    | def all($why): {total: ($keys | length), all: true, why: $why, run: $keys};
+    ([$files[] | . as $f | [$keys[] | select(. as $k | $k == "." or $f == $k or ($f | startswith($k + "/")))] | sort_by(length) | last] ) as $own
+    | if $mb == "" then all("the changed files cannot be told")
+      elif ($files | length) == 0 then all("no changed file")
+      elif any($own[]; . == null) then all("a changed file lies outside every package: " + $files[[range(0; $own | length) | select($own[.] == null)][0]])
+      else
+        def step($a): ($a + [$keys[] | select(. as $k | any(($g[$k] // [])[]; . as $d | any($a[]; . == $d)))]) | unique;
+        ($own | unique | until(step(.) == .; step(.))) as $run
+        | {total: ($keys | length), all: false, why: "", run: $run}
+      end'
+}
+
+# The packages of a selection $1 as "3 of 12 packages: api, shared, web": the last component of each directory, the
+# whole directory when two share it.
+packages_say() {
+  jq -r '.run as $r | ($r | map(split("/") | last) | group_by(.) | map(select(length > 1) | .[0])) as $dup
+    | "\($r | length) of \(.total) packages: \($r | map(if (split("/") | last) as $b | $dup | index($b) then . else split("/") | last end) | join(", "))"' <<<"$1"
 }

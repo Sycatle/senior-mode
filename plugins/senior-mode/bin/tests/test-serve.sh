@@ -65,6 +65,14 @@ case "$*" in
     mv "$FIX/pull-$3.tmp" "$FIX/pull-$3.json"
     cp "$FIX/pull-$3.json" "$FIX/open.d/$3.json"
     jq -s '.' "$FIX"/open.d/*.json >"$FIX/open-prs.json" ;;
+  "issue list"*) { cat "$FIX/issues.json" 2>/dev/null || echo '[]'; } | respond ;;
+  "issue create"*)
+    # The tickets serve files (#497): kept in $FIX/issues.json, which `issue list` serves back.
+    t="" prev=""
+    for a in "$@"; do [ "$prev" = --title ] && t=$a; prev=$a; done
+    n=$(jq '[500, (.[].number + 1)] | max' "$FIX/issues.json" 2>/dev/null || echo 500)
+    jq --argjson n "$n" --arg t "$t" '. + [{number: $n, title: $t, body: "", labels: []}]' "$FIX/issues.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issues.json"
+    echo "https://github.com/acme/app/issues/$n" ;;
   "api repos/acme/app/dependabot/alerts"* | "api repos/acme/app/secret-scanning/alerts"*) echo '[]' | respond ;;
   "issue view "*)
     n=$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*")
@@ -194,7 +202,9 @@ state="$repo/.git/senior-mode/serve"
 git init -q -b main "$repo"
 git -C "$repo" remote add origin "$work/github.com/acme/app.git"
 mkdir -p "$repo/.claude"
-fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2", "In review": "o3", "Backlog": "o0", "Done": "o4"}}}'
+fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2", "In review": "o3", "Backlog": "o0", "Done": "o4"}},
+  "Priority": {"id": "F_P", "options": {"P0 now": "p0", "P1 next": "p1", "P2 later": "p2", "P3 someday": "p3"}},
+  "Size": {"id": "F_Z", "options": {"S": "z1", "M": "z2", "L": "z3"}}, "Paths": {"id": "F_Paths"}}'
 # config <autonomy json> [<serve json> [<notify json>]]; the daily digest is off unless the notify json turns it on.
 config() {
   jq -n --argjson f "$fields" --argjson a "$1" --argjson s "${2:-{\}}" --argjson nt "${3:-{\}}" '{project: {id: "PVT_1", owner: "acme", number: 3, fields: $f},
@@ -1940,6 +1950,81 @@ once || fail "AG: serve failed: $(cat "$work/out")"
 [ -e "$repo/.git/index.lock" ] || fail "AG: a recent index.lock was removed"
 rm -f "$repo/.git/index.lock"
 unset SENIOR_MODE_TIMEOUT_UNIT
+
+# DF: dependency freshness (#497, spec 471 section 8). Once a week serve reads the outdated list of the ecosystem
+# (`npm outdated --json` here, a stub) and files one `chore(deps): <package> <from> to <to>` ticket per major, reusing
+# an open one of the same title. The time of the pass is kept in <serve dir>/deps-at, as the digest keeps its own.
+cat >"$work/stub/npm" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >>"$NPM_LOG"
+[ "$1 $2" = "outdated --json" ] || exit 0
+cat "$FIX/npm-outdated.json" 2>/dev/null || echo '{}'
+exit 1
+STUB
+chmod +x "$work/stub/npm"
+export NPM_LOG="$work/npm.log"
+echo '{"name": "app", "dependencies": {"next": "^14.2.0", "react": "^18.2.0"}}' >"$repo/package.json"
+echo '{"next": {"current": "14.2.0", "wanted": "14.2.5", "latest": "15.0.0", "dependent": "app"},
+  "react": {"current": "18.2.0", "wanted": "18.3.1", "latest": "18.3.1", "dependent": "app"}}' >"$FIX/npm-outdated.json"
+echo '[]' >"$FIX/issues.json"
+config '{}'
+board
+dep_tickets() { jq -r '[.[] | select(.title | startswith("chore(deps): "))] | length' "$FIX/issues.json"; }
+fresh
+: >"$NPM_LOG"
+SENIOR_MODE_NOW=1800000000 once || fail "DF: serve failed: $(cat "$work/out")"
+grep -q '^outdated --json' "$NPM_LOG" || fail "DF: the outdated list was not read: $(cat "$NPM_LOG")"
+[ "$(dep_tickets)" = 1 ] || fail "DF: not one ticket for the major of next: $(cat "$FIX/issues.json")"
+jq -e 'any(.[]; .title == "chore(deps): next 14.2.0 to 15.0.0")' "$FIX/issues.json" >/dev/null ||
+  fail "DF: the ticket is not titled for next 14.2.0 to 15.0.0: $(cat "$FIX/issues.json")"
+jq -e 'any(.[]; .title | test("react"))' "$FIX/issues.json" >/dev/null && fail "DF: a minor of react became a ticket: $(cat "$FIX/issues.json")"
+[ -s "$state/deps-at" ] || fail "DF: the pass is not kept in $state/deps-at"
+# The same week: no new pass.
+: >"$NPM_LOG"
+SENIOR_MODE_NOW=1800086400 once || fail "DF: serve failed: $(cat "$work/out")"
+grep -q '^outdated' "$NPM_LOG" && fail "DF: a second pass within the week: $(cat "$NPM_LOG")"
+[ "$(dep_tickets)" = 1 ] || fail "DF: a second ticket within the week: $(cat "$FIX/issues.json")"
+# The next week, the ticket still open: the pass runs again and files nothing more.
+: >"$NPM_LOG"
+SENIOR_MODE_NOW=1800700000 once || fail "DF: serve failed: $(cat "$work/out")"
+grep -q '^outdated --json' "$NPM_LOG" || fail "DF: no pass a week later: $(cat "$NPM_LOG")"
+[ "$(dep_tickets)" = 1 ] || fail "DF: the weekly pass run twice filed $(dep_tickets) tickets: $(cat "$FIX/issues.json")"
+# A restart that lost the mark does not file a second one either.
+rm -f "$state/deps-at"
+SENIOR_MODE_NOW=1800700100 once || fail "DF: serve failed: $(cat "$work/out")"
+[ "$(dep_tickets)" = 1 ] || fail "DF: a lost mark filed a second ticket: $(cat "$FIX/issues.json")"
+# A newer major of the same package is another title, hence another ticket.
+echo '{"next": {"current": "14.2.0", "wanted": "14.2.5", "latest": "16.0.0"}}' >"$FIX/npm-outdated.json"
+rm -f "$state/deps-at"
+SENIOR_MODE_NOW=1801400000 once || fail "DF: serve failed: $(cat "$work/out")"
+jq -e 'any(.[]; .title == "chore(deps): next 14.2.0 to 16.0.0")' "$FIX/issues.json" >/dev/null || fail "DF: no ticket for 16.0.0: $(cat "$FIX/issues.json")"
+# Nothing outdated, no ticket; no package.json, no pass.
+echo '[]' >"$FIX/issues.json"
+echo '{}' >"$FIX/npm-outdated.json"
+rm -f "$state/deps-at"
+SENIOR_MODE_NOW=1802000000 once || fail "DF: serve failed: $(cat "$work/out")"
+[ "$(dep_tickets)" = 0 ] || fail "DF: a ticket with nothing outdated: $(cat "$FIX/issues.json")"
+rm -f "$repo/package.json"
+config '{}'
+echo '{"next": {"current": "14.2.0", "wanted": "14.2.5", "latest": "15.0.0"}}' >"$FIX/npm-outdated.json"
+rm -f "$state/deps-at"
+: >"$NPM_LOG"
+SENIOR_MODE_NOW=1802700000 once || fail "DF: serve failed: $(cat "$work/out")"
+[ ! -s "$NPM_LOG" ] || fail "DF: npm asked in a project with no package.json: $(cat "$NPM_LOG")"
+[ "$(dep_tickets)" = 0 ] || fail "DF: a ticket for a project with no package.json: $(cat "$FIX/issues.json")"
+
+# DF2 (ADR 0024): a Dependabot pull request is not from a collaborator: green, reviewed, it still waits for a human.
+config '{}'
+boardx "98:In review:S:P1 next"
+prs_reset
+sha98=$(mkbranch feat/98-x f98.txt)
+pr 198 feat/98-x "$sha98" clean
+patch_pr 198 '.user.login = "dependabot[bot]" | .user.type = "Bot" | .author_association = "CONTRIBUTOR"'
+green "$sha98"
+fresh
+once || fail "DF2: serve failed: $(cat "$work/out")"
+grep -q '^pr merge' "$GH_LOG" && fail "DF2: a Dependabot pull request was merged: $(grep '^pr ' "$GH_LOG")"
+grep -q "pull request #198, it is external" "$work/out" || fail "DF2: the Dependabot pull request is not left to a human: $(cat "$work/out")"
 
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

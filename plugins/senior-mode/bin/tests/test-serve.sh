@@ -127,7 +127,7 @@ case $(sed -n 3p "$fx") in
     echo "$$ $!" >"$FIX/pids-$n"
     wait ;;
   slow) for _ in $(seq 600); do [ -f "$FIX/release-$n" ] && break; sleep 0.1; done ;;
-  busy) for i in $(seq 14); do echo "$i" >>busy.txt; sleep 0.3; done; rm -f busy.txt ;;
+  busy) for i in $(seq 30); do echo "$i" >>busy.txt; sleep 0.3; done; rm -f busy.txt ;;
   flaky*:*)
     # flaky:<message> dies once, flaky<k>:<message> k times (the count is in $FIX/flaky-done-<n>-<model>).
     spec=$(sed -n 3p "$fx")
@@ -1920,7 +1920,8 @@ started 110 || fail "AG: the ticket did not resume: $(cat "$CLAUDE_LOG")"
 grep -q 'issues/110/labels.*needs-human' "$GH_LOG" || fail "AG: the second stop is not needs-human: $(cat "$GH_LOG")"
 grep -q 'issues/110/comments' "$GH_LOG" || fail "AG: no comment on the second stop"
 # A session that works, with a child that comes and goes, runs past the stall delay and is left alone.
-config '{"startupMinutes": 1, "stallMinutes": 2}'
+# The delays are wide (30 s, 4 s): a loaded machine may start the session late, and the session still outlasts the stall delay.
+config '{"startupMinutes": 30, "stallMinutes": 4}'
 board 111
 session 111-sonnet delivered pr "busy"
 fresh

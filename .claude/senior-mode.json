@@ -87,5 +87,18 @@
   },
   "github": {
     "protection": "ruleset"
+  },
+  "process": {
+    "profile": "fast",
+    "lifts": [
+      {
+        "rule": "review",
+        "adr": "docs/adr/0016-this-repository-delivery.md"
+      }
+    ]
+  },
+  "autonomy": {
+    "parallel": 4,
+    "merge": true
   }
 }

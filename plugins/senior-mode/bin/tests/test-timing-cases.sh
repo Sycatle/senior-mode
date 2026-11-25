@@ -15,6 +15,7 @@ check_case() { # <name> <file> <start regex> <end regex>
   local name=$1 text
   text=$(block "$2" "$3" "$4")
   [ -n "$text" ] || { fail "$name: case not found in $2"; return; }
+  # shellcheck disable=SC2016 # the pattern looks for a literal $((...))
   if grep -Eq '\$\(\(\s*(\$?SECONDS|\$\(date \+%s\))[^)]*\)\)\s*-(lt|le|gt|ge)|"\$SECONDS"\s*-(lt|le)|\$\(date \+%s\)\)' <<<"$text"; then
     fail "$name: waits on a wall-clock budget: $(grep -En 'SECONDS|date \+%s' <<<"$text" | head -3 | tr '\n' ';')"
   fi

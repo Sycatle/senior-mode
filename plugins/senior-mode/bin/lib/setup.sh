@@ -248,16 +248,46 @@ security_feature() { # label gh-api-arguments...
 }
 
 # GitHub's own scanners (ADR 0015, #172, amended by #222): Dependabot alerts, secret scanning and push
-# protection. Each may be refused by the plan. Dependabot security updates stay off and no
-# dependabot.yml is written: GitHub has no severity filter for them, so alerts become issues only (#144
-# path, high and critical). A dependabot.yml of the project's own is left as it is.
+# protection. Each may be refused by the plan. Dependabot security updates stay off: GitHub has no severity
+# filter for them, so alerts become issues only (#144 path, high and critical).
 setup_security() { # root slug
   security_feature "Dependabot alerts" -X PUT "repos/$2/vulnerability-alerts"
   security_feature "secret scanning (with push protection)" -X PATCH "repos/$2" \
     -f "security_and_analysis[secret_scanning][status]=enabled" \
     -f "security_and_analysis[secret_scanning_push_protection][status]=enabled"
-  [ ! -e "$1/.github/dependabot.yml" ] ||
-    echo "dependabot.yml: untouched (senior-mode writes none; security updates are not turned on, alerts become issues)"
+  setup_dependabot "$1"
+}
+
+# Version updates (#497, spec 471 section 8): a weekly npm entry, minor and patch in one group, majors ignored
+# (serve files them as tickets). Nothing is written beside a Renovate config or a dependabot.yml, nor without a
+# package.json. The file is left uncommitted.
+setup_dependabot() { # root
+  local root=$1 dep=$1/.github/dependabot.yml
+  if [ -e "$dep" ]; then
+    echo "dependabot.yml: untouched (kept as it is; security updates are not turned on, alerts become issues)"
+  elif compgen -G "$root/renovate.json*" >/dev/null || [ -e "$root/.renovaterc" ] || [ -e "$root/.github/renovate.json" ] ||
+    [ -e "$root/.github/renovate.json5" ]; then
+    echo "renovate: untouched"
+  elif [ -f "$root/package.json" ]; then
+    mkdir -p "$root/.github"
+    cat <<'YML' | state_write "$dep"
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+YML
+    echo "dependabot.yml: written (weekly npm, minor and patch grouped, majors left to tickets)"
+  fi
 }
 
 # The labels `setup github` creates, as name|color|description; the type labels only on a personal account

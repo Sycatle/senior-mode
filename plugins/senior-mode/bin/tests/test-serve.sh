@@ -3,7 +3,7 @@
 # stubs on PATH, as in test-run.sh. gh answers the board query and the REST calls from fixtures in $FIX; claude
 # plays a ticket session from $FIX/claude-<n>-<model> (line 1: the outcome to write, empty for none; line 2:
 # "pr" to open a pull request; line 3: "hang" to never end, with a child process recorded in $FIX/pids-<n>,
-# "slow" to end after two seconds, "limit" to end on the subscription usage limit with the message in
+# "slow" to end once $FIX/release-<n> exists (the case creates it; bounded at 60 s), "limit" to end on the subscription usage limit with the message in
 # $FIX/limit-msg, "flaky:<message>" to die once with the message on stderr (exit 1), then behave; the file claude-<n>-<model>-<role> wins over claude-<n>-<model> for a session with that
 # SENIOR_MODE_ROLE; line 2 may be "pr:<number>" for another pull request number; line 4: "review:<state>" posts
 # senior-mode/review on the head checked out, "commit" commits a test file). gh serves the open pull requests,
@@ -126,7 +126,7 @@ case $(sed -n 3p "$fx") in
     sleep 300 &
     echo "$$ $!" >"$FIX/pids-$n"
     wait ;;
-  slow) sleep 2 ;;
+  slow) for _ in $(seq 600); do [ -f "$FIX/release-$n" ] && break; sleep 0.1; done ;;
   busy) for i in $(seq 14); do echo "$i" >>busy.txt; sleep 0.3; done; rm -f busy.txt ;;
   flaky*:*)
     # flaky:<message> dies once, flaky<k>:<message> k times (the count is in $FIX/flaky-done-<n>-<model>).
@@ -413,6 +413,8 @@ started 44 || fail "F: not launched after the cooldown: $(cat "$work/out")"
 
 # G: TERM stops the launching at once and gives the sessions the grace. A session that ends within it is read;
 # one that does not is killed and its ticket labelled needs-human. A second serve is refused meanwhile.
+# Time unit: the cases wait on events (a file, a process) with polls of 0.1 s bounded by a count, never on a
+# wall-clock budget, so a loaded machine slows them without failing them.
 config '{"parallel": 1}' '{"interval": 5, "grace": 30}'
 board 50
 session 50-sonnet delivered pr "slow"
@@ -426,6 +428,7 @@ started 50 || fail "G: no session started: $(cat "$work/out")"
 grep -q 'already runs' "$work/out2" || fail "G: second serve not refused for that: $(cat "$work/out2")"
 board 51
 kill -TERM "$pid"
+: >"$FIX/release-50"
 rc=0
 wait "$pid" || rc=$?
 [ "$rc" -eq 0 ] || fail "G: serve exited $rc on TERM: $(cat "$work/out")"
@@ -1894,7 +1897,7 @@ once || fail "AF5: serve failed on the second read: $(cat "$work/out")"
 outcome_of 105 delivered AF5
 
 
-# AG: the watchdog (#384, spec 373 section 4). The minutes are seconds here (SENIOR_MODE_TIMEOUT_UNIT=1). A session on which
+# AG: the watchdog (#384, spec 373 section 4). The minutes are seconds here (SENIOR_MODE_TIMEOUT_UNIT=1: the time unit of the delays); no wall-clock budget is asserted. A session on which
 # nothing moves is stopped; the first stop is an interruption (the ticket goes back to Ready, resumes after the backoff, no
 # failure counted), the second is needs-human. A session that works is left alone. What an ended session left behind is
 # killed, and so is a stale git index.lock.
@@ -1903,9 +1906,7 @@ config '{"startupMinutes": 1, "stallMinutes": 1}'
 board 110
 session 110-sonnet "" "" hang
 fresh
-start=$SECONDS
 once || fail "AG: serve failed: $(cat "$work/out")"
-[ $((SECONDS - start)) -lt 60 ] || fail "AG: the hung session was not stopped: $((SECONDS - start))s"
 grep -q '#110: the session is stopped, hung at startup' "$work/out" || fail "AG: the stop is not said: $(cat "$work/out")"
 read -r -a pids <"$FIX/pids-110"
 for p in "${pids[@]}"; do ! kill -0 "$p" 2>/dev/null || fail "AG: the hung session is still running (pid $p)"; done

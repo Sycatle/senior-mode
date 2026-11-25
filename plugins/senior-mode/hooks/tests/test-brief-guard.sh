@@ -31,7 +31,8 @@ call "$nover"
 [ "$err" = "brief: missing ## Verify (skill brief)" ] || fail "missing Verify: wrong message: $err"
 
 call $'## Goal\n\n## Context\nc\n\n## Constraints\nk\n\n## Acceptance\na\n\n## Verify\nv\n\n## Return\nr\n\n## Model\nm'
-[ "$rc" = 2 ] && grep -qF "missing ## Goal" <<<"$err" || fail "empty Goal: rc=$rc $err"
+[ "$rc" = 2 ] || fail "empty Goal: expected exit 2, got $rc"
+grep -qF "missing ## Goal" <<<"$err" || fail "empty Goal: wrong message: $err"
 
 [ "$(wc -l <"$briefs")" = 1 ] || fail "only the accepted call is logged"
 exit "$failures"

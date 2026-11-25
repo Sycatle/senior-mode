@@ -1559,6 +1559,32 @@ serve_digest() {
   fi
 }
 
+# Dependency freshness (#497, spec 471 section 8). Once a week, `npm outdated --json` of a project with a package.json
+# gives the majors available; each becomes one `chore(deps): <package> <from> to <to>` ticket, unless an open issue
+# has that title. The time of the pass is kept in <serve dir>/deps-at.
+serve_deps() {
+  local now last root out slug open line title body
+  now=$(serve_now)
+  last=$(cat "$SERVE_DIR/deps-at" 2>/dev/null || true)
+  [[ $last =~ ^[0-9]+$ ]] && [ $((now - last)) -lt 604800 ] && return 0
+  root=$(git rev-parse --show-toplevel 2>/dev/null) && [ -f "$root/package.json" ] || return 0
+  state_put "$SERVE_DIR/deps-at" "$now"
+  out=$(cd "$root" && npm outdated --json 2>/dev/null) || true
+  slug=$(repo_slug)
+  open=$(gh_retry issue list --repo "$slug" --state open --limit 500 --json title 2>/dev/null) || open='[]'
+  while IFS= read -r title; do
+    [ -n "$title" ] || continue
+    jq -e --arg t "$title" 'any(.[]; .title == $t)' <<<"$open" >/dev/null && continue
+    body=$(mktemp)
+    printf '## Context\n\nA new major is available.\n\n## Acceptance criteria\n\n- Given the major is available, when the project is moved to it, then check passes.\n' >"$body"
+    "$SELF" issue create --title "$title" --body-file "$body" --size S --priority "P2 later" --type chore </dev/null >/dev/null ||
+      echo "serve: dependency ticket not filed: $title" >&2
+    rm -f "$body"
+  done < <(jq -r 'to_entries[] | select((.value.current // "") != "" and (.value.latest // "") != "" and
+    ((.value.latest | split(".")[0]) != (.value.current | split(".")[0])))
+    | "chore(deps): \(.key) \(.value.current) to \(.value.latest)"' <<<"${out:-{\}}" 2>/dev/null)
+}
+
 # The digest of the day through the webhook (#309). Once notify.digestAt (HH:MM, the local time of the daemon) has
 # passed and none was sent today, one JSON POST {event: "digest", repo, number: null, url: null, reason: <text>,
 # digest: {...}} to the notify webhook with, over the last 24 hours, the pull requests merged, the tickets that wait
@@ -1685,6 +1711,7 @@ serve_loop() {
     serve_questions
     serve_digest
     serve_digest_at
+    serve_deps
     [ -z "${SENIOR_MODE_SERVE_ONCE:-}" ] || break
     sleep "$interval" &
     sleeper=$!

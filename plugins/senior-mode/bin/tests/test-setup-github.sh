@@ -584,7 +584,7 @@ done
 grep -q 'package-ecosystem: *"\?npm"\?' "$dep" || fail "no npm entry: $(cat "$dep")"
 grep -q 'interval: *"\?weekly"\?' "$dep" || fail "the npm entry is not weekly: $(cat "$dep")"
 grep -q 'minor-and-patch' "$dep" || fail "no minor-and-patch group: $(cat "$dep")"
-grep -q 'update-types' "$dep" && grep -q '"\?minor"\?' "$dep" && grep -q '"\?patch"\?' "$dep" || fail "the group does not take minor and patch: $(cat "$dep")"
+{ grep -q 'update-types' "$dep" && grep -q '"\?minor"\?' "$dep" && grep -q '"\?patch"\?' "$dep"; } || fail "the group does not take minor and patch: $(cat "$dep")"
 grep -q 'version-update:semver-major' "$dep" || fail "majors not ignored: $(cat "$dep")"
 grep -q '^version: 2' "$dep" || fail "not a version 2 file: $(cat "$dep")"
 logged "git commit" && fail "setup committed the file"

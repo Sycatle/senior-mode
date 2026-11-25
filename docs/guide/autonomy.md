@@ -113,10 +113,10 @@ merging at all.
 push protection (`vulnerability-alerts` and `security_and_analysis` of the
 repository API), and says for each whether it is `on` or `not enabled` with GitHub's reason: a plan
 that refuses (HTTP 403 or 422, as private repositories without GitHub Advanced Security do) does not
-stop setup. It does not turn on Dependabot security updates and writes no `.github/dependabot.yml`:
+stop setup. It does not turn on Dependabot security updates and no security-update `dependabot.yml`:
 GitHub offers no severity filter for security-update pull requests, so they would come for every
-severity, and alerts become issues only (below). A `dependabot.yml` of your own is left untouched, and
-setup says so.
+severity, and alerts become issues only (below). For version updates it writes a weekly `npm` `dependabot.yml` (minor and patch grouped, majors ignored; `serve` files
+majors as tickets). A `dependabot.yml` or Renovate config of your own is left untouched, and setup says so.
 
 When `run` starts and when `retro` runs, each open high or critical Dependabot alert and each open
 secret-scanning alert (treated as critical) gets one `security` issue, through

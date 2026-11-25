@@ -396,7 +396,7 @@ the default branch, and the audit workflow only reports it. Upgrade or go public
 again to get the ruleset and `"ruleset"`; `ci.mode` stays `local` until you pass `--ci actions`.
 
 `setup github` also turns on Dependabot alerts, secret scanning and push protection where the plan
-allows it. It turns on no Dependabot security updates and writes no `.github/dependabot.yml`; see [GitHub's scanners](autonomy.md#githubs-scanners).
+allows it. It turns on no Dependabot security updates; for a node project without Dependabot or Renovate config it writes a weekly `.github/dependabot.yml`; see [GitHub's scanners](autonomy.md#githubs-scanners).
 
 ### Following the project's workflow
 

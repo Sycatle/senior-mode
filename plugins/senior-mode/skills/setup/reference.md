@@ -29,9 +29,10 @@ the README is left as it is, ask the user to restore the markers).
 
 `senior-mode setup github` turns on Dependabot alerts, secret scanning and push
 protection, and prints `security: <feature>: on` or `not enabled (<reason>)` for each: relay every
-`not enabled` in plain words (the plan or the token refuses it; setup went on). It leaves Dependabot security updates off and writes no `.github/dependabot.yml` (GitHub cannot limit
-them to high and critical severity, so alerts become issues only); if the project has its own, setup
-prints `dependabot.yml: untouched`.
+`not enabled` in plain words (the plan or the token refuses it; setup went on). It leaves Dependabot security updates off (GitHub cannot limit
+them to high and critical severity, so alerts become issues only). For a project with a `package.json`, it writes a weekly `npm` `.github/dependabot.yml`
+(minor and patch in one group, majors ignored: `serve` files each major as a `chore(deps)` ticket once a week); if the
+project has its own, setup prints `dependabot.yml: untouched`, and `renovate: untouched` beside a Renovate config.
 
 ## Questions
 

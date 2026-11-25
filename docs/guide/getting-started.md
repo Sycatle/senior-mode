@@ -138,6 +138,14 @@ again after an error, or to switch CI mode:
 
 The script form, if you prefer: `senior-mode setup github --ci actions`, then `senior-mode setup repo`.
 
+### Joining an adopted repository
+
+A fresh clone of a repository that already ran setup has the files but not your machine's side:
+`core.hooksPath` is local to a checkout, so `senior-mode doctor` reports the git hooks missing. Run
+`senior-mode setup repo` in the clone (it sets `core.hooksPath` and brings the hooks and the config up to the
+installed plugin version: commit that diff), then, in a
+Node project, `npm ci` before the first `senior-mode check`.
+
 ### Leaving
 
 `senior-mode setup remove` lists what it would take out of the repository and changes nothing;

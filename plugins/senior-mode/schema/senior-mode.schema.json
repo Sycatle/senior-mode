@@ -324,7 +324,9 @@
         "breakerMax": { "type": "integer", "minimum": 1 },
         "backoffBase": { "type": "integer", "minimum": 1 },
         "backoffMax": { "type": "integer", "minimum": 1 },
-        "callTimeout": { "type": "integer", "minimum": 1, "description": "Seconds a gh call of serve may take." }
+        "callTimeout": { "type": "integer", "minimum": 1, "description": "Seconds a gh call of serve may take." },
+        "unknownBackoffMax": { "type": "integer", "minimum": 1, "description": "Minutes, the longest wait before serve retries a ticket whose session ended on an unknown environment failure (1, 2, 4... minutes)." },
+        "unknownMaxAttempts": { "type": "integer", "minimum": 1, "description": "Launches of a ticket that ends on an unknown environment failure, with nothing changed, before it is needs-human." }
       }
     },
     "notify": {

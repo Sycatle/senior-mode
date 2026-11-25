@@ -496,6 +496,14 @@ command, not a model, applies these bounds:
   `serve.breakerCooldown` (15 minutes), doubled at each further pause up to `serve.breakerMax` (4 hours);
   a merge, `serve --resume` or 24 hours without a pause start the count again. Only a ticket's own
   failure counts: transient and environment ends never do.
+- **Unknown environment failure:** a session that says `failed: environment: ...` with a cause `serve`
+  has no pattern for (so no probe that could ever turn green) holds the launches with the cause `unknown`.
+  The same ticket is not launched again until something changed (the plugin version or SHA, or the head of
+  the default branch) or you ran `senior-mode serve --resume`. Without a change it is tried again after 1, 2,
+  4... minutes (`serve.unknownBackoffMax`, 60 at most), and after `serve.unknownMaxAttempts` ends (3) in a row it
+  is labelled `needs-human` with the last error output and left alone; the hold then lasts until a change or
+  `--resume`, which also start the count again. The pause is one `environment` alert, the stop one decision;
+  the retries between them send nothing.
 - **Session timeout:** a session still running after `autonomy.sessionTimeout` minutes (default 90,
   at most 1440) is killed: the signal reaches its process group, so what the session started in it
   stops too, but not a process that left the group. The ticket gets the `needs-human` label and a

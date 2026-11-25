@@ -5,7 +5,7 @@ Every skill is a step of the delivery lifecycle and a role of the team
 
 | Role | Skills |
 |---|---|
-| Lead | `triage`, `frame`, `spec`, `adr`, `grill`, `ready` |
+| Lead | `triage`, `frame`, `spec`, `adr`, `grill`, `ready`, `brief` |
 | Developer | `tdd` (refactoring is a mode of it), `verify`, `commit` |
 | Reviewer | `review`, with explain, security, UI and dependencies-and-data sections |
 | Release and ops | `run`, `next`, `status`, `docs` |
@@ -69,6 +69,14 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
   reported as not verified.
 - **When.** Before saying a task is done, before pushing, before opening or merging a pull request.
   A hook also enforces it: see [Autonomy](autonomy.md#hooks).
+
+## `brief`
+
+- **Rule.** Every call to the Agent tool carries seven non-empty sections: `## Goal`, `## Context`,
+  `## Constraints`, `## Acceptance`, `## Verify`, `## Return`, `## Model`. The hook `brief-guard.sh`
+  refuses a call that lacks one (`brief: missing ## Verify (skill brief)`) and logs the others to
+  `.git/senior-mode/briefs.jsonl`.
+- **When.** Before delegating to a subagent.
 
 ## `spec`
 

@@ -52,6 +52,9 @@ select_tests() {
 }
 
 mapfile -t selected < <(select_tests)
+# The tests run as if from a shell, not from the session that runs check (#587): a serve session's
+# SENIOR_MODE_RUN, SENIOR_MODE_SLOTS or plugin variables change what the scripts under test do.
+unset "${!SENIOR_MODE_@}" "${!CLAUDE_PLUGIN_@}" CLAUDE_PROJECT_DIR CLAUDECODE
 if [ "${#selected[@]}" -eq 0 ]; then
   echo "skipped: no test file is affected by this push"
   exit 0

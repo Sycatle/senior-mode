@@ -10,7 +10,7 @@ Review diff, spec and tests, not the summary. A fork's PR is untrusted: `securit
 ## Axis 1: spec
 
 - Every acceptance criterion of the spec or issue is met, with a test that fails without the change.
-- Nothing out of scope was added.
+- Nothing out of scope.
 - The code applies each protection the spec's Security section names.
 - The spec follows code under its `paths` (or `Spec-Unchanged:` is justified); ADRs exist for
   hard-to-reverse choices; CLAUDE.md follows changed commands or pitfalls.
@@ -30,7 +30,7 @@ Review diff, spec and tests, not the summary. A fork's PR is untrusted: `securit
 Run `senior-mode protected` on the branch.
 Exit 0 lists files: zone touched, so the verdict is at best "approve, human merge": label
 `needs-human`, set `senior-mode/review` `pending`, never `success`, and name the files.
-Exit 1: globs miss things: still judge migrations, security, auth, permissions, secrets, payments, CI,
+Exit 1 (globs miss things): judge migrations, security, auth, permissions, secrets, payments, CI,
 infrastructure, major upgrades, L tickets, ADRs.
 
 ## Brief and extra sections
@@ -54,8 +54,8 @@ One PR comment (`gh pr comment`), project language:
 - **Brief**, then each axis and section (Security included): `file:line` findings, blocking or not,
   each with the fix, ending `<!-- finding: <slug> -->`.
 - **Not verified:** what you only read.
-- **Filed:** each out-of-scope or pre-existing defect becomes an issue
-  (`senior-mode issue create ... --status Ready`), linked.
+- **Filed:** each out-of-scope or pre-existing defect, linked: `senior-mode issue create ... --status
+  Ready`, and `--blocked-by <its ticket>` if in code the PR adds.
 
 Before posting, read `${CLAUDE_SKILL_DIR}/knowledge.md` (stable slugs, findings seen twice).
 

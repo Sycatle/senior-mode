@@ -40,7 +40,7 @@ call "$repo" "$full" Task >/dev/null
 
 # Given a call missing ## Verify, then the hook exits 2 with `brief: missing ## Verify (skill brief)`.
 before=$(wc -l <"$briefs")
-call "$repo" "${full/## Verify/## Check}" >/dev/null
+call "$repo" "${full/\#\# Verify/## Check}" >/dev/null
 [ "$rc" = 2 ] || fail "missing Verify: expected exit 2, got $rc"
 grep -qF "brief: missing ## Verify (skill brief)" <<<"$err" || fail "missing Verify: wrong message: $err"
 [ "$(wc -l <"$briefs")" = "$before" ] || fail "a refused call must not be logged"

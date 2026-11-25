@@ -570,6 +570,8 @@ run_finish_batch() {
     return 1
   fi
   if [ ${#done_[@]} -gt 0 ]; then
+    # serve sets Done every ticket of <n>.batch once the pull request merges: only the delivered ones are left in it.
+    [ ${#bad[@]} -eq 0 ] || state_put "$RUN_DIR/$n.batch" "${done_[*]}"
     RUN_FAILS=0
     for m in "${done_[@]}"; do run_record "$m" delivered "${RUN_REASON[$n]:-}" "$n"; done
     if [ -n "${RUN_ROLE[$n]:-}" ]; then

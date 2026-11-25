@@ -14,6 +14,7 @@ clearly which parts are still to come.
 - [Skills](skills.md): the discipline rules Claude loads by itself, and when.
 - [Agents](agents.md): the agent team, the model each one uses and why.
 - [Autonomy and guardrails](autonomy.md): what is blocked, what is required before a merge, what is not automated yet.
+- [Running the pipeline on a server](self-hosting.md): account, pinned plugin, sandbox, token, one `serve` unit per repository.
 - [Configuration](configuration.md): `.claude/senior-mode.json`, checks, CI mode, presets, git hooks, releases.
 - [FAQ](faq.md): cost, GitHub Actions budget, private repositories, existing repositories, leaving senior-mode, French.
 

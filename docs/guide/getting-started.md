@@ -119,7 +119,12 @@ in its own commit, only if you say yes.
 | `local` (default) | On your machine: before each push (git hook) and with `senior-mode check`. `senior-mode publish` sends the result to the pull request as `senior-mode/ci`. | Free. No GitHub Actions minutes. |
 | `actions` | Also on GitHub Actions, through `.github/workflows/senior-mode.yml`, which sets `senior-mode/ci`. | Spends your Actions budget. |
 
-The check list is the same in both modes. Why local is the default: [ADR 0006](../adr/0006-local-ci.md).
+A third mode, `existing`, reuses the project's own CI instead of running the checks again (see
+[CI mode](configuration.md#ci-mode)). The check list is the same in `local` and `actions`. Why local is
+the default: [ADR 0006](../adr/0006-local-ci.md).
+
+In a Node project, install the dependencies (`npm ci`) before the first `senior-mode check`: without
+`node_modules` it stops with `dependencies not installed: run npm ci`.
 
 ### Re-running to repair
 

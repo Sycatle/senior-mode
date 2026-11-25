@@ -224,7 +224,7 @@ board_items() { # project-id
   while [ "$more" = true ]; do
     page=$(jq -nc --arg q "$BOARD_ITEMS_QUERY" --arg id "$1" --arg a "$after" \
       '{query: $q, variables: ({id: $id} + (if $a == "" then {} else {after: $a} end))}' | gh_retry api graphql --input -) || return 1
-    pages=$(jq -c --argjson p "$page" '. + [$p]' <<<"$pages")
+    pages=$(json_append "$pages" "$page")
     more=$(jq -r '.data.node.items.pageInfo.hasNextPage // false' <<<"$page")
     after=$(jq -r '.data.node.items.pageInfo.endCursor // empty' <<<"$page")
     count=$((count + 1))

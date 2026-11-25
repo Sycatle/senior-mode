@@ -370,7 +370,7 @@ ready_items() {
       die "cannot read the Project from GitHub"
     err=$(jq -r '.errors[0].message // empty' <<<"$page" 2>/dev/null) || die "GitHub answered something that is not JSON"
     [ -z "$err" ] || die "GitHub refused the Project query: $err"
-    pages=$(jq -c --argjson p "$page" '. + [$p]' <<<"$pages")
+    pages=$(json_append "$pages" "$page")
     more=$(jq -r '.data.node.items.pageInfo.hasNextPage // false' <<<"$page")
     after=$(jq -r '.data.node.items.pageInfo.endCursor // empty' <<<"$page")
     count=$((count + 1))
@@ -711,7 +711,7 @@ board_more() {
       die "cannot read the pull requests and branches from GitHub"
     err=$(jq -r '.errors[0].message // empty' <<<"$page" 2>/dev/null) || die "GitHub answered something that is not JSON"
     [ -z "$err" ] || die "GitHub refused the pull request query: $err"
-    data=$(jq -c --argjson page "$page" "$HYGIENE_NODES"'$page.data.repository as $r | .hygiene as $h
+    data=$(jq -c --slurpfile page <(printf '%s' "$page") "$HYGIENE_NODES"'$page[0].data.repository as $r | .hygiene as $h
       | .hygiene.prs += [$r.pullRequests.nodes[]? | hpr] | .hygiene.branches += [$r.branches.nodes[]? | hbr]
       | .hygiene.prsMore = (if $r.pullRequests then more($r.pullRequests.pageInfo) else null end)
       | .hygiene.branchesMore = (if $r.branches then more($r.branches.pageInfo) else null end)' <<<"$data") ||
@@ -762,7 +762,7 @@ board_data() {
       die "cannot read the Project from GitHub"
     err=$(jq -r '.errors[0].message // empty' <<<"$page" 2>/dev/null) || die "GitHub answered something that is not JSON"
     [ -z "$err" ] || die "GitHub refused the Project query: $err"
-    pages=$(jq -c --argjson p "$page" '. + [$p]' <<<"$pages")
+    pages=$(json_append "$pages" "$page")
     more=$(jq -r '.data.node.items.pageInfo.hasNextPage // false' <<<"$page")
     after=$(jq -r '.data.node.items.pageInfo.endCursor // empty' <<<"$page")
     with_repo=false

@@ -228,6 +228,12 @@ iso_time() {
   date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ
 }
 
+# The JSON array $1 with the value $2 appended. Both go through stdin: a Project page passed as a jq argument
+# breaks past the per-argument limit of 128 KiB (#583); pass large JSON to jq with --slurpfile, never --argjson.
+json_append() {
+  printf '%s\n%s\n' "$1" "$2" | jq -sc '.[0] + [.[1]]'
+}
+
 # Modification time of a file, in epoch seconds (GNU stat, then BSD).
 file_mtime() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"

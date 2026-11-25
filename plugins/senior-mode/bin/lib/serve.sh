@@ -1029,7 +1029,7 @@ serve_stuck() {
 serve_candidates() {
   local re
   re=$(workflow_branch_re "$RUN_ROOT")
-  jq -r --argjson d "$1" --argjson map "$(workflow_branch_map_json)" --arg re "${re:-^[a-z]+/(?<n>[0-9]+)(-|\$)}" '[.[] | . as $p
+  jq -r --slurpfile d <(printf '%s' "$1") --argjson map "$(workflow_branch_map_json)" --arg re "${re:-^[a-z]+/(?<n>[0-9]+)(-|\$)}" '$d[0] as $d | [.[] | . as $p
       | ((try ($p.head.ref | capture($re) | .n | tonumber) catch null) // $map[$p.head.ref]) as $t
       | select($t != null)
       | ($d.items[] | select(.number == $t and .open and .status == "In review")) as $i
@@ -1095,9 +1095,10 @@ serve_merged_done() {
     serve_busy "$t" && continue
     serve_done "$t" "$pr"
     moved=true
-  done < <(jq -r --argjson d "$data" --argjson o "$prs" '
+  done < <(jq -r --slurpfile d <(printf '%s' "$data") --slurpfile o <(printf '%s' "$prs") '
       def ticket: try (capture("^[a-z]+/(?<n>[0-9]+)(-|$)") | .n | tonumber) catch null;
-      ([$o[] | .head.ref | ticket] | map(select(. != null))) as $open
+      $d[0] as $d | $o[0] as $o
+      | ([$o[] | .head.ref | ticket] | map(select(. != null))) as $open
       | [.[] | . as $p
           | ([($p.headRefName | ticket)] + [($p.body // "" | scan("(?i)(?:closes|fixes|resolves) #([0-9]+)") | .[0] | tonumber)])
           | map(select(. != null))[] | {t: ., pr: $p.number}]

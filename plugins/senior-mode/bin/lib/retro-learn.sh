@@ -95,7 +95,7 @@ retro_learn() {
   local data=$1 history=$2 board=$3 slug=$4 repeat out n cause open g marker found title body_file prio filed labelled="" improvements=""
   repeat=$(config_get retro.repeat)
   [[ $repeat =~ ^[1-9][0-9]*$ ]] || die "retro.repeat must be a positive whole number, not $repeat"
-  out=$(jq -c --argjson h "$history" --argjson b "$board" --argjson repeat "$repeat" "$RETRO_FAILURES_JQ" <<<"$data") || {
+  out=$(jq -c --argjson h "$history" --slurpfile b <(printf '%s' "$board") --argjson repeat "$repeat" '$b[0] as $b | '"$RETRO_FAILURES_JQ" <<<"$data") || {
     echo "retro: could not read the failure causes" >&2
     printf '%s\n' "$data"
     return 0

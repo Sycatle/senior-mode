@@ -568,8 +568,8 @@ grep -q "RELEASE_PLEASE_TOKEN" "$work/out" && fail "release note printed though 
 
 # GitHub's own scanners (#172, amended by #222): Dependabot alerts, secret scanning and push protection
 # are switched on. Security updates (automated-security-fixes) are not: GitHub has no severity filter
-# for them, so alerts become issues only (#144 path). No dependabot.yml is written; one that exists
-# is left untouched and setup says so.
+# for them, so alerts become issues only (#144 path). Version updates (#497) come from a dependabot.yml
+# setup writes when the project has no Dependabot or Renovate config; one that exists is left untouched and setup says so.
 dep=$repo/.github/dependabot.yml
 rm -f "$dep"
 echo '{}' >"$repo/package.json"
@@ -580,11 +580,23 @@ for want in "security_and_analysis[secret_scanning][status]=enabled" "security_a
   logged "api -X PATCH repos/acme/app -f" || fail "repository not patched"
   logged "$want" || fail "repository not patched with $want"
 done
-[ ! -e "$dep" ] || fail "dependabot.yml written: $(cat "$dep")"
+[ -f "$dep" ] || fail "no dependabot.yml written for a node project"
+grep -q 'package-ecosystem: *"\?npm"\?' "$dep" || fail "no npm entry: $(cat "$dep")"
+grep -q 'interval: *"\?weekly"\?' "$dep" || fail "the npm entry is not weekly: $(cat "$dep")"
+grep -q 'minor-and-patch' "$dep" || fail "no minor-and-patch group: $(cat "$dep")"
+grep -q 'update-types' "$dep" && grep -q '"\?minor"\?' "$dep" && grep -q '"\?patch"\?' "$dep" || fail "the group does not take minor and patch: $(cat "$dep")"
+grep -q 'version-update:semver-major' "$dep" || fail "majors not ignored: $(cat "$dep")"
+grep -q '^version: 2' "$dep" || fail "not a version 2 file: $(cat "$dep")"
+logged "git commit" && fail "setup committed the file"
 grep -qF "Dependabot security updates" "$work/out" && fail "security updates still reported: $(cat "$work/out")"
 logged "git commit" && fail "setup committed something"
 grep -qiE "alerts.*(on|enabled)" "$work/out" || fail "scanners not reported on: $(cat "$work/out")"
-grep -q "dependabot.yml" "$work/out" && fail "dependabot.yml mentioned though there is none: $(cat "$work/out")"
+grep -q "dependabot.yml: written" "$work/out" || fail "the written file is not reported: $(cat "$work/out")"
+# A rerun finds the file it wrote and leaves it as it is.
+cp "$dep" "$work/dep-first"
+setup
+cmp -s "$dep" "$work/dep-first" || fail "a rerun rewrote dependabot.yml"
+grep -q "dependabot.yml: .*untouched" "$work/out" || fail "rerun does not report the file untouched: $(cat "$work/out")"
 
 # A dependabot.yml of the project's own is left untouched, and setup says so; a rerun keeps the scanners on.
 mkdir -p "$repo/.github"; echo "version: 2 # mine" >"$dep"
@@ -594,12 +606,25 @@ grep -q "dependabot.yml: .*untouched" "$work/out" || fail "existing file not rep
 logged "api -X PUT repos/acme/app/vulnerability-alerts" || fail "rerun does not keep the scanners on"
 logged "automated-security-fixes" && fail "rerun turned security updates on"
 
-# No manifest or another ecosystem: still no file.
+# A Renovate config: nothing is written and setup says so (#497).
+rm -f "$dep"
+echo '{}' >"$repo/renovate.json"
+setup
+[ ! -e "$dep" ] || fail "dependabot.yml written beside a renovate.json: $(cat "$dep")"
+grep -q "renovate: untouched" "$work/out" || fail "renovate.json not reported untouched: $(cat "$work/out")"
+[ "$(cat "$repo/renovate.json")" = '{}' ] || fail "renovate.json rewritten"
+logged "api -X PUT repos/acme/app/vulnerability-alerts" || fail "renovate: the scanners are not kept on"
+rm -f "$repo/renovate.json"
+
+# No manifest: no file, and nothing said about it. Another ecosystem gets no npm entry.
 rm -f "$dep" "$repo/package.json"
+setup
+[ ! -e "$dep" ] || fail "dependabot.yml written for a project with no manifest: $(cat "$dep")"
+grep -q "dependabot.yml\|renovate" "$work/out" && fail "dependabot.yml mentioned with no manifest: $(cat "$work/out")"
 echo 'module example.com/app' >"$repo/go.mod"
 setup
-[ ! -e "$dep" ] || fail "dependabot.yml written for a go project: $(cat "$dep")"
-rm -f "$repo/go.mod"
+grep -q 'package-ecosystem: *"\?npm' "$dep" 2>/dev/null && fail "an npm entry for a go project: $(cat "$dep")"
+rm -f "$repo/go.mod" "$dep"
 
 # A plan that refuses (HTTP 403 or 422): each refusal is said, the other features are still tried,
 # and setup goes on to the end.

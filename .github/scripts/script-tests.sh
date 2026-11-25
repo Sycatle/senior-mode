@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs the script tests of the repository (*/test-*.sh), as many at a time as there are CPUs. Each file's
+# Runs the script tests of the repository (*/test-*.sh), as many at a time as there are CPUs (divided by
+# SENIOR_MODE_SLOTS, the sessions that may run a check at once). Each file's
 # output is kept apart and printed in the order of the files; a failing file is named, and the others still
 # run. On a push (SENIOR_MODE_CHANGED_FILES, set by the pre-push hook) only the files the changed paths touch
 # run: a changed test, a test whose text names the changed file. A path that cannot be mapped runs them all.
@@ -52,6 +53,12 @@ select_tests() {
 }
 
 mapfile -t selected < <(select_tests)
+jobs=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+# Parallel serve sessions each run a check: they share the cores instead of each taking them all (#588).
+slots=${SENIOR_MODE_SLOTS:-1}
+[[ $slots =~ ^[1-9][0-9]*$ ]] || slots=1
+jobs=$((jobs / slots))
+[ "$jobs" -ge 1 ] || jobs=1
 # The tests run as if from a shell, not from the session that runs check (#587): a serve session's
 # SENIOR_MODE_RUN, SENIOR_MODE_SLOTS or plugin variables change what the scripts under test do.
 unset "${!SENIOR_MODE_@}" "${!CLAUDE_PLUGIN_@}" CLAUDE_PROJECT_DIR CLAUDECODE
@@ -60,7 +67,6 @@ if [ "${#selected[@]}" -eq 0 ]; then
   exit 0
 fi
 
-jobs=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
 out=$(mktemp -d)
 # Two runs at once (parallel sessions, #295) share nothing: the test files get a temp directory and a lock
 # directory (XDG_RUNTIME_DIR, where the machine-wide lock files go) of this run only.

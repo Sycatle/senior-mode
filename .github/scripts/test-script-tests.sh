@@ -46,6 +46,19 @@ printf '#!/bin/sh\necho 2\n' >"$work/stub/nproc"
 PATH="$work/stub:$PATH" run || fail "fails on the two-core run: $(cat "$work/out")"
 [ "$(sort -n "$work/peak" | tail -n 1)" = 2 ] || fail "files not run two at a time: $(tr '\n' ' ' <"$work/peak")"
 
+# Parallel serve sessions share the cores (#588): four cores and two slots, two files at a time; more slots
+# than cores, still one at a time. The tests do not see the session's variables (#587).
+printf '#!/bin/sh\necho 4\n' >"$work/stub/nproc"
+: >"$work/peak"
+PATH="$work/stub:$PATH" SENIOR_MODE_SLOTS=2 run || fail "fails on the two-slot run: $(cat "$work/out")"
+[ "$(sort -n "$work/peak" | tail -n 1)" = 2 ] || fail "four cores, two slots: not two at a time: $(tr '\n' ' ' <"$work/peak")"
+: >"$work/peak"
+PATH="$work/stub:$PATH" SENIOR_MODE_SLOTS=8 run || fail "fails on the eight-slot run: $(cat "$work/out")"
+[ "$(sort -n "$work/peak" | tail -n 1)" = 1 ] || fail "four cores, eight slots: not one at a time: $(tr '\n' ' ' <"$work/peak")"
+tfile a "env | grep -E '^(SENIOR_MODE_|CLAUDE_PLUGIN_|CLAUDECODE=)' && exit 1; true"
+commit
+SENIOR_MODE_RUN=1 SENIOR_MODE_SLOTS=4 CLAUDE_PLUGIN_ROOT=/x CLAUDECODE=1 run || fail "a test saw the session's variables: $(cat "$work/out")"
+
 # Output comes in the order of the files, whatever the order they finish in.
 tfile a 'sleep 1'
 tfile b 'true'

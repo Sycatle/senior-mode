@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.8.0](https://github.com/Sycatle/senior-mode/compare/senior-mode--v0.7.0...senior-mode--v0.8.0) (2026-11-25)
+
+
+### Features
+
+* **check:** architecture rules from the config fail the check, with a ratchet baseline ([cf45f42](https://github.com/Sycatle/senior-mode/commit/cf45f42b4246378a9ea9e5cf80c330f99f94e703)), refs [#337](https://github.com/Sycatle/senior-mode/issues/337)
+* **check:** check --changed runs what the diff impacts ([92fdce9](https://github.com/Sycatle/senior-mode/commit/92fdce98b9a3cf34539718c36cbda884c9c3b386)), refs [#339](https://github.com/Sycatle/senior-mode/issues/339)
+* **check:** knowledge notes have a validated format ([afc427a](https://github.com/Sycatle/senior-mode/commit/afc427ab5376ddd35e48e879f1069afca1b1ad3e)), refs [#333](https://github.com/Sycatle/senior-mode/issues/333)
+* **check:** notes citing missing paths are flagged ([55b14ad](https://github.com/Sycatle/senior-mode/commit/55b14adce5a3cc0d91f4fa4865a2f32660451272)), refs [#345](https://github.com/Sycatle/senior-mode/issues/345)
+* **check:** run only the packages a diff affects ([6688c75](https://github.com/Sycatle/senior-mode/commit/6688c75a2b63c28763979d9ebea8daf84c4b4b19)), refs [#418](https://github.com/Sycatle/senior-mode/issues/418)
+* **cli:** hotfix lane for production emergencies ([b82e54e](https://github.com/Sycatle/senior-mode/commit/b82e54e3a49d3cf1f48d60a5e42e649e178e7ed9)), refs [#322](https://github.com/Sycatle/senior-mode/issues/322)
+* **context:** the briefing fits a token budget, goes from stable to variable and shows each note's age ([8917248](https://github.com/Sycatle/senior-mode/commit/891724856cd6708ccc67f59c4bca059cedcbbb30)), refs [#343](https://github.com/Sycatle/senior-mode/issues/343)
+* **context:** the briefing lists related tickets and framing decisions and works without GitHub ([2a9a24a](https://github.com/Sycatle/senior-mode/commit/2a9a24ae121fd8b004c35f8a1ce665c64129c68c)), refs [#354](https://github.com/Sycatle/senior-mode/issues/354)
+* **context:** the briefing selects and ranks the specs, ADRs and notes that govern the ticket's Paths ([4251f04](https://github.com/Sycatle/senior-mode/commit/4251f04418b0c9490d62ee3ccf379dadfb6f198e)), refs [#338](https://github.com/Sycatle/senior-mode/issues/338)
+* **context:** the briefing shows the history of the ticket's Paths ([a450b25](https://github.com/Sycatle/senior-mode/commit/a450b259e45cc773ba8478465b2e3ddf656fc02c)), refs [#349](https://github.com/Sycatle/senior-mode/issues/349)
+* **frame:** acceptance criteria become red test skeletons ([5c77eb6](https://github.com/Sycatle/senior-mode/commit/5c77eb6ed8523f14aeba0cc52794e43caa8a20bc)), refs [#311](https://github.com/Sycatle/senior-mode/issues/311)
+* **notify:** a daily digest of what the daemon did ([de202db](https://github.com/Sycatle/senior-mode/commit/de202db45d9f0e54c9a772a98a685f013ef0ec8e)), refs [#309](https://github.com/Sycatle/senior-mode/issues/309)
+* **presets:** record the packages of a monorepo in setup repo ([a09c34e](https://github.com/Sycatle/senior-mode/commit/a09c34e3efc2bb2be83730fb9848b6321aba9b02)), refs [#323](https://github.com/Sycatle/senior-mode/issues/323)
+* **retro:** a failure taxonomy opens a targeted improvement ticket when a cause repeats ([8376e6c](https://github.com/Sycatle/senior-mode/commit/8376e6cf8c8dada72236d744cc77bb8dabb9abdb)), refs [#364](https://github.com/Sycatle/senior-mode/issues/364)
+* **retro:** retro proposes merging and deleting notes and promotes or drops agent memory drafts ([92d8dd7](https://github.com/Sycatle/senior-mode/commit/92d8dd71054d93fc6f9fc40702192a0ba58f461d)), refs [#340](https://github.com/Sycatle/senior-mode/issues/340)
+* **review:** the reviewer promotes a finding seen twice into a knowledge note ([fb273f8](https://github.com/Sycatle/senior-mode/commit/fb273f839da389974dd1ffe395efeccc08b91a50)), refs [#359](https://github.com/Sycatle/senior-mode/issues/359)
+* **serve:** reconcile sessions, merged pull requests and a hung gh after a crash ([29ea85c](https://github.com/Sycatle/senior-mode/commit/29ea85c6ced9f1280f1fdd9c2c207b048daa1a5f)), refs [#379](https://github.com/Sycatle/senior-mode/issues/379)
+* **serve:** watchdog for hung sessions, orphans and stale locks ([c762805](https://github.com/Sycatle/senior-mode/commit/c7628053420cd795cfc280b2d8ac6dd8ee68643b)), refs [#384](https://github.com/Sycatle/senior-mode/issues/384)
+* **serve:** write every state file whole, under one lock ([e96087d](https://github.com/Sycatle/senior-mode/commit/e96087d00eb8254ad588124354dc5cd54d8e1dab)), refs [#381](https://github.com/Sycatle/senior-mode/issues/381)
+* **setup:** opt out of hosted preview deployments ([d1d7bd0](https://github.com/Sycatle/senior-mode/commit/d1d7bd0bd32cd2736b67b3bc8177fda6907b5513)), refs [#542](https://github.com/Sycatle/senior-mode/issues/542)
+* **setup:** setup proposes the stack's language server ([fcbcb66](https://github.com/Sycatle/senior-mode/commit/fcbcb669c06a79d9950803b34360090d534577a5)), refs [#341](https://github.com/Sycatle/senior-mode/issues/341)
+* **status:** a decision inbox groups everything waiting for the human ([4d56a94](https://github.com/Sycatle/senior-mode/commit/4d56a945843395d9748236d3e58e863f4d64f3ef)), refs [#308](https://github.com/Sycatle/senior-mode/issues/308)
+* **tdd:** the implementer adds a knowledge note when it hits a pitfall ([d71f8c0](https://github.com/Sycatle/senior-mode/commit/d71f8c0e42b35237bc626ec6b092a572f2a29258)), refs [#336](https://github.com/Sycatle/senior-mode/issues/336)
+
+
+### Bug Fixes
+
+* **board:** read a Todo status as Backlog ([838ac4a](https://github.com/Sycatle/senior-mode/commit/838ac4aa997fab0e7d71c851358191e4ff087f22)), refs [#556](https://github.com/Sycatle/senior-mode/issues/556)
+* **board:** read the board when check runs are forbidden to the token ([2d68121](https://github.com/Sycatle/senior-mode/commit/2d6812156279b465789c4c6a63d322a6f4c5cf66)), refs [#548](https://github.com/Sycatle/senior-mode/issues/548)
+* **red-tests:** verify without a git worktree, and not after a test-author record ([830cb21](https://github.com/Sycatle/senior-mode/commit/830cb21f8f7af0744704524140264a345fdfa1f7)), refs [#563](https://github.com/Sycatle/senior-mode/issues/563)
+* **serve:** align the failure classification with spec 373 section 1 ([470e013](https://github.com/Sycatle/senior-mode/commit/470e01361c432aa8ec601c068b387f87b3a16e76)), refs [#432](https://github.com/Sycatle/senior-mode/issues/432)
+* **serve:** an unknown environment failure does not relaunch the same ticket in a loop ([f6607d5](https://github.com/Sycatle/senior-mode/commit/f6607d58fce9f74c336cd898de55e3aa8965a727)), refs [#569](https://github.com/Sycatle/senior-mode/issues/569)
+
 ## [0.7.0](https://github.com/Sycatle/senior-mode/compare/senior-mode--v0.6.0...senior-mode--v0.7.0) (2026-11-24)
 
 

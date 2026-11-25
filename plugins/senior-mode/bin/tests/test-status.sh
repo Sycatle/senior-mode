@@ -186,6 +186,13 @@ run pick --json || fail "empty pick --json failed"
 [ "$(cat "$work/out")" = "[]" ] || fail "empty pick --json: $(cat "$work/out")"
 cp "$FIX/page-first.full" "$FIX/page-first.json"
 
+# A Project page over the 128 KiB a single argument may hold is read whole (#583).
+jq -c '(.data.node.items.nodes[] | select(.content.number == 10) | .content.body) = ("x" * 300000)' \
+  "$FIX/page-first.full" >"$FIX/page-first.json"
+run pick --json || fail "pick on a 300 KiB page failed: $(cat "$work/err")"
+[ "$(json 'map(.number)')" = "[11,16,12,10]" ] || fail "pick on a 300 KiB page: $(cat "$work/out")"
+cp "$FIX/page-first.full" "$FIX/page-first.json"
+
 # A token that cannot read check runs (#548): the board is read anyway; any other error still fails.
 GH_GQL_ERROR=repository.pullRequests.nodes.0.commits.nodes.0.commit.statusCheckRollup.contexts.nodes.0 run pick --json ||
   fail "pick with forbidden check runs failed: $(cat "$work/err")"

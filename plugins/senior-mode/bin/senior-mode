@@ -66,6 +66,8 @@ usage() {
 . "$LIB/schedule.sh"
 # shellcheck source=lib/watchdog.sh
 . "$LIB/watchdog.sh"
+# shellcheck source=lib/lease.sh
+. "$LIB/lease.sh"
 # shellcheck source=lib/serve.sh
 . "$LIB/serve.sh"
 

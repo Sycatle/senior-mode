@@ -776,6 +776,15 @@ grep -qi 'at most 2 fix rounds\|reviewer agent reviews the pull request' "$state
 grep -q 'you never set it' "$state/21.prompt" || fail "J: the batch prompt does not forbid senior-mode/review"
 grep -q 'delivered.*senior-mode/ci and senior-mode/security' "$state/21.prompt" || fail "J: the batch prompt does not end at ci and security"
 grep -q '#22 ("Ticket 22")' "$state/21.prompt" || fail "J: the batch prompt does not list #22"
+# A ticket the batch session gives up is no longer of the batch: the merge of its pull request leaves it open.
+board 21 22
+paths_of 21 'src/a/**'
+paths_of 22 'src/a/x.ts'
+session 21-sonnet "" pr
+printf '#21 outgrown: fixes code of an unmerged pull request\n#22 delivered\n' >"$FIX/outcome-21"
+fresh
+once || fail "J: serve failed: $(cat "$work/out")"
+[ "$(cat "$state/21.batch")" = 22 ] || fail "J: the batch keeps a ticket it gave up: $(cat "$state/21.batch")"
 fields=$saved_fields
 
 # Z: a ticket launched in a poll reserves its Paths for the rest of that poll (#344), also when the config of the

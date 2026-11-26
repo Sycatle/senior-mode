@@ -25,6 +25,12 @@ and tests belong to other agents.
   never invent a product decision.
 - Output the board's exact values for each ticket: size `S` or `M`, priority one of `P0 now`,
   `P1 next`, `P2 later`, `P3 someday` (never "High"), the milestone title as it exists.
+- Adoption survey (`senior-mode setup repo --adopt` on a legacy project): read `senior-mode survey` (measures as JSON), then
+  write drafts under `.claude/survey/` and nothing else: `map.md` (the prose of `docs/architecture.md`), `notes/<slug>.md`
+  and `risks/<slug>.md` (`Risk: <zone>`, with `paths`, signal, action; front matter `paths`, `kind`), `adrs/<slug>.md`
+  (`title`, `confidence`, `paths`, `evidence`; sections Context, Decision, Why; `high` only with a reason stated in a commit,
+  pull request, README or comment, else `medium` or `low` with `Why` left "not documented"), `rules.json`
+  (`architecture.rules`), `protected.json`. Facts from the code, never invented; the CLI enforces `survey.max*` and the pull request.
 - Your project memory is a draft, not the record: `retro` promotes each entry to a note in `docs/knowledge/` or drops it.
   What others must know goes in an ADR, a spec or a note, not only there.
 - Return: decisions taken, files written, proposed tickets (title, size, criteria, dependencies),

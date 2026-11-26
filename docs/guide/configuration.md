@@ -64,6 +64,9 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `knowledge.staleMonths` | `6` | Months after which the [briefing](commands.md#the-senior-mode-script) marks a note `stale` and `check` warns about it (a positive whole number) |
 | `knowledge.churnCommits` | `15` | Commits on a note's `paths` since its `verified` date above which [`serve`](autonomy.md#alerts) files a gardening ticket to re-verify the note (a positive whole number) |
 | `maintenance.share` | `0.2` | Share of `autonomy.parallel` kept for Ready `gardening` tickets, rounded up (0.2 of 4 slots keeps 1): [`serve`](autonomy.md#maintenance-budget) does not let a feature ticket take the last of them while a gardening ticket waits; `0` reserves nothing (a number from 0 to 1) |
+| `survey.maxNotes` | `30` | Most knowledge notes (risk zones included) the [adoption survey](#architecture-survey-of-a-legacy-project) writes into its pull request; the rest are listed in it (a positive whole number) |
+| `survey.maxAdrs` | `10` | Most retroactive ADRs the adoption survey writes (a positive whole number) |
+| `survey.maxRules` | `15` | Most `architecture.rules` the adoption survey adds (a positive whole number) |
 | `maintenance.maxOpen` | `5` | Most open tickets labelled `gardening`: `serve` files no more while that many are open (a positive whole number) |
 | `retro.repeat` | `3` | Tickets with the same `cause:<x>` label on the same paths or skill, in the period, that make [`retro`](commands.md#retro) open one improvement ticket aimed at that cause (a positive whole number) |
 | `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |
@@ -456,6 +459,30 @@ takes the recommended answer, printed as `ask: ... (assumed)`. A key you already
 The ruleset still covers the default branch only: a project that works on `dev` is not protected there by
 `setup github`.
 
+### Architecture survey of a legacy project
+
+On a project recorded `adopt.kind: legacy`, `senior-mode setup repo --adopt` also surveys the architecture, and the one pull
+request `docs: adopt senior-mode` holds the result: the prose map in `docs/architecture.md` (with the generated block after it),
+knowledge notes with `origin: "survey"` (`Risk: <zone>` notes for the zones with a signal: high churn and fixes, no tests,
+nothing imports it and no change in 12 months, many `TODO`), retroactive ADRs, `architecture.rules` with the baseline of the
+violations that exist, and a proposal of `protected` globs for the security-sensitive paths (listed, never applied).
+`senior-mode survey` prints the measures as JSON (churn and fix ratio per zone over 12 months, tests next to the code, `TODO`
+density, imports between zones, the coverage report); the architect agent reads them and writes drafts under `.claude/survey/`,
+which setup checks against `survey.maxNotes`, `survey.maxAdrs` and `survey.maxRules` and removes once the pull request is open.
+`--dry-run` prints the measures and the files, and writes nothing.
+
+A retroactive ADR carries `retroactive: true`, `confidence` and `evidence`. `high`: the reason is stated in a commit, a pull
+request, the README or a comment (it needs `evidence`, else it is `medium`); `medium`: the code follows it nearly everywhere and
+no reason is stated; `low`: inferred. Below `high`, `Why` says "Not documented, owner to fill": a reason is never invented. A `low`
+ADR is `proposed` and binds no agent until you set `accepted`. The pull request lists each file with its confidence and a
+checkbox; you validate by editing or deleting files, and the merge is the validation. A second run never rewrites a file: new
+findings come as a separate pull request.
+
+Once merged, agents follow the project's conventions before senior-mode's defaults. The briefing opens its project block with
+`Project conventions`: the `workflow` keys, the architecture rules, the notes of kind `convention` whose `paths` overlap the ticket,
+then `CLAUDE.md` and the lint configuration; the implementer and the test author follow it, and the reviewer flags a diff that breaks
+it. The secret scan, protected zones, independent review, a green `check` and tests for new behaviour still apply.
+
 ## Knowledge notes
 
 A note is a Markdown file `docs/knowledge/<slug>.md` (`<slug>` kebab-case, one fact per note) that tells agents what
@@ -474,7 +501,7 @@ kind: pitfall
 
 - `paths`: a non-empty list of globs (the dialect of `protected`): the files the note is about.
 - `verified`: `YYYY-MM-DD`, not in the future: when a person or an agent last confirmed the note is true.
-- `origin`: `#<n>` (the ticket or pull request that taught it; several, `#41, #57`, when more than one did), `retro` or a path under `docs/spikes/`.
+- `origin`: `#<n>` (the ticket or pull request that taught it; several, `#41, #57`, when more than one did), `retro`, `survey` (written by the [adoption survey](#architecture-survey-of-a-legacy-project)) or a path under `docs/spikes/`.
 - `kind`: `pitfall`, `convention`, `howto` or `context`.
 - The body (after the front matter) has at most `knowledge.maxLines` lines (default 40): a longer subject is split in notes, or becomes an ADR or a spec.
 

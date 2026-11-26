@@ -16,8 +16,8 @@ Wording, follow-ups, status line, no human to ask: `${CLAUDE_SKILL_DIR}/referenc
 2. `gh auth status` succeeds. If the token lacks the `project` scope, ask the user to run
    `gh auth refresh -s project`.
 3. Run `senior-mode setup detect`, then ask the three questions of the reference ("Questions") in one round.
-   Run `senior-mode setup answers --dry-run <flags>` and show its summary (facts, answers, defaults). On their
-   yes, rerun it without `--dry-run`: it writes the answers, nothing on GitHub.
+   Run `senior-mode setup answers --dry-run <flags>` and show its summary (facts, answers, defaults). On their yes,
+   rerun it without `--dry-run`: it writes the answers, nothing on GitHub.
 
 ## GitHub
 
@@ -41,9 +41,9 @@ Run `senior-mode setup github --ci <local|actions>` (`local` unless asked). It:
 ## Repository
 
 Run `senior-mode setup repo`. With a `package.json` it takes the
-`node` preset; otherwise ask once how to lint, typecheck, test and build, and rerun with one
+`node` preset; otherwise ask once how to lint, typecheck, test and build, rerun with one
 `--command lint="<cmd>"` per answer. It adds checks, hooks, `CLAUDE.md` Principles, templates, permissions,
-release-please; what exists is kept. Then the reference's follow-ups.
+release-please; what exists is kept. Legacy: survey first. Then the reference's follow-ups.
 
 ## Report
 

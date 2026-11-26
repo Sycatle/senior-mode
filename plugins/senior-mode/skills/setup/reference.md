@@ -25,6 +25,15 @@ It also writes the Project's short description and README in the project languag
 only the block between the `senior-mode:begin` and `senior-mode:end` markers (`board README: ... markers broken`:
 the README is left as it is, ask the user to restore the markers).
 
+## Survey of a legacy project
+
+`senior-mode setup repo --adopt` on a project recorded `adopt.kind: legacy` opens one pull request that also holds the survey.
+Before it, run `senior-mode survey` (measures as JSON) and give the architect agent the output: it writes drafts under
+`.claude/survey/` (map, notes, risk zones, retroactive ADRs, rules, `protected` proposal), see its prompt. `--adopt --dry-run`
+prints the measures and the files that would be written. The pull request lists each file with its confidence and a
+checkbox: tell the user that editing or deleting a file corrects it and that the merge validates it. A second run adds
+only new findings, in a pull request of its own.
+
 ## Scanners
 
 `senior-mode setup github` turns on Dependabot alerts, secret scanning and push

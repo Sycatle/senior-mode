@@ -364,6 +364,29 @@ kept=$(find "$logs" -type f | wc -l)
 [ -f "$(sed -n 's/^      full log: //p' "$work/out")" ] || fail "the new log was removed"
 [ -e "$logs/old-30.log" ] && [ ! -e "$logs/old-1.log" ] || fail "the oldest logs were not the ones removed: $(printf "%s " "$logs"/* | head -c 300)"
 
+# A failure with `file:line` lines prints one line per finding, 10 at most, then the `fix` command and the log path (#478).
+# shellcheck disable=SC2016 # the check's command is expanded by the check, not here
+config '{"audit":false,"checks":[{"name":"lint","run":"echo banner; for i in $(seq 1 30); do echo \"src/f$i.ts:$i:5: error unused value\"; done; echo 30 problems; exit 1","fix":"pnpm lint --fix"}]}'
+run check && fail "a failing check passes"
+[ "$(grep -cE '^      src/f[0-9]+\.ts:[0-9]+ lint error unused value$' "$work/out")" = 10 ] || fail "not 10 compact lines: $(cat "$work/out")"
+grep -qF '      src/f1.ts:1 lint error unused value' "$work/out" || fail "the first finding is not compact: $(cat "$work/out")"
+grep -qF '      … 20 more' "$work/out" || fail "no count of the other findings: $(cat "$work/out")"
+grep -qF '      fix: pnpm lint --fix' "$work/out" || fail "no fix line: $(cat "$work/out")"
+grep -q '^      full log: ' "$work/out" || fail "no log path: $(cat "$work/out")"
+grep -qE 'banner|30 problems|f11\.ts' "$work/out" && fail "other output of the check is printed: $(cat "$work/out")"
+# No `file:line` line, no fix key: the last 20 lines as before, and no `fix:` line.
+config '{"audit":false,"checks":[{"name":"noisy test","run":"seq 1 50; exit 3"}]}'
+run check && fail "a failing check passes"
+{ grep -q '^      31$' "$work/out" && grep -q '^      50$' "$work/out" && ! grep -q '^      30$' "$work/out"; } || fail "unparsable output is not the last 20 lines: $(cat "$work/out")"
+grep -q 'fix:' "$work/out" && fail "a fix line without a fix command: $(cat "$work/out")"
+# Fewer than 10 findings: no count line. A passing check prints no output.
+config '{"audit":false,"checks":[{"name":"lint","run":"echo a.go:3:1: bad; echo b.go:4: worse; exit 1"},{"name":"fine","run":"echo src/x.ts:1:1: fine; true"}]}'
+run check && fail "a failing check passes"
+grep -qF '      a.go:3 lint bad' "$work/out" || fail "a.go finding not compact: $(cat "$work/out")"
+grep -qF '      b.go:4 lint worse' "$work/out" || fail "b.go finding not compact: $(cat "$work/out")"
+grep -q ' more' "$work/out" && fail "a count line for 2 findings: $(cat "$work/out")"
+grep -q 'src/x.ts' "$work/out" && fail "the output of a passing check is printed: $(cat "$work/out")"
+
 # Two checks started together in two worktrees both pass (#295): each run gives its checks a temp directory of
 # its own, so a fixed name under TMPDIR never collides, and removes it when it ends.
 config "$(jq -nc --arg d "$work" '{audit: false, checks: [{name: "fixed name", run: ("mkdir \"$TMPDIR/fixed-name\" && sleep 1 && echo \"$TMPDIR\" >>" + $d + "/tmps")}]}')"

@@ -51,6 +51,26 @@ check_log_keep() {
   printf '%s\n' "$log"
 }
 
+# The failure of a check as one line per finding (#478, spec 474 §8): the `file:line[:col]` lines of the output $1, as
+# `<file>:<line> <check $2> <message>`, 10 at most then `… <n> more`, then `fix: <command $3>` when there is one. An output with
+# no such line is its last 20 lines. Every line is indented for the check report.
+check_findings() {
+  local out=$1 name=$2 fix=${3:-} re='^([^[:space:]:]+):([0-9]+)(:[0-9]+)?:?[[:space:]]+([^[:space:]].*)$' line n=0 total
+  total=$(grep -cE '^[^[:space:]:]+:[0-9]+(:[0-9]+)?:?[[:space:]]+[^[:space:]]' "$out" || true)
+  if [ "${total:-0}" -eq 0 ]; then
+    tail -n 20 "$out" | sed 's/^/      /'
+  else
+    while IFS= read -r line; do
+      [[ $line =~ $re ]] || continue
+      n=$((n + 1))
+      [ "$n" -le 10 ] || break
+      printf '      %s:%s %s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$name" "${BASH_REMATCH[4]}"
+    done <"$out"
+    [ "$total" -le 10 ] || echo "      … $((total - 10)) more"
+  fi
+  [ -z "$fix" ] || echo "      fix: $fix"
+}
+
 # Whether `check` audits the dependencies (`audit`, on by default); anything but a boolean is an error.
 audit_enabled() {
   local value
@@ -1015,8 +1035,12 @@ check() {
       took=$(since_ms "$started")
       failed="${failed:+$failed, }$name"
       echo "FAIL  $label ($took)"
-      # The audit lists every blocking advisory (it caps them itself); another check shows its last lines.
-      tail -n "$([ "$name" = "dependency audit" ] && echo 300 || echo 20)" "$output" | sed 's/^/      /'
+      # The audit lists every blocking advisory (it caps them itself); another check shows one line per finding, else its last lines.
+      if [ "$name" = "dependency audit" ]; then
+        tail -n 300 "$output" | sed 's/^/      /'
+      else
+        check_findings "$output" "${bases[i]}" "$(jq -r --arg n "${bases[i]}" '[.checks[]? | select(.name == $n) | .fix // empty][0] // empty' "$file")"
+      fi
       log=$(check_log_keep "$name" "$output")
       [ -z "$log" ] || echo "      full log: $log"
     fi

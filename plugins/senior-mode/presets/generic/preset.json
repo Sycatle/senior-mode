@@ -6,7 +6,7 @@
     "**/rbac/**", ".env*", "**/secrets/**", "*.pem", "*.key", "**/payments/**", "**/billing/**",
     "**/stripe/**", ".github/workflows/**", ".github/actions/**", ".github/CODEOWNERS", ".githooks/**",
     ".gitlab-ci.yml", "Dockerfile*", "docker-compose*", "compose.y*ml", "**/infra/**",
-    "**/terraform/**", "**/k8s/**", "*.tf", ".claude/settings*.json", ".claude/senior-mode.json", ".claude/secret-allowlist"
+    "**/terraform/**", "**/k8s/**", "*.tf", ".claude/settings*.json", ".claude/senior-mode.json", ".claude/secret-allowlist", ".claude/ratchet-baseline.json", ".claude/architecture-baseline.json"
   ],
   "release": {
     "packages": { ".": { "release-type": "simple", "component": "{{name}}", "include-component-in-tag": true } }

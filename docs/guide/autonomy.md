@@ -237,7 +237,8 @@ The `node` and `generic` presets protect:
 | Payments | `**/payments/**`, `**/billing/**`, `**/stripe/**` |
 | CI and git hooks | `.github/workflows/**`, `.github/actions/**`, `.github/CODEOWNERS`, `.githooks/**`, `.gitlab-ci.yml` |
 | Infrastructure, containers | `Dockerfile*`, `docker-compose*`, `compose.y*ml`, `**/infra/**`, `**/terraform/**`, `**/k8s/**`, `*.tf` |
-| senior-mode config | `.claude/settings*.json`, `.claude/senior-mode.json` |
+| senior-mode config | `.claude/settings*.json`, `.claude/senior-mode.json`, `.claude/secret-allowlist` |
+| Ratchet and architecture baselines | `.claude/ratchet-baseline.json`, `.claude/architecture-baseline.json` |
 | Next.js projects (`framework`) | `middleware.*`, `src/middleware.*`, `proxy.*`, `src/proxy.*` |
 
 The [`review`](skills.md#review) skill and the `reviewer` agent run `senior-mode protected`: a match

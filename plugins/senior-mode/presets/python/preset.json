@@ -11,7 +11,9 @@
     "docker-compose*.yml",
     "infra/**",
     ".claude/senior-mode.json",
-    ".claude/secret-allowlist"
+    ".claude/secret-allowlist",
+    ".claude/ratchet-baseline.json",
+    ".claude/architecture-baseline.json"
   ],
   "checks": [{ "name": "commit subjects", "run": ".githooks/commit-msg --branch" }],
   "queries": {

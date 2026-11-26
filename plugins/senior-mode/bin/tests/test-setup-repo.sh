@@ -53,7 +53,7 @@ jq -e '.packages["."].component == "app"' "$new/release-please-config.json" >/de
 jq -e '.packages["."]["initial-version"] == "0.1.0"' "$new/release-please-config.json" >/dev/null ||
   fail "a new project's first release is not 0.1.0"
 
-jq -e '.protected | index("**/migrations/**") and index(".github/workflows/**") and index("**/secrets/**") and index(".claude/secret-allowlist")' \
+jq -e '.protected | index("**/migrations/**") and index(".github/workflows/**") and index("**/secrets/**") and index(".claude/secret-allowlist") and index(".claude/ratchet-baseline.json") and index(".claude/architecture-baseline.json")' \
   "$new/.claude/senior-mode.json" >/dev/null || fail "generic preset without protected zones: $(jq -c .protected "$new/.claude/senior-mode.json")"
 
 # `setup repo` writes `protected`, after `setup github` ran on a first setup: with globs and no

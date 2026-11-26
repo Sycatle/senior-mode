@@ -329,9 +329,34 @@ issue_create() {
     echo "#$number blocked by #$b"
   done
   if [ -n "$parent" ]; then
-    link "$slug" "$parent" sub_issues sub_issue_id "$number"
-    echo "#$number under #$parent"
+    if err=$(link "$slug" "$parent" sub_issues sub_issue_id "$number" 2>&1); then
+      echo "#$number under #$parent"
+    else
+      part_of_body "$slug" "$number" "$parent" "$err"
+    fi
   fi
+}
+
+# A parent that refuses one more sub-issue (GitHub allows 100 per parent, #614): the ticket says `Part of #<parent>` in
+# its body instead, once, and the hierarchy of `status` reads that line. Any other refusal fails as before.
+part_of_body() { # slug issue parent error
+  local cur tmp
+  grep -qiE '422|sub.?issues?|limit|maximum|more than 100' <<<"$4" || {
+    printf '%s\n' "$4" >&2
+    return 1
+  }
+  cur=$(gh_retry issue view "$2" --repo "$1" --json body --jq '.body // ""') || return 1
+  if ! grep -qxE "Part of #$3[[:space:]]*" <<<"$cur"; then
+    tmp=$(mktemp)
+    printf '%s\n\nPart of #%s\n' "$cur" "$3" >"$tmp"
+    gh issue edit "$2" --repo "$1" --body-file "$tmp" >/dev/null || {
+      rm -f "$tmp"
+      return 1
+    }
+    rm -f "$tmp"
+  fi
+  echo "senior-mode: the sub-issue link of #$2 under #$3 was refused ($(head -1 <<<"$4")); its body says Part of #$3 instead" >&2
+  echo "#$2 under #$3 (Part of #$3 in its body)"
 }
 
 # The open alerts GitHub itself raises (#172), as one JSON object per line: severity, kind, path and
@@ -396,15 +421,19 @@ READY_QUERY='query($project: ID!, $after: String) { node(id: $project) { ... on 
 # The hierarchy (spec 325 §7, #358): the reason a ticket is an orphan, null when it is not. A ticket needs a parent epic
 # under a milestone whose description has a `Goal:` line, unless it carries a label of $h.exempt (hierarchy.exempt, default security and hotfix)
 # or sits under the maintenance epic (label `maintenance`); an epic (label `epic`) needs no parent. Its input has `labels`
-# and `parent`, the epic as {number, labels, milestone: {title, description}} or null (`epic_of` reads it from GraphQL).
+# and `parent`, the epic as {number, labels, milestone: {title, description}} or null (`epic_of` reads it from GraphQL). $bp is
+# the epic named by a `Part of #n` line of the body (`part_of`, #614, a parent that was full): it stands for the parent link.
 # shellcheck disable=SC2016 # a jq program, not shell
-ORPHAN_DEF='def epic_of: if . then {number, labels: [.labels.nodes[].name], milestone} else null end;
-  def orphan($h): ($h.exempt // ["security", "hotfix"]) as $ex | if any(.labels[]; . as $l | $ex | index($l) != null) or (.labels | index("epic")) != null then null
-    elif .parent == null then "no parent epic"
+PART_OF_DEF='def part_of: ((. // "") | capture("(^|\n)Part of #(?<n>[0-9]+)[ \t]*(\r?\n|$)")? | .n | tonumber) // null;'
+# shellcheck disable=SC2016 # a jq program, not shell
+ORPHAN_DEF=$PART_OF_DEF'def epic_of: if . then {number, labels: [.labels.nodes[].name], milestone} else null end;
+  def orphan($h; $bp): ($h.exempt // ["security", "hotfix"]) as $ex | if any(.labels[]; . as $l | $ex | index($l) != null) or (.labels | index("epic")) != null then null
+    elif .parent == null then (if $bp != null then null else "no parent epic" end)
     elif (.parent.labels | index("maintenance")) != null then null
     elif .parent.milestone == null then "its epic #\(.parent.number) has no milestone, so no Goal"
     elif (.parent.milestone.description // "" | test("(^|\n)[ \t]*Goal:[ \t]*\\S")) then null
-    else "the milestone \"\(.parent.milestone.title)\" of its epic #\(.parent.number) has no Goal: line" end;'
+    else "the milestone \"\(.parent.milestone.title)\" of its epic #\(.parent.number) has no Goal: line" end;
+  def orphan($h): orphan($h; null);'
 
 # The Status of an item, GitHub's default Todo read as Backlog (#556): on some organisations an option named Backlog
 # makes GitHub put every issue back to it after each move, so the board keeps Todo. Needs a def single($f).
@@ -415,7 +444,7 @@ READY_ITEMS=$ORPHAN_DEF'def single($f): [.fieldValues.nodes[]? | select(.field.n
   def text($f): [.fieldValues.nodes[]? | select(.field.name == $f and .text != null) | .text][0];
   '$STATUS_DEF'
   [.[].data.node.items.nodes[]? | select(.content.number != null) | .content as $c
-    | {number: $c.number, open: ($c.state == "OPEN"), body: ($c.body // ""), labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation, parent: ($c.parent | epic_of),
+    | {number: $c.number, open: ($c.state == "OPEN"), body: ($c.body // ""), labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation, parent: ($c.parent | epic_of), bodyParent: ($c.body | part_of),
        status: status, priority: single("Priority"), size: single("Size"), severity: single("Severity"),
        agent: (($c.body // "") | test("(^|\n)filed-by: agent[ \t]*(\n|$)")),
        paths: ((text("Paths") // "") | gsub("[\\[\\]\"\u0027]"; "") | [split("[,\\s]+"; null)[] | select(length > 0)])}]'
@@ -539,7 +568,7 @@ ready_missing() {
       (if .size != null and .size != "S" then "size \(.size) (a ticket an agent filed is Ready only when S)" else empty end),
       (if .severity == "high" or .severity == "critical" then "\(.severity) security severity (a ticket an agent filed is never Ready by rule)" else empty end)
      else empty end),
-    (if $h.enforce == true then orphan($h) | if . then "hierarchy: \(.)" else empty end else empty end)]' <<<"$it")
+    (if $h.enforce == true then orphan($h; .bodyParent) | if . then "hierarchy: \(.)" else empty end else empty end)]' <<<"$it")
   if jq -e .agent <<<"$it" >/dev/null; then
     while IFS= read -r p; do
       ! ready_in_zone "$zones" "$p" || hits+=${hits:+, }$p
@@ -855,7 +884,7 @@ BOARD_QUERY='query($project: ID!, $owner: String!, $name: String!, $after: Strin
       id isArchived updatedAt
       fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
         ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } }
-      content { ... on Issue { number title url state closedAt updatedAt authorAssociation labels(first: 20) { nodes { name } }
+      content { ... on Issue { number title url state body closedAt updatedAt authorAssociation labels(first: 20) { nodes { name } }
         milestone { title dueOn } blockedBy(first: 20) { nodes { number state } }
         parent { number labels(first: 20) { nodes { name } } milestone { title description } }
         comments(last: 10) { nodes { body authorAssociation } } } } } } } }
@@ -986,7 +1015,7 @@ board_data() {
            labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation, milestone: $c.milestone.title, due: $c.milestone.dueOn,
            updated: ([$c.updatedAt, $moved] | map(select(. != null)) | max),
            blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number], last: lastc($c), decision: decisionc($c), parent: ($c.parent | epic_of)}
-        | . + {orphan: orphan($hier)}],
+        | . + {orphan: orphan($hier; $c.body | part_of)}],
        hierarchy: {enforce: ($hier.enforce == true)},
        prs: [$r.pullRequests.nodes[]? | {number, title, url, branch: .headRefName, labels: [.labels.nodes[].name], failing: failing,
          updated: .updatedAt, last: lastc(.)}],

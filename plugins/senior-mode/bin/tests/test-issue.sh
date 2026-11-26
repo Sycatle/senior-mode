@@ -37,6 +37,7 @@ case "$*" in
   "issue edit"*)
     [ "$(FLAG=--body-file arg "$@")" != - ] || cat >"$FIX/stdin-edit-body"
     f=$(FLAG=--body-file arg "$@"); [ -z "$f" ] || [ "$f" = - ] || cp "$f" "$FIX/edit-body" ;;
+  "issue view"*) jq --argjson n "$3" '.[] | select(.number == $n)' "$FIX/issues.json" | respond ;;
   "repo view"*) echo "{\"isPrivate\": ${REPO_PRIVATE:-false}}" | respond ;;
   "api -X POST repos/acme/app/security-advisories"*)
     cat >"$FIX/advisory.json"; echo '{"html_url": "https://github.com/acme/app/security/advisories/GHSA-aaaa"}' | respond ;;
@@ -341,6 +342,33 @@ logged "project item-add" && fail "board touched after a failed create"
 LINK_ERR="HTTP 422: cycle" create --title "Z" --body-file "$work/body.md" --size S --priority "P0 now" --blocked-by 8 &&
   fail "a failed link exits zero"
 grep -q cycle "$work/err" || fail "link error not shown: $(cat "$work/err")"
+
+# A parent that is full (#614, GitHub allows 100 sub-issues): the issue is still created, its body says `Part of #7`,
+# stderr says the link was skipped, the exit code is 0. Another refusal of the link still fails.
+rm -f "$FIX/edit-body"
+LINK_ERR="gh: Validation Failed (HTTP 422): sub-issues limit of 100 reached" create --title "Slice 101" --body-file "$work/body.md" --size S --priority "P0 now" --parent 7 ||
+  fail "a full parent fails issue create: $(cat "$work/err")"
+logged "issue create --repo acme/app --title Slice 101" || fail "full parent: the issue is not created: $(cat "$GH_LOG")"
+grep -qx 'Part of #7' "$FIX/edit-body" || fail "full parent: no Part of line in the body: $(cat "$FIX/edit-body" 2>&1)"
+grep -q 'Acceptance criteria' "$FIX/edit-body" || fail "full parent: the body lost its text: $(cat "$FIX/edit-body")"
+grep -q 'sub-issue link of #[0-9]* under #7 was refused' "$work/err" || fail "full parent: the skipped link is not said: $(cat "$work/err")"
+head -1 "$work/out" | grep -q '^#[0-9]* Slice 101 (created)' || fail "full parent: not created: $(cat "$work/out")"
+LINK_ERR="gh: Not Found (HTTP 404)" create --title "Slice 102" --body-file "$work/body.md" --size S --priority "P0 now" --parent 7 &&
+  fail "a missing parent exits zero"
+grep -q 'Not Found' "$work/err" || fail "a missing parent: error not shown: $(cat "$work/err")"
+# Under 100: the link is made and the body has no Part of line.
+rm -f "$FIX/edit-body"
+create --title "Slice 103" --body-file "$work/body.md" --size S --priority "P0 now" --parent 7 || fail "a parent with room fails: $(cat "$work/err")"
+[ ! -f "$FIX/edit-body" ] || fail "a parent with room: the body was edited: $(cat "$FIX/edit-body")"
+logged "api -X POST repos/acme/app/issues/7/sub_issues" || fail "a parent with room: no link"
+# A rerun of a ticket whose body already says Part of #7: the line is not added twice.
+n=$(jq -r '[.[] | select(.title == "Slice 101")][0].number' "$FIX/issues.json")
+jq --argjson n "$n" 'map(if .number == $n then .body += "\n\nPart of #7\n" else . end)' "$FIX/issues.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issues.json"
+rm -f "$FIX/edit-body"
+LINK_ERR="gh: Validation Failed (HTTP 422): sub-issues limit of 100 reached" create --title "Slice 101" --body-file "$work/body.md" --size S --priority "P0 now" --parent 7 ||
+  fail "rerun with a full parent fails: $(cat "$work/err")"
+[ "$(count "issue edit $n")" -eq 1 ] || fail "rerun: the Part of line is written again: $(grep 'issue edit' "$GH_LOG")"
+grep -q 'Part of' "$FIX/edit-body" && fail "rerun: Part of added twice: $(cat "$FIX/edit-body")"
 
 # An issue an agent files (an unattended session: SENIOR_MODE_RUN) ends with the line `filed-by: agent`, which
 # `ready` reads (#154); a person's issue, and a security-id one from a person, do not.

@@ -833,8 +833,8 @@ hier="$work/hier"
 cp -r "$repo" "$hier"
 run_hier() { : >"$GH_LOG"; : >"$FIX/bodies"; (cd "$hier" && "$cli" "$@") >"$work/out" 2>"$work/err"; }
 # hissue <number> <state> <total sub-issues> <completed> <body>
-hissue() { jq -nc --argjson n "$1" --arg s "$2" --argjson t "$3" --argjson c "$4" --arg b "$5" \
-  '{number: $n, title: "Item \($n)", state: $s, body: $b, subIssuesSummary: {total: $t, completed: $c}}'; }
+hissue() { jq -nc --argjson n "$1" --arg s "$2" --argjson t "$3" --argjson c "$4" --arg b "$5" --argjson p "${6:-0}" \
+  '{number: $n, title: "Item \($n)", state: $s, body: $b, parent: (if $p == 0 then null else {number: $p} end), subIssuesSummary: {total: $t, completed: $c}}'; }
 # hmile <number> <title> <description> <issues...>
 hmile() { local n=$1 t=$2 d=$3; shift 3
   jq -nc --argjson n "$n" --arg t "$t" --arg d "$d" --argjson i "$(printf '%s\n' "$@" | jq -sc .)" \
@@ -883,6 +883,17 @@ grep -q '^      #100 Item 100: 1/3 sub-issues$' "$work/out" || fail "epic line: 
 grep -q '^      #120 Item 120: 0/1 sub-issues, no spec in its body' "$work/out" || fail "epic flag: $(cat "$work/out")"
 grep -q '^  No goal: 0/2 tickets' "$work/out" || fail "no goal line: $(cat "$work/out")"
 grep -q '^    v1.2 Loose: 0/1 tickets, no Goal: line' "$work/out" || fail "milestone drift line: $(cat "$work/out")"
+# A ticket whose parent was full says `Part of #n` in its body (#614) and counts in the epic: #141 and #142, not #143 (a
+# sub-issue of #140 already, whatever its body says); an epic with no sub-issue is one when a body names it (#150).
+hier_json \
+  "$(hmile 5 "v1.4 Wide" $'Goal: G1' \
+    "$(hissue 140 OPEN 1 1 'Spec: docs/specs/d.md')" "$(hissue 141 CLOSED 0 0 $'x\n\nPart of #140')" "$(hissue 142 OPEN 0 0 $'Part of #140\n')" \
+    "$(hissue 143 CLOSED 0 0 'Part of #140' 140)" "$(hissue 150 OPEN 0 0 'Spec: docs/specs/e.md')" "$(hissue 151 OPEN 0 0 'Part of #150')" \
+    "$(hissue 152 OPEN 0 0 'Not Part of #140 here')")" >"$FIX/hierarchy.json"
+run_hier status --json || fail "Part of: status --json failed: $(cat "$work/err")"
+[ "$(json '.hierarchy.milestones[0].epics | map("\(.number):\(.closed)/\(.total)") | join(" ")')" = '"140:2/3 150:0/1"' ] ||
+  fail "Part of: epic progress: $(json '.hierarchy.milestones[0].epics')"
+[ "$(json '.hierarchy.milestones[0] | "\(.closed)/\(.total)"')" = '"2/5"' ] || fail "Part of: tickets of the milestone: $(json '.hierarchy.milestones[0]')"
 # No milestone, no section; an unreadable hierarchy is said, and the report stays.
 echo '{"data": {"repository": {"milestones": {"nodes": []}}}}' >"$FIX/hierarchy.json"
 run_hier status || fail "status with no milestone failed"

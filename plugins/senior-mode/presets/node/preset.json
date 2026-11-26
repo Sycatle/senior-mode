@@ -9,6 +9,7 @@
     "**/terraform/**", "**/k8s/**", "*.tf", ".claude/settings*.json", ".claude/senior-mode.json", ".claude/secret-allowlist"
   ],
   "frameworks": { "next": { "protected": ["middleware.*", "src/middleware.*", "proxy.*", "src/proxy.*"] } },
+  "queries": { "prisma": { "template": "queries/prisma.ts", "helper": "test/support/query-count.ts" } },
   "release": {
     "packages": { ".": { "release-type": "node", "component": "{{name}}", "include-component-in-tag": true } }
   }

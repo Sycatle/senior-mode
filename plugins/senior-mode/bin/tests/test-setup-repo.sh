@@ -198,6 +198,57 @@ jq '.checks[1].tier = 4' "$sc/.claude/senior-mode.json" >"$work/c" && mv "$work/
 (cd "$sc" && .githooks/pre-push </dev/null) >"$work/out" 2>&1 && fail "pre-push accepts tier 4"
 grep -q 'checks\[1\].tier must be 2 or 3, not 4' "$work/out" || fail "pre-push error does not name the key: $(cat "$work/out")"
 
+# The query-count helper of the project's ORM (spec 472): offered at the preset's path, recorded as
+# performance.queries.helper, never over an existing file; no supported ORM, nothing and `queries: not measured`.
+orm_repo() { # name, then the manifest file and its content
+  local d="$work/orm-$1"
+  git init -q -b main "$d"
+  mkdir -p "$d/.claude"
+  echo '{}' >"$d/.claude/senior-mode.json"
+  printf '%s\n' "$3" >"$d/$2"
+  printf '%s' "$d"
+}
+helper_key() { jq -r '.performance.queries.helper // "none"' "$1/.claude/senior-mode.json"; }
+pr=$(orm_repo prisma package.json '{"name":"p","devDependencies":{"prisma":"6.0.0"}}')
+setup "$pr"
+grep -q '^queries: prisma helper test/support/query-count.ts: created$' "$work/out" || fail "prisma helper not offered: $(grep '^queries' "$work/out")"
+cmp -s "$pr/test/support/query-count.ts" "$(dirname "$cli")/../presets/node/queries/prisma.ts" || fail "prisma helper is not the preset's"
+[ "$(helper_key "$pr")" = test/support/query-count.ts ] || fail "prisma helper path not recorded: $(helper_key "$pr")"
+echo '// mine' >"$pr/test/support/query-count.ts"
+setup "$pr"
+grep -q '^queries: helper kept at test/support/query-count.ts$' "$work/out" || fail "a recorded helper is not kept: $(grep '^queries' "$work/out")"
+[ "$(cat "$pr/test/support/query-count.ts")" = '// mine' ] || fail "an existing helper was overwritten"
+pr=$(orm_repo prisma2 package.json '{"name":"p","dependencies":{"@prisma/client":"6.0.0"}}')
+mkdir -p "$pr/test/support" && echo '// mine' >"$pr/test/support/query-count.ts"
+setup "$pr"
+[ "$(cat "$pr/test/support/query-count.ts")" = '// mine' ] || fail "a helper at the default path, not recorded yet, was overwritten"
+grep -q '^queries: prisma helper test/support/query-count.ts: kept$' "$work/out" || fail "existing file at the helper path not reported: $(grep '^queries' "$work/out")"
+[ "$(helper_key "$pr")" = test/support/query-count.ts ] || fail "path of an existing helper not recorded"
+pr=$(orm_repo prisma3 package.json '{"name":"p","dependencies":{"@prisma/client":"6.0.0"}}')
+jq '.performance.queries.helper = "spec/db-helper.ts"' "$pr/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$pr/.claude/senior-mode.json"
+setup "$pr"
+[ ! -e "$pr/test/support/query-count.ts" ] || fail "a helper written although the config names another"
+[ "$(helper_key "$pr")" = spec/db-helper.ts ] || fail "a configured helper path was changed"
+pr=$(orm_repo sqla pyproject.toml $'[project]\nname = "x"\ndependencies = ["SQLAlchemy[asyncio]>=2"]')
+setup "$pr"
+cmp -s "$pr/tests/query_count.py" "$(dirname "$cli")/../presets/python/queries/sqlalchemy.py" || fail "sqlalchemy helper not offered: $(grep '^queries' "$work/out")"
+[ "$(helper_key "$pr")" = tests/query_count.py ] || fail "sqlalchemy helper path not recorded"
+pr=$(orm_repo django requirements.txt $'Django==5.0\npytest')
+setup "$pr"
+cmp -s "$pr/tests/query_count.py" "$(dirname "$cli")/../presets/python/queries/django.py" || fail "django helper not offered: $(grep '^queries' "$work/out")"
+pr=$(orm_repo sqlx Cargo.toml $'[package]\nname = "x"\n\n[dependencies]\nsqlx = { version = "0.8", features = ["sqlite"] }')
+setup "$pr"
+cmp -s "$pr/tests/support/query_count.rs" "$(dirname "$cli")/../presets/rust/queries/sqlx.rs" || fail "sqlx helper not offered: $(grep '^queries' "$work/out")"
+[ "$(helper_key "$pr")" = tests/support/query_count.rs ] || fail "sqlx helper path not recorded"
+pr=$(orm_repo plainpy pyproject.toml $'[project]\nname = "x"\ndependencies = ["requests", "django-environ"]')
+setup "$pr"
+grep -q '^queries: not measured' "$work/out" || fail "no ORM did not report not measured: $(cat "$work/out")"
+[ "$(helper_key "$pr")" = none ] && [ ! -e "$pr/tests/query_count.py" ] || fail "something was offered with no supported ORM"
+pr=$(orm_repo plainnode package.json '{"name":"p","dependencies":{"drizzle-orm":"1"}}')
+setup "$pr"
+grep -q '^queries: not measured' "$work/out" || fail "an unsupported ORM did not report not measured: $(cat "$work/out")"
+[ ! -e "$pr/test" ] || fail "something was offered for an unsupported ORM"
+
 # An existing repository: its own CLAUDE.md, settings, PR template, hooks path and checks are extended.
 old="$work/legacy"
 git init -q -b main "$old"

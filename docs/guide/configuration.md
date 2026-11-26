@@ -38,6 +38,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `packages` | none | The packages of a monorepo, by directory: `{ "packages/api": { "preset": "node", "commands": { ... }, "deps": ["packages/shared"] } }`, written by `setup repo` from the manifests of npm, pnpm and yarn workspaces (`workspaces`, `pnpm-workspace.yaml`), a Cargo workspace (`members` and `exclude`, path dependencies) and Go (every tracked `go.mod`, or the `use` of a `go.work`; `require` and local `replace` between them). The commands run in the package directory; `install` runs once at the root, except for Go, once per module. A rerun reads `preset`, `commands` and `deps` again without changing what you edited, and writes no key for a repository without a workspace. With `packages`, `check` runs [only the packages the diff affects](#affected-packages) |
 | `framework` | none | `next` when Next.js is a dependency; the node preset then adds `middleware.*`, `src/middleware.*`, `proxy.*` and `src/proxy.*` to `protected` |
 | `envGuard.forbidden` | none | Strings, or `/regex/` patterns, that must never appear on an agent machine; turns on the `env guard` check |
+| `performance.queries.helper` | set by `setup repo` | Path of the [query-count helper](#query-count-helper) of the project's ORM; a path you set is kept |
 | `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks); an optional `"tier"` (2, the default, or 3) says [when it runs](#checks) |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, even an empty one; `senior-mode protected` and the reviewer read it, and `setup github` maps it to [CODEOWNERS](autonomy.md#code-owners) |
 | `ci.mode` | `local` | `local`, `actions` or `existing` (the project's own CI is reused, see [CI mode](#ci-mode)) |
@@ -252,6 +253,29 @@ Apply when the diff touches `src/billing/`.
 - A missing file is reported by the review, not skipped silently. A section adds checks; it does not
   lift the rule for protected zones.
 - Setup does not write this key. Add it by hand; without it, no extra section applies.
+
+## Query-count helper
+
+An N+1 (one query per record of a list) passes every test that only checks the rows. When the project uses Prisma
+(node), SQLAlchemy or Django (python) or sqlx (rust), read from `package.json`, `pyproject.toml`, `requirements*.txt`,
+`Pipfile` or `Cargo.toml` at the root, `senior-mode setup repo` offers the preset's helper and records its path:
+
+| ORM | Default path | Use |
+|---|---|---|
+| Prisma | `test/support/query-count.ts` | `new PrismaClient().$extends(countQueries)`, then `queriesOf(fn)` and `expectQueries(n, fn)` |
+| SQLAlchemy | `tests/query_count.py` | `count_queries(engine)` and `expect_queries(engine, n)`, context managers |
+| Django | `tests/query_count.py` | `count_queries()` and `expect_queries(n)`, context managers |
+| sqlx | `tests/support/query_count.rs` | `queries_of(fut)` and `expect_queries(n, fut)`, counting the `sqlx::query` events (needs `tracing` and `tracing-subscriber`) |
+
+```json
+{ "performance": { "queries": { "helper": "test/support/query-count.ts" } } }
+```
+
+A file already at that path is kept, and so is a `helper` the config already names (nothing is written then). A
+project with no supported ORM gets nothing, and `setup repo` prints `queries: not measured`. The
+[`test-author`](agents.md#test-author) and the [`tdd`](skills.md#tdd) skill write the journey test of a list with
+it: the count for 1 record, then the same count for 10; a list that queries once per record fails with
+`expected <n> queries, got <m>`.
 
 ## Checks
 

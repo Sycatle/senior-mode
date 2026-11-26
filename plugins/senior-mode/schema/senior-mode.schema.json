@@ -48,6 +48,19 @@
         }
       }
     },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "queries": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "helper": { "type": "string", "minLength": 1, "description": "Path of the query-count helper of the project's ORM (Prisma, SQLAlchemy, Django, sqlx), written by `setup repo`; journey tests assert a query count that does not grow with the list." }
+          }
+        }
+      }
+    },
     "protected": { "type": "array", "items": { "type": "string" }, "description": "Globs of protected zones. Layers add to it, none removes from it." },
     "secrets": { "type": "array", "items": { "type": "string" }, "description": "Extra globs of the secrets guard. Layers add to it." },
     "audit": { "type": "boolean", "description": "false turns off the dependency audit of `check`." },

@@ -53,7 +53,7 @@ or drops it.
 ## `test-author`
 
 Turns acceptance criteria into failing tests, through the test seam the spec names, and checks they
-fail for the right reason. It edits test files only (by instruction) and does not commit: the
+fail for the right reason. A journey that lists records asserts the same query count for 1 and for 10 records through the [query-count helper](configuration.md#query-count-helper), so a list that queries once per record fails naming the expected and the actual count. It edits test files only (by instruction) and does not commit: the
 implementer commits the tests with the code. For an M ticket, a separate session with
 `SENIOR_MODE_ROLE=test-author` does commit them first; they are then read-only for the implementer
 (see [Session roles](autonomy.md#session-roles)).

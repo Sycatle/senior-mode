@@ -217,7 +217,7 @@ serve_settled() {
     notify recovered "" "#$n: the session ran again after $count transient ends in a row"
   fi
   rm -f "$SERVE_DIR/$n.transient" "$SERVE_DIR/$n.resumed" "$SERVE_DIR/$n.retry" "$SERVE_DIR/$n.model" "$SERVE_DIR/startup-streak" \
-    "$SERVE_DIR/launch-backoff-until" "$SERVE_DIR/limit-streak" "$SERVE_DIR/$n.envfail"
+    "$SERVE_DIR/launch-backoff-until" "$SERVE_DIR/limit-streak" "$SERVE_DIR/$n.envfail" "$SERVE_DIR/$n.envhold"
 }
 
 # A session of the ticket $1 ended on a problem of the environment ($2 the cause, $3 the diagnosis): the ticket goes back
@@ -266,13 +266,14 @@ serve_unknown_count() {
 }
 
 # A session of the ticket $1 ended on `failed: environment:` with a cause serve has no pattern, and so no probe, for ($2
-# the session's words). The only probe is a change: the plugin version or SHA, or the head of the default branch (a fix
-# may have landed), else the owner's `serve --resume`. The hold (cause `unknown`) retries without a change after 1, 2, 4...
-# minutes (serve.unknownBackoffMax minutes at most); the serve.unknownMaxAttempts-th end in a row stops the retries: the
-# ticket is needs-human with the last output, and the hold waits for a change or `--resume`, which also start the count again.
-# One alert for the whole pause (the first end), one decision (the last); a retry or a lift by timer says nothing more.
+# the session's words). Only that ticket waits (#630): <n>.envhold, `<retryAt> <fingerprint>`, keeps it from launching
+# (serve_env_held) while the plugin and the head of the default branch are the same, since a change is the only thing that
+# says a new attempt may end differently (a fix may have landed); else the owner's `serve --resume`. Without a change it
+# retries after 1, 2, 4... minutes (serve.unknownBackoffMax minutes at most); the serve.unknownMaxAttempts-th end in a row
+# stops the retries: the ticket is needs-human with the last output, and the wait lasts until a change or `--resume`, which
+# also start the count again. One alert for the ticket (the first end), one decision (the last); a retry says nothing more.
 serve_unknown() {
-  local n=$1 why=$2 fp count now delay=0 retry=0 out="" quiet=true
+  local n=$1 why=$2 fp count now delay=0 retry=0 out=""
   fp=$(serve_fingerprint)
   count=$(state_update serve_unknown_count "$SERVE_DIR/$n.envfail" "$fp") || count=1
   now=$(serve_now)
@@ -281,8 +282,10 @@ serve_unknown() {
     [ "$delay" -le $((SERVE_UNKNOWN_CAP * 60)) ] || delay=$((SERVE_UNKNOWN_CAP * 60))
     retry=$((now + delay))
   fi
-  [ "$count" -gt 1 ] || quiet=false
-  serve_hold_set unknown "$why" "$fp" "$retry" "$quiet"
+  state_put "$SERVE_DIR/$n.envhold" "$retry $fp"
+  if [ "$count" -eq 1 ]; then
+    notify environment "" "#$n: environment problem serve does not recognise ($why); only this ticket waits"
+  fi
   if [ "$retry" -gt 0 ]; then
     echo "#$n: unknown environment failure $count of $SERVE_UNKNOWN_MAX ($why); the same ticket is not launched again before $(date -d "@$retry" '+%F %T' 2>/dev/null || echo "$retry"), or before the plugin or $RUN_BASE changes" >&2
     serve_give_back "$n"
@@ -294,7 +297,46 @@ serve_unknown() {
   notify needs-human "$n" "the session ended on an environment failure serve does not recognise $count times in a row, and it was not relaunched again. Last error: $why${out:+
 Last output of the session:
 $out}
-Fix the environment, then remove needs-human; serve launches again after a new plugin version, a new commit on $RUN_BASE or senior-mode serve --resume."
+Fix the environment, then remove needs-human; serve launches it again after a new plugin version, a new commit on $RUN_BASE or senior-mode serve --resume."
+}
+
+# The board $1 without the tickets that must not launch (#630): those labelled needs-human, and those that wait on an
+# environment problem of their own (serve_env_held). Taken out before the queue and its batches are made, so that a
+# batch is not lost with its lead.
+serve_unheld() {
+  local f n held=" "
+  for f in "$SERVE_DIR"/*.envhold; do
+    [ -e "$f" ] || continue
+    n=${f##*/}
+    n=${n%.envhold}
+    [[ $n =~ ^[0-9]+$ ]] || continue
+    if serve_env_held "$n"; then held+="$n "; fi
+  done
+  jq -c --arg h "$held" '.items |= map(select((.labels | index("needs-human") | not) and (" \(.number) " as $k | $h | contains($k) | not)))' <<<"$1" ||
+    printf '%s\n' "$1"
+}
+
+# Is the ticket $1 waiting on an unknown environment problem of its own (serve_unknown)? Not once its backoff is over, or
+# when the plugin or the default branch changed since: the wait is then lifted (its file goes). A ticket whose attempts are
+# used up waits for a change or `--resume`, and says so at each poll.
+serve_env_held() {
+  local n=$1 file=$SERVE_DIR/$1.envhold line retry fp
+  [ -s "$file" ] || return 1
+  line=$(state_get "$file" '[0-9]+ .*') || line=""
+  retry=${line%% *}
+  fp=${line#* }
+  [ -n "$line" ] || {
+    rm -f "$file"
+    return 1
+  }
+  [ -n "${SERVE_FP:-}" ] || SERVE_FP=$(serve_fingerprint)
+  if [ "$SERVE_FP" != "$fp" ] || { [ "$retry" -gt 0 ] && [ "$(serve_now)" -ge "$retry" ]; }; then
+    rm -f "$file"
+    echo "serve: #$n: the wait on its unknown environment failure is over, trying the ticket again" >&2
+    return 1
+  fi
+  [ "$retry" -gt 0 ] || echo "serve: #$n: unknown environment failure, attempts used up; waiting for a new plugin version or commit on $RUN_BASE, or senior-mode serve --resume" >&2
+  return 0
 }
 
 # A transient end of the session $1 (cause $2, `startup` for one that died at once; why $3): it goes back to Ready, its
@@ -352,16 +394,14 @@ serve_model() {
 # again (cheap probes at every poll, expensive ones, the Claude ping and the dependencies, every 5 minutes, then every 15
 # once the hold is an hour old) and lifts the hold on its own when the probe is green; `serve --resume` lifts it by hand.
 serve_hold_set() {
-  local cause=$1 detail=$2 fp=${3:-} retry=${4:-0} quiet=${5:-false} now kind=cheap next
+  local cause=$1 detail=$2 now kind=cheap next
   [ ! -s "$SERVE_DIR/held" ] || return 0
   now=$(serve_now)
   case $cause in claude-auth | deps) kind=expensive ;; esac
   next=$now
   [ "$kind" = cheap ] || next=$((now + 300))
-  state_update serve_hold_write "$cause" "$detail" "$now" "$kind" "$next" "$fp" "$retry" || return 0
+  state_update serve_hold_write "$cause" "$detail" "$now" "$kind" "$next" || return 0
   echo "serve: holding all launches, environment problem ($cause): $detail; probing again, or senior-mode serve --resume" >&2
-  # An unknown problem that came back after its backoff is the same pause: no second alert.
-  [ "$quiet" = false ] || return 0
   notify environment "" "serve holds all launches, environment problem ($cause): $detail"
   project_post_update "senior-mode serve holds all launches: environment problem ($cause): $detail. It resumes by itself once the probe is green." AT_RISK >/dev/null 2>&1 ||
     echo "serve: could not post the hold as a Project status update" >&2
@@ -370,8 +410,8 @@ serve_hold_set() {
 # Run by state_update: writes the hold, unless there is one.
 serve_hold_write() {
   [ ! -s "$SERVE_DIR/held" ] || return 1
-  jq -nc --arg c "$1" --arg d "$2" --argjson s "$3" --arg k "$4" --argjson x "$5" --arg f "${6:-}" --argjson r "${7:-0}" \
-    '{cause: $c, since: $s, probe: $k, nextProbe: $x, detail: $d} + (if $f == "" then {} else {fingerprint: $f, retryAt: $r} end)' |
+  jq -nc --arg c "$1" --arg d "$2" --argjson s "$3" --arg k "$4" --argjson x "$5" \
+    '{cause: $c, since: $s, probe: $k, nextProbe: $x, detail: $d}' |
     state_write "$SERVE_DIR/held"
 }
 
@@ -466,29 +506,9 @@ serve_probe_deps() {
   return "$rc"
 }
 
-# Probe: an unknown environment problem has nothing to test. It is over when the plugin or the default branch changed, or,
-# while attempts are left, when its backoff is (retryAt, 0 once they are used up).
-serve_probe_unknown() {
-  local fp at
-  serve_probe_disk || return 1
-  serve_probe gh-auth || return 1
-  fp=$(serve_held fingerprint)
-  [ -n "$fp" ] || return 0
-  [ "$(serve_fingerprint)" = "$fp" ] || return 0
-  at=$(serve_held retryAt)
-  if [[ $at =~ ^[0-9]+$ ]] && [ "$at" -gt 0 ]; then
-    [ "$(serve_now)" -lt "$at" ] || return 0
-    echo "unknown environment failure; retrying at $at, or when the plugin or $RUN_BASE changes"
-  else
-    echo "unknown environment failure, attempts used up; waiting for a new plugin version or commit on $RUN_BASE, or senior-mode serve --resume"
-  fi
-  return 1
-}
-
 # Is the environment healthy for the cause $1? Prints the diagnosis and returns 1 when it is not. disk: room again;
 # gh-auth: gh answers; claude-auth: `claude auth status`, else a one-word haiku session answers; deps: the install
-# command of the base branch passes; main-red: senior-mode/ci is not red on the base head; unknown: disk and gh, then
-# a change since the hold (serve_fingerprint) or the end of its backoff (retryAt).
+# command of the base branch passes; main-red: senior-mode/ci is not red on the base head.
 serve_probe() {
   local out
   case $1 in
@@ -507,7 +527,6 @@ serve_probe() {
       ;;
     deps) serve_probe_deps ;;
     main-red) serve_probe_main ;;
-    unknown) serve_probe_unknown ;;
     *) serve_probe_disk && serve_probe gh-auth ;;
   esac
 }
@@ -661,7 +680,7 @@ serve_finish_integrator() {
 # cooldown or `serve --resume`, which removes the file), an environment pause (until a probe is green), a usage limit
 # (until its reset) or a transient backoff. A hold that is over is lifted here. $1 is the time.
 serve_hold() {
-  local now=$1 until cause diag since next now_diag retried
+  local now=$1 until cause diag since next now_diag
   if [ -f "$SERVE_DIR/paused" ]; then
     until=$(state_get "$SERVE_DIR/paused" '[0-9]+') || until=""
     if [[ $until =~ ^[0-9]+$ ]] && [ "$now" -lt "$until" ]; then
@@ -684,16 +703,10 @@ serve_hold() {
     }
     if [ -n "$cause" ] && [ "$now" -ge "$next" ]; then
       if now_diag=$(serve_probe "$cause"); then
-        retried=false
-        [ "$cause" != unknown ] || [ "$(serve_fingerprint)" != "$(serve_held fingerprint)" ] || retried=true
         rm -f "$SERVE_DIR/held"
-        if [ "$retried" = true ]; then
-          echo "serve: the backoff of the unknown environment problem is over, trying the ticket again" >&2
-        else
-          echo "serve: the environment is healthy again (probe for $cause is green), launching again" >&2
-          notify recovered "" "serve launches again: the probe for $cause is green"
-          project_post_update "senior-mode serve resumed: the probe for $cause is green." ON_TRACK >/dev/null 2>&1 || true
-        fi
+        echo "serve: the environment is healthy again (probe for $cause is green), launching again" >&2
+        notify recovered "" "serve launches again: the probe for $cause is green"
+        project_post_update "senior-mode serve resumed: the probe for $cause is green." ON_TRACK >/dev/null 2>&1 || true
         cause=""
       else
         case $(serve_held probe) in
@@ -1028,9 +1041,10 @@ serve_busy() {
 }
 
 # May a session start now? Not when serve is stopping, held back (serve_hold), without a free slot or after the
-# failures the breaker counts; then the guards (#117) are in place and no ceiling is reached. What it says, it
+# failures the breaker counts, nor a ticket $1 that waits on an environment problem of its own; then the guards (#117) are in place and no ceiling is reached. What it says, it
 # says once per poll.
 serve_can_launch() {
+  [ -z "${1:-}" ] || ! serve_env_held "$1" || return 1
   [ "$SERVE_TERM" = false ] && [ -z "$SERVE_HELD" ] && [ ${#running[@]} -lt "$SERVE_PARALLEL" ] && [ "$RUN_FAILS" -lt "$RUN_MAXFAIL" ] || return 1
   if [ -z "$SERVE_GUARDS" ]; then
     if (run_guards "$SERVE_COMMON"); then
@@ -1327,7 +1341,7 @@ serve_conflict() {
     serve_needs_human "$t" "$pr" "it conflicts with $RUN_BASE again after the integrator resolved it twice"
     return 1
   fi
-  serve_can_launch || return 1
+  serve_can_launch "$t" || return 1
   new=$base-r$k
   git_bound fetch -q origin 2>/dev/null || true
   wt=$(worktree_path "$RUN_ROOT" "$t-r$k")
@@ -1394,7 +1408,7 @@ serve_merge() {
 serve_red_retry() {
   local t=$1 pr=$2 reason=$4
   [ ! -f "$SERVE_DIR/red-retry-$t" ] || return 1
-  serve_can_launch || return 1
+  serve_can_launch "$t" || return 1
   RUN_ROLE[$t]=ticket
   unset 'RUN_CWD[$t]'
   run_open "$t" || return 1
@@ -1413,7 +1427,7 @@ serve_changes() {
     serve_needs_human "$t" "$pr" "the reviewer still requests changes after $rounds fix rounds"
     return 0
   fi
-  serve_can_launch || return 0
+  serve_can_launch "$t" || return 0
   RUN_ROLE[$t]=ticket
   unset 'RUN_CWD[$t]'
   run_open "$t" || return 0
@@ -1442,7 +1456,7 @@ serve_review_model() {
 serve_review() {
   local t=$1 pr=$2 sha=$3 ref=$4 wt model
   model=$(serve_review_model "$t")
-  serve_can_launch || return 0
+  serve_can_launch "$t" || return 0
   git_bound fetch -q origin "$ref" 2>/dev/null || true
   wt=$(worktree_path "$RUN_ROOT" "review-$t")
   git worktree remove --force "$wt" 2>/dev/null || true
@@ -1523,7 +1537,7 @@ serve_poll() {
   local -a queue=()
   now=$(serve_now)
   RUN_STOP=""
-  SERVE_HELD="" SERVE_GUARDS="" SERVE_WAIT=""
+  SERVE_HELD="" SERVE_GUARDS="" SERVE_WAIT="" SERVE_FP=""
   rm -f "$GH_DOWN_FILE"
   run_reap
   wd_orphans
@@ -1582,7 +1596,7 @@ serve_poll() {
       unset "RUN_BATCH[$n]"
     fi
     queue+=("$n")
-  done < <(queue_lines "$data")
+  done < <(queue_lines "$(serve_unheld "$data")")
   # The maintenance budget (#351): the numbers of the open gardening tickets, only when a slot is reserved.
   reserved=$(maintenance_reserved "$SERVE_PARALLEL") || reserved=0
   if [ "$reserved" -gt 0 ]; then
@@ -1980,10 +1994,10 @@ serve() {
       serve_loop
       ;;
     --resume)
-      if [ -f "$common/senior-mode/serve/paused" ] || [ -f "$common/senior-mode/serve/held" ]; then
+      if [ -f "$common/senior-mode/serve/paused" ] || [ -f "$common/senior-mode/serve/held" ] || compgen -G "$common/senior-mode/serve/*.envhold" >/dev/null; then
         rm -f "$common/senior-mode/serve/paused" "$common/senior-mode/serve/held" "$common/senior-mode/serve/breaker" \
           "$common/senior-mode/serve/transient-until" "$common/senior-mode/serve/launch-backoff-until" \
-          "$common/senior-mode/serve/startup-streak" "$common/senior-mode/serve/"*.envfail
+          "$common/senior-mode/serve/startup-streak" "$common/senior-mode/serve/"*.envfail "$common/senior-mode/serve/"*.envhold
         echo "resumed: the circuit breaker's pause and the environment's hold are lifted"
       else
         echo "serve is not paused."

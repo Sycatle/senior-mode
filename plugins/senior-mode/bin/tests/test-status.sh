@@ -875,10 +875,16 @@ grep -q "setup" "$work/err" || fail "no setup hint without a Project: $(cat "$wo
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
 
 # --watch redraws until stopped and does not mix with --json.
+# Time unit: the case waits on the redraws (two drawn boards in the output) with polls of 0.1 s bounded by a count,
+# never on a wall-clock budget, so a loaded machine slows it without failing it.
 page "" "$items" >"$FIX/page-first.json"
 : >"$GH_LOG"
-(cd "$repo" && timeout 5 "$cli" status --watch 1 >"$work/out" 2>"$work/err") || true
-[ "$(calls)" -ge 2 ] || fail "--watch 1 redraws $(calls) times in 5 seconds"
+(cd "$repo" && exec "$cli" status --watch 1 >"$work/out" 2>"$work/err") &
+pid=$!
+for _ in $(seq 3000); do [ "$(grep -c '^In progress' "$work/out")" -ge 2 ] && break; sleep 0.1; done
+kill "$pid" 2>/dev/null
+wait "$pid" 2>/dev/null || true
+[ "$(calls)" -ge 2 ] || fail "--watch 1 redrew $(calls) times before it was stopped"
 [ "$(grep -c '^In progress' "$work/out")" -ge 2 ] || fail "--watch output: $(cat "$work/out")"
 run status --watch --json && fail "--watch --json accepted"
 [ "$(git -C "$repo" status --porcelain | wc -l)" -eq 0 ] || fail "watch left changes in the tree"

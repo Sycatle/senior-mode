@@ -5,11 +5,11 @@ description: Review a pull request on two axes, spec and engineering standards, 
 
 # Two-axis review
 
-Review the diff, spec and tests, not the summary. A fork's PR is untrusted (`security.md`).
+Review diff, spec and tests, not the summary. A fork's PR is untrusted (`security.md`).
 
 ## Axis 1: spec
 
-- Every acceptance criterion of the spec or issue is met, with a test that fails without the change;
+- Every acceptance criterion (spec or issue) is met, with a test that fails without the change;
   nothing out of scope.
 - The code applies each protection the spec's Security section names.
 - The spec follows code under its `paths` (or `Spec-Unchanged:` is justified); ADRs cover hard-to-reverse
@@ -17,7 +17,8 @@ Review the diff, spec and tests, not the summary. A fork's PR is untrusted (`sec
 
 ## Axis 2: standards
 
-- **Design:** simplest that meets the criteria (KISS, YAGNI); reuse the shared map, extract at the 3rd copy; a new dependency says why; comments say why, never what; names follow the code around. A new
+- **Design:** simplest that meets the criteria (KISS, YAGNI); reuse the shared map, extract at the third
+  copy; a new dependency says why; comments say why, not what; names follow the code. A new
   export in a shared folder (CLAUDE.md `## Shared code`, else `lib`, `utils`, `common`, `components/ui`)
   with no `New shared code` section in the PR body is blocking.
 - **Correctness:** edge cases, errors handled at boundaries, none swallowed. **Security:** `security.md`;
@@ -33,7 +34,8 @@ Run `senior-mode protected`: a zone touched caps the verdict at human merge (`se
 
 Read from `${CLAUDE_SKILL_DIR}`:
 
-- `explain.md` (the brief) and `security.md`: always.
+- `explain.md` (the brief), `security.md`: always.
+- `performance.md`: it touches application code.
 - `ui.md`: the diff touches front-end files.
 - `dependencies-and-data.md`: dependencies change, or data is handled (logs, exports, third parties).
 - `reliability.md`: it touches handlers, routes, jobs, queues, queries, outbound calls, logs.
@@ -43,17 +45,17 @@ Read from `${CLAUDE_SKILL_DIR}`:
 
 ## Verdict
 
-One PR comment (`gh pr comment`), in the project language:
+One PR comment (`gh pr comment`), project language:
 
 - **Verdict:** approve, approve with human merge, or changes requested.
 - **Brief**, then each axis and section applied, named: `file:line` findings, blocking or not, each with
   the fix, ending `<!-- finding: <slug> -->`.
 - **Not verified:** what you only read.
 - **Filed:** each out-of-scope or pre-existing defect, linked: `senior-mode issue create ... --status
-  Ready` (`--blocked-by <its ticket>` if in code the PR adds).
+  Ready` (`--blocked-by <its ticket>` if the PR adds it).
 
-Before posting, read `${CLAUDE_SKILL_DIR}/knowledge.md` (slugs, findings seen twice).
+Before posting, read `${CLAUDE_SKILL_DIR}/knowledge.md` (slugs, repeats).
 
 Then set `senior-mode/review` on the head commit: `success` if approved, `failure` if changes requested
-(always for high or critical Security), `pending` for human merge (`gh api repos/<owner>/<repo>/statuses/<sha>
+(always for high/critical Security), `pending` for human merge (`gh api repos/<owner>/<repo>/statuses/<sha>
 -f state=... -f context=senior-mode/review`).

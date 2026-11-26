@@ -1274,7 +1274,7 @@ board 710 '[]' 711 '[]' 712 '["needs-decision"]'
 session 710-sonnet "decision: Which table owns the audit trail? | Add a new table audit_log | done: tests written, next: the migration"
 session 711-sonnet delivered pr
 # #346: the checkpoint block of the draft pull request of the ticket goes in the comment.
-echo '[{"number": 810, "body": "Closes #710\n\n<!-- senior-mode:checkpoint -->\n**Done**\n\n- the audit schema\n<!-- /senior-mode:checkpoint -->\n\nafter"}]' >"$FIX/pulls-710"
+printf '%s\n' '[{"number": 810, "body": "Closes #710\n\n<!-- senior-mode:checkpoint -->\n**Done**\n\n- the audit schema\n<!-- /senior-mode:checkpoint -->\n\nafter"}]' >"$FIX/pulls-710"
 run || fail "Y: run failed: $(cat "$work/out")"
 rm -f "$FIX/pulls-710"
 grep -q 'app-710 opus' "$CLAUDE_LOG" && fail "Y: a decision was retried on Opus"
@@ -1337,7 +1337,7 @@ printf 'plan 1:\nfirst\narchitect 1: revise: no\n' >"$FIX/plan-906"
 # #346: with no plan file, the plan in the checkpoint block of the pull request counts.
 session 907-sonnet delivered pr
 echo none >"$FIX/plan-907"
-echo '.[0].body = "Closes #907\n\n<!-- senior-mode:checkpoint -->\n**Plan**\n\n```text\nplan 1:\nedit a.sh\narchitect 1: approve\n```\n<!-- /senior-mode:checkpoint -->"' >"$FIX/external-907"
+printf '%s\n' '.[0].body = "Closes #907\n\n<!-- senior-mode:checkpoint -->\n**Plan**\n\n```text\nplan 1:\nedit a.sh\narchitect 1: approve\n```\n<!-- /senior-mode:checkpoint -->"' >"$FIX/external-907"
 run || fail "PL: run failed: $(cat "$work/out")"
 runs=$(find "$repo/.git/senior-mode/runs" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
 for want in 'Plan first (size M)' 'at most 15 lines' 'architect agent' 'architect 1: approve' 'architect 1: revise' 'plan-rejected: <the architect' 'SENIOR_MODE_RUN_PLAN'; do

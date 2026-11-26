@@ -497,7 +497,7 @@ command, not a model, applies these bounds:
   never batched, nor is a `type:spike` ticket. `run` and `serve` start a batch as one session: one worktree (on the branch of its
   first ticket), every ticket In progress, a prompt that asks one commit and one `Closes #n` per
   ticket and one pull request, which one review covers. The session writes one outcome line per
-  ticket (`#n delivered`, `#n outgrown: ...`, `#n failed: ...`). A ticket that fails goes back alone
+  ticket (`#n delivered`, `#n outgrown: ...`, `#n blocked: ...`, `#n duplicate: ...`, `#n failed: ...`). A ticket that fails goes back alone
   (Backlog, `needs-human`, a comment) while the delivered ones are merged or left for a human with
   the pull request; when none is delivered, the session is tried again on Opus, then every ticket goes
   back. A batch counts as one slot of `autonomy.parallel`, and the Paths of all its tickets are

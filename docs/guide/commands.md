@@ -151,8 +151,11 @@ daemon) and runs that. The `senior-mode run` command below stays, for a bounded 
   ticket, in the worktree `senior-mode start` opens for it (`~/.local/share/senior-mode/worktrees/<repo>/<n>`, branch `<type>/<n>-<slug>`)
   and, when tmux is installed, in a window of `tmux attach -t senior-mode-run`. A ticket that fails on
   Sonnet is retried once on Opus (`autonomy.escalate`). Logs stay in `.git/senior-mode/runs/`, with one
-  `<n>.json` per ticket that says how it ended (`delivered`, `outgrown` or `failed`, whether it went
-  to Opus, why, when). A `type:spike` ticket with a `Timebox: <N>m` or `<N>h` line is stopped when that time is up
+  `<n>.json` per ticket that says how it ended (`delivered`, `outgrown`, `decision`, `blocked`, `duplicate` or `failed`, whether it went
+  to Opus, why, when). A session that ends `blocked: #<issue or pull request> <reason>` (the code it changes is not on the base
+  branch yet) labels the ticket `blocked` and puts it back in Backlog; one that ends `duplicate: #<original> <reason>` (the work is
+  merged, or another open issue asks the same) puts it back in Backlog and asks a human to close it (`needs-human`). Neither is
+  a size matter or a failure: no retry on Opus, no count for the circuit breaker, and `retro` does not read them as failed runs. A `type:spike` ticket with a `Timebox: <N>m` or `<N>h` line is stopped when that time is up
   (before `autonomy.sessionTimeout`, if it is shorter): the session is killed, the notes it left under `docs/spikes/`
   go in a comment, the ticket gets `needs-human` and is recorded as `delivered` with the reason. It is no failure and
   does not count for the circuit breaker. A token budget is written in the ticket and the prompt, not enforced.

@@ -196,7 +196,7 @@ skill, in `skills/next/reference.md`.
 - Run outcomes are optional: `run` writes one JSON object per ticket run to
   `.git/senior-mode/runs/<stamp>/<n>.json` (in the git common directory, so `retro` finds them from
   any worktree; no gitignore, outside the self-protected paths) with `ticket`, `outcome` (`delivered`,
-  `outgrown` or `failed`), `escalated` (the ticket went to Opus), `reason` (the last failure the session
+  `outgrown`, `decision`, `blocked`, `duplicate` or `failed`), `escalated` (the ticket went to Opus), `reason` (the last failure the session
   reported, null for a clean delivery), `model` (of the last session) and `finishedAt`. `retro` counts
   `failed` and `outgrown` as failed runs, and skips what it cannot read; the session logs next to the
   outcomes (`<n>-<model>.json`) are not outcomes. Without the directory, `runs.found` is false and the
@@ -329,7 +329,8 @@ for each, at most P at a time:
 - records each ticket's result in `.git/senior-mode/runs/<stamp>/<n>.json` once it is settled (the
   format `retro` reads, section 7);
 - reads the outcome line the session writes: `delivered` (it counts only with an open pull request
-  for the branch), `outgrown: <reason>` (stops the run) or `failed: <reason>`; a missing line is a
+  for the branch), `outgrown: <reason>` (stops the run), `blocked: #<n> <reason>` (labels the ticket `blocked`),
+  `duplicate: #<n> <reason>` (asks a human to close it; neither is retried on Opus nor a failure) or `failed: <reason>`; a missing line is a
   failure. A failure on Sonnet is retried once on Opus from the same worktree when
   `autonomy.escalate` is true (default). A ticket given up goes back to `Backlog` with a comment;
 - merges a delivered pull request only when `autonomy.merge` is true, `senior-mode/ci` and

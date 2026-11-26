@@ -61,7 +61,8 @@ for want in '--draft' '--base main' '--head feat/7-thing' '--title feat(thing): 
   grep -qF -- "$want" <<<"$create" || fail "pr create misses '$want': $create"
 done
 body=$(cat "$GH_DIR/body")
-grep -qx "$BEGIN" <<<"$body" && grep -qx "$END" <<<"$body" || fail "the body has no block: $body"
+grep -qx "$BEGIN" <<<"$body" || fail "the body has no block: $body"
+grep -qx "$END" <<<"$body" || fail "the block has no end: $body"
 grep -qF 'Closes #7' <<<"$body" || fail "the new pull request does not close the ticket: $body"
 for want in 'Done' '- tests for a' '- a.txt' 'Doing' '- wiring b' 'Next' '- docs' 'Assumptions' '- no migration'; do
   grep -qF -- "$want" <<<"$body" || fail "the block misses '$want': $body"

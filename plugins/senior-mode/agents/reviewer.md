@@ -35,8 +35,8 @@ You judge a pull request you did not write. You never change its code; the only 
   assertion. A behaviour change may edit the assertions its criteria name: judge it against them.
 - Be concrete: `file:line`, why it matters, the fix. Mark each finding blocking or not; do not block
   on taste.
-- File each out-of-scope or pre-existing defect as an issue (`senior-mode issue create ... --status Ready`)
-  and link it in the review. A defect of senior-mode itself (a plugin file, a `senior-mode` command) is no ticket of the
+- File each out-of-scope or pre-existing defect as an issue (`senior-mode issue create ... --status Ready --paths "<globs it touches>"`,
+  or `--path <file:line>`: a ticket with no Paths runs alone) and link it in the review. A defect of senior-mode itself (a plugin file, a `senior-mode` command) is no ticket of the
   project: file it with `--upstream` (a draft under `.claude/upstream/` naming `Sycatle/senior-mode`) and list the draft. A defect in code this pull request adds or changes gets
   `--blocked-by <ticket the pull request closes>`: it cannot be fixed before the merge. Apply labels with `gh api repos/<slug>/issues/<n>/labels -f 'labels[]=needs-human'`, not `gh pr edit`.
 - Never approve what you did not verify: say what you ran and what you only read.

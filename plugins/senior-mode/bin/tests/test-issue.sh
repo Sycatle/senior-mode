@@ -375,11 +375,11 @@ grep -q 'Part of' "$FIX/edit-body" && fail "rerun: Part of added twice: $(cat "$
 filed_body() { jq -r --arg t "$1" '.[] | select(.title == $t) | .body' "$FIX/issues.json"; }
 create --title "By a person" --body-file "$work/body.md" --size S --priority "P1 next" || fail "person: create failed: $(cat "$work/err")"
 filed_body "By a person" | grep -q 'filed-by: agent' && fail "an issue filed by a person carries the agent marker"
-SENIOR_MODE_RUN=1 create --title "By an agent" --body-file "$work/body.md" --size S --priority "P1 next" ||
+SENIOR_MODE_RUN=1 create --title "By an agent" --body-file "$work/body.md" --size S --priority "P1 next" --paths "x/**" ||
   fail "agent: create failed: $(cat "$work/err")"
 [ "$(filed_body "By an agent" | grep -c '^filed-by: agent$')" -eq 1 ] || fail "agent issue misses its marker: $(filed_body "By an agent")"
 filed_body "By an agent" | grep -q 'Given a, when b, then c' || fail "agent issue lost its own body: $(filed_body "By an agent")"
-printf '## Acceptance criteria\n- Given from stdin.\n' | SENIOR_MODE_RUN=1 create --title "By an agent, stdin" --body-file - --size S --priority "P1 next" ||
+printf '## Acceptance criteria\n- Given from stdin.\n' | SENIOR_MODE_RUN=1 create --title "By an agent, stdin" --body-file - --size S --priority "P1 next" --paths "x/**" ||
   fail "agent stdin: create failed: $(cat "$work/err")"
 filed_body "By an agent, stdin" | grep -q 'Given from stdin' || fail "agent issue read from stdin lost its body"
 filed_body "By an agent, stdin" | grep -q '^filed-by: agent$' || fail "agent issue read from stdin misses its marker"
@@ -387,6 +387,33 @@ SENIOR_MODE_RUN=1 create --title "Risk by an agent" --body-file "$work/body.md" 
   fail "agent risk: create failed: $(cat "$work/err")"
 filed_body "Risk by an agent" | grep -q '^filed-by: agent$' || fail "agent risk misses its marker"
 filed_body "Risk by an agent" | grep -q '^security-id: ' || fail "agent risk lost its security-id"
+
+# #677: an agent's ticket has Paths, or it runs alone and stalls the parallel slots. Without --paths they come from
+# --path (with or without :line), else from the first file:line of the body; with neither the command fails and files nothing.
+agent() { SENIOR_MODE_RUN=1 create --size S --priority "P1 next" "$@"; }
+agent --title "Paths from --path" --body-file "$work/body.md" --path tooling/x/a.mjs:12 || fail "paths: --path refused: $(cat "$work/err")"
+logged "--field-id F_Pa --text tooling/x/**" || fail "paths: Paths not derived from --path: $(cat "$GH_LOG")"
+grep -q '^#[0-9]* Paths = tooling/x/\*\*$' "$work/out" || fail "paths: the Paths are not printed: $(cat "$work/out")"
+agent --title "Paths from a bare file" --body-file "$work/body.md" --path lib/b.sh || fail "paths: a path with no line refused: $(cat "$work/err")"
+logged "--field-id F_Pa --text lib/**" || fail "paths: Paths not derived from a path with no line: $(cat "$GH_LOG")"
+agent --title "Paths of a root file" --body-file "$work/body.md" --path Makefile:3 || fail "paths: a root file refused: $(cat "$work/err")"
+logged "--field-id F_Pa --text Makefile" || fail "paths: a root file is not its own glob: $(cat "$GH_LOG")"
+printf 'The bug is in tooling/x/a.mjs:12 and tooling/y/b.mjs:3.\n' >"$work/cites.md"
+agent --title "Paths from the body" --body-file "$work/cites.md" || fail "paths: the body is not read: $(cat "$work/err")"
+logged "--field-id F_Pa --text tooling/x/**" || fail "paths: Paths not derived from the body: $(cat "$GH_LOG")"
+n_before=$(jq length "$FIX/issues.json")
+agent --title "No paths at all" --body-file "$work/body.md" && fail "an agent ticket with no Paths was filed"
+grep -q -- '--paths' "$work/err" || fail "paths: the refusal does not name --paths: $(cat "$work/err")"
+[ "$(jq length "$FIX/issues.json")" -eq "$n_before" ] || fail "paths: a ticket with no Paths was filed"
+logged "issue create" && fail "paths: gh issue create called for a ticket with no Paths"
+agent --title "Paths given" --body-file "$work/cites.md" --path other/c.sh --paths "a/**,b/**" || fail "paths: --paths refused: $(cat "$work/err")"
+logged "--field-id F_Pa --text a/**,b/**" || fail "paths: --paths not used unchanged: $(cat "$GH_LOG")"
+logged "other/**" && fail "paths: --path overrode --paths"
+create --title "A person without Paths" --body-file "$work/body.md" --size S --priority "P1 next" || fail "paths: a person must not need Paths: $(cat "$work/err")"
+logged "F_Pa" && fail "paths: Paths set for a person who gave none"
+create --title "A person with --path alone" --body-file "$work/body.md" --size S --priority "P1 next" --path tooling/x/a.mjs || fail "paths: --path alone refused: $(cat "$work/err")"
+logged "F_Pa" && fail "paths: a person's --path set Paths"
+create --title "Half a risk" --body-file "$work/body.md" --size S --priority "P1 next" --kind k --path p.sh && fail "--kind without --rule accepted"
 
 # A spike (#321) is a type with a timebox, a duration or a token budget, written to the body as `Timebox: <value>`.
 create --title "Can we use OAuth?" --body-file "$work/body.md" --size S --priority "P1 next" --type spike --timebox 2h ||
@@ -401,7 +428,7 @@ filed_body "Spike on stdin" | grep -q '^Timebox: 200k tokens$' || fail "spike on
 create --title "Spike by an agent" --body-file "$work/body.md" --size S --priority "P1 next" --type spike --timebox 45m ||
   fail "spike: 45m refused: $(cat "$work/err")"
 filed_body "Spike by an agent" | grep -q '^Timebox: 45m$' || fail "spike: 45m lost"
-SENIOR_MODE_RUN=1 create --title "Spike by an agent 2" --body-file "$work/body.md" --size S --priority "P1 next" --type spike --timebox 45m ||
+SENIOR_MODE_RUN=1 create --title "Spike by an agent 2" --body-file "$work/body.md" --size S --priority "P1 next" --type spike --timebox 45m --paths "x/**" ||
   fail "agent spike: create failed: $(cat "$work/err")"
 [ "$(filed_body "Spike by an agent 2" | grep -c '^Timebox: 45m$')" -eq 1 ] ||
   fail "agent spike lost its Timebox: $(filed_body "Spike by an agent 2")"

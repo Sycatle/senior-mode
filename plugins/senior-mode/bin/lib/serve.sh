@@ -523,17 +523,68 @@ serve_finish() {
     test-author) serve_finish_tests "$1" ;;
     reviewer) serve_finish_review "$1" ;;
     integrator) serve_finish_integrator "$1" ;;
-    *) run_finish "$1" ;;
+    *) serve_finish_ticket "$1" ;;
   esac
 }
 
+# A ticket session is over. An implementer that reports a red test as wrong (`wrong-test: <finding>`, M tickets only: it
+# cannot edit the red tests) sends the ticket back to the test-author once; any other end is run's.
+serve_finish_ticket() {
+  local n=$1 outcome
+  outcome=$(head -n 1 "$RUN_DIR/$n.outcome" 2>/dev/null) || outcome=""
+  if [[ $outcome == wrong-test:* ]] && [ -z "${RUN_BATCH[$n]:-}" ] && [ -f "$SERVE_COMMON/senior-mode/runs/$n/red-tests" ]; then
+    serve_wrong_test "$n" "${outcome#wrong-test:}" && return 0
+    return 1
+  fi
+  run_finish "$n"
+}
+
+# The implementer of ticket $1 says a red test is wrong ($2 its finding). The first time, the test-author session starts
+# again on the same branch with the finding (<n>.retest holds the head it starts from, <n>.wrong-test the finding), then
+# the implementer again (serve_finish_tests). The second time the ticket is given up and needs a person, as any ticket
+# whose session cannot go on. Returns 1 when the ticket goes on with another session.
+serve_wrong_test() {
+  local n=$1 finding reason
+  finding=$(sed -e 's/^[[:space:]]*//' <<<"$2")
+  [ -n "$finding" ] || finding="no detail given"
+  if [ -s "$RUN_DIR/$n.wrong-test" ]; then
+    reason="the implementer reports a red test as wrong a second time, after the test-author revised the tests: $finding"
+    run_record "$n" failed "$reason"
+    run_giveup "$n" "$reason"
+    return 0
+  fi
+  state_put "$RUN_DIR/$n.wrong-test" "$finding"
+  state_put "$RUN_DIR/$n.retest" "$(git -C "${RUN_WT[$n]}" rev-parse HEAD)"
+  RUN_ROLE[$n]=test-author
+  serve_retest_prompt "$n" "${RUN_TITLE[$n]:-}" "${RUN_BRANCH[$n]}" "$finding" | state_write "$RUN_DIR/$n.prompt"
+  echo "#$n: the implementer reports a red test as wrong ($finding); the test-author revises it once" >&2
+  run_launch "$n" sonnet || return 0
+  return 1
+}
+
+# The files the test-author session added or changed since the head <n>.retest holds join the red tests (the list
+# is written once by `red-tests record`, so this is the second pass of the same step). The implementer's commits come
+# before that head: they never join.
+serve_retest_record() {
+  local n=$1 list=$SERVE_COMMON/senior-mode/runs/$1/red-tests since
+  since=$(cat "$RUN_DIR/$n.retest")
+  { cat "$list"; git -C "${RUN_WT[$n]}" diff -z --no-renames --name-only --diff-filter=AM "$since" HEAD | tr '\0' '\n'; } |
+    awk 'NF && !seen[$0]++' | state_write "$list"
+}
+
 # The test-author session of an M ticket is over: its tests are recorded as the red tests (senior-mode red-tests
-# record), then the ticket session starts on the same branch.
+# record), then the ticket session starts on the same branch. After a wrong test reported by the implementer
+# (<n>.retest), the tests it revised are added to the record instead.
 serve_finish_tests() {
   local n=$1 outcome reason="" red rc=0
   outcome=$(head -n 1 "$RUN_DIR/$n.outcome" 2>/dev/null) || outcome=""
   if [ "$outcome" = delivered ]; then
-    red=$(cd "${RUN_WT[$n]}" && "$SELF" red-tests record "$n" 2>&1) || rc=$?
+    if [ -f "$RUN_DIR/$n.retest" ]; then
+      red=$(serve_retest_record "$n" 2>&1) || rc=$?
+      rm -f "$RUN_DIR/$n.retest"
+    else
+      red=$(cd "${RUN_WT[$n]}" && "$SELF" red-tests record "$n" 2>&1) || rc=$?
+    fi
     printf '%s\n' "$red" | state_write "$RUN_DIR/$n.red"
     if [ "$rc" -eq 0 ]; then
       RUN_ROLE[$n]=ticket
@@ -1065,7 +1116,7 @@ serve_backmerge() {
 # A merged pull request: counted, its ticket Done, and the breaker's trips start again at 0.
 serve_done() {
   local t=$1 pr=$2 m
-  rm -f "$SERVE_DIR/queued-$pr" "$SERVE_DIR/rounds-$t" "$SERVE_DIR/breaker"
+  rm -f "$SERVE_DIR/queued-$pr" "$SERVE_DIR/rounds-$t" "$SERVE_DIR/breaker" "$SERVE_DIR/$t.wrong-test" "$SERVE_DIR/$t.retest"
   serve_backmerge "$t" "$pr"
   hotfix_release "$t" "$pr"
   # Every ticket of a batch is done with its one pull request (the lead's <n>.batch).
@@ -1493,12 +1544,17 @@ serve_poll() {
       continue
     fi
     started_before=${#running[@]}
-    if [ "${SERVE_SIZE[$n]}" = M ] && [ ! -f "$SERVE_COMMON/senior-mode/runs/$n/red-tests" ]; then
-      # An M ticket: its red tests come first, from a session of their own (#191).
+    if [ "${SERVE_SIZE[$n]}" = M ] && { [ ! -f "$SERVE_COMMON/senior-mode/runs/$n/red-tests" ] || [ -f "$RUN_DIR/$n.retest" ]; }; then
+      # An M ticket: its red tests come first, from a session of their own (#191); again, with the implementer's
+      # finding, when it reported one as wrong and the test-author did not finish revising it.
       RUN_ROLE[$n]="test-author"
       unset 'RUN_CWD[$n]'
       if run_open "$n"; then
-        serve_tests_prompt "$n" "${RUN_TITLE[$n]}" "${RUN_BRANCH[$n]}" | state_write "$RUN_DIR/$n.prompt"
+        if [ -f "$RUN_DIR/$n.retest" ]; then
+          serve_retest_prompt "$n" "${RUN_TITLE[$n]}" "${RUN_BRANCH[$n]}" "$(cat "$RUN_DIR/$n.wrong-test")" | state_write "$RUN_DIR/$n.prompt"
+        else
+          serve_tests_prompt "$n" "${RUN_TITLE[$n]}" "${RUN_BRANCH[$n]}" | state_write "$RUN_DIR/$n.prompt"
+        fi
         if run_launch "$n" "$(serve_model "$n")"; then running+=("$n"); fi
       fi
     else

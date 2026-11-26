@@ -5,7 +5,7 @@
 # "pr" to open a pull request; line 3: "hang" to never end, with a child process recorded in $FIX/pids-<n>,
 # "slow" to end once $FIX/release-<n> exists (the case creates it; bounded at 60 s), "limit" to end on the subscription usage limit with the message in
 # $FIX/limit-msg, "flaky:<message>" to die once with the message on stderr (exit 1), then behave; the file claude-<n>-<model>-<role> wins over claude-<n>-<model> for a session with that
-# SENIOR_MODE_ROLE; line 2 may be "pr:<number>" for another pull request number; line 4: "review:<state>" posts
+# SENIOR_MODE_ROLE, and <file>.<k> wins for the k-th session of that ticket, model and role; line 2 may be "pr:<number>" for another pull request number; line 4: "review:<state>" posts
 # senior-mode/review on the head checked out, "commit" commits a test file). gh serves the open pull requests,
 # their statuses and their merge state from $FIX (see the helpers below). systemctl logs its calls to $SYS_LOG. SENIOR_MODE_SERVE_ONCE=1 makes serve poll once, wait for
 # its sessions and exit; SENIOR_MODE_NOW is its clock; SENIOR_MODE_LOADAVG stands in for the load average.
@@ -119,7 +119,13 @@ fi
 n=$(sed -nE 's#.*/senior-mode/worktrees/[^/]+/(review-)?([0-9]+)(-r[0-9]+)?$#\2#p' <<<"$PWD")
 [ -n "$n" ] || exit 0
 fx=$FIX/claude-$n-$model-${SENIOR_MODE_ROLE:-}
-[ -f "$fx" ] || fx=$FIX/claude-$n-$model
+# The k-th session of that ticket, model and role plays <fixture>.<k> when it exists; the prompt it got is kept.
+k=$(($(cat "$FIX/calls-$n-$model-${SENIOR_MODE_ROLE:-}" 2>/dev/null || echo 0) + 1))
+echo "$k" >"$FIX/calls-$n-$model-${SENIOR_MODE_ROLE:-}"
+printf '%s\n' "${!#}" >"$FIX/prompt-$n-${SENIOR_MODE_ROLE:-}-$k"
+if [ -f "$fx.$k" ]; then fx=$fx.$k
+elif [ ! -f "$fx" ]; then fx=$FIX/claude-$n-$model; [ -f "$fx.$k" ] && fx=$fx.$k
+fi
 [ -f "$fx" ] || exit 1
 case $(sed -n 3p "$fx") in
   hang)
@@ -157,7 +163,10 @@ esac
 [ -z "$num" ] || echo "[{\"number\": $num, \"author_association\": \"OWNER\", \"head\": {\"sha\": \"sha$n\"}, \"labels\": []}]" >"$FIX/pulls-$n"
 case $(sed -n 4p "$fx") in
   review:*) echo "senior-mode/review $(sed -n 4p "$fx" | cut -d: -f2)" >>"$FIX/status-$(git rev-parse HEAD)" ;;
-  commit) echo "red $n" >"tests-$n.txt"; git add "tests-$n.txt"; git -c user.name=t -c user.email=t@t commit -q -m "test: red tests" ;;
+  commit)
+    tf=tests-$n.txt
+    [ "$k" = 1 ] || tf=tests-$n-$k.txt
+    echo "red $n" >"$tf"; git add "$tf"; git -c user.name=t -c user.email=t@t commit -q -m "test: red tests" ;;
 esac
 # $FIX/after-<n>: a shell snippet run when the session is about to end (something it did to the machine).
 [ ! -f "$FIX/after-$n" ] || bash "$FIX/after-$n"
@@ -228,7 +237,7 @@ board() {
 session() { printf '%s\n%s\n%s\n%s\n' "$2" "${3:-}" "${4:-}" "${5:-}" >"$FIX/claude-$1"; }
 # fresh: an empty state directory; once: one poll of serve in $repo.
 fresh() { rm -rf "$state"; }
-once() { : >"$GH_LOG"; : >"$CLAUDE_LOG"; (cd "$repo" && SENIOR_MODE_SERVE_ONCE=1 "$cli" serve) >"$work/out" 2>&1; }
+once() { : >"$GH_LOG"; : >"$CLAUDE_LOG"; rm -f "$FIX"/calls-*; (cd "$repo" && SENIOR_MODE_SERVE_ONCE=1 "$cli" serve) >"$work/out" 2>&1; }
 started() { grep -q "^app-$1 " "$CLAUDE_LOG"; }
 # outcome_of <n> <outcome>: the record serve left for the ticket under .git/senior-mode/serve/.
 outcome_of() {
@@ -1286,6 +1295,37 @@ fresh
 once || fail "U: serve failed: $(cat "$work/out")"
 grep -q '^app-63 sonnet run=1 role=test-author$' "$CLAUDE_LOG" && fail "U: the red tests are recorded, no test-author again: $(cat "$CLAUDE_LOG")"
 grep -q '^app-63 sonnet run=1 role=ticket$' "$CLAUDE_LOG" || fail "U: no ticket session"
+config '{}'
+
+# UW: the implementer of an M ticket reports a red test as wrong (#589): the test-author is called back once, with the
+# finding, on the same branch, then the implementer again; a second report is needs-human, as before.
+boardx "880:Ready:M:P1 next" "881:Ready:M:P1 next"
+prs_reset
+session 880-sonnet-test-author delivered "" "" commit
+session 880-sonnet-test-author.2 delivered "" "" commit
+session 880-sonnet-ticket.1 "wrong-test: tests-880.txt anchors on # so it never fails for the right reason"
+session 880-sonnet-ticket.2 delivered pr
+session 881-sonnet-test-author delivered "" "" commit
+session 881-sonnet-ticket.1 "wrong-test: the first finding"
+session 881-sonnet-ticket.2 "wrong-test: the second finding"
+config '{"parallel": 2}'
+fresh
+rm -f "$FIX"/prompt-*
+once || fail "UW: serve failed: $(cat "$work/out")"
+seq880=$(grep '^app-880 ' "$CLAUDE_LOG" | sed -E 's/.*role=//' | paste -sd' ')
+[ "$seq880" = "test-author ticket test-author ticket" ] || fail "UW: #880 sessions: $seq880"
+grep -q 'tests-880.txt anchors on #' "$FIX/prompt-880-test-author-2" || fail "UW: the finding is not in the test-author prompt: $(cat "$FIX/prompt-880-test-author-2" 2>&1)"
+grep -q 'wrong-test' "$FIX/prompt-880-ticket-1" || fail "UW: the ticket prompt does not offer the wrong-test outcome"
+grep -qx 'tests-880.txt' "$repo/.git/senior-mode/runs/880/red-tests" || fail "UW: the first red tests are not recorded"
+grep -qx 'tests-880-2.txt' "$repo/.git/senior-mode/runs/880/red-tests" || fail "UW: the revised tests are not recorded: $(cat "$repo/.git/senior-mode/runs/880/red-tests")"
+grep -q 'written and committed already' "$state/880.prompt" || fail "UW: the second ticket session has no ticket prompt: $(cat "$state/880.prompt")"
+outcome_of 880 delivered UW
+seq881=$(grep '^app-881 ' "$CLAUDE_LOG" | sed -E 's/.*role=//' | paste -sd' ')
+[ "$seq881" = "test-author ticket test-author ticket" ] || fail "UW: #881 sessions: $seq881"
+outcome_of 881 failed UW
+grep -q 'issues/881/labels' "$GH_LOG" || fail "UW: no needs-human after a second wrong test: $(grep 881 "$GH_LOG")"
+grep -q 'issues/880/labels' "$GH_LOG" && fail "UW: needs-human on #880, which was delivered"
+grep -c 'item-edit.*--single-select-option-id o0' "$GH_LOG" | grep -qx 1 || fail "UW: #881 is not back in Backlog: $(grep item-edit "$GH_LOG")"
 config '{}'
 
 # V: the usage limit holds the reviewers too, without a failure; the pull request is reviewed after the reset. A

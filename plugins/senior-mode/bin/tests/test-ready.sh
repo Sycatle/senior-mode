@@ -460,5 +460,16 @@ ready --pr 500 || fail "M: an improvement pull request that changes no skill is 
 evalpr 500 502 "" plugins/senior-mode/skills/tdd/SKILL.md:10
 ready --pr 500 || fail "M: a pull request of an ordinary ticket is held to an eval: $(cat "$work/out")"
 
+# N (#632): a ticket that declares a tool absent from the machine (`Needs:`) is kept out of Ready, with that reason.
+items="[]"
+item 120 Backlog "P1 next" S - "docs/**" '[]' "$criteria"$'\nNeeds: sh, no-such-tool-632\n'
+item 121 Backlog "P1 next" S - "docs/**" '[]' "$criteria"$'\nNeeds: sh\n'
+board
+pr 130 MERGED docs/wave-n "Framing: #120 #121"
+ready --pr 130 || fail "N: ready failed: $(cat "$work/err")"
+labelled 120 || fail "N: #120, whose tool is absent, is not held back"
+said '^#120 needs-human: .*tool not installed: no-such-tool-632' || fail "N: the missing tool is not named: $(cat "$work/out")"
+said '^#121 Status = Ready' || fail "N: #121, whose tool is there, is not Ready: $(cat "$work/out")"
+
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

@@ -52,6 +52,16 @@ prompt_pr_open() {
   echo "fill the draft pull request your checkpoints opened (\`gh pr edit\`, from the template, keeping its checkpoint block; \`gh pr ready\` once it is complete; \`gh pr create\` only if there is none)"
 }
 
+# The first thing a ticket session does (#632): `senior-mode preflight` checks, from where the session runs, that gh is authenticated, the
+# branch can be pushed and the tools the tickets declare (`Needs:`) are installed. On a failure it writes the outcome itself; the
+# session stops there, before any code, instead of finding out at its last step that it cannot open a pull request. $1 the tickets.
+prompt_preflight() {
+  cat <<TEXT
+Before anything else, run \`senior-mode preflight $1\`. When it fails, it has written the outcome \`failed: environment: <cause>\`: write no
+code, run no other command and stop. When it passes, go on.
+TEXT
+}
+
 # The task of the headless session of one ticket (spec 0001 §10, ADR 0007): number, title, branch.
 run_prompt() {
   local nl=$'\n' wf dec plan pout ck pr
@@ -63,6 +73,8 @@ run_prompt() {
   cat <<EOF
 You are one ticket session of an autonomous senior-mode run on $RUN_SLUG. Nobody will answer
 questions: decide within the ticket, its spec and the project's rules, or give up as described below.
+
+$(prompt_preflight "$1")
 
 Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode team:
 1. Read the ticket (\`gh issue view $1\`), its spec and its acceptance criteria. A \`type:spike\` ticket is
@@ -112,6 +124,8 @@ run_prompt_batch() {
   cat <<EOF
 You are one batch session of an autonomous senior-mode run on $RUN_SLUG. Nobody will answer
 questions: decide within the tickets, their specs and the project's rules, or give up as described below.
+
+$(prompt_preflight "$3")
 
 Deliver these small tickets, which touch the same paths, in this worktree, on branch $branch, as the
 senior-mode team, in ONE pull request:
@@ -180,6 +194,8 @@ serve_prompt() {
 You are one ticket session (SENIOR_MODE_ROLE=ticket) of senior-mode serve on $RUN_SLUG. Nobody will answer
 questions: decide within the ticket, its spec and the project's rules, or give up as described below.
 
+$(prompt_preflight "$1")
+
 Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode team:
 1. Read the ticket (\`gh issue view $1\`), its spec and its acceptance criteria.${plan:+$nl$plan}
 $tests
@@ -224,6 +240,8 @@ serve_prompt_batch() {
   cat <<PROMPT
 You are one batch session (SENIOR_MODE_ROLE=ticket) of senior-mode serve on $RUN_SLUG. Nobody will answer
 questions: decide within the tickets, their specs and the project's rules, or give up as described below.
+
+$(prompt_preflight "$3")
 
 Deliver these small tickets, which touch the same paths, in this worktree, on branch $branch, as the
 senior-mode team, in ONE pull request:

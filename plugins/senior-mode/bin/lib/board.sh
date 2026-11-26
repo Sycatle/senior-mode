@@ -447,6 +447,10 @@ ready_missing() {
     done < <(jq -r '.paths[]' <<<"$it")
     [ -z "$hits" ] || reasons=$(jq -c --arg h "$hits" '. + ["protected zone: \($h)"]' <<<"$reasons")
   fi
+  # The tools it declares (`Needs: tool`, #632) must be on this machine, where its session will run.
+  while IFS= read -r p; do
+    command -v "$p" >/dev/null 2>&1 || reasons=$(jq -c --arg t "$p" '. + ["tool not installed: \($t) (declared by its Needs: line)"]' <<<"$reasons")
+  done < <(ticket_needs "$(jq -r '.body // ""' <<<"$it")")
   printf '%s\n' "$reasons"
 }
 
@@ -1217,4 +1221,50 @@ start() {
   fi
   item_set "$issue" Status "In progress"
   cycle_start "$issue"
+}
+
+# The tools a ticket declares in its body (#632), one a line: the words of its `Needs: tool, tool` lines.
+ticket_needs() {
+  sed -nE 's/^Needs:[[:space:]]*(.*)$/\1/p' <<<"$1" | tr ', \t' '\n\n\n' | grep -E '^[A-Za-z0-9._+-]+$' || true
+}
+
+# senior-mode preflight <issue>...: what a ticket session needs before it works (#632), checked from where it runs: gh
+# authenticated, a push of the current branch accepted (`git push --dry-run`) and every tool the tickets declare (`Needs:`)
+# on the PATH. The first failure prints `failed: environment: <cause>` and fails; with SENIOR_MODE_RUN_OUTCOME set it is also
+# the outcome of the session (a line `#<n> failed: ...` per ticket when there are several), so that it ends at once, before any
+# code, instead of finding out at its last step.
+preflight() {
+  [ $# -gt 0 ] || usage
+  local issue branch cause="" err body tool
+  for issue; do [[ $issue =~ ^[1-9][0-9]*$ ]] || usage; done
+  err=$(SENIOR_MODE_GH_TIMEOUT=${SENIOR_MODE_GH_TIMEOUT:-30} gh_bound auth status 2>&1) ||
+    cause="gh cannot authenticate: $(grep -m1 . <<<"$err" || echo "gh auth status failed")"
+  if [ -z "$cause" ]; then
+    branch=$(git symbolic-ref -q --short HEAD) || cause="git has no branch checked out here, nothing to push"
+  fi
+  if [ -z "$cause" ]; then
+    err=$(git_bound push --dry-run -q origin "HEAD:refs/heads/$branch" 2>&1) ||
+      cause="git push to origin is refused for $branch: $(grep -m1 . <<<"$err" || echo "git push --dry-run failed")"
+  fi
+  if [ -z "$cause" ]; then
+    for issue; do
+      body=$(SENIOR_MODE_GH_TIMEOUT=${SENIOR_MODE_GH_TIMEOUT:-30} gh_bound issue view "$issue" --repo "$(repo_slug)" --json body --jq '.body // ""' 2>&1) ||
+        { cause="cannot read #$issue: $(grep -m1 . <<<"$body")"; break; }
+      while IFS= read -r tool; do
+        command -v "$tool" >/dev/null 2>&1 || { cause="the tool $tool, declared by #$issue (Needs:), is not installed"; break 2; }
+      done < <(ticket_needs "$body")
+    done
+  fi
+  if [ -n "$cause" ]; then
+    echo "failed: environment: $cause"
+    if [ -n "${SENIOR_MODE_RUN_OUTCOME:-}" ]; then
+      if [ $# -eq 1 ]; then
+        echo "failed: environment: $cause"
+      else
+        for issue; do echo "#$issue failed: environment: $cause"; done
+      fi | state_write "$SENIOR_MODE_RUN_OUTCOME"
+    fi
+    return 1
+  fi
+  echo "preflight ok"
 }

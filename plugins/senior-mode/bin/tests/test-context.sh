@@ -384,5 +384,15 @@ done
 SENIOR_MODE_RUN=1 context "$repo"
 grep -qF "nobody answers" <<<"$out" || fail "run session rule lost on a ticket branch: $out"
 
+# The criteria are read under the headings `ready` accepts (#756): Acceptance, Criteria, any heading level, bullets or numbers.
+git -C "$repo" switch -q feat/12-login
+GH_ISSUE='{"number":12,"title":"Let people log in","state":"OPEN","projectItems":[],"body":"## Acceptance\n- Given A, then a.\n\n## Notes\n- not a criterion"}' context "$repo"
+grep -qF "Given A, then a." <<<"$out" || fail "criteria under '## Acceptance' not read: $out"
+grep -qF "not a criterion" <<<"$out" && fail "a list of the next section read as criteria: $out"
+GH_ISSUE='{"number":12,"title":"Let people log in","state":"OPEN","projectItems":[],"body":"### Criteria:\n1. Given B, then b.\n2) Given C, then c.\n"}' context "$repo"
+for want in "Acceptance criteria:" "Given B, then b." "Given C, then c."; do
+  grep -qF "$want" <<<"$out" || fail "numbered criteria under '### Criteria:' not read ('$want'): $out"
+done
+
 [ "$failures" -eq 0 ] && echo "context: all cases pass"
 exit "$failures"

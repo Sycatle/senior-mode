@@ -140,6 +140,22 @@ advisory() {
   echo "draft security advisory: $url"
 }
 
+# A finding whose fix lives in senior-mode itself (it cites a file under plugins/senior-mode/, or --upstream says it is a
+# behaviour of a `senior-mode` command) is no ticket of the project (#678): the project's agents would try to work on it.
+# In any repository but senior-mode's own, writes it as a draft under .claude/upstream/ naming the target repository, for
+# the owner to file there, and says so. Returns 0 when it drafted.
+UPSTREAM_REPO=Sycatle/senior-mode
+upstream_draft() {
+  local slug=$1 title=$2 text=$3 cites=$4 dir file
+  [ "$slug" != "$UPSTREAM_REPO" ] || return 1
+  [ -n "$cites" ] || [[ $text$title =~ (^|[^[:alnum:]_./-])plugins/senior-mode/ ]] || return 1
+  dir=$(git rev-parse --show-toplevel)/.claude/upstream
+  mkdir -p "$dir"
+  file=$dir/$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//; s/-$//' | cut -c1-60).md
+  printf 'Target repository: %s\nFound in: %s\nTitle: %s\n\n%s\n' "$UPSTREAM_REPO" "$slug" "$title" "$text" >"$file"
+  echo "upstream draft: $file (target repository $UPSTREAM_REPO); no ticket created in $slug"
+}
+
 # Creates a ticket with its board fields, milestone, type label, blocked-by links and parent epic.
 # --severity adds the Severity field and the label `security`. --kind, --path and --rule (a risk
 # outside the ticket) add the line `security-id: <sha256 of the three>` to the body: an open issue
@@ -150,18 +166,24 @@ advisory() {
 # its body, fields, milestone, label and links converge to the arguments, its Status only with --status.
 issue_create() {
   local title="" body="" size="" priority="" severity="" status="" milestone="" type="" parent="" paths="" timebox=""
-  local kind="" path="" rule="" details="" sid="" text private no_advisory=""
+  local kind="" path="" rule="" details="" sid="" text private no_advisory="" upstream=""
   local blockers=() edits=() file slug found number url b fields implied have
   while [ $# -gt 0 ]; do
     case $1 in -h | --help)
-      echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> [--priority <option>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <file|-> | --no-advisory]] [--status <option>] [--milestone <title>] [--type feature|bug|task|chore|spike] [--timebox <N>m|<N>h|<N>[k] tokens] [--paths <globs>] [--blocked-by <n>]... [--parent <n>]"
+      echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> [--priority <option>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <file|-> | --no-advisory]] [--status <option>] [--milestone <title>] [--type feature|bug|task|chore|spike] [--timebox <N>m|<N>h|<N>[k] tokens] [--paths <globs>] [--blocked-by <n>]... [--parent <n>] [--upstream]"
       echo "--timebox is the timebox of a spike (--type spike needs it, no other type takes it): a duration or a token budget, written to the body as the line Timebox: <value>."
       echo "--paths is a comma-separated list of the globs the ticket touches (the board field Paths: tickets whose paths overlap never run at the same time)."
+      echo "--upstream marks a finding whose fix is in senior-mode itself: no ticket, a draft under .claude/upstream/ naming Sycatle/senior-mode (a body or --path citing plugins/senior-mode/ does the same)."
       echo "--priority is required unless --severity is critical (P0) or high (P1). --kind, --path and --rule go together and need --severity."
       return 0 ;;
     esac
     if [ "$1" = --no-advisory ]; then
       no_advisory=1
+      shift
+      continue
+    fi
+    if [ "$1" = --upstream ]; then
+      upstream=1
       shift
       continue
     fi
@@ -205,6 +227,10 @@ issue_create() {
     [ "$details" != - ] || [ "$body" != - ] || die "--body-file and --details-file cannot both read stdin"
   fi
   [ -z "$no_advisory" ] || [ -z "$details" ] || die "--no-advisory and --details-file exclude each other"
+  # A body from stdin is read here and put back on stdin for the reads below.
+  text=$(cat "$body")
+  [ "$body" != - ] || exec 0<<<"$text"
+  ! upstream_draft "$(repo_slug)" "$title" "$text $path $paths" "$upstream" || return 0
   case $type in "" | feature | bug | task | chore | spike) ;; *) die "unknown type $type (feature, bug, task, chore, spike)" ;; esac
   # A spike (#321) is timeboxed: a duration (45m, 2h) or a token budget (200000 tokens, 200k tokens); only a spike has one.
   if [ "$type" = spike ]; then

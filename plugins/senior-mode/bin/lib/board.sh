@@ -156,6 +156,20 @@ upstream_draft() {
   echo "upstream draft: $file (target repository $UPSTREAM_REPO); no ticket created in $slug"
 }
 
+# The Paths of a finding (#677): the directory of its file as a glob (`tooling/x/a.mjs:12` is `tooling/x/**`), a file at the
+# root as itself. The file is $1 (with or without `:line`), else the first `path/to/file.ext:NN` of the text $2.
+# Fails when there is none.
+paths_of_finding() {
+  local f=$1
+  [ -n "$f" ] || f=$(grep -oE '[A-Za-z0-9_.@+-]+(/[A-Za-z0-9_.@+-]+)+\.[A-Za-z0-9]+:[0-9]+' <<<"$2" | head -1)
+  f=${f%%:*}
+  [[ $f =~ ^[A-Za-z0-9_.@+/-]+$ ]] && [ "${f#/}" = "$f" ] || return 1
+  case $f in
+    */*) printf '%s/**' "${f%/*}" ;;
+    *) printf '%s' "$f" ;;
+  esac
+}
+
 # Creates a ticket with its board fields, milestone, type label, blocked-by links and parent epic.
 # --severity adds the Severity field and the label `security`. --kind, --path and --rule (a risk
 # outside the ticket) add the line `security-id: <sha256 of the three>` to the body: an open issue
@@ -172,7 +186,7 @@ issue_create() {
     case $1 in -h | --help)
       echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> [--priority <option>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <file|-> | --no-advisory]] [--status <option>] [--milestone <title>] [--type feature|bug|task|chore|spike] [--timebox <N>m|<N>h|<N>[k] tokens] [--paths <globs>] [--blocked-by <n>]... [--parent <n>] [--upstream]"
       echo "--timebox is the timebox of a spike (--type spike needs it, no other type takes it): a duration or a token budget, written to the body as the line Timebox: <value>."
-      echo "--paths is a comma-separated list of the globs the ticket touches (the board field Paths: tickets whose paths overlap never run at the same time)."
+      echo "--paths is a comma-separated list of the globs the ticket touches (the board field Paths: tickets whose paths overlap never run at the same time). A session (SENIOR_MODE_RUN) that gives none gets the directory of --path <file>, else of the first file:line of the body, else the command fails."
       echo "--upstream marks a finding whose fix is in senior-mode itself: no ticket, a draft under .claude/upstream/ naming Sycatle/senior-mode (a body or --path citing plugins/senior-mode/ does the same)."
       echo "--priority is required unless --severity is critical (P0) or high (P1). --kind, --path and --rule go together and need --severity."
       return 0 ;;
@@ -215,10 +229,11 @@ issue_create() {
   [ -n "$title" ] && [ -n "$size" ] && [ -n "$priority" ] ||
     die "issue create needs --title, --body-file, --size and --priority (optional with --severity critical or high)"
   [ "$body" = - ] || [ -f "$body" ] || die "no body file: $body"
-  if [ -n "$kind$path$rule" ]; then
+  case $path in *$'\n'*) die "--path cannot hold a newline" ;; esac
+  if [ -n "$kind$rule" ]; then
     [ -n "$kind" ] && [ -n "$path" ] && [ -n "$rule" ] || die "--kind, --path and --rule go together, none empty"
     [ -n "$severity" ] || die "--kind, --path and --rule need --severity"
-    case $kind$path$rule in *$'\n'*) die "--kind, --path and --rule cannot hold a newline" ;; esac
+    case $kind$rule in *$'\n'*) die "--kind, --path and --rule cannot hold a newline" ;; esac
     sid=$(printf '%s\n%s\n%s\n' "$kind" "$path" "$rule" | sha256sum | cut -d' ' -f1)
   fi
   if [ -n "$details" ]; then
@@ -243,6 +258,12 @@ issue_create() {
     case $paths in *$'\n'*) die "--paths cannot hold a newline" ;; esac
     paths=$(printf '%s' "$paths" | sed -E 's/[[:space:]]*,[[:space:]]*/,/g; s/^[[:space:],]+//; s/[[:space:],]+$//; s/,+/,/g')
     [ -n "$paths" ] || die "--paths holds no glob"
+  fi
+  # What an agent files without Paths runs alone and stalls the parallel slots (#677): Paths come from --path or the first
+  # `file:line` of the body when --paths is not given, and a session that has neither must say them.
+  if [ -z "$paths" ] && [ -n "${SENIOR_MODE_RUN:-}" ] && jq -e '.project.fields.Paths.id' "$(config_file)" >/dev/null 2>&1; then
+    paths=$(paths_of_finding "$path" "$text") ||
+      die "a ticket filed by an agent needs Paths: pass --paths \"<globs>\", or --path <file>, or cite a file:line in the body"
   fi
   # ${a[@]+...}: an empty array is unbound under set -u before bash 4.4.
   for b in ${blockers[@]+"${blockers[@]}"}; do

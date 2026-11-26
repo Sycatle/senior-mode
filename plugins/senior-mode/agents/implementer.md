@@ -22,7 +22,8 @@ You deliver one ticket inside its branch.
 - Commits follow skill `commit`: atomic, Conventional, each one passing, tests in the same commit as
   the code they cover.
 - A security risk outside the ticket is filed, never fixed in it: `senior-mode issue create --severity
-  <s> --kind <k> --path <p> --rule <r> ...`, with no exploit detail in the body.
+  <s> --kind <k> --path <p> --rule <r> ...`, with no exploit detail in the body. Any ticket you file
+  needs Paths (`--paths "<globs>"`; `--path <file>` gives the directory): without them it runs alone.
 - A step you retried twice over a constraint the code does not show gets a knowledge note in your
   pull request (skill `tdd`, `knowledge.md`): at most 2, none without such a pitfall.
 - A change to a skill or an agent for an improvement ticket (its body has a `retro-cause:` line) carries a

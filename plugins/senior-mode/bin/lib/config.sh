@@ -77,6 +77,21 @@ config_schema_file() {
   printf '%s\n' "$(dirname "$SELF")/../schema/senior-mode.schema.json"
 }
 
+# The version of the installed plugin.
+plugin_version() {
+  jq -r '.version // empty' "$(plugin_root)/.claude-plugin/plugin.json" 2>/dev/null || true
+}
+
+# The `minVersion` of a layer (JSON in $1) when it is newer than the installed plugin: such a file was written for a
+# version that knows keys this one does not (#606). Fails when there is none or the plugin is recent enough.
+config_needs_newer() {
+  local need have
+  need=$(jq -r '.minVersion // empty | strings | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<<"$1" 2>/dev/null) || return 1
+  have=$(plugin_version)
+  [ -n "$need" ] && [ -n "$have" ] && [ "$need" != "$have" ] || return 1
+  [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | tail -n 1)" = "$need" ] && printf '%s\n' "$need"
+}
+
 # The findings of a JSON document against a schema (the plugin's by default), one {level, path, message} per line.
 config_findings() { # document [schema]
   jq -c --slurpfile schema "${2:-$(config_schema_file)}" "$CONFIG_WALK" "$1" ||
@@ -214,7 +229,7 @@ adr_status() {
 # the invalid JSON of a layer to a lift without its ADR; `lifted` lists the lifts that hold. --validate also
 # reads every layer and profile file against its schema.
 config_resolve() { # [--validate]
-  local validate=false root common n t j findings='[]' out name prof pre layers merged gates lifted='[]' g adr st base lifts
+  local validate=false root common n t j need findings='[]' out name prof pre layers merged gates lifted='[]' g adr st base lifts
   local -A layer=() present=() text=()
   [ "${1:-}" != --validate ] || validate=true
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
@@ -236,6 +251,10 @@ config_resolve() { # [--validate]
       fi
       if [ "$validate" = true ]; then
         out=$(config_findings <(printf '%s' "$j"))
+        if need=$(config_needs_newer "$j"); then
+          out=$(jq -nc --arg m "this config needs senior-mode >= $need, installed $(plugin_version): update the plugin (claude plugin update senior-mode@senior-mode)" \
+            '{level: "error", path: "minVersion", message: $m}')
+        fi
         findings=$(jq -sc --arg l "$n" --argjson f "$findings" '$f + map(. + {layer: $l})' <<<"$out")
       fi
     else

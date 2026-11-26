@@ -111,6 +111,9 @@ expect_fail "D1" 'did you mean maxTickets' 'edit .claude/senior-mode.json: maxTi
 config "$(jq -c '.preset = "typescript"' <<<"$good")"
 doctor || fail "D2: a deprecated value fails: $(cat "$work/out")"
 grep -q 'warn .*"typescript" is deprecated' "$work/out" || fail "D2: no warning: $(cat "$work/out")"
+config "$(jq -c '.minVersion = "99.0.0" | .lsp = true | .autonomyy = 1 | .project.protection = "local"' <<<"$good")"
+expect_fail "D4" 'this config needs senior-mode >= 99.0.0' 'update the plugin, then restart Claude Code: claude plugin update senior-mode@senior-mode'
+[ "$(grep -c '^FAIL .*config' "$work/out")" -eq 1 ] || fail "D4: more than one config failure: $(cat "$work/out")"
 rm "$repo/.claude/senior-mode.json"
 expect_fail "D3" 'no .claude/senior-mode.json' '/senior-mode:setup'
 

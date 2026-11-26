@@ -108,5 +108,21 @@ esac
 (cd "$fresh" && "$cli" setup repo >/dev/null 2>&1)
 [ "$(jq '[paths | select(.[0] == "$schema")] | length' "$fresh/.claude/senior-mode.json")" -eq 1 ] || fail "\$schema written twice"
 
+# A config that records a newer minVersion is one version mismatch, not one error per key it does not know (#606).
+installed=$(jq -r .version "$bin/../.claude-plugin/plugin.json")
+config '{"minVersion":"99.0.0","lsp":true,"autonomyy":1,"project":{"protection":"local"},"language":"xx"}'
+run config validate && fail "a newer config passes"
+[ "$(wc -l <"$work/out")" -eq 1 ] || fail "a newer config gives more than one finding: $(cat "$work/out")"
+grep -q "^error: minVersion: this config needs senior-mode >= 99.0.0, installed $installed: update the plugin (claude plugin update senior-mode@senior-mode)\$" "$work/out" || fail "version mismatch not said: $(cat "$work/out")"
+run config validate --json
+[ "$(jq -r '.findings | length' "$work/out")" -eq 1 ] || fail "--json: more than one finding: $(cat "$work/out")"
+config "{\"minVersion\":\"$installed\"}"
+run config validate || fail "a minVersion that is installed is refused: $(cat "$work/out")"
+config "{\"minVersion\":\"$installed\",\"nobodyknowsthis\":1}"
+run config validate && fail "an unknown key passes with a satisfied minVersion"
+grep -q '^error: nobodyknowsthis: unknown key$' "$work/out" || fail "the unknown key message changed: $(cat "$work/out")"
+config '{"minVersion":"latest"}'
+run config validate && fail "a minVersion that is not a version passes"
+
 [ "$failures" -eq 0 ] && echo "config validate: all cases pass"
 exit "$failures"

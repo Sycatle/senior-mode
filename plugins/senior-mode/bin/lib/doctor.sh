@@ -127,6 +127,7 @@ doctor_config_fix() { # path layer message
   case $1 in
     process.lifts) echo "make the ADR of the lift 'status: accepted' and merge it on the default branch, or remove the lift and choose the strict profile (a lift is read from $file)" ;;
     process.profile) echo "set process.profile to strict or fast, or add .claude/senior-mode/profiles/<name>.json" ;;
+    minVersion) echo "update the plugin, then restart Claude Code: claude plugin update senior-mode@senior-mode (do not edit $file: its keys are valid for the newer version)" ;;
     overrides/*) echo "rename or delete the file under .claude/senior-mode/overrides/" ;;
     *) case $3 in
       *"did you mean"*) echo "edit $file: ${3##*did you mean }" ;;

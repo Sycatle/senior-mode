@@ -6,6 +6,9 @@ Closes #
 ## Comment c'est vérifié
 <!-- Commandes lancées et leur résultat ; l'échec des nouveaux tests avant le correctif. -->
 
+## Nouveau code partagé (New shared code)
+<!-- Chaque nouvel export dans un dossier partagé (`## Shared code` du CLAUDE.md) : `searched: <termes>` et ce que tu as trouvé ou réutilisé. Écris « aucun » s'il n'y en a pas. -->
+
 ## Self-review
 <!-- Une ligne par critère d'acceptation de chaque ticket fermé, numérotée #<ticket>.<k> dans l'ordre de l'issue ;
 la preuve est un nom de test ou une commande et son résultat. `senior-mode ready` refuse une ligne ou une preuve manquante. -->

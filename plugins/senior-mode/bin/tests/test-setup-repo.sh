@@ -36,6 +36,8 @@ grep -q "environnements de développement.*envGuard" "$new/CLAUDE.md" || fail "F
 grep -q '^## Vue d.ensemble' "$new/docs/architecture.md" 2>/dev/null || fail "docs/architecture.md not created in the project language: $(cat "$work/out")"
 grep -q 'docs/architecture.md: created' "$work/out" || fail "architecture overview not reported: $(cat "$work/out")"
 grep -qi 'Ce que ça apporte' "$new/.github/pull_request_template.md" || fail "PR template not in the project language"
+grep -q '^## .*New shared code' "$new/.github/pull_request_template.md" || fail "PR template without its New shared code section (#487)"
+grep -q '^## New shared code' "$(dirname "$cli")/../templates/en/pull_request_template.md" || fail "English PR template without its New shared code section (#487)"
 [ -x "$new/.githooks/commit-msg" ] && [ -x "$new/.githooks/pre-push" ] || fail "git hooks not executable"
 [ "$(git -C "$new" config core.hooksPath)" = .githooks ] || fail "core.hooksPath not set"
 jq -e '.permissions.allow | index("Bash(senior-mode:*)")' "$new/.claude/settings.json" >/dev/null ||

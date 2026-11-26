@@ -48,6 +48,8 @@ Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the pull request is open with senior-mode/ci, senior-mode/review and senior-mode/security set;
 - \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
 - \`decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
+- \`blocked: #<issue or pull request> <reason>\` when the code it changes is not on the base branch yet (an open pull request or ticket must land first);
+- \`duplicate: #<original> <reason>\` when the work is already merged, or another open issue asks for the same (look for one with the same title before you start);
 - \`failed: <reason>\` otherwise, in one plain sentence.
 EOF
 }
@@ -95,6 +97,8 @@ Last, write one line per ticket to the file \$SENIOR_MODE_RUN_OUTCOME, each star
   senior-mode/security set;
 - \`#<n> outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
 - \`#<n> decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
+- \`#<n> blocked: #<issue or pull request> <reason>\` when the code it changes is not on the base branch yet (an open pull request or ticket must land first);
+- \`#<n> duplicate: #<original> <reason>\` when the work is already merged, or another open issue asks for the same (look for one with the same title before you start);
 - \`#<n> failed: <reason>\` otherwise, in one plain sentence.
 EOF
 }
@@ -146,6 +150,8 @@ Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the pull request is open with senior-mode/ci and senior-mode/security published;
 - \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;${wrong}
 - \`decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
+- \`blocked: #<issue or pull request> <reason>\` when the code it changes is not on the base branch yet (an open pull request or ticket must land first);
+- \`duplicate: #<original> <reason>\` when the work is already merged, or another open issue asks for the same (look for one with the same title before you start);
 - \`failed: environment: <reason>\` when the machine, not the ticket, is the problem (dependencies that cannot be
   installed, a full disk, a check that is red on the base branch too, gh or Claude not signed in): serve pauses
   until it is healthy, and does not count it against the ticket;
@@ -195,6 +201,8 @@ Last, write one line per ticket to the file \$SENIOR_MODE_RUN_OUTCOME, each star
   published;
 - \`#<n> outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
 - \`#<n> decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
+- \`#<n> blocked: #<issue or pull request> <reason>\` when the code it changes is not on the base branch yet (an open pull request or ticket must land first);
+- \`#<n> duplicate: #<original> <reason>\` when the work is already merged, or another open issue asks for the same (look for one with the same title before you start);
 - \`#<n> failed: environment: <reason>\` when the machine, not the ticket, is the problem (dependencies that cannot
   be installed, a full disk, a check that is red on the base branch too, gh or Claude not signed in);
 - \`#<n> failed: <reason>\` otherwise, in one plain sentence.

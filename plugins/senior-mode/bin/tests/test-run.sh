@@ -347,6 +347,31 @@ grep -q 'needs a data migration' "$work/out" || fail "C: report misses the reaso
   fail "C: clean did not run after the last ticket: $(cat "$GH_LOG")"
 outcome_is 30
 
+# C2 (#582): a blocked or duplicate ticket is neither outgrown nor failed, and is not retried on Opus: `blocked` labels the
+# ticket and names the blocker, `duplicate` asks a human to close it; neither stops the run or counts for the breaker.
+config '{"maxConsecutiveFailures": 1}'
+board 35 '[]' 36 '[]' 37 '[]'
+session 35-sonnet "blocked: #23 the code it changes is in an unmerged pull request"
+session 36-sonnet "duplicate: #32 already merged"
+session 37-sonnet delivered pr
+run || fail "C2: run failed: $(cat "$work/out")"
+grep -q 'app-3[56] opus' "$CLAUDE_LOG" && fail "C2: a blocked or duplicate ticket was retried on Opus"
+grep -q 'app-37' "$CLAUDE_LOG" || fail "C2: the run stopped after a blocked or duplicate ticket"
+grep -q 'issues/35/labels -f labels\[\]=blocked' "$GH_LOG" || fail "C2: #35 not labelled blocked"
+grep -q 'issues/35/comments.*blocked by #23' "$GH_LOG" || fail "C2: the comment on #35 does not name its blocker"
+grep -q 'issues/35/labels -f labels\[\]=needs-human' "$GH_LOG" && fail "C2: a blocked ticket was labelled needs-human"
+grep -q 'issues/36/labels -f labels\[\]=needs-human' "$GH_LOG" || fail "C2: the duplicate #36 does not ask a human to close it"
+grep -q 'issues/36/comments.*duplicate of #32' "$GH_LOG" || fail "C2: the comment on #36 does not name the original"
+grep -q 'issues/36/labels -f labels\[\]=blocked' "$GH_LOG" && fail "C2: a duplicate ticket was labelled blocked"
+grep -q 'outgrew' "$GH_LOG" "$work/out" && fail "C2: reported as outgrown"
+grep -q 'Failed: #3[56]' "$work/out" && fail "C2: reported as failed: $(cat "$work/out")"
+grep -q 'Waiting for a human: #35.*blocked by #23' "$work/out" || fail "C2: report misses #35 blocked: $(cat "$work/out")"
+grep -q 'Waiting for a human: #36.*duplicate of #32' "$work/out" || fail "C2: report misses #36 duplicate: $(cat "$work/out")"
+jq -e '.outcome == "blocked" and .escalated == false and (.reason | startswith("#23"))' "$repo/.git/senior-mode/runs/"*/35.json >/dev/null ||
+  fail "C2: #35 not recorded as blocked: $(cat "$repo"/.git/senior-mode/runs/*/35.json)"
+jq -e '.outcome == "duplicate" and .escalated == false and (.reason | startswith("#32"))' "$repo/.git/senior-mode/runs/"*/36.json >/dev/null ||
+  fail "C2: #36 not recorded as duplicate: $(cat "$repo"/.git/senior-mode/runs/*/36.json)"
+
 # D: merging on but no protection on the server, and a needs-human label: nothing merges. --max 1.
 config '{"merge": true}' '{"protection": "none"}'
 board 40 '[]' 41 '[]'
@@ -1142,6 +1167,21 @@ for n in 411 412; do
   jq -e '.outcome == "failed" and .escalated == true' "$repo/.git/senior-mode/runs/"*/$n.json >/dev/null || fail "W: #$n not recorded as failed on Opus"
   grep -q "issues/$n/labels" "$GH_LOG" || fail "W: #$n not labelled needs-human"
 done
+
+# W2 (#582): a batch whose session reports one ticket blocked and another duplicate does not go on Opus, and neither is a failure.
+board 421 '[]' 422 '[]'
+paths_of 421 'src/d/**'
+paths_of 422 'src/d/x.ts'
+session 421-sonnet ""
+printf '#421 blocked: #23 unmerged pull request\n#422 duplicate: #32 already merged\n' >"$FIX/outcome-421"
+run || fail "W2: run failed: $(cat "$work/out")"
+grep -c '^app-421 ' "$CLAUDE_LOG" | grep -qx 1 || fail "W2: the batch was retried: $(cat "$CLAUDE_LOG")"
+grep -q 'issues/421/labels -f labels\[\]=blocked' "$GH_LOG" || fail "W2: #421 not labelled blocked"
+grep -q 'issues/422/labels -f labels\[\]=needs-human' "$GH_LOG" || fail "W2: #422 does not ask a human to close it"
+jq -e '.outcome == "blocked" and .escalated == false' "$repo/.git/senior-mode/runs/"*/421.json >/dev/null || fail "W2: #421 not recorded as blocked"
+jq -e '.outcome == "duplicate" and .escalated == false' "$repo/.git/senior-mode/runs/"*/422.json >/dev/null || fail "W2: #422 not recorded as duplicate"
+grep -q 'Failed: #42[12]' "$work/out" && fail "W2: reported as failed: $(cat "$work/out")"
+rm -f "$FIX/outcome-421"
 
 # X: Done items closed more than board.archiveAfterDays ago (default 14) are archived when a run starts and listed (#179);
 # an open item, an item not Done, one closed recently and one already archived are left alone.

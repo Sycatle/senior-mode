@@ -307,6 +307,34 @@ Reply on this ticket: the labels \`needs-decision\` and \`needs-human\` go and t
   RUN_WAITING+=("#$n ${RUN_TITLE[$n]}: waiting for a decision: $q (branch ${RUN_BRANCH[$n]} kept)")
 }
 
+# A ticket whose session found it cannot be done yet (#582): the outcome `blocked: #<issue or pull request> <reason>`, $2
+# being what follows `blocked: ` (the code it changes is not on the base branch yet). Not a size matter and not a failure:
+# no retry on Opus, nothing counted for the circuit breaker, the run goes on. The ticket gets the `blocked` label (pick
+# skips it) and goes back to Backlog with a comment that names the blocker, its branch and worktree kept.
+run_blocked() {
+  local n=$1 why=$2
+  run_record "$n" blocked "$why" "${3:-$n}"
+  gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=blocked' >/dev/null ||
+    echo "#$n: could not label the ticket blocked" >&2
+  (item_set "$n" Status Backlog) >/dev/null || echo "#$n: could not set the Status Backlog" >&2
+  gh_bound api "repos/$RUN_SLUG/issues/$n/comments" -f body="An autonomous senior-mode session stopped on this ticket: it is blocked by $why
+
+It is labelled \`blocked\` and back in Backlog; no other model was tried, since a stronger one cannot unblock it. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the worktree \`${RUN_WT[$n]}\`." \
+    >/dev/null || echo "#$n: could not comment on the ticket" >&2
+  RUN_WAITING+=("#$n ${RUN_TITLE[$n]}: blocked by $why (branch ${RUN_BRANCH[$n]} kept)")
+}
+
+# A ticket whose session found the work already done or asked elsewhere (#582): the outcome `duplicate: #<original>
+# <reason>`, $2 being what follows `duplicate: ` (merged work, or another open issue with the same ask). Not a failure
+# and not escalated: the ticket goes back to Backlog and a human is asked to close it (needs-human, as for a question).
+run_duplicate() {
+  local n=$1 why=$2
+  run_record "$n" duplicate "$why" "${3:-$n}"
+  (item_set "$n" Status Backlog) >/dev/null || echo "#$n: could not set the Status Backlog" >&2
+  notify needs-human "$n" "duplicate of $why: close this ticket or say what is left to do"
+  RUN_WAITING+=("#$n ${RUN_TITLE[$n]}: duplicate of $why (branch ${RUN_BRANCH[$n]} kept)")
+}
+
 # The tickets labelled needs-decision whose question got a reply (#363): a comment after the last decision comment of
 # senior-mode, by a collaborator (OWNER, MEMBER or COLLABORATOR) and not senior-mode's own. Their labels needs-decision and
 # needs-human are removed; the ticket is Ready, so the next pick takes it and the session reads the answer in its comments.
@@ -509,7 +537,7 @@ run_merge() {
 }
 
 # Writes the outcome of a ticket, the file `retro` reads: $RUN_DIR/<n>.json holds {ticket, outcome
-# (delivered, outgrown, decision or failed), escalated (the ticket went to Opus), reason (the last failure the
+# (delivered, outgrown, decision, blocked, duplicate or failed), escalated (the ticket went to Opus), reason (the last failure the
 # session reported, null for a clean delivery), model (of the last session), finishedAt}. $2 is the
 # outcome and $3 the reason, possibly empty; $4 the session of the ticket when it is not its own (a batch).
 # Spec 0001 section 10.
@@ -579,7 +607,8 @@ run_pulls() {
 }
 
 # Reads how a finished batch session went (#263): one outcome line per ticket in its outcome file, `#<n> delivered`,
-# `#<n> outgrown: <reason>`, `#<n> decision: <question> | ...` (run_decision) or `#<n> failed: <reason>`; a file without such lines gives its first line to every
+# `#<n> outgrown: <reason>`, `#<n> decision: <question> | ...` (run_decision), `#<n> blocked: #<blocker> <reason>` (run_blocked),
+# `#<n> duplicate: #<original> <reason>` (run_duplicate) or `#<n> failed: <reason>`; a file without such lines gives its first line to every
 # ticket. The delivered ones are merged or left for a human with their one pull request; each of the others goes
 # back alone as a ticket would (run_giveup: Backlog, needs-human, a comment), the delivered ones are not held back.
 # When none is delivered the session goes on Opus as a ticket would. Returns 1 when the session goes on.
@@ -609,7 +638,7 @@ run_finish_batch() {
       done_=()
     fi
   fi
-  if [ ${#done_[@]} -eq 0 ] && [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ] && [[ ${out[*]} != *outgrown:* ]] && [[ ${out[*]} != *decision:* ]]; then
+  if [ ${#done_[@]} -eq 0 ] && [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ] && [[ ${out[*]} != *outgrown:* ]] && [[ ${out[*]} != *decision:* ]] && [[ ${out[*]} != *blocked:* ]] && [[ ${out[*]} != *duplicate:* ]]; then
     why=${out[$n]#failed: }
     printf '\nA first attempt on Sonnet gave up: %s\nIts work is in this worktree; build on it or reset it.\n' "$why" | state_append "$RUN_DIR/$n.prompt"
     RUN_ESCALATED[$n]=true
@@ -641,6 +670,8 @@ run_finish_batch() {
         run_giveup "$m" "it outgrew its size: ${out[$m]#outgrown: }"
         ;;
       decision:*) run_decision "$m" "${out[$m]#decision: }" "$n" ;;
+      blocked:*) run_blocked "$m" "${out[$m]#blocked: }" "$n" ;;
+      duplicate:*) run_duplicate "$m" "${out[$m]#duplicate: }" "$n" ;;
       *)
         run_record "$m" failed "${out[$m]#failed: }" "$n"
         run_giveup "$m" "${out[$m]#failed: }"
@@ -687,6 +718,8 @@ run_finish() {
       run_giveup "$n" "it outgrew its size: ${outcome#outgrown: }"
       ;;
     decision:*) run_decision "$n" "${outcome#decision: }" ;;
+    blocked:*) run_blocked "$n" "${outcome#blocked: }" ;;
+    duplicate:*) run_duplicate "$n" "${outcome#duplicate: }" ;;
     *)
       if [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ]; then
         printf '\nA first attempt on Sonnet gave up: %s\nIts work is in this worktree; build on it or reset it.\n' \

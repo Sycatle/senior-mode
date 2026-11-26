@@ -43,7 +43,7 @@ in the issue as assumed), then:
 questions, when it exists. An idea that contradicts a non-goal is not framed: quote the non-goal word for word
 and ask it as the first framing question (keep the idea, drop it, or the owner changes the vision himself).
 Nobody to ask: label the idea's issue `needs-human` (created first when it has none) with a comment quoting the
-non-goal, and stop with no spec and no ticket. No file: skip.
+non-goal, and stop with no spec and no ticket. A wave's milestone also needs a goal: "Tickets", "Hierarchy". No file: skip.
 
 ## Decisions
 
@@ -84,6 +84,22 @@ Given / When / Then and the test seams. A size L has an epic (size L, the spec's
 the anchor; every slice takes `--parent <epic>`. A chosen milestone that is closed is reopened
 (`-X PATCH .../milestones/<n> -f state=open`); one absent from the facts is created first with
 `gh api repos/{owner}/{repo}/milestones -f title=<title>`.
+
+### Hierarchy
+
+With `docs/vision.md`, a wave is vision goal, milestone, epic, ticket (spec 325 section 7):
+
+- A milestone created here gets `-f description="Goal: G<n>"` as its first line, `G<n>` being a goal of the vision
+  file. Pick the goal that fits and put it in the question round, recommended option first. No goal fits: ask
+  (keep the idea, add a goal to the vision yourself, or another milestone). Never invent a goal or
+  a number. Nobody to ask: do not create the milestone, label the anchor `needs-human` with a comment naming
+  the idea and the goals, and stop. A milestone that already exists is used as is; one with no `Goal:` line
+  is said in the report, not edited.
+- Each epic (size L) has one spec: its body links exactly one spec (`docs/specs/<anchor>-<slug>.md`), no more. A wave
+  of several specs has one epic per spec.
+- Every ticket of the wave is created with `--parent <epic>`; none is left without one.
+
+No vision file: none of this applies, milestones and tickets are made as above.
 
 ## Spikes
 

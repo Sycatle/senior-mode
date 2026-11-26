@@ -55,6 +55,30 @@ run publish || fail "publish fails after a passing check: $(cat "$work/out")"
 grep -q -- "api repos/acme/app/statuses/$(sha) -f state=success -f context=senior-mode/ci -f description=7/7 checks passed" "$GH_LOG" ||
   fail "success status not published as expected: $(cat "$GH_LOG")"
 
+# The mount points of the Claude Code sandbox (#640) are not uncommitted changes; a file of the same name with
+# content is, and so is any other untracked file.
+: >"$repo/.mcp.json"
+mkdir -p "$repo/.claude/skills"
+: >"$repo/.claude/skills/.keep"
+: >"$repo/.bashrc"
+run check || fail "check fails with the sandbox mount points in the tree: $(cat "$work/out")"
+grep -q "uncommitted changes" "$work/out" && fail "a sandbox mount point counts as an uncommitted change: $(cat "$work/out")"
+: >"$GH_LOG"
+run publish || fail "the result is not recorded with the mount points in the tree: $(cat "$work/out")"
+grep -q -- "-f state=success -f context=senior-mode/ci" "$GH_LOG" || fail "no status published with the mount points in the tree: $(cat "$GH_LOG")"
+echo '{"mcpServers":{}}' >"$repo/.mcp.json"
+run check || fail "check: $(cat "$work/out")"
+grep -q "uncommitted changes" "$work/out" || fail "an .mcp.json with content is not an uncommitted change: $(cat "$work/out")"
+rm "$repo/.mcp.json"
+echo x >"$repo/.claude/skills/real.md"
+run check || fail "check: $(cat "$work/out")"
+grep -q "uncommitted changes" "$work/out" || fail "a skill in .claude/skills is not an uncommitted change: $(cat "$work/out")"
+rm -r "$repo/.claude/skills" "$repo/.bashrc"
+echo x >"$repo/other.txt"
+run check || fail "check: $(cat "$work/out")"
+grep -q "uncommitted changes" "$work/out" || fail "an untracked file is not an uncommitted change: $(cat "$work/out")"
+rm "$repo/other.txt"
+
 config '{"checks":[{"name":"lint","run":"true"},{"name":"tests","run":"echo boom; exit 3"}]}'
 run check && fail "check passes although a check fails"
 grep -q "FAIL  tests" "$work/out" || fail "failing check not named: $(cat "$work/out")"

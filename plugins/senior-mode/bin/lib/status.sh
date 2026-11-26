@@ -923,12 +923,15 @@ retro() {
   data=$(retro_learn "$data" "$history" "$board" "$slug") || exit 1
   # The notes to merge or delete and the agents' drafts (#340): facts for the pull request the skill opens.
   data=$(retro_knowledge "$data") || exit 1
+  # The proof of a long run (#423): the merge gate audit, the snapshots and the metrics of the period.
+  data=$(retro_proof "$data" "$root" "$slug" "$since_s" "${until_iso:+$(jq -nr --arg d "$until_iso" '$d | fromdateiso8601')}" "$now_s") || exit 1
   if [ "$json" = true ]; then
     printf '%s\n' "$data"
   else
     jq -r --arg head "$head" "$HYGIENE_DEF$RETRO_TEXT_JQ" <<<"$data"
     jq -r "$RETRO_LEARN_TEXT_JQ" <<<"$data"
     jq -r "$RETRO_NOTES_TEXT_JQ" <<<"$data"
+    jq -r "$RETRO_PROOF_TEXT_JQ" <<<"$data"
   fi
   # `status` proposes the next retro a week after this one (#319).
   mkdir -p "$root/senior-mode" && printf '%s\n' "$now_s" >"$root/senior-mode/retro-last"

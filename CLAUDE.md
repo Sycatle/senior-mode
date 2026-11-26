@@ -38,6 +38,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `repomap.sh`: the repo map of the briefing (symbols and signatures of the ticket's Paths, ctags or regex, index cached by tree sha).
 - `retro-learn.sh`: failure causes and improvement tickets of `retro`.
 - `retro-notes.sh`: notes to merge or delete and agent memory drafts, the facts of the `retro` knowledge pull request.
+- `retro-proof.sh`: the run proof of `retro` (merge gate audit, metrics of the period) and `serve`'s hourly snapshot (`snapshots.jsonl`).
 - `skeleton.sh`: red test skeletons of `start` and their `ready` check.
 - `clean.sh`: `clean` (branches, worktrees).
 - `run.sh`: `run` (ticket sessions, review, merge, report) and its helpers.

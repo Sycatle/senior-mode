@@ -2077,5 +2077,29 @@ once || fail "DF2: serve failed: $(cat "$work/out")"
 grep -q '^pr merge' "$GH_LOG" && fail "DF2: a Dependabot pull request was merged: $(grep '^pr ' "$GH_LOG")"
 grep -q "pull request #198, it is external" "$work/out" || fail "DF2: the Dependabot pull request is not left to a human: $(cat "$work/out")"
 
+# AF: the hourly snapshot (#423): one JSON line in snapshots.jsonl the first poll and then once an hour, with the sessions
+# running, the free slots, the Ready tickets that could run, and null where nothing is known (no train, no quota band).
+config '{"parallel": 2}'
+board 10 11 12
+session 10-sonnet delivered pr
+session 11-sonnet delivered pr
+fresh
+SENIOR_MODE_NOW=1800000000 once || fail "AF: serve failed: $(cat "$work/out")"
+snaps="$state/snapshots.jsonl"
+[ "$(awk 'END { print NR }' "$snaps" 2>/dev/null)" = 1 ] || fail "AF: no snapshot at the first poll: $(cat "$snaps" 2>&1)"
+jq -e '.at == 1800000000 and .running == 2 and .free == 0 and .runnable == 1 and .train == null and .band == null and .held == null and (.started | type) == "number"' "$snaps" >/dev/null ||
+  fail "AF: snapshot fields: $(cat "$snaps")"
+jq -e 'has("leases") and has("mainCi") and has("drift")' "$snaps" >/dev/null || fail "AF: snapshot lacks leases, mainCi or drift: $(cat "$snaps")"
+[ "$(cat "$state/snapshot-at")" = 1800000000 ] || fail "AF: the time of the snapshot is not kept: $(cat "$state/snapshot-at" 2>&1)"
+SENIOR_MODE_NOW=1800001800 once || fail "AF: serve failed: $(cat "$work/out")"
+[ "$(awk 'END { print NR }' "$snaps")" = 1 ] || fail "AF: a second snapshot within the hour: $(cat "$snaps")"
+echo '{"id": "t1", "phase": "checking", "entries": [{"pr": 1}, {"pr": 2}], "evicted": [{"pr": 3}]}' >"$state/train"
+echo 'reserve 72%' >"$state/band"
+printf '%s\nthe breaker tripped\n' "$((1800003600 + 99999))" >"$state/paused"
+SENIOR_MODE_NOW=1800003600 once || fail "AF: serve failed: $(cat "$work/out")"
+[ "$(awk 'END { print NR }' "$snaps")" = 2 ] || fail "AF: no snapshot an hour later: $(cat "$snaps")"
+tail -n 1 "$snaps" | jq -e '.at == 1800003600 and .train == {id: "t1", phase: "checking", entries: 2, evicted: 1} and .band == "reserve 72%" and .held == "paused"' >/dev/null ||
+  fail "AF: train, band or hold not in the snapshot: $(tail -n 1 "$snaps")"
+
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

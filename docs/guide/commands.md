@@ -207,6 +207,20 @@ State: **Available.**
   merge and deletion and, for each draft, whether it became a note (front matter filled) or was dropped; it opens none
   when there is nothing to tidy or one is already open, never pushes to the default branch, and removes the drafts
   once the pull request exists, so none older than that pass remains. A person merges it.
+- **Run proof.** The section "Run proof" (`proof` in `--json`) is the evidence of a long run of `serve`, over the
+  period (`--since 7d` for a week). The merge gate audit lists each pull request merged in the period with the
+  statuses of its merged head: `senior-mode/ci`, `review` and `security` must be `success`, and a merge where one is
+  not is marked `GATE OPEN` (a bypass); it names who set `review` (the account, which is all GitHub gives) and who
+  merged. It then gives the new secret scanning alerts of the period (never their value), the drift count of
+  the last snapshot of each day, the incidents that no issue covers (a hold or pause of `serve`, a restart, an evicted
+  train entry, a lease takeover, a `needs-human` pull request: covered when an issue created after it names its
+  `#<n>`, or for the ones with no number, its kind), and the metrics: tickets done per day, mean parallel,
+  starvation minutes (a free slot with no runnable ticket), trains and tickets per train, evictions, minutes with
+  `senior-mode/ci` red on main, takeovers and duplicate work (a lease taken before it expired) from the lease
+  histories, and restarts. The snapshot metrics read the hourly
+  [`snapshots.jsonl`](autonomy.md) of `serve` and count each snapshot as an hour; with no snapshot in the period the
+  section says so and the metrics that need them read "not measured". Whatever GitHub does not answer is said and never
+  counted as clean.
 - **Token use.** Each session `run` or `serve` starts appends its tokens (input, output, cache read, cache
   write) per model to `.git/senior-mode/usage.jsonl`. `retro` shows them per ticket and role (ticket,
   test-author, reviewer, integrator, and `run docs` for the docs session), with an estimated USD

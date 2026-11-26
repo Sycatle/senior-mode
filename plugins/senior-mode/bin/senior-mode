@@ -62,6 +62,8 @@ usage() {
 . "$LIB/retro-learn.sh"
 # shellcheck source=lib/retro-notes.sh
 . "$LIB/retro-notes.sh"
+# shellcheck source=lib/retro-proof.sh
+. "$LIB/retro-proof.sh"
 # shellcheck source=lib/clean.sh
 . "$LIB/clean.sh"
 # shellcheck source=lib/run.sh

@@ -169,10 +169,13 @@ doctor_hooks() {
         soft="$soft${soft:+, }$hook is not senior-mode's and does not call it"
     fi
   done
-  if [ -n "$bad" ]; then
-    doctor_add fail "git hooks" "in $dir: $bad${soft:+, $soft}" "senior-mode setup repo"
+  if [ -n "$bad$soft" ] && { [ ! -w "$(git rev-parse --path-format=absolute --git-path hooks)" ] || [ ! -w "$(git rev-parse --path-format=absolute --git-path config)" ]; }; then
+    doctor_add "$([ -n "$bad" ] && echo fail || echo warn)" "git hooks" "in $dir: ${bad:-pre-push is in place}${soft:+${bad:+, }$soft}; .git/hooks or .git/config is read-only here, so an agent cannot install them: a person must run the fix" \
+      "! senior-mode setup repo --hooks"
+  elif [ -n "$bad" ]; then
+    doctor_add fail "git hooks" "in $dir: $bad${soft:+, $soft}" "senior-mode setup repo --hooks"
   elif [ -n "$soft" ]; then
-    doctor_add warn "git hooks" "pre-push is in place in $dir; $soft" "senior-mode setup repo"
+    doctor_add warn "git hooks" "pre-push is in place in $dir; $soft" "senior-mode setup repo --hooks"
   else
     doctor_add ok "git hooks" "pre-push and commit-msg in $dir"
   fi

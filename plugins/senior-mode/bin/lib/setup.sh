@@ -528,6 +528,14 @@ setup_githooks() { # root templates [owner]
   fi
 }
 
+# `setup repo --hooks`: the git hooks only, no config, no document (what a person runs when the agent cannot write them).
+setup_hooks_only() {
+  local root tpl
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  tpl=$(cd "$(dirname "$SELF")/.." && pwd)/templates
+  setup_githooks "$root" "$tpl" "$(workflow_hook_owner "$root")"
+}
+
 # The project memory of the agents (`memory: project`) is written in the checkout the session runs in,
 # never in a pull request: it stays on the machine, so git ignores it and the tree stays clean.
 setup_gitignore() {
@@ -863,6 +871,11 @@ queries_propose() { # root config-file preset-dir preset-name
 # installs the dependencies of a new worktree, which has no check.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_repo() {
+  if [[ " $* " == *" --hooks "* ]]; then
+    [ $# -eq 1 ] || usage
+    setup_hooks_only
+    return
+  fi
   if [[ " $* " == *" --knowledge "* ]]; then
     local arg rest=()
     for arg in "$@"; do [ "$arg" = --knowledge ] || rest+=("$arg"); done

@@ -151,6 +151,18 @@ grep -q 'warn .*commit-msg missing' "$work/out" || fail "C3: no warning: $(cat "
 printf '#!/bin/sh\n# senior-mode hook\n' >"$repo/.githooks/commit-msg"
 chmod +x "$repo/.githooks/commit-msg"
 
+# C4: .git/config read-only (the sandbox of an agent): the fix is for a person to run, with the hooks only.
+rm "$repo/.githooks/pre-push"
+if [ "$(id -u)" -ne 0 ]; then
+  chmod a-w "$repo/.git/config"
+  expect_fail "C4" 'a person must run the fix' '! senior-mode setup repo --hooks'
+  chmod u+w "$repo/.git/config"
+fi
+expect_fail "C5" 'pre-push missing' 'senior-mode setup repo --hooks'
+grep -q 'a person must run' "$work/out" && fail "C5: a writable .git asks for a person: $(cat "$work/out")"
+printf '#!/bin/sh\n# senior-mode hook\n' >"$repo/.githooks/pre-push"
+chmod +x "$repo/.githooks/pre-push"
+
 # D: config validity: the unknown key and its closest, a deprecated value as a warning only.
 config "$(jq -c '.autonomy = {"maxTicket": 3}' <<<"$good")"
 expect_fail "D1" 'did you mean maxTickets' 'edit .claude/senior-mode.json: maxTickets'

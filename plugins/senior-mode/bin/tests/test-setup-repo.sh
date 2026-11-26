@@ -434,5 +434,18 @@ git init -q -b main "$d"
 setup "$d"
 ! grep -q '^lsp:' "$work/out" || fail "generic preset got a language server proposal"
 
+# `setup repo --hooks` writes the hooks and nothing else (#608).
+hk="$work/hooks"
+git init -q -b main "$hk"
+setup "$hk" --hooks
+[ -x "$hk/.githooks/commit-msg" ] && [ -x "$hk/.githooks/pre-push" ] || fail "--hooks: hooks not installed: $(cat "$work/out")"
+[ "$(git -C "$hk" config core.hooksPath)" = .githooks ] || fail "--hooks: core.hooksPath not set"
+[ "$(cd "$hk" && find . -path ./.git -prune -o -type f -print | sort | tr '\n' ' ')" = "./.githooks/commit-msg ./.githooks/pre-push " ] ||
+  fail "--hooks wrote more than the hooks: $(cd "$hk" && find . -path ./.git -prune -o -type f -print)"
+rm "$hk/.githooks/pre-push"
+setup "$hk" --hooks
+[ -x "$hk/.githooks/pre-push" ] || fail "--hooks: a missing hook is not refreshed"
+(cd "$hk" && "$cli" setup repo --hooks --dry-run) >/dev/null 2>&1 && fail "--hooks accepted with another option"
+
 [ "$failures" -eq 0 ] && echo "setup-repo: all cases pass"
 exit "$failures"

@@ -295,6 +295,23 @@
         }
       }
     },
+    "ratchet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lint": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "command": { "type": "string", "minLength": 1, "description": "Lint command whose output the ratchet reads: ESLint, ruff, golangci-lint or clippy JSON, or a list of {file, rule, line}." } }
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "report": { "type": "string", "minLength": 1, "description": "Path of the lcov or Cobertura report the ratchet reads." } }
+        },
+        "patchCoverage": { "type": "number", "minimum": 0, "maximum": 100, "description": "Percent of lines a new file must cover." }
+      }
+    },
     "limits": {
       "type": "object",
       "additionalProperties": false,

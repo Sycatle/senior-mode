@@ -70,6 +70,9 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `maintenance.maxOpen` | `5` | Most open tickets labelled `gardening`: `serve` files no more while that many are open (a positive whole number) |
 | `retro.repeat` | `3` | Tickets with the same `cause:<x>` label on the same paths or skill, in the period, that make [`retro`](commands.md#retro) open one improvement ticket aimed at that cause (a positive whole number) |
 | `bestOf.n` | `2` | Candidates [`serve`](autonomy.md#best-of-n) tries for a ticket whose pull request still has changes requested after its 2 fix rounds, that pull request being the first (1 to 3; `1` turns it off) |
+| `ratchet.lint.command` | the preset's | Lint command whose output the [ratchet](#ratchet-for-legacy-code) reads, in a machine format: ESLint (`--format json`), ruff (`--output-format json`), golangci-lint (`--out-format json`), clippy (`--message-format json`), or a list of `{ "file", "rule", "line" }`; the presets of node, python, go and rust have one, the generic preset none |
+| `ratchet.coverage.report` | none | Path of the lcov or Cobertura report the ratchet reads (produced by the tests; the ratchet does not run them) |
+| `ratchet.patchCoverage` | `80` | Percent of lines a new file must cover under the ratchet (0 to 100) |
 | `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |
 | `docs.extra` | none | Extra living documents the `docs` skill keeps current after a merge: a list of `{ "path", "purpose" }`; its changes are flagged for human review. Add it yourself |
 | `context.claudeMdLines` | `80` | Most lines a tracked `CLAUDE.md` may have before `check` fails (context hygiene); a whole number from 1 |
@@ -558,6 +561,39 @@ Existing violations are recorded in `.claude/architecture-baseline.json`, a ratc
 ```
 
 `count` (1 when absent) is how many violations of the rule the file may keep. `check` fails only on the violations beyond it (all those of the rule in the file are listed). An entry that no longer violates, or that allows more than what is left, is a warning; `senior-mode check --update-baseline` removes or lowers it, and never adds one: a new violation is refused (exit 1) and the file keeps what it had.
+
+## Ratchet for legacy code
+
+On a project with years of lint findings and little coverage, the whole code base cannot meet the bar on day one. The ratchet
+freezes what exists in `.claude/ratchet-baseline.json`, holds the code a branch adds or touches to the bar, and lets the
+baseline only improve. A project with no baseline (an evergreen one) is held to the full bar by its own lint and test checks:
+`senior-mode ratchet` says `no baseline: full bar`, and `check` has no `ratchet` step.
+
+```json
+{ "version": 1, "createdAt": "2026-11-23",
+  "lint": { "total": 412, "files": { "src/a.ts": { "no-explicit-any": 7 } } },
+  "coverage": { "total": 41.2, "files": { "src/a.ts": 12.5 } } }
+```
+
+`senior-mode ratchet --init` writes it once from the tree (a pull request adds it, like any file). Lint counts findings per
+file and rule, not line numbers, so unrelated edits do not move them; coverage is the percent of lines per file from the report.
+When the baseline exists, `check` runs the `ratchet` step (`senior-mode ratchet-check`) against the merge base with the default branch:
+
+- A **new file** has no lint finding, whatever the baseline says, and covers at least `ratchet.patchCoverage`. A renamed file counts as new.
+- A **touched file** has no finding on a line the branch adds or changes, no more findings per rule than its entry
+  (`src/a.ts:41: no-explicit-any: 8 findings in the file, the baseline allows 7`), and no less coverage than its entry.
+- A touched file **better** than its entry fails `baseline stale` until `senior-mode check --update-baseline` lowers the entry (deleting it at
+  zero) and raises the coverage floor, so an improvement is locked in the pull request that made it. It refuses, writing nothing, when a
+  file got worse or a finding is not in the baseline.
+- The baseline is compared with the one on the base branch: a hand edit that raises a count or `lint.total`, adds a file or a rule, adds
+  a coverage entry or lowers a coverage floor fails. Raising a coverage floor is allowed: it only tightens the bar. A baseline the base
+  branch does not have yet is the first freeze and is accepted.
+- An **untouched file** is never held to the bar, whatever it contains.
+
+A metric that cannot be read is `not measured`, never guessed: `ratchet` and `check` print `lint: not measured: set ratchet.lint.command`
+(no lint command with a machine format, or output in none of the known ones) or `coverage: not measured: set ratchet.coverage.report`
+(`check` then only warns about it). `senior-mode ratchet` prints the baseline against the tree for lint, coverage and the
+[architecture rules](#architecture-rules), which keep their own baseline.
 
 ## Affected packages
 

@@ -582,8 +582,11 @@ delivery_blocker() {
     echo "the acceptance criteria of its tickets could not be read"
     return 0
   }
-  [ -z "$gaps" ] ||
+  [ -z "$gaps" ] || {
     echo "not ready: the Self-review table has no row with evidence for ${gaps// /, } (one row per acceptance criterion: | #<ticket>.<k> criterion | evidence |)"
+    return 0
+  }
+  eval_blocker "$slug" "$pr" "$pull" "$files"
 }
 
 # senior-mode ready --pr <n> on an open pull request that is no framing one: whether it is ready to merge on

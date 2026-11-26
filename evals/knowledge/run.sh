@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Behaviour eval of the implementer's knowledge note (#336): runs a headless session on a fixture ticket
 # several times and grades each result. Needs `claude`, network and Node 22; not part of `check`.
-# Usage: evals/knowledge/run.sh [runs, default 3]
+# Usage: [EVAL_PLUGIN_DIR=<plugin dir>] evals/knowledge/run.sh [runs, default 3]
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-plugin=$here/../../plugins/senior-mode
+plugin=${EVAL_PLUGIN_DIR:-$here/../../plugins/senior-mode}
 runs=${1:-3}
 work=$(mktemp -d)
 failures=0

@@ -44,6 +44,13 @@ case "$*" in
     if [ -f "$f" ]; then respond <"$f"; else echo '[]' | respond; fi ;;
   "api repos/acme/app/issues/"*"/labels "*)
     n=${2#repos/acme/app/issues/}; echo "${n%%/*} $4" >>"$FIX/cause-labels"; echo '[]' ;;
+  "pr list"*--state\ merged*) if [ -f "$FIX/merged-prs.json" ]; then respond <"$FIX/merged-prs.json"; else echo '[]' | respond; fi ;;
+  "api repos/acme/app/commits/"*"/status"*)
+    f=${2#repos/acme/app/commits/}; f=$FIX/status-${f%%/*}.json
+    if [ -f "$f" ]; then respond <"$f"; else echo '{"statuses": []}' | respond; fi ;;
+  "api repos/acme/app/git/matching-refs/"*) if [ -f "$FIX/lease-refs.json" ]; then respond <"$FIX/lease-refs.json"; else echo '[]' | respond; fi ;;
+  "api repos/acme/app/git/commits/"*) f=${2#repos/acme/app/git/commits/}; respond <"$FIX/commit-$f.json" ;;
+  "issue list"*"--state all"*) if [ -f "$FIX/issues-all.json" ]; then respond <"$FIX/issues-all.json"; else echo '[]' | respond; fi ;;
   "issue list"*) respond <"$FIX/issues.json" ;;
   "issue create"*)
     f=$(FLAG=--body-file arg "$@")
@@ -164,7 +171,7 @@ run() { : >"$GH_LOG"; rm -f "$FIX/cause-labels"; : >"$FIX/board-bodies"; : >"$FI
 json() { if [ "$1" = -r ]; then jq -r "$2" "$work/out"; else jq -c "$1" "$work/out"; fi; }
 
 run retro --json || fail "retro --json failed: $(cat "$work/err")"
-[ "$(grep -c '^api ' "$GH_LOG")" -eq 8 ] || fail "retro makes $(grep -c '^api ' "$GH_LOG") gh calls, wanted 8 (the two alert lists, board, history, the status update, three cause labels)"
+[ "$(grep -c '^api ' "$GH_LOG")" -eq 10 ] || fail "retro makes $(grep -c '^api ' "$GH_LOG") gh calls, wanted 10 (the two alert lists, board, history, the status update, three cause labels, the secret alerts and the lease refs of the run proof)"
 [ "$(jq -r '.variables.repo' "$FIX/board-bodies")" = true ] || fail "retro does not reuse the board with repository facts"
 [ "$(jq -r '.variables.owner + "/" + .variables.name' "$FIX/history-bodies")" = acme/app ] || fail "history repository: $(cat "$FIX/history-bodies")"
 since_sent=$(jq -r '.variables.since' "$FIX/history-bodies")
@@ -406,6 +413,88 @@ run retro --json || fail "retro without local facts failed: $(cat "$work/err")"
 run retro || fail "plain retro without local facts failed"
 grep -qF "nothing" "$work/out" || fail "empty sections: $(cat "$work/out")"
 cp "$FIX/history.full" "$FIX/history.json"
+
+# #423: the run proof. A fixture snapshot file, a stub of the merged pull requests with their statuses, the secret scanning alerts,
+# the lease histories and the issues of the period.
+T=$(date +%s)
+D0=$((T / 86400 * 86400))
+mkdir -p "$repo/.git/senior-mode/serve"
+snap() { # at running free runnable train ci drift held started
+  jq -nc --argjson at "$1" --argjson r "$2" --argjson f "$3" --argjson q "$4" --argjson t "$5" --arg ci "$6" --argjson d "$7" --argjson h "$8" --argjson s "$9" \
+    '{at: $at, running: $r, free: $f, runnable: $q, train: $t, band: null, leases: 0, mainCi: $ci, drift: $d, held: $h, started: $s}'; }
+S1=$((D0 - 3 * DAY)); S2=$((D0 - DAY + 3 * HOUR))
+{
+  snap $((D0 - 20 * DAY)) 9 0 9 null failure 9 null $((D0 - 20 * DAY))
+  snap $((D0 - 2 * DAY + HOUR)) 2 1 0 null success 1 null $S1
+  snap $((D0 - 2 * DAY + 2 * HOUR)) 3 0 4 '{"id":"t1","phase":"checking","entries":3,"evicted":0}' success 0 null $S1
+  echo 'not a snapshot {'
+  snap $((D0 - DAY + HOUR)) 1 2 0 '{"id":"t1","phase":"merging","entries":3,"evicted":1}' failure 2 '"main-red"' $S1
+  snap $((D0 - DAY + 5 * HOUR)) 2 1 2 '{"id":"t2","phase":"merging","entries":1,"evicted":0}' success 1 null $S2
+} >"$repo/.git/senior-mode/serve/snapshots.jsonl"
+jq -nc --arg a "$(ago $DAY)" --arg b "$(ago $((2 * DAY)))" --arg c "$(ago $((20 * DAY)))" '[
+  {number: 40, title: "PR 40", headRefOid: "h400000000", mergedAt: $a, mergedBy: {login: "daemon"}},
+  {number: 41, title: "PR 41", headRefOid: "h410000000", mergedAt: $b, mergedBy: {login: "owner"}},
+  {number: 42, title: "PR 42", headRefOid: "h420000000", mergedAt: $c, mergedBy: {login: "owner"}}]' >"$FIX/merged-prs.json"
+st() { jq -nc --arg c "$1" --arg s "$2" --arg by "$3" '{context: $c, state: $s, description: "d", creator: {login: $by}}'; }
+jq -nc --argjson a "$(st senior-mode/ci success daemon)" --argjson b "$(st senior-mode/review success reviewer-bot)" --argjson c "$(st senior-mode/security success daemon)" \
+  '{statuses: [$a, $b, $c]}' >"$FIX/status-h400000000.json"
+jq -nc --argjson a "$(st senior-mode/ci success daemon)" --argjson b "$(st senior-mode/review failure alice)" \
+  '{statuses: [$a, $b]}' >"$FIX/status-h410000000.json"
+jq -nc --arg a "$(ago $((2 * DAY)))" --arg b "$(ago $((20 * DAY)))" '[
+  {number: 3, state: "resolved", secret_type: "github_personal_access_token", created_at: $a, secret: "SUPERSECRETVALUE"},
+  {number: 2, state: "open", secret_type: "slack_api_token", created_at: $b, secret: "SUPERSECRETVALUE"}]' >"$FIX/secret-scanning.json"
+echo '[]' >"$FIX/dependabot.json"
+lcommit() { # sha worker reason at expires parent
+  jq -nc --arg m "$(jq -nc --arg w "$2" --arg r "$3" --argjson at "$4" --argjson e "$5" '{worker: $w, expires: $e, renewed: $at, reason: $r}')" --arg p "$6" \
+    '{message: $m, parents: (if $p == "" then [] else [{sha: $p}] end)}' >"$FIX/commit-$1.json"; }
+TL=$((T - 2 * DAY))
+lcommit c51 w1 claim "$TL" $((TL + 600)) ""
+lcommit c52 w2 takeover $((TL + 700)) $((TL + 1300)) c51
+lcommit c61 w1 claim $((TL + 5000)) $((TL + 5600)) ""
+lcommit c62 w2 takeover $((TL + 5100)) $((TL + 5700)) c61
+echo '[{"ref": "refs/senior-mode/leases/ticket-5", "object": {"sha": "c52"}}, {"ref": "refs/senior-mode/leases/ticket-6", "object": {"sha": "c62"}}]' >"$FIX/lease-refs.json"
+jq -nc --arg at "$(ago 600)" '[
+  {number: 60, title: "incident: serve held its launches on a red main", body: "", createdAt: $at},
+  {number: 61, title: "serve restarted after the reboot", body: "", createdAt: $at},
+  {number: 62, title: "worker w1 died", body: "The ticket #5 was taken over.", createdAt: $at},
+  {number: 63, title: "decision for the pull request", body: "#31 waits", createdAt: $at}]' >"$FIX/issues-all.json"
+
+run retro --json || fail "retro with a run proof failed: $(cat "$work/err")"
+[ "$(json '.proof.snapshots | [.found, .count, .meanParallel, .starvationMinutes, .mainRedMinutes, .trains, .ticketsPerTrain, .evictions] | map(tostring) | join("|")')" = \
+  '"true|4|2|120|60|2|2|1"' ] || fail "snapshot metrics: $(json '.proof.snapshots')"
+[ "$(json '.proof.drift | map([.day, .drift, .snapshots])')" = "[[\"$(date -u -d "@$((D0 - 2 * DAY))" +%F)\",0,2],[\"$(date -u -d "@$((D0 - DAY))" +%F)\",1,2]]" ] ||
+  fail "drift per day: $(json .proof.drift)"
+[ "$(json '.proof.merges | [.read, .count, .open]')" = '[true,2,1]' ] || fail "merge gate: $(json .proof.merges)"
+[ "$(json '.proof.merges.pullRequests | map([.number, .reviewBy, .mergedBy, .bypass, .gaps])')" = \
+  '[[40,"reviewer-bot","daemon",false,[]],[41,"alice","owner",true,["senior-mode/review failure","senior-mode/security missing"]]]' ] ||
+  fail "merge gate rows: $(json '.proof.merges.pullRequests')"
+[ "$(json '.proof.secrets | [.read, (.new | map([.number, .state]))]')" = '[true,[[3,"resolved"]]]' ] || fail "new secret alerts: $(json .proof.secrets)"
+grep -q SUPERSECRETVALUE "$work/out" && fail "the secret value reached the retro"
+[ "$(json '.proof.metrics | [.takeovers, .duplicateWork, .restarts, .evictions]')" = '[2,1,1,1]' ] || fail "lease and restart metrics: $(json .proof.metrics)"
+[ "$(json '.proof.metrics.throughputPerDay')" = "0.4" ] || fail "throughput: $(json .proof.metrics)"
+[ "$(json '.proof.incidents | [.read, .count, (.uncovered | map(.kind + (.ref // 0 | tostring)))]')" = '[true,7,["eviction0","takeover6","needs-human41"]]' ] ||
+  fail "incidents: $(json .proof.incidents)"
+run retro || fail "plain retro with a run proof failed: $(cat "$work/err")"
+for want in "Run proof (7 days)" "snapshots: 4, one an hour" "#41 h410000: review set by alice, merged by owner, GATE OPEN: senior-mode/review failure; senior-mode/security missing" \
+  "#40 h400000: review set by reviewer-bot, merged by daemon, ci, review and security success" "new secret scanning alerts: 1" "drift per day" \
+  "incidents without an issue: 3 of 7" "starvation minutes (a free slot, no runnable ticket): 120" "main red minutes: 60" "takeovers: 2, duplicate work: 1, restarts: 1"; do
+  grep -qF -- "$want" "$work/out" || fail "plain retro lacks '$want': $(sed -n '/^Run proof/,$p' "$work/out")"
+done
+# With no snapshot file the section says so and gives no value; what GitHub holds is still audited.
+mv "$repo/.git/senior-mode/serve/snapshots.jsonl" "$work/snapshots.jsonl"
+run retro --json || fail "retro without snapshots failed: $(cat "$work/err")"
+[ "$(json '.proof.snapshots')" = '{"found":false,"count":0}' ] || fail "snapshots without a file: $(json .proof.snapshots)"
+[ "$(json '.proof.metrics | [.meanParallel, .starvationMinutes, .mainRedMinutes, .trains, .evictions, .restarts, .takeovers]')" = '[null,null,null,null,null,null,2]' ] ||
+  fail "metrics invented without snapshots: $(json .proof.metrics)"
+[ "$(json '.proof.drift')" = '[]' ] || fail "drift without snapshots: $(json .proof.drift)"
+run retro || fail "plain retro without snapshots failed: $(cat "$work/err")"
+grep -qF "no snapshot in this period" "$work/out" || fail "no word about the missing snapshots: $(sed -n '/^Run proof/,$p' "$work/out")"
+grep -qF "main red minutes: not measured" "$work/out" || fail "a missing metric is not said: $(sed -n '/^Run proof/,$p' "$work/out")"
+# What cannot be read is said, never counted as clean.
+ALERTS_ERR="gh: not available (HTTP 404)" run retro --json || fail "an alerts error stopped the run proof"
+[ "$(json '.proof.secrets')" = '{"read":false,"new":[]}' ] || fail "unreadable alerts: $(json .proof.secrets)"
+rm -f "$FIX/merged-prs.json" "$FIX"/status-h*.json "$FIX"/commit-c*.json "$FIX/lease-refs.json" "$FIX/issues-all.json" "$FIX/secret-scanning.json"
+rm -rf "$repo/.git/senior-mode/serve"
 
 # Open alerts: a high Dependabot alert, a moderate and a low one (nothing to file), and an exposed secret
 # whose value must never reach an issue.

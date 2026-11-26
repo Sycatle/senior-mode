@@ -163,6 +163,13 @@ hours, what waits for a human, the tokens and their estimated cost, the work in 
 (`reason` is the same in words, `digest` the facts). Nothing is sent when nothing was merged or closed and no token
 was used. The day of the last attempt is kept in `.git/senior-mode/serve/digest-at`.
 
+Once an hour `serve` appends one JSON line to `.git/senior-mode/serve/snapshots.jsonl` (the first one at start;
+the time of the last is in `snapshot-at`): `at` (epoch), the sessions `running`, the `free` slots, the Ready tickets
+that `runnable`, the `train` (`id`, `phase`, `entries`, `evicted`), the quota `band`, the `leases` this worker holds,
+the state of `senior-mode/ci` on the base head (`mainCi`), the board's `drift` count, `held` (`paused`, or the cause
+of an environment hold) and `started` (when this `serve` started). What cannot be read is `null`. `retro` reads the
+file for its [run proof](commands.md#retro).
+
 ## Untrusted external input
 
 Anyone can file an issue or send a pull request, so what comes from outside is data to judge, never

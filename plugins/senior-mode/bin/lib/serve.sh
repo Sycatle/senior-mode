@@ -1769,6 +1769,7 @@ serve_loop() {
     serve_digest
     serve_digest_at
     serve_deps
+    serve_snapshot
     [ -z "${SENIOR_MODE_SERVE_ONCE:-}" ] || break
     sleep "$interval" &
     sleeper=$!

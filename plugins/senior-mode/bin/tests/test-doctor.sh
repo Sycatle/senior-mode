@@ -21,7 +21,21 @@ case "$1 $2" in
   "auth status")
     [ "${GH_STUB_AUTH:-ok}" = ok ] || { echo "You are not logged into any GitHub hosts. To log in, run: gh auth login" >&2; exit 1; }
     echo "github.com"
-    echo "  - Token scopes: ${GH_STUB_SCOPES:-'repo', 'project', 'workflow'}"
+    if [ -n "${GH_STUB_FINE:-}" ]; then echo "  - Token: github_pat_**********"; else echo "  - Token scopes: ${GH_STUB_SCOPES:-'repo', 'project', 'workflow'}"; fi
+    ;;
+  "api repos/o/r/commits/abc123/check-runs"|"api repos/o/r/commits/abc123/statuses")
+    case "$2 ${GH_STUB_DENY:-}" in
+      *check-runs*checks*|*statuses*statuses*) echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2; exit 1 ;;
+    esac
+    echo '{}'
+    ;;
+  "api repos/o/r/commits"*|"api repos/o/r/pulls"*|"api repos/o/r/issues"*|"api repos/o/r/actions/workflows"*|"api graphql")
+    case "$2" in
+      repos/o/r/commits\?*) w=contents ;; repos/o/r/pulls*) w=pulls ;; repos/o/r/issues*) w=issues ;;
+      repos/o/r/actions/*) w=actions ;; *) w=projects ;;
+    esac
+    case " ${GH_STUB_DENY:-} " in *" $w "*) echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2; exit 1 ;; esac
+    [ "$w" = contents ] && echo abc123 || echo '[]'
     ;;
   "api repos/o/r/rulesets") [ "${GH_STUB_RULESETS:-1}" != fail ] || exit 1; echo "${GH_STUB_RULESETS:-1}" ;;
   *) exit 1 ;;
@@ -91,6 +105,14 @@ if [ "$(id -u)" != 0 ]; then
 fi
 doctor --json
 [ "$(jq -r '[.checks[] | select(.level == "fail")] | length' "$work/out")" = 0 ] || fail "B5: the stubs leaked between cases"
+
+# B9: a fine-grained token: the permissions are probed with read calls, the missing ones named, the fix lists them.
+GH_STUB_FINE=1 doctor || fail "B9: a complete fine-grained token fails: $(cat "$work/out")"
+grep -q 'ok .*gh auth: logged in with a fine-grained token' "$work/out" || fail "B9: not ok: $(cat "$work/out")"
+GH_STUB_FINE=1 GH_STUB_DENY="checks" expect_fail "B10" 'the fine-grained token lacks the permission Checks' 'grant the permissions .*Checks.*read'
+grep -q 'gh auth refresh' "$work/out" && fail "B10: still suggests gh auth refresh: $(cat "$work/out")"
+GH_STUB_FINE=1 GH_STUB_DENY="statuses projects" expect_fail "B11" 'lacks the permissions Commit statuses, Projects' 'grant the permissions Contents, Pull requests, Issues, Commit statuses and Workflows: read and write'
+GH_STUB_FINE=1 GH_TOKEN=github_pat_x GH_STUB_DENY="pulls issues actions" expect_fail "B12" 'lacks the permissions Pull requests, Issues, Actions' 'grant the permissions .*organization Projects: read and write'
 
 # C: git hooks.
 rm "$repo/.githooks/pre-push"

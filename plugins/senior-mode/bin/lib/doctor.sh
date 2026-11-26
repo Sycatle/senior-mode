@@ -56,6 +56,10 @@ doctor_gh() {
     return 0
   fi
   line=$(grep -i 'token scopes' <<<"$out" | head -n 1 || true)
+  if [ -z "$line" ] && { [[ ${GH_TOKEN:-${GITHUB_TOKEN:-}} == github_pat_* ]] || grep -q 'github_pat_' <<<"$out"; }; then
+    doctor_gh_fine_grained
+    return 0
+  fi
   if [ -z "$line" ]; then
     doctor_add warn "gh scopes" "logged in, but gh does not list the scopes of the token (a token from the environment?)" "gh auth refresh -s repo -s project"
     return 0
@@ -69,6 +73,43 @@ doctor_gh() {
     doctor_add fail "gh scopes" "the token lacks the scope $missing" "gh auth refresh -s repo -s project"
   else
     doctor_add ok "gh auth" "logged in with the scopes repo and project"
+  fi
+}
+
+# What senior-mode needs of a fine-grained token, to grant when a probe is refused (a read call cannot tell a missing
+# write permission, so the list is the full one).
+DOCTOR_TOKEN_GRANT='grant the permissions Contents, Pull requests, Issues, Commit statuses and Workflows: read and write; Checks and Actions: read; organization Projects: read and write (docs/guide/self-hosting.md, "The GitHub token")'
+
+# A fine-grained token lists no scopes: probe what senior-mode reads (contents, pull requests, issues, commit statuses,
+# check runs, workflows, the Project) and name the permissions that GitHub refuses.
+doctor_gh_fine_grained() {
+  local slug sha file owner number missing="" probe name path
+  slug=$(repo_slug 2>/dev/null) || slug=""
+  [ -n "$slug" ] || { doctor_add warn "gh auth" "logged in with a fine-grained token, but there is no origin remote to probe its permissions"; return 0; }
+  sha=$(gh_bound api "repos/$slug/commits?per_page=1" --jq '.[0].sha' 2>/dev/null) || sha=""
+  [ -n "$sha" ] || missing="Contents"
+  for probe in "Pull requests|repos/$slug/pulls?per_page=1" "Issues|repos/$slug/issues?per_page=1" \
+    "Commit statuses|repos/$slug/commits/$sha/statuses" "Checks|repos/$slug/commits/$sha/check-runs" \
+    "Actions|repos/$slug/actions/workflows?per_page=1"; do
+    name=${probe%%|*}
+    path=${probe#*|}
+    [ -n "$sha" ] || case $name in Commit* | Checks) continue ;; esac
+    gh_bound api "$path" >/dev/null 2>&1 || missing="$missing${missing:+, }$name"
+  done
+  file=$(git rev-parse --show-toplevel 2>/dev/null)/.claude/senior-mode.json
+  if [ -f "$file" ] && owner=$(jq -r '.project.owner // empty' "$file" 2>/dev/null) && number=$(jq -r '.project.number // empty' "$file" 2>/dev/null) &&
+    [ -n "$owner" ] && [ -n "$number" ]; then
+    # shellcheck disable=SC2016 # a GraphQL query, not shell
+    gh_bound api graphql -f owner="$owner" -F number="$number" -f query='query($owner: String!, $number: Int!) {
+      repositoryOwner(login: $owner) { ... on User { projectV2(number: $number) { id } } ... on Organization { projectV2(number: $number) { id } } } }' \
+      >/dev/null 2>&1 || missing="$missing${missing:+, }Projects"
+  fi
+  if [ -n "$missing" ]; then
+    name=permission
+    [[ $missing == *,* ]] && name=permissions
+    doctor_add fail "gh auth" "the fine-grained token lacks the $name $missing (GitHub refused a read on $slug)" "$DOCTOR_TOKEN_GRANT"
+  else
+    doctor_add ok "gh auth" "logged in with a fine-grained token that reads contents, pull requests, issues, statuses, checks, actions and the Project (write access is not probed)"
   fi
 }
 

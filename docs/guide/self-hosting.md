@@ -95,12 +95,18 @@ another owner needs its own. Give it access to the served repositories, with:
 | Pull requests | Read and write | opening, reviewing, merging |
 | Issues | Read and write | tickets, labels, comments |
 | Commit statuses | Read and write | `senior-mode/ci`, `review`, `security` |
+| Workflows | Read and write | pushing a branch that changes `.github/workflows` |
+| Checks | Read | the check runs of a pull request (`gh pr checks`) |
 | Actions | Read and write | `setup github --ci local` disables workflows |
 | Administration | Read and write | `setup github`: ruleset, merge settings (else set them by hand) |
 | Projects (organization or account) | Read and write | the board |
 | Secret scanning alerts, Dependabot alerts | Read | alerts read by `serve` (optional) |
 
-A fine-grained token cannot read check runs; senior-mode reads the board without them.
+Without Checks, check runs answer 403 (`gh pr checks` fails); senior-mode then reads the board without them.
+`senior-mode doctor` probes a fine-grained token with read calls (contents, pull requests, issues, commit statuses,
+check runs, Actions, the Project of the config), names the permissions GitHub refuses and prints this list as the
+fix, instead of `gh auth refresh`, which does nothing for such a token. A read cannot tell whether a permission
+is write: Commit statuses, which the merge gate writes, are checked on the read side only.
 
 Keep it in a file only the account reads, outside every repository, for example
 `~/.config/senior-mode/serve.env` (mode 600), next to `SENIOR_MODE_NOTIFY_WEBHOOK` if you want alerts

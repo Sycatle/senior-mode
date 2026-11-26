@@ -347,12 +347,12 @@ READY_QUERY='query($project: ID!, $after: String) { node(id: $project) { ... on 
     content { ... on Issue { number state body labels(first: 20) { nodes { name } }
       parent { number labels(first: 20) { nodes { name } } milestone { title description } } } } } } } } }'
 # The hierarchy (spec 325 §7, #358): the reason a ticket is an orphan, null when it is not. A ticket needs a parent epic
-# under a milestone whose description has a `Goal:` line, unless it carries a label of the list $ex (hierarchy.exempt)
+# under a milestone whose description has a `Goal:` line, unless it carries a label of $h.exempt (hierarchy.exempt, default security and hotfix)
 # or sits under the maintenance epic (label `maintenance`); an epic (label `epic`) needs no parent. Its input has `labels`
 # and `parent`, the epic as {number, labels, milestone: {title, description}} or null (`epic_of` reads it from GraphQL).
 # shellcheck disable=SC2016 # a jq program, not shell
 ORPHAN_DEF='def epic_of: if . then {number, labels: [.labels.nodes[].name], milestone} else null end;
-  def orphan($ex): if any(.labels[]; . as $l | $ex | index($l) != null) or (.labels | index("epic")) != null then null
+  def orphan($h): ($h.exempt // ["security", "hotfix"]) as $ex | if any(.labels[]; . as $l | $ex | index($l) != null) or (.labels | index("epic")) != null then null
     elif .parent == null then "no parent epic"
     elif (.parent.labels | index("maintenance")) != null then null
     elif .parent.milestone == null then "its epic #\(.parent.number) has no milestone, so no Goal"
@@ -439,7 +439,7 @@ ready_missing() {
       (if .size != null and .size != "S" then "size \(.size) (a ticket an agent filed is Ready only when S)" else empty end),
       (if .severity == "high" or .severity == "critical" then "\(.severity) security severity (a ticket an agent filed is never Ready by rule)" else empty end)
      else empty end),
-    (if $h.enforce == true then orphan($h.exempt // []) | if . then "hierarchy: \(.)" else empty end else empty end)]' <<<"$it")
+    (if $h.enforce == true then orphan($h) | if . then "hierarchy: \(.)" else empty end else empty end)]' <<<"$it")
   if jq -e .agent <<<"$it" >/dev/null; then
     while IFS= read -r p; do
       ! ready_in_zone "$zones" "$p" || hits+=${hits:+, }$p
@@ -802,7 +802,7 @@ board_data() {
            labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation, milestone: $c.milestone.title, due: $c.milestone.dueOn,
            updated: ([$c.updatedAt, $moved] | map(select(. != null)) | max),
            blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number], last: lastc($c), parent: ($c.parent | epic_of)}
-        | . + {orphan: orphan($hier.exempt // [])}],
+        | . + {orphan: orphan($hier)}],
        hierarchy: {enforce: ($hier.enforce == true)},
        prs: [$r.pullRequests.nodes[]? | {number, title, url, branch: .headRefName, labels: [.labels.nodes[].name], failing: failing,
          updated: .updatedAt, last: lastc(.)}],

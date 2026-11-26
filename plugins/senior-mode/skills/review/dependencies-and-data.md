@@ -29,6 +29,8 @@ there; otherwise read the package metadata and say so.
   app). Flag copyleft (GPL, AGPL, LGPL, MPL, EUPL, SSPL), non-commercial or "source available" terms,
   and missing or unknown licences (`UNLICENSED`, `SEE LICENSE IN ...`, a bare file, empty): list the
   unknown ones, do not interpret them. MIT, BSD, Apache-2.0 and ISC need no flag.
+- A new dependency says why a few lines of code would not do (the PR body or the commit): without a
+  reason, ask for one.
 - A major version bump is a protected zone (see the protected-zone rule in `SKILL.md`).
 
 ## Secrets and personal data

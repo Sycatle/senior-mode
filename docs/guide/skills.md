@@ -7,7 +7,7 @@ Every skill is a step of the delivery lifecycle and a role of the team
 |---|---|
 | Lead | `triage`, `frame`, `spec`, `adr`, `grill`, `ready`, `brief` |
 | Developer | `tdd` (refactoring is a mode of it), `verify`, `commit` |
-| Reviewer | `review`, with explain, security, UI and dependencies-and-data sections |
+| Reviewer | `review`, with explain, security, UI, dependencies-and-data, reliability and compatibility sections |
 | Release and ops | `run`, `next`, `status`, `docs` |
 | Learning | `retro` |
 
@@ -107,8 +107,9 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
 ## `review`
 
 - **Rule.** Review from the diff, the spec and the tests, on two axes. Spec: every criterion met and
-  tested, nothing out of scope, spec and ADRs up to date. Standards: simplicity, design,
-  correctness, security, tests, readability, history. A file matching a `protected` glob
+  tested, nothing out of scope, spec and ADRs up to date. Standards: simplicity, design (reuse the
+  shared code, extract at the third copy, a new export in a shared folder needs the pull request's `New
+  shared code` section), correctness, security, tests, history. A file matching a `protected` glob
   (`senior-mode protected`), or another sensitive area (migrations, security, auth, payments, CI,
   infrastructure, major upgrades, L tickets, ADRs), gets at best "approve, human merge" and the
   `needs-human` label.
@@ -125,6 +126,12 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
   - dependencies and data, when dependencies or data handling change: licences from the ecosystem's
     own tool, secrets and personal data in logs and exports, new third-party services. It flags
     facts for a human and does not rule on them;
+  - reliability, when the diff touches handlers, routes, jobs, queues, queries, outbound calls or
+    logs: no secret or personal data in logs, input validated at each entry point, errors with context
+    logged once, retries only when idempotent, writes in a transaction. Blocking findings carry the fix;
+  - compatibility, when the diff touches a public API, a schema or migration, a config or file format or
+    an event: a breaking change goes through expand then contract or a flag, a removal is deprecated
+    first, the version or changelog says so;
   - your own, from [`review.sections`](configuration.md#project-review-sections).
 - **Produces.** One PR comment with the verdict, the brief and `file:line` findings, and the status
   `senior-mode/review` (`success`, `pending` for a human merge, `failure`). Each finding ends with a stable

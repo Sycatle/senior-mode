@@ -69,6 +69,9 @@ carries a [knowledge note](configuration.md#knowledge-notes) with `origin` set t
 (the most useful), none without such a pitfall, and an existing note with the same `paths` and `kind` is edited
 and re-verified instead of duplicated. `evals/knowledge/run.sh` measures it on a fixture ticket.
 
+When it changes a skill or an agent for an improvement ticket from `retro`, its pull request carries a before/after
+eval table made by `evals/compare.sh <case>` ([skill evals](autonomy.md#ready-pull-request)).
+
 ADR 0004 plans a retry on Opus with high effort after two failed attempts. The agent stops as
 planned, but the retry is the caller's job: `run` retries a failed ticket once on Opus
 (`autonomy.escalate`, [ADR 0014](../adr/0014-model-escalation-in-runs.md)); in other sessions, ask

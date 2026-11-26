@@ -633,6 +633,13 @@ request that closes no ticket is held to neither.
   (see [`start`](commands.md#the-senior-mode-script)); a file of the pull request named after a closed ticket
   (`ticket-<n>`, `ticket_<n>`) that still says `not implemented`, or skips a test (`.skip(`, `.todo(`, `xit(`,
   `@pytest.mark.skip`, `t.Skip(`, `#[ignore]`, `todo!`), is named and the pull request is not ready.
+- **Skill evals** (#368): a pull request that closes an improvement ticket (a ticket `retro` filed for a repeated
+  failure cause: its body has a `retro-cause:` line) and changes a skill or an agent (`plugins/*/skills/**`,
+  `plugins/*/agents/**`, `.claude/skills/**`, `.claude/agents/**`) needs an `## Eval` table in its body, one row per
+  case: `| Case | Before | After |` with scores as `k/n` (runs graded ok out of runs). `evals/compare.sh <case> [runs] [base]`
+  runs the targeted `evals/<case>/run.sh` with `claude -p` on the plugin of the base (`origin/main`) and on the
+  branch, 3 runs each by default, and prints the table. Without a table (the cases found under `evals/` are named),
+  with fewer than 2 runs on a side, or with an after score below the before score, the pull request is not ready.
 - **Red tests** (#306), under `run` and `serve` only: a pull request that closes a `type:feature` or `type:bug` ticket needs a
   record for it, `red-tests` (the `test-author` session of an M ticket) or `red-verified` (`senior-mode red-tests verify <n>`):
   its added tests fail on the base and pass on the head, and every file the record lists is in the pull request.

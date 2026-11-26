@@ -370,5 +370,47 @@ ready --pr 340 || fail "K: the skeleton of #3410 held #341: $(cat "$work/out")"
 changes 340 src/a.sh:10 tests/ticket-341.test.ts:0 tests/ticket_341_test.go:3
 ready --pr 340 || fail "K: a removed skeleton held the ticket: $(cat "$work/out")"
 
+# L: skill evals (#368). An improvement ticket (its body carries the `retro-cause:` line) that changes a skill or
+# an agent needs a before/after eval table in its pull request: several runs, an after score not below the before.
+mkdir -p "$repo/evals/knowledge" "$repo/evals/other"
+: >"$repo/evals/knowledge/run.sh"
+: >"$repo/evals/other/run.sh"
+size 501 S
+size 502 S
+printf '{"body": "## Acceptance criteria\\n- Given a, then b.\\n\\nretro-cause: fuzzy-criterion tdd\\n"}' >"$FIX/issue-501.json"
+printf '{"body": "## Acceptance criteria\\n- Given a, then b.\\n"}' >"$FIX/issue-502.json"
+sr=$'\n\n## Self-review\n\n| Criterion | Evidence |\n|---|---|\n| 1 Given a | t |\n'
+evalpr() { # pull-request ticket eval-section files...
+  local n=$1 t=$2 e=$3
+  shift 3
+  delivery "$n" "Closes #$t$sr$e" "feat: a"
+  changes "$n" "$@"
+}
+tbl=$'\n\n## Eval\n\n| Case | Before | After |\n|---|---|---|\n'
+evalpr 500 501 "" plugins/senior-mode/skills/tdd/SKILL.md:10
+ready --pr 500 && fail "L: an improvement pull request on a skill without an eval table is ready"
+said 'pull request #500 is not ready: #501 answers a failure cause and changes a skill or agent \(plugins/senior-mode/skills/tdd/SKILL.md\) but its body has no Eval table' ||
+  fail "L: the missing table is not said: $(cat "$work/out")"
+said 'evals/compare.sh <case> \(knowledge, other\)' || fail "L: the cases to run are not named: $(cat "$work/out")"
+evalpr 500 501 "$tbl| knowledge | 1/3 | 3/3 |" plugins/senior-mode/agents/implementer.md:10
+ready --pr 500 || fail "L: an agent change with a better after score is not ready: $(cat "$work/out")"
+evalpr 500 501 "$tbl| knowledge | 2/3 | 2/3 |" plugins/senior-mode/skills/tdd/SKILL.md:10
+ready --pr 500 || fail "L: an equal after score is not ready: $(cat "$work/out")"
+evalpr 500 501 "$tbl| knowledge | 3/3 | 2/3 |" plugins/senior-mode/skills/tdd/SKILL.md:10
+ready --pr 500 && fail "L: an after score below the before score is ready"
+said 'pull request #500 is not ready: the Eval table of #501 shows knowledge at 2/3 after, below 3/3 before' ||
+  fail "L: the regression is not named: $(cat "$work/out")"
+evalpr 500 501 "$tbl| knowledge | 0/1 | 1/1 |" plugins/senior-mode/skills/tdd/SKILL.md:10
+ready --pr 500 && fail "L: a single run per side is ready"
+said 'knowledge with fewer than 2 runs' || fail "L: the run count is not said: $(cat "$work/out")"
+evalpr 500 501 "$tbl| knowledge | many | few |" plugins/senior-mode/skills/tdd/SKILL.md:10
+ready --pr 500 && fail "L: a table with no score is ready"
+said 'has no Eval table' || fail "L: a table with no score is not refused as missing: $(cat "$work/out")"
+# Only a change to a skill or an agent is held to it, and only an improvement ticket.
+evalpr 500 501 "" src/a.sh:10 docs/guide/skills.md:4
+ready --pr 500 || fail "L: an improvement pull request that changes no skill is held to an eval: $(cat "$work/out")"
+evalpr 500 502 "" plugins/senior-mode/skills/tdd/SKILL.md:10
+ready --pr 500 || fail "L: a pull request of an ordinary ticket is held to an eval: $(cat "$work/out")"
+
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

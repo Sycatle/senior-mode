@@ -34,6 +34,8 @@ usage() {
 . "$LIB/architecture.sh"
 # shellcheck source=lib/skeleton.sh
 . "$LIB/skeleton.sh"
+# shellcheck source=lib/evals.sh
+. "$LIB/evals.sh"
 # shellcheck source=lib/guard.sh
 . "$LIB/guard.sh"
 # shellcheck source=lib/setup-board.sh

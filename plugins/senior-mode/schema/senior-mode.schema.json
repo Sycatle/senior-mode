@@ -431,6 +431,14 @@
         "coAuthor": { "type": "boolean", "description": "Whether the commits of run and serve sessions may carry Claude Code's Co-Authored-By trailer; false empties attribution.commit for the sessions and makes check refuse a branch whose commits carry one." }
       }
     },
+    "characterize": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "below": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Coverage percent (ratchet baseline) under which an existing file counts as untested: a branch that changes it needs a characterization commit first." },
+        "exempt": { "type": "array", "items": { "type": "string" }, "description": "Globs of files that need no characterization commit, on top of docs, tests, generated files, types and constants." }
+      }
+    },
     "process": {
       "type": "object",
       "additionalProperties": false,

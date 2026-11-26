@@ -62,6 +62,17 @@ code, run no other command and stop. When it passes, go on.
 TEXT
 }
 
+# What a session does before it changes code that has no tests (#422, spec 409 section 6).
+prompt_characterize() {
+  cat <<TEXT
+   Code with no tests: run \`senior-mode untested <the paths the ticket changes>\`. For each file it lists as untested, the first commit of
+   the work is \`test(<scope>): characterize <unit>\`: tests that pin what the code does today (the right answer or not), written to pass
+   on the unmodified code, before any change to it. Never change that code to make them pass; a bug you see is pinned as it is and filed.
+   Say in the plan which files you left out and why (exempt: docs, tests, generated files, types and constants, \`characterize.exempt\`).
+   \`senior-mode untested --check\` must pass before the pull request: a refactor leaves the pinned assertions as they are.
+TEXT
+}
+
 # The task of the headless session of one ticket (spec 0001 §10, ADR 0007): number, title, branch.
 run_prompt() {
   local nl=$'\n' wf dec plan pout ck pr
@@ -80,6 +91,7 @@ Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode tea
 1. Read the ticket (\`gh issue view $1\`), its spec and its acceptance criteria. A \`type:spike\` ticket is
    research: deliver a note under docs/spikes/, an ADR or framed tickets, no code outside docs/, and stop at
    its \`Timebox:\` line (the run stops the session when a duration is reached).${plan:+$nl$plan}
+$(prompt_characterize)
 2. The test-author agent writes failing tests from the acceptance criteria and records the red run;
    the implementer agent makes them pass (skills tdd, verify, commit): tests land in the same commit
    as the code they cover.
@@ -131,6 +143,7 @@ Deliver these small tickets, which touch the same paths, in this worktree, on br
 senior-mode team, in ONE pull request:
 $list
 1. Read each ticket (\`gh issue view <n>\`), its spec and its acceptance criteria.
+$(prompt_characterize)
 2. One ticket after the other: the test-author agent writes failing tests from its acceptance criteria and
    records the red run; the implementer agent makes them pass (skills tdd, verify, commit). One commit per
    ticket, tests in the same commit as the code they cover, its message ending with \`Refs #<n>\`.
@@ -198,6 +211,7 @@ $(prompt_preflight "$1")
 
 Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode team:
 1. Read the ticket (\`gh issue view $1\`), its spec and its acceptance criteria.${plan:+$nl$plan}
+$(prompt_characterize)
 $tests
 $ck
 ${prove}\`senior-mode check\` passes on a clean tree; push the branch; $pr
@@ -247,6 +261,7 @@ Deliver these small tickets, which touch the same paths, in this worktree, on br
 senior-mode team, in ONE pull request:
 $list
 1. Read each ticket (\`gh issue view <n>\`), its spec and its acceptance criteria.
+$(prompt_characterize)
 2. One ticket after the other: the test-author agent writes failing tests from its acceptance criteria and
    records the red run; the implementer agent makes them pass (skills tdd, verify, commit). One commit per
    ticket, tests in the same commit as the code they cover, its message ending with \`Refs #<n>\`.

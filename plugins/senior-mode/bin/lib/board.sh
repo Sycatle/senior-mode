@@ -669,6 +669,11 @@ delivery_blocker() {
     echo "$gaps"
     return 0
   }
+  gaps=$(characterize_blocker "$slug" "$pr" "$pull" "$files")
+  [ -z "$gaps" ] || {
+    echo "$gaps"
+    return 0
+  }
   gaps=$(self_review_gaps "$slug" "$(jq -r '.body // ""' <<<"$pull")" "${tickets[@]}") || {
     echo "the acceptance criteria of its tickets could not be read"
     return 0
@@ -1389,6 +1394,7 @@ start() {
     esac
   fi
   item_set "$issue" Status "In progress"
+  characterize_notice "$issue" "$( (item_get "$issue" Paths) 2>/dev/null || true)" "$path" || true
   cycle_start "$issue"
 }
 

@@ -382,6 +382,7 @@ session 38-sonnet "failed: environment: gh cannot authenticate: not logged in"
 run || fail "C3: run failed: $(cat "$work/out")"
 grep -q 'app-38 opus' "$CLAUDE_LOG" && fail "C3: an environment failure was retried on Opus"
 grep -qF 'senior-mode preflight 38' "$(run_dir)/38.prompt" || fail "C3: the prompt of #38 does not start with the preflight: $(head -n 8 "$(run_dir)/38.prompt")"
+grep -qF 'senior-mode untested' "$(run_dir)/38.prompt" || fail "C3: the prompt of #38 does not ask for characterization tests"
 grep -q 'Failed.*#38.*environment: gh cannot authenticate' "$work/out" || fail "C3: report misses the cause: $(cat "$work/out")"
 
 # D: merging on but no protection on the server, and a needs-human label: nothing merges. --max 1.

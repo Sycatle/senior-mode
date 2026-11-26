@@ -7,6 +7,7 @@ DEFAULTS='{
   "notify": { "mention": "", "webhook": "", "digest": true, "digestAt": "", "batchMinutes": 60 },
   "agent": { "command": "claude" },
   "commit": { "coAuthor": true },
+  "characterize": { "below": 50, "exempt": [] },
   "e2e": { "slots": 2 },
   "limits": { "prLines": 400, "diffLines": { "S": 300, "M": 800, "L": 2000 }, "diffWeights": { "tests": 0.5, "docs": 0.25 }, "diffExclude": [] },
   "wip": 1,

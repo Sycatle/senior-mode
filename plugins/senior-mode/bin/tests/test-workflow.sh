@@ -26,6 +26,18 @@ case "$*" in
   "label list"*) echo '[{"name": "bug"}, {"name": "enhancement"}]' | respond ;;
   "issue view "*) echo "$GH_ISSUE" ;;
   "api repos/acme/app/issues/"*) ;;
+  "api repos/acme/app/rules/branches/"* | "api repos/acme/app/branches/"*"/protection/"*)
+    # PROTECTION_403: like gh, the body of the error response goes to stdout, the status line to stderr
+    case "$*" in
+      *"/rules/branches/"*) [ -z "${PROTECTION_OK:-}" ] || { echo '[{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "build"}]}}]' | respond; exit 0; } ;;
+    esac
+    if [ -n "${PROTECTION_404:-}" ]; then
+      echo '{"message": "Branch not protected", "status": "404"}'
+      echo "gh: Branch not protected (HTTP 404)" >&2; exit 1
+    fi
+    [ -n "${PROTECTION_403:-}" ] || exit 1
+    echo '{"message": "Resource not accessible by personal access token", "status": "403"}'
+    echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2; exit 1 ;;
   "api repos/acme/app/commits/"*"/check-runs"*) respond <"$FIX/runs.json" ;;
   "api repos/acme/app/commits/"*"/status"*) respond <"$FIX/statuses.json" ;;
   "api repos/acme/app/statuses/"*) ;;
@@ -82,6 +94,23 @@ get() { jq -r "$1" <<<"$cfg"; }
 [ "$(get .adopt.kind)" = evergreen ] || fail "adopt.kind not detected: $cfg"
 [ -z "$(git -C "$repo" status --porcelain)" ] || fail "--dry-run changed the checkout: $(git -C "$repo" status --porcelain)"
 grep -q 'merge --admin\|--admin' "$GH_LOG" && fail "detection called a writing gh command: $(cat "$GH_LOG")"
+
+# A protection the token cannot read (403) is said; the body of the error is never taken for check names.
+PROTECTION_403=1 run setup repo --dry-run || fail "setup repo --dry-run failed on a 403: $(cat "$work/err")"
+grep -q 'config: would write' "$work/out" || fail "no config planned on a 403: $(cat "$work/out")"
+grep -q 'Resource not accessible\|"message"' "$work/out" && fail "the body of a 403 reached the config: $(cat "$work/out")"
+grep -q '"required":' "$work/out" && fail "ci.required recorded on a 403: $(cat "$work/out")"
+grep -q 'required status checks: the token cannot read the protection' "$work/out" || fail "the refused read is not said: $(cat "$work/out")"
+
+# A 404 (branch not protected) stays silent; the body is not read either.
+PROTECTION_404=1 run setup repo --dry-run || fail "setup repo --dry-run failed on a 404: $(cat "$work/err")"
+grep -q 'Branch not protected' "$work/out" && fail "the body of a 404 reached the config: $(cat "$work/out")"
+grep -q 'token cannot read the protection' "$work/out" && fail "a 404 is reported as a refused read: $(cat "$work/out")"
+
+# A readable ruleset is still recorded.
+PROTECTION_OK=1 run setup repo --dry-run || fail "setup repo --dry-run failed on a readable ruleset: $(cat "$work/err")"
+{ grep -q "required status checks of the protection" "$work/out" && grep -q "\"build\"" "$work/out"; } || fail "readable required checks not recorded: $(cat "$work/out")"
+grep -q 'token cannot read the protection' "$work/out" && fail "a readable ruleset reported as refused: $(cat "$work/out")"
 
 # A real run records it, keeps a key the owner holds, and installs the hook that follows the commit format.
 mkdir -p "$repo/.claude"

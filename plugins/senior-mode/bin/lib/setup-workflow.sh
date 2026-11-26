@@ -352,9 +352,26 @@ wf_workflow_jobs() {
   done
 }
 
+# The lines that `gh api <endpoint> --jq <filter>` prints. A failed call gives none, since gh prints the body of an error
+# response on stdout: nothing of it may reach ci.required. A refusal (403: the token lacks admin rights) returns 3.
+wf_gh_contexts() { # endpoint filter
+  local out err rc=0
+  err=$(mktemp)
+  out=$(gh_bound api "$1" --jq "$2" 2>"$err") || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    printf '%s\n' "$out"
+  elif grep -q 'HTTP 403' "$err"; then
+    rc=3
+  else
+    rc=0
+  fi
+  rm -f "$err"
+  return "$rc"
+}
+
 # §2.3: the CI of the project.
 wf_ci() {
-  local jobs ctx req="" b prs=0 any=0 cutoff ts f count=0 other
+  local jobs ctx req="" b prs=0 any=0 cutoff ts f count=0 other denied=false
   for f in "$WF_ROOT"/.github/workflows/*.yml "$WF_ROOT"/.github/workflows/*.yaml; do
     [ -f "$f" ] && [ "$(basename "$f")" != senior-mode.yml ] && [ "$(basename "$f")" != senior-mode-audit.yml ] && count=$((count + 1))
   done
@@ -377,10 +394,12 @@ wf_ci() {
   if [ -n "$WF_SLUG" ]; then
     for b in "$(jq -r '.integration // empty' <<<"$WF_JSON")" "$(jq -r '.base // empty' <<<"$WF_JSON")"; do
       [ -n "$b" ] || continue
-      req+=$'\n'$(gh_bound api "repos/$WF_SLUG/rules/branches/$b" --jq '[.[]? | select(.type == "required_status_checks")
-        | .parameters.required_status_checks[]?.context] | .[]' 2>/dev/null || true)
-      req+=$'\n'$(gh_bound api "repos/$WF_SLUG/branches/$b/protection/required_status_checks" --jq '.contexts[]?' 2>/dev/null || true)
+      req+=$'\n'$(wf_gh_contexts "repos/$WF_SLUG/rules/branches/$b" '[.[]? | select(.type == "required_status_checks")
+        | .parameters.required_status_checks[]?.context] | .[]') || denied=true
+      req+=$'\n'$(wf_gh_contexts "repos/$WF_SLUG/branches/$b/protection/required_status_checks" '.contexts[]?') || denied=true
     done
+    [ "$denied" = false ] ||
+      WF_UNMAPPED+=("required status checks: the token cannot read the protection or rulesets of the branch (HTTP 403, admin rights needed); ci.required stays unset")
     req=$(printf '%s\n' "$req" | grep -v '^senior-mode/' | grep -v '^$' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))') || req='[]'
     cutoff=$(wf_days_ago 30)
     while read -r ts; do

@@ -39,6 +39,19 @@ doctor_sandboxed() {
   [ -d "$dir" ] && { [ ! -r "$dir" ] || [ ! -x "$dir" ]; }
 }
 
+# `senior-mode version` (#615): the plugin version and the commit of the checkout it runs from; `unknown` from a copy that is
+# no checkout of the plugin's repository (the plugin cache), where the commit of some enclosing repository would be wrong.
+print_version() {
+  local root version top commit=unknown
+  root=$(plugin_root)
+  version=$(jq -r '.version // empty' "$root/.claude-plugin/plugin.json" 2>/dev/null) || version=""
+  top=$(git -C "$root" rev-parse --show-toplevel 2>/dev/null) || top=""
+  if [ -n "$top" ] && [ -f "$top/plugins/senior-mode/.claude-plugin/plugin.json" ]; then
+    commit=$(git -C "$root" rev-parse --short HEAD 2>/dev/null) || commit=unknown
+  fi
+  echo "senior-mode ${version:-unknown} ($commit)"
+}
+
 # git, jq, gh and claude on the PATH, their versions, and the version of the plugin.
 doctor_tools() {
   local t v hint found="" plugin

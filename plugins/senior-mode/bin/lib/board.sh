@@ -55,6 +55,26 @@ item_set() {
   done
 }
 
+# `senior-mode item set`: item_set, then, for a Status, reads it back after $SENIOR_MODE_READBACK_DELAY seconds (3;
+# `off` to skip) and warns when it is not what was written (#633): a Project workflow ("Sync with issue status", an
+# item-added or reopened workflow) turns it back within a second, and nothing else notices. A read that fails says
+# nothing; the exit status is item_set's.
+item_set_checked() {
+  item_set "$@" || return $?
+  local issue=$1 delay=${SENIOR_MODE_READBACK_DELAY:-3} want="" got i
+  [ "$delay" != off ] || return 0
+  shift
+  for ((i = 1; i < $#; i += 2)); do
+    [ "${!i}" != Status ] || want=${*:i+1:1}
+  done
+  [ -n "$want" ] || return 0
+  sleep "$delay"
+  got=$(item_get "$issue" Status 2>/dev/null) || return 0
+  [ "$got" = "$want" ] ||
+    echo "senior-mode: warning: #$issue Status is ${got:-empty}, not $want, $delay seconds after it was set; a Project workflow may be resetting it (senior-mode doctor lists the workflows)" >&2
+  return 0
+}
+
 # Prints the board fields of an issue's Project item, read in one GraphQL call: the value of one
 # field (empty when it has none), or "#<issue> <field> = <value>" for each field that has one.
 # shellcheck disable=SC2016 # a GraphQL query, not shell

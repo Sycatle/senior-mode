@@ -259,6 +259,28 @@ doctor_orphans() {
   fi
 }
 
+# The built-in workflows of the Project that are on (#633): all but those that only close, archive or add can set a
+# Status, and one that does turns back what serve and `item set` write. GitHub has no API for the "Sync with issue
+# status" setting of the Project, so it is named, not read.
+doctor_workflows() {
+  local project answer on risky
+  command -v gh >/dev/null || return 0
+  project=$(jq -r '.project.id // empty' "$(config_file)")
+  [ -n "$project" ] || return 0
+  answer=$(jq -nc --arg id "$project" '{variables: {id: $id}, query: "query($id: ID!) { node(id: $id) {
+    ... on ProjectV2 { workflows(first: 20) { nodes { name enabled } } } } }"}' | gh_retry api graphql --input - 2>/dev/null) || return 0
+  jq -e '.data.node.workflows.nodes | type == "array"' <<<"$answer" >/dev/null 2>&1 || return 0
+  on=$(jq -r '[.data.node.workflows.nodes[] | select(.enabled) | .name] | join(", ")' <<<"$answer")
+  risky=$(jq -r '[.data.node.workflows.nodes[] | select(.enabled)
+    | select(.name | IN("Item closed", "Pull request merged", "Auto-add to project", "Auto-add sub-issues to project", "Auto-archive items", "Auto-close issue") | not) | .name]
+    | join(", ")' <<<"$answer")
+  if [ -n "$risky" ]; then
+    doctor_add warn "board workflows" "the Project workflows $risky are on and can set Status, which turns back what serve and item set write (on: $on)" "turn them off in the Project, Workflows (no API can), and check that Sync with issue status is off in the Project settings"
+  else
+    doctor_add ok "board workflows" "the enabled Project workflows (${on:-none}) leave Status alone; check by hand that Sync with issue status is off, no API shows it"
+  fi
+}
+
 # The board of the config has its fields; the ruleset required by github.protection exists.
 doctor_github() {
   local file missing protection slug n
@@ -272,6 +294,7 @@ doctor_github() {
       doctor_add ok "board fields" "Status, Priority, Size and Severity are in the config of Project #$(jq -r '.project.number // "?"' "$file")"
     fi
     doctor_orphans
+    doctor_workflows
   else
     doctor_add warn "board fields" "no Project board in the config" "senior-mode setup github"
   fi

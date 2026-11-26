@@ -37,8 +37,12 @@ case "$1 $2" in
       repos/o/r/actions/*) w=actions ;; *) w=projects ;;
     esac
     case " ${GH_STUB_DENY:-} " in *" $w "*) echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2; exit 1 ;; esac
+    q="$*"
+    [ "$w" != projects ] || [ -t 0 ] || q="$q $(cat)"
     if [ "$w" = contents ]; then echo abc123
-    elif [ "$w" = projects ] && [ -n "${GH_STUB_ORPHANS:-}" ]; then
+    elif [ "$w" = projects ] && [ -n "${GH_STUB_WORKFLOWS:-}" ] && grep -q 'workflows(first' <<<"$q"; then
+      jq -nc --arg w "$GH_STUB_WORKFLOWS" '{data: {node: {workflows: {nodes: ($w | split(",") | map({name: ., enabled: true}))}}}}'
+    elif [ "$w" = projects ] && [ -n "${GH_STUB_ORPHANS:-}" ] && grep -q 'issues(states' <<<"$q"; then
       jq -nc --argjson n "$GH_STUB_ORPHANS" '{data: {repository: {issues: {pageInfo: {hasNextPage: false}, nodes: [range(0; $n) | {number: (. + 1), labels: {nodes: []}, projectItems: {nodes: []}}]}}}}'
     else echo '[]'; fi
     ;;
@@ -224,6 +228,15 @@ grep -q 'warn .*board issues.*3 open issue(s) not on the Project' "$work/out" ||
 grep -q 'fix: senior-mode ready' "$work/out" || fail "E6: no fix: $(cat "$work/out")"
 GH_STUB_ORPHANS=0 doctor || fail "E6: no orphan fails doctor"
 grep -q 'ok .*board issues' "$work/out" || fail "E6: no ok line without orphans: $(cat "$work/out")"
+
+# E7 (#633): a Project workflow that can set Status is warned about; the ones that close or archive are not.
+GH_STUB_WORKFLOWS="Item closed,Pull request merged,Item reopened,Item added to project" doctor || fail "E7: a risky workflow fails doctor"
+grep -q 'warn .*board workflows.*Item reopened, Item added to project are on and can set Status' "$work/out" || fail "E7: the workflows are not named: $(cat "$work/out")"
+grep -q 'fix: turn them off' "$work/out" || fail "E7: no fix: $(cat "$work/out")"
+GH_STUB_WORKFLOWS="Item closed,Pull request merged,Auto-archive items" doctor || fail "E7: harmless workflows fail doctor"
+grep -q 'ok .*board workflows.*Sync with issue status' "$work/out" || fail "E7: no ok line for harmless workflows: $(cat "$work/out")"
+doctor
+grep -q 'board workflows' "$work/out" && fail "E7: workflows reported with no answer"
 
 # F: customization: a lift names its ADR, a refused one fails; overrides and layer values are listed.
 printf -- '---\nid: 0016\nstatus: proposed\n---\n' >"$repo/docs/adr/0016-lift.md"

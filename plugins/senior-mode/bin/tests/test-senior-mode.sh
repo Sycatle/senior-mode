@@ -20,6 +20,7 @@ esac
 STUB
 chmod +x "$work/stub/gh"
 export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" GH_QUERY="$work/query.json" GH_ANSWER="$work/answer.json"
+export SENIOR_MODE_READBACK_DELAY=off
 
 repo="$work/repo"
 git init -q "$repo"
@@ -89,6 +90,27 @@ grep -q -- "project item-add 1 --owner acme --url https://github.com/acme/app/is
   fail "item-add not called as expected: $(cat "$GH_LOG")"
 grep -q -- "--project-id PVT_1 --id ITEM_1 --field-id F_STATUS --single-select-option-id O_READY" "$GH_LOG" ||
   fail "item-edit not called as expected: $(cat "$GH_LOG")"
+
+# #633: `item set` reads a Status back and warns when a Project workflow turned it back; it stays quiet when the
+# Status held, when the read fails, and for another field.
+answer() { # status
+  jq -nc --arg s "$1" '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"},
+    fieldValues: {nodes: [{name: $s, field: {name: "Status"}}]}}]}}}}}' >"$GH_ANSWER"
+}
+answer Backlog
+got=$(cd "$repo" && SENIOR_MODE_READBACK_DELAY=0 "$cli" item set 12 Status Ready 2>"$work/err")
+[ "$got" = "#12 Status = Ready" ] || fail "readback: the write is not printed: $got"
+grep -q 'warning: #12 Status is Backlog, not Ready, 0 seconds after it was set' "$work/err" || fail "readback: a reverted Status is not warned: $(cat "$work/err")"
+answer Ready
+(cd "$repo" && SENIOR_MODE_READBACK_DELAY=0 "$cli" item set 12 Status Ready) >/dev/null 2>"$work/err" || fail "readback: a held Status fails"
+[ -s "$work/err" ] && fail "readback: a held Status is warned: $(cat "$work/err")"
+rm -f "$GH_ANSWER"
+(cd "$repo" && SENIOR_MODE_READBACK_DELAY=0 "$cli" item set 12 Status Ready) >/dev/null 2>"$work/err" || fail "readback: an unreadable Status fails"
+grep -q warning "$work/err" && fail "readback: an unreadable Status is warned"
+answer Backlog
+(cd "$repo" && SENIOR_MODE_READBACK_DELAY=off "$cli" item set 12 Status Ready) >/dev/null 2>"$work/err"
+grep -q warning "$work/err" && fail "readback: SENIOR_MODE_READBACK_DELAY=off still reads"
+rm -f "$GH_ANSWER"
 
 : >"$GH_LOG"
 expect 1 - item set 12 Status Nope

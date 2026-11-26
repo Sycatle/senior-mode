@@ -20,7 +20,7 @@ if [ "$calls" -le "$GH_FAILS" ]; then echo "$GH_ERROR" >&2; exit "${GH_EXIT:-1}"
 case "$*" in *item-add*) echo "ITEM_1" ;; esac
 STUB
 chmod +x "$work/stub/gh"
-export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" GH_COUNT="$work/count" SENIOR_MODE_RETRY_DELAY=0
+export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" GH_COUNT="$work/count" SENIOR_MODE_RETRY_DELAY=0 SENIOR_MODE_READBACK_DELAY=off
 
 repo="$work/repo"
 git init -q "$repo"

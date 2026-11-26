@@ -480,6 +480,20 @@ run status --fix --since 7d && fail "--fix exits zero when the Status could not 
 grep -q '^not fixed: #24 .*Done' "$work/out" || fail "failed Done repair of #24 not said: $(cat "$work/out")"
 grep -q '^fixed: #24' "$work/out" && fail "#24 said fixed although the edit failed: $(cat "$work/out")"
 unset GH_FAIL_ON
+# A Backlog ticket with an open pull request (#633: a Project workflow turned its Status back) is drift, and --fix
+# sets In review.
+cp "$FIX/page-first.json" "$FIX/page-first.revkeep"
+jq -c --argjson i "$(item 45 Backlog "P1 next" S null '[]' '[]')" '.data.node.items.nodes += [$i]
+  | .data.repository.pullRequests.nodes += [{number: 46, title: "Ticket 45 slice", url: "u46", isDraft: false, headRefName: "feat/45-slice",
+    labels: {nodes: []}, commits: {nodes: [{commit: {statusCheckRollup: null}}]}}]' "$FIX/page-first.revkeep" >"$FIX/page-first.json"
+run status --json --since 7d || fail "reverted: status --json failed: $(cat "$work/err")"
+[ "$(json '.drift | map(select(.number == 45) | .kind)')" = '["reverted"]' ] || fail "reverted: a Backlog ticket with an open pull request is not drift: $(json .drift)"
+[ "$(json '[.drift[] | select(.kind == "reverted")] | length')" = 1 ] || fail "reverted: a Backlog ticket with no pull request is reverted: $(json .drift)"
+run status --fix --since 7d || fail "reverted: status --fix failed: $(cat "$work/err")"
+grep -q '^fixed: #45 .*In review' "$work/out" || fail "reverted: --fix does not say what it fixed: $(cat "$work/out")"
+grep -qE 'issues/45 ' "$GH_LOG" || fail "reverted: #45 not touched: $(cat "$GH_LOG")"
+[ "$(grep -c 'item-edit.*--single-select-option-id o3' "$GH_LOG")" -eq 1 ] || fail "reverted: #45 not set In review: $(cat "$GH_LOG")"
+cp "$FIX/page-first.revkeep" "$FIX/page-first.json"
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claude/senior-mode.json"
 
 # Hygiene (#226): stale pull requests, remote branches with no pull request, pull requests that another

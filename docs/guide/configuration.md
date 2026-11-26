@@ -61,6 +61,8 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `vision.maxLines` | `100` | Lines `docs/vision.md` may have; `check` fails above it (a positive whole number). See [`docs/vision.md`](commands.md#frame) |
 | `knowledge.maxLines` | `40` | Lines the body of a [knowledge note](#knowledge-notes) may have; `check` fails above it (a positive whole number) |
 | `knowledge.staleMonths` | `6` | Months after which the [briefing](commands.md#the-senior-mode-script) marks a note `stale` and `check` warns about it (a positive whole number) |
+| `knowledge.churnCommits` | `15` | Commits on a note's `paths` since its `verified` date above which [`serve`](autonomy.md#alerts) files a gardening ticket to re-verify the note (a positive whole number) |
+| `maintenance.maxOpen` | `5` | Most open tickets labelled `gardening`: `serve` files no more while that many are open (a positive whole number) |
 | `retro.repeat` | `3` | Tickets with the same `cause:<x>` label on the same paths or skill, in the period, that make [`retro`](commands.md#retro) open one improvement ticket aimed at that cause (a positive whole number) |
 | `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |
 | `docs.extra` | none | Extra living documents the `docs` skill keeps current after a merge: a list of `{ "path", "purpose" }`; its changes are flagged for human review. Add it yourself |

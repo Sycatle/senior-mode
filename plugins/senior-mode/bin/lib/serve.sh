@@ -1642,6 +1642,83 @@ serve_deps() {
     | "chore(deps): \(.key) \(.value.current) to \(.value.latest)"' <<<"${out:-{\}}" 2>/dev/null)
 }
 
+# The commits of the base branch $1 after the day $2 (YYYY-MM-DD) that touch a file matched by the globs $3 (a JSON list).
+serve_note_churn() {
+  local files matched
+  files=$(git -c core.quotePath=false log --since="$(date -u -d "$2 23:59:59" +%s)" --name-only --no-renames --format= "$1" | sort -u)
+  matched=$(protected_match "$3" <<<"$files")
+  [ -n "$matched" ] || { echo 0; return 0; }
+  git -c core.quotePath=false log --since="$(date -u -d "$2 23:59:59" +%s)" --name-only --no-renames --format=@%H "$1" |
+    awk -v m="$matched" 'BEGIN { n = split(m, a, "\n"); for (i = 1; i <= n; i++) set[a[i]] = 1 }
+      /^@/ { if (hit) c++; hit = 0; next } NF && ($0 in set) { hit = 1 } END { if (hit) c++; print c + 0 }'
+}
+
+# Gardening of the knowledge notes (#357, spec 325 section 5). Once a day, each note of docs/knowledge on the base branch
+# with more than knowledge.churnCommits commits on its `paths` since `verified`, or verified more than knowledge.staleMonths
+# ago, gets one S ticket `chore(knowledge): re-verify <slug>`, labelled gardening, under the open epic labelled maintenance,
+# with the note as Paths. None is filed for a note whose title is open already, once maintenance.maxOpen gardening tickets
+# are open, nor without the epic (`setup repo --knowledge` creates it). The time of the pass is kept in <serve dir>/gardening-at.
+serve_gardening() {
+  local now last base months churn max cutoff issues epic gl ml open note slug title raw verified globs why n body out fm
+  now=$(serve_now)
+  last=$(cat "$SERVE_DIR/gardening-at" 2>/dev/null || true)
+  [[ $last =~ ^[0-9]+$ ]] && [ $((now - last)) -lt 86400 ] && return 0
+  base=$RUN_BASE
+  git rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1 || return 0
+  git cat-file -e "$base:docs/knowledge" 2>/dev/null || return 0
+  state_put "$SERVE_DIR/gardening-at" "$now"
+  months=$(config_get knowledge.staleMonths)
+  churn=$(config_get knowledge.churnCommits)
+  max=$(config_get maintenance.maxOpen)
+  [[ $months =~ ^[1-9][0-9]*$ && $churn =~ ^[1-9][0-9]*$ && $max =~ ^[1-9][0-9]*$ ]] || {
+    echo "serve: knowledge.staleMonths, knowledge.churnCommits and maintenance.maxOpen must be positive whole numbers; no gardening" >&2
+    return 0
+  }
+  cutoff=$(date -u -d "$(date -u -d "@$now" +%F) $months months ago" +%F)
+  issues=$(gh_retry issue list --repo "$RUN_SLUG" --state open --limit 1000 --json number,title,labels 2>/dev/null) || {
+    echo "serve: cannot list the issues; no gardening until tomorrow" >&2
+    return 0
+  }
+  gl=$(workflow_label "" gardening)
+  ml=$(workflow_label "" maintenance)
+  epic=$(jq -r --arg l "$ml" 'first(.[] | select(any(.labels[]?; .name == $l)) | .number) // empty' <<<"$issues")
+  [ -n "$epic" ] || {
+    echo "serve: no open epic labelled $ml; no gardening (senior-mode setup repo --knowledge creates it)" >&2
+    return 0
+  }
+  open=$(jq -r --arg l "$gl" '[.[] | select(any(.labels[]?; .name == $l))] | length' <<<"$issues")
+  while IFS= read -r note; do
+    [ "$open" -lt "$max" ] || break
+    slug=$(basename "$note" .md)
+    title="chore(knowledge): re-verify $slug"
+    jq -e --arg t "$title" 'any(.[]; .title == $t)' <<<"$issues" >/dev/null && continue
+    fm=$(git show "$base:$note" 2>/dev/null | awk 'NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { exit } NR > 1 { print }')
+    verified=$(sed -n 's/^verified:[[:space:]]*//p' <<<"$fm" | head -n 1 | tr -d "\"'\r")
+    [[ $verified =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [ "$(date -u -d "$verified" +%F 2>/dev/null)" = "$verified" ] || continue
+    raw=$(sed -n 's/^paths:[[:space:]]*//p' <<<"$fm" | head -n 1 | tr -d '\r')
+    globs=$(jq -c 'select(type == "array" and length > 0 and all(.[]; type == "string"))' <<<"$raw" 2>/dev/null) && [ -n "$globs" ] || continue
+    if [[ $verified < $cutoff ]]; then
+      why="was last verified on $verified, more than $months months ago (\`knowledge.staleMonths\`)"
+    else
+      n=$(serve_note_churn "$base" "$verified" "$globs")
+      [ "${n:-0}" -gt "$churn" ] || continue
+      why="has $n commits on its \`paths\` since it was verified on $verified (more than \`knowledge.churnCommits\`, $churn)"
+    fi
+    body=$(mktemp)
+    printf '## Context\n\nThe knowledge note `%s` %s. A note is true only when someone checked it against the code.\n\n## Acceptance criteria\n\n- Given the note `%s`, when the session re-reads it against its paths %s, then it bumps `verified` to today, edits the note to match the code, or deletes it, in one pull request.\n' \
+      "$note" "$why" "$note" "$(jq -r 'join(", ")' <<<"$globs")" >"$body"
+    if out=$(SENIOR_MODE_RUN=1 "$SELF" issue create --title "$title" --body-file "$body" --size S --priority "P2 later" --type chore \
+      --paths "$note" --parent "$epic" </dev/null) && n=$(sed -nE '1s/^#([0-9]+) .*/\1/p' <<<"$out") && [ -n "$n" ]; then
+      gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f "labels[]=$gl" >/dev/null || echo "serve: could not label #$n $gl" >&2
+      echo "serve: gardening ticket #$n filed: $title"
+      open=$((open + 1))
+    else
+      echo "serve: gardening ticket not filed: $title" >&2
+    fi
+    rm -f "$body"
+  done < <(git ls-tree --name-only "$base" docs/knowledge/ | grep -E '^docs/knowledge/[^/]+\.md$' | LC_ALL=C sort)
+}
+
 # The digest of the day through the webhook (#309). Once notify.digestAt (HH:MM, the local time of the daemon) has
 # passed and none was sent today, one JSON POST {event: "digest", repo, number: null, url: null, reason: <text>,
 # digest: {...}} to the notify webhook with, over the last 24 hours, the pull requests merged, the tickets that wait
@@ -1769,6 +1846,7 @@ serve_loop() {
     serve_digest
     serve_digest_at
     serve_deps
+    serve_gardening
     serve_snapshot
     [ -z "${SENIOR_MODE_SERVE_ONCE:-}" ] || break
     sleep "$interval" &

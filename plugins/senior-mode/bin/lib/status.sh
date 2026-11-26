@@ -83,11 +83,13 @@ DRIFT_DEF="$BRANCH_DEF"'def drift($d; $locals): $d.items as $items
 
 # The decisions (#308): everything that waits for the human, from board_data and $now. A ticket with `needs-human`
 # (kind needs-human), a pull request with `needs-human` (pull-request), a ticket in framing (an open ticket with
-# `needs-info`: the questions of the framing wait for an answer) and a pull request labelled `framing-draft` (framing).
+# `needs-info`: the questions of the framing wait for an answer) and a pull request labelled `framing-draft` (framing). A
+# ticket with `needs-decision` (#363, #621) is kind needs-decision, with the question and the recommended option of its last
+# `<!-- senior-mode:decision -->` comment, when a collaborator wrote it; it is listed under that kind, not as needs-human, which it also carries.
 # Each has its age (seconds since its last activity, GitHub's updatedAt; null when unknown) and the question to answer: the
 # first line of the last comment when a collaborator wrote it (the reason of the alert, without its mention), else a
 # default that does not repeat the title. Plain text, control characters stripped, 300 characters at most (a title can be an
-# outsider's). `options`, `recommended` and `id` are there for the answers of #466 and empty until then. Sorted by Priority
+# outsider's). `options` and `id` are there for the answers of #466 and empty until then; `recommended` is the recommended option of a needs-decision ticket. Sorted by Priority
 # (a pull request has none), then the oldest first.
 # shellcheck disable=SC2016 # a jq program, not shell
 DECISIONS_DEF='def plain: gsub("[[:cntrl:]]"; " ") | gsub("^ +| +$"; "") | .[:300];
@@ -101,8 +103,14 @@ DECISIONS_DEF='def plain: gsub("[[:cntrl:]]"; " ") | gsub("^ +| +$"; "") | .[:30
     age: (if .updated then (($now | fromdateiso8601) - (.updated | fromdateiso8601) | if . < 0 then 0 else . end) else null end),
     question: asked($default), options: [], recommended: null, id: null,
     priority: ($i.priority // null)};
+  def marked($k): [(.decision.body // "") | gsub("\r"; "") | split("\n")[] | select(startswith("**\($k):** ")) | ltrimstr("**\($k):** ") | plain][0] // "";
+  def waits_decision: marked("Question") as $q | marked("Recommended option") as $r
+    | decision("needs-decision"; "Needs your decision")
+    | .question = (if $q != "" then $q else .question end)
+    | .recommended = (if $r == "" or ($r | test("^none given$"; "i")) then null else $r end);
   def decisions($d): ([$d.items[] | select(.open and (.archived | not))
-      | if (.labels | index("needs-human")) then decision("needs-human"; "Needs your decision")
+      | if (.labels | index("needs-decision")) then waits_decision
+        elif (.labels | index("needs-human")) then decision("needs-human"; "Needs your decision")
         elif (.labels | index("needs-info")) then decision("framing"; "Answer the open questions of the framing")
         else empty end]
     + [$d.prs[] | if (.labels | index("needs-human")) then decision("pull-request"; "Merge or close this pull request")
@@ -210,7 +218,7 @@ STATUS_TEXT_JQ="$HIERARCHY_TEXT_DEF"'def sec($h; $ls): $h, (if ($ls | length) ==
     [.inProgress[] | ticket + (if .worktree then " (worktree \(.worktree))" else "" end)]),
   sec("In review (\(.inReview | length))"; [.inReview[] | ticket + (if .pr then " (pull request #\(.pr))" else "" end)]),
   sec("Blocked or missing information (\(.blocked | length))"; [.blocked[] | ticket + ": " + (.reasons | join(", "))]),
-  sec("Decisions (\(.decisions | length))"; [.decisions[] | "#\(.number) \(.title) · \(.kind) · \(.age | age_text): \(.question)"]),
+  sec("Decisions (\(.decisions | length))"; [.decisions[] | "#\(.number) \(.title) · \(.kind) · \(.age | age_text): \(.question)\(if .recommended then " (recommended: \(.recommended))" else "" end)"]),
   (if ([.waiting[] | select(.why | test("failing: "))] | length) > 0 then sec("Failing checks (\([.waiting[] | select(.why | test("failing: "))] | length))";
     [.waiting[] | select(.why | test("failing: ")) | "\(.kind) #\(.number) \(.title): \(.why | sub("^needs a human decision; "; ""))"]) else empty end),
   (if (.drift | length) > 0 then sec("Board drift (\(.drift | length))"; [.drift[] | ticket + ": " + .why]) else empty end),

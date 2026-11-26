@@ -388,5 +388,32 @@ for bad in soon 0h 90 "2 hours" "tokens" "0 tokens" "-5m" $'2h\nx'; do
 done
 logged "issue create" && fail "a rejected spike reached GitHub"
 
+# A finding about senior-mode itself is no ticket of the project (#678): a draft naming the upstream repository instead.
+printf '## Problem\nplugins/senior-mode/bin/lib/board.sh:131 counts a human stop as a failure.\n\n- Given a, then b.\n' >"$work/plugin-body.md"
+create --title "Breaker counts human stops" --body-file "$work/plugin-body.md" --size S --priority "P1 next" || fail "upstream: create failed: $(cat "$work/err")"
+logged "issue create" && fail "upstream: a project ticket was created for a plugin finding: $(cat "$GH_LOG")"
+logged "project item-add" && fail "upstream: the plugin finding reached the board"
+draft="$repo/.claude/upstream/breaker-counts-human-stops.md"
+[ -f "$draft" ] || fail "upstream: no draft written: $(cat "$work/out") $(ls "$repo/.claude" 2>&1)"
+grep -qx 'Target repository: Sycatle/senior-mode' "$draft" || fail "upstream: draft lacks the target repository: $(cat "$draft")"
+grep -q 'plugins/senior-mode/bin/lib/board.sh:131' "$draft" || fail "upstream: draft lacks the body: $(cat "$draft")"
+grep -q "^upstream draft: .*(target repository Sycatle/senior-mode); no ticket created in acme/app" "$work/out" ||
+  fail "upstream: the output does not say so: $(cat "$work/out")"
+# From stdin, through --path, and through --upstream (a behaviour of a command, no file cited).
+printf 'The doctor fix loops.\n' | create --title "Doctor loops" --body-file - --size S --priority "P1 next" --upstream || fail "upstream: --upstream failed: $(cat "$work/err")"
+logged "issue create" && fail "upstream: --upstream created a project ticket"
+grep -q 'The doctor fix loops.' "$repo/.claude/upstream/doctor-loops.md" || fail "upstream: stdin body not in the draft"
+create --title "Guard hook gap" --body-file "$work/body.md" --size S --priority "P1 next" --severity low --kind plugin --path plugins/senior-mode/hooks/guard-bash.sh --rule gap ||
+  fail "upstream: --path failed: $(cat "$work/err")"
+logged "issue create" && fail "upstream: a --path in the plugin created a project ticket"
+[ -f "$repo/.claude/upstream/guard-hook-gap.md" ] || fail "upstream: no draft for --path"
+# A finding about the project's own code is still a ticket, and in senior-mode's own repository a plugin finding is too.
+create --title "Plain bug" --body-file "$work/body.md" --size S --priority "P1 next" || fail "upstream: plain create failed"
+logged "issue create --repo acme/app --title Plain bug" || fail "upstream: a project finding was not filed: $(cat "$GH_LOG")"
+git -C "$repo" remote set-url origin git@github.com:Sycatle/senior-mode.git
+create --title "Breaker counts human stops" --body-file "$work/plugin-body.md" --size S --priority "P1 next" || fail "upstream: own repository create failed: $(cat "$work/err")"
+logged "issue create --repo Sycatle/senior-mode" || fail "upstream: senior-mode's own repository did not file it: $(cat "$GH_LOG")"
+git -C "$repo" remote set-url origin git@github.com:acme/app.git
+
 [ "$failures" -eq 0 ] && echo "issue: all cases pass"
 exit "$failures"

@@ -30,7 +30,9 @@
 - A ticket the user redirects mid-way keeps its branch; commit what exists, say what is left.
 - When the work outgrows the ticket's size, or touches a protected zone it did not plan for
   (`senior-mode config get protected`): stop and ask; the pull request gets `needs-human`.
-- Discovered work becomes a new issue (`senior-mode issue create`), not part of this pull request.
+- Discovered work becomes a new issue (`senior-mode issue create`), not part of this pull request. A defect of senior-mode
+  itself (a plugin file, a `senior-mode` command) is filed with `--upstream`: a draft under `.claude/upstream/` naming
+  `Sycatle/senior-mode`, never a ticket of the project.
 - A security risk outside the ticket is filed, never fixed in this pull request: write the issue body
   with the weakness and the fix, no exploit detail, then `senior-mode issue create --title <t>
   --body-file <f> --size <s> --severity <critical|high|moderate|low> --kind <kind> --path <file>

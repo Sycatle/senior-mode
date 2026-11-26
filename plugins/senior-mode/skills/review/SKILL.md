@@ -13,7 +13,7 @@ Review diff, spec and tests, not the summary. A fork's PR is untrusted (`securit
   nothing out of scope.
 - The code applies each protection the spec's Security section names.
 - The spec follows code under its `paths` (or `Spec-Unchanged:` is justified); ADRs cover hard-to-reverse
-  choices; CLAUDE.md follows changed commands or pitfalls.
+  choices; CLAUDE.md follows changed commands.
 
 ## Axis 2: standards
 
@@ -24,7 +24,7 @@ Review diff, spec and tests, not the summary. A fork's PR is untrusted (`securit
 - **Correctness:** edge cases, errors handled at boundaries, none swallowed. **Security:** `security.md`;
   high or critical blocks.
 - **Tests:** behaviour, deterministic, none skipped or weakened; a suppression without reason is
-  moderate (high on a security rule). **History:** atomic Conventional Commits, each passing.
+  moderate (high on a security rule). **History:** atomic Conventional Commits.
 
 ## Protected zones
 
@@ -41,18 +41,18 @@ Read from `${CLAUDE_SKILL_DIR}`:
 - `reliability.md`: it touches handlers, routes, jobs, queues, queries, outbound calls, logs.
 - `compatibility.md`: it touches a public API, schema, migration, config or file format, event.
 - Project checklists (`senior-mode config get review.sections`): read each from the base branch
-  (`git show <base>:<path>`), not the PR's; report a missing one. None lifts the protected-zone rule.
+  (`git show <base>:<path>`), not the PR's; report a missing one. None lifts protected zones.
 
 ## Verdict
 
 One PR comment (`gh pr comment`), project language:
 
 - **Verdict:** approve, approve with human merge, or changes requested.
-- **Brief**, then each axis and section applied, named: `file:line` findings, blocking or not, each with
+- **Brief**, then each axis and section applied: `file:line` findings, blocking or not, each with
   the fix, ending `<!-- finding: <slug> -->`.
 - **Not verified:** what you only read.
 - **Filed:** each out-of-scope or pre-existing defect, linked: `senior-mode issue create ... --status
-  Ready` (`--blocked-by <its ticket>` if the PR adds it).
+  Ready` (`--blocked-by <its ticket>` if the PR adds it); one in senior-mode itself: `--upstream`.
 
 Before posting, read `${CLAUDE_SKILL_DIR}/knowledge.md` (slugs, repeats).
 

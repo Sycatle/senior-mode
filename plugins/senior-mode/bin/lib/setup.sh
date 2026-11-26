@@ -597,13 +597,33 @@ node_pm() {
   printf '%s\t%s\t%s\n' "$pm" "$exec" "$install"
 }
 
+# The test files of the project at $1 (not those of node_modules), at most $2 (50): `*.test.*`, `*.spec.*`, Go's
+# `*_test.go` and Python's `test_*.py` and `*_test.py`. Paths relative to the root.
+project_test_files() { # root [max]
+  (cd "$1" && find . \( -name node_modules -o -name .git -o -name vendor -o -name target \) -prune -o -type f \
+    \( -name '*.test.*' -o -name '*.spec.*' -o -name '*_test.go' -o -name 'test_*.py' -o -name '*_test.py' \) -print 2>/dev/null |
+    sed 's|^\./||' | sort | head -n "${2:-50}") || true
+}
+
+# Whether a project has node:test suites (a `*.test` or `*.spec` file of .js, .mjs or .cjs that imports node:test): what
+# `node --test` runs when package.json has no test script.
+node_has_node_tests() { # root
+  local f
+  while IFS= read -r f; do
+    case $f in *.js | *.mjs | *.cjs) ;; *) continue ;; esac
+    grep -qE "node:test" "$1/$f" && return 0
+  done < <(project_test_files "$1" 200)
+  return 1
+}
+
 # shellcheck disable=SC2016 # jq program, not shell
 node_detect() { # root [workspace-root]: the package manager is the one of the workspace root, its lockfile lives there
   # exec runs an installed binary only: npx and bunx would download a missing one.
-  local root=$1 pm exec install tsconfig=false
+  local root=$1 pm exec install tsconfig=false nodetest=false
   IFS=$'\t' read -r pm exec install < <(node_pm "${2:-$root}")
   [ ! -f "$root/tsconfig.json" ] || tsconfig=true
-  jq -c --arg pm "$pm" --arg exec "$exec" --arg install "$install" --argjson tsconfig "$tsconfig" '(.scripts // {}) as $s
+  ! node_has_node_tests "$root" || nodetest=true
+  jq -c --arg pm "$pm" --arg exec "$exec" --arg install "$install" --argjson tsconfig "$tsconfig" --argjson nodetest "$nodetest" '(.scripts // {}) as $s
     | def run($n): if $s[$n] then "\($pm) run \($n)" else null end;
     ((.dependencies.typescript // .devDependencies.typescript) != null) as $ts
     # Next.js 15.5+ generates its route types only on build or dev: a fresh worktree needs
@@ -619,7 +639,8 @@ node_detect() { # root [workspace-root]: the package manager is the one of the w
           // (if $tsconfig and $ts then "\($exec) tsc --noEmit" else null end))
           | if . and $typegen and (($s.typecheck // $s["type-check"] // "") | contains("typegen") | not)
             then "\($exec) next typegen && \(.)" else . end),
-        test: (if ($s.test // "") | test("no test specified") then null else run("test") end),
+        test: ((if ($s.test // "") | test("no test specified") then null else run("test") end)
+          // (if $nodetest then "node --test" else null end)),
         build: run("build"),
         e2e: (run("test:e2e") // run("e2e")),
         install: $install

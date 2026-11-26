@@ -587,6 +587,10 @@ command, not a model, applies these bounds:
   `serve.breakerCooldown` (15 minutes), doubled at each further pause up to `serve.breakerMax` (4 hours);
   a merge, `serve --resume` or 24 hours without a pause start the count again. Only a ticket's own
   failure counts: transient and environment ends never do.
+- **Red default branch after a merge:** two pull requests green on their own can fail together. After a merge, `serve`
+  runs the checks on the new head of the default branch and publishes `senior-mode/ci` there. On a failure it holds every
+  launch (the `main-red` environment hold, kept while the status is red on that head and lifted by a fix that lands on it) and
+  files a P0 ticket in Backlog that names the failing check. A head that already has a `senior-mode/ci` status is not checked.
 - **Unknown environment failure:** a session that says `failed: environment: ...` with a cause `serve`
   has no pattern for (so no probe that could ever turn green) makes only its own ticket wait: the other
   Ready tickets keep launching. The same ticket is not launched again until something changed (the plugin

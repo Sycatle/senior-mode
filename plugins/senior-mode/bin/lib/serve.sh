@@ -1138,9 +1138,52 @@ serve_backmerge() {
   rm -f "$file"
 }
 
-# A merged pull request: counted, its ticket Done, and the breaker's trips start again at 0.
+# After a merge (serve_done leaves main-verify), the head of the base branch has no senior-mode/ci status: two pull
+# requests green on their own can fail together (#683). The check list runs on a detached worktree of that head and is
+# published there as senior-mode/ci, as for a pull request. A failure holds every launch (the main-red hold, which the
+# probe of the next polls keeps while the status is red on the head) and files a P0 ticket that names the failing
+# check, a person's to take: no session starts on a red base branch. A head that already has a status is left alone.
+serve_verify_main() {
+  local sha ci wt log="$SERVE_DIR/main-check.log" state desc base=${RUN_BASE#origin/} body title
+  [ -e "$SERVE_DIR/main-verify" ] && [ "$SERVE_TERM" = false ] || return 0
+  git_bound fetch -q origin 2>/dev/null || true
+  sha=$(git rev-parse -q --verify "$RUN_BASE^{commit}") || return 0
+  ci=$(serve_states "$sha" | jq -r '.["senior-mode/ci"] // empty') || return 0
+  rm -f "$SERVE_DIR/main-verify"
+  [ -z "$ci" ] || return 0
+  wt=$(worktree_path "$RUN_ROOT" "verify-main")
+  git worktree remove --force "$wt" 2>/dev/null || true
+  if ! git worktree add -q --detach "$wt" "$sha" 2>/dev/null; then
+    echo "serve: could not open a worktree of $RUN_BASE to check it after a merge" >&2
+    return 0
+  fi
+  serve_install "$wt" >"$log" 2>&1 || true
+  (cd "$wt" && "$SELF" check) >>"$log" 2>&1 || true
+  state=$(cd "$wt" && sed -n 1p "$(check_record "$sha")" 2>/dev/null) || state=""
+  desc=$(cd "$wt" && sed -n 2p "$(check_record "$sha")" 2>/dev/null) || desc=""
+  if ! (cd "$wt" && "$SELF" publish) >>"$log" 2>&1; then
+    echo "serve: the check of $RUN_BASE after a merge could not be published (log $log)" >&2
+    state=""
+  fi
+  git worktree remove --force "$wt" 2>/dev/null || true
+  [ "$state" = failure ] || return 0
+  echo "serve: $RUN_BASE (${sha:0:7}) fails its checks after a merge: $desc" >&2
+  serve_hold_set main-red "senior-mode/ci is failure on $RUN_BASE (${sha:0:7}): $desc"
+  [ -n "$SERVE_HELD" ] || SERVE_HELD="held, environment problem (main-red): $desc"
+  title="fix($base): $base fails its checks after a merge"
+  body=$(mktemp)
+  printf '## Context\n\nAfter a merge, serve ran the checks on `%s` (`%s`) and they fail: %s.\n\nserve published `senior-mode/ci` failure on that commit and holds every launch until `%s` is green again. The log is `%s`.\n\n## Acceptance criteria\n\n- Given `%s` at `%s`, when the failing check is fixed or the merge that broke it is reverted, then `senior-mode check` passes on its head.\n' \
+    "$base" "${sha:0:7}" "${desc:-no description}" "$base" "$log" "$base" "${sha:0:7}" >"$body"
+  "$SELF" issue create --title "$title" --body-file "$body" --size S --priority "P0 now" --type bug </dev/null >/dev/null ||
+    echo "serve: the ticket for the red $RUN_BASE was not filed" >&2
+  rm -f "$body"
+}
+
+# A merged pull request: counted, its ticket Done, and the breaker's trips start again at 0. The head of the base branch
+# is checked at the next poll (serve_verify_main).
 serve_done() {
   local t=$1 pr=$2 m
+  : | state_write "$SERVE_DIR/main-verify"
   rm -f "$SERVE_DIR/queued-$pr" "$SERVE_DIR/rounds-$t" "$SERVE_DIR/breaker" "$SERVE_DIR/$t.wrong-test" "$SERVE_DIR/$t.retest"
   serve_close_candidates "$t" "$pr"
   serve_backmerge "$t" "$pr"
@@ -1707,6 +1750,7 @@ serve_poll() {
   else
     echo "serve: cannot read the open pull requests; trying again at the next poll" >&2
   fi
+  serve_verify_main
   while IFS=$'\t' read -r n size title batch; do
     [ -n "$n" ] || continue
     [[ " ${running[*]} " != *" $n "* ]] || continue

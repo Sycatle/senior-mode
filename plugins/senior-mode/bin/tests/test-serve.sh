@@ -2608,5 +2608,44 @@ st "$sha91" "senior-mode/ci success" "senior-mode/review failure 1700000000"
 once || fail "BP: serve failed: $(cat "$work/out")"
 grep -q '^app-review-91' "$CLAUDE_LOG" && fail "BP: a failed review of a needs-human pull request was reviewed again"
 
+# BS: after a merge, the head of the base branch is checked and the result is published there (#683). Two pull requests green
+# on their own can fail together: the failure is published on the head, every launch is held, and a P0 ticket names the
+# failing check. A green head gets its success and no hold.
+config '{}'
+boardx "96:In review:S:P1 next" "97:Ready:S:P1 next"
+prs_reset
+sha96=$(mkbranch feat/96-x f96.txt)
+pr 196 feat/96-x "$sha96" clean
+green "$sha96"
+base=$(git -C "$repo" rev-parse origin/main)
+session 97-sonnet delivered pr
+fresh
+once || fail "BS: serve failed: $(cat "$work/out")"
+grep -q "^pr merge 196 " "$GH_LOG" || fail "BS: the pull request did not merge: $(grep '^pr ' "$GH_LOG")"
+[ "$(status_of "$base" senior-mode/ci)" = success ] || fail "BS: no success published on the base head after the merge: $(cat "$FIX/status-$base" 2>&1)"
+[ ! -e "$state/held" ] || fail "BS: a green base head held the launches: $(cat "$work/out")"
+started 97 || fail "BS: #97 not started on a green base head: $(cat "$work/out")"
+[ ! -e "$state/main-verify" ] || fail "BS: the check after the merge was not marked done"
+jq '.checks = [{name: "fmt", run: "false"}]' "$repo/.claude/senior-mode.json" >"$work/cfg" && mv "$work/cfg" "$repo/.claude/senior-mode.json"
+git -C "$repo" -c user.name=t -c user.email=t@t commit -qam "chore: failing check"
+git -C "$repo" push -q origin main
+boardx "98:In review:S:P1 next" "99:Ready:S:P1 next"
+prs_reset
+sha98=$(mkbranch feat/98-x f98.txt)
+pr 198 feat/98-x "$sha98" clean
+green "$sha98"
+base=$(git -C "$repo" rev-parse origin/main)
+session 99-sonnet delivered pr
+echo '[]' >"$FIX/issues.json"
+fresh
+once || fail "BS: serve failed: $(cat "$work/out")"
+grep -q "^pr merge 198 " "$GH_LOG" || fail "BS: the pull request did not merge: $(grep '^pr ' "$GH_LOG")"
+[ "$(status_of "$base" senior-mode/ci)" = failure ] || fail "BS: no failure published on the base head: $(cat "$FIX/status-$base" 2>&1)"
+[ "$(jq -r .cause "$state/held" 2>/dev/null)" = main-red ] || fail "BS: a red base head after a merge is not a hold: $(cat "$work/out")"
+started 99 && fail "BS: a ticket started on the red base head"
+jq -e 'any(.[]; (.title | test("fails its checks")))' "$FIX/issues.json" >/dev/null || fail "BS: no ticket for the red base branch: $(cat "$FIX/issues.json")"
+grep -q 'fmt' "$FIX"/body-* || fail "BS: the ticket does not name the failing check: $(cat "$FIX"/body-* 2>&1)"
+grep -q 'item-edit.*--field-id F_P --single-select-option-id p0' "$GH_LOG" || fail "BS: the ticket is not P0: $(grep item-edit "$GH_LOG")"
+
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

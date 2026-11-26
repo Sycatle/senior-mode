@@ -68,9 +68,10 @@ case "$*" in
   "issue list"*) { cat "$FIX/issues.json" 2>/dev/null || echo '[]'; } | respond ;;
   "issue create"*)
     # The tickets serve files (#497): kept in $FIX/issues.json, which `issue list` serves back.
-    t="" prev=""
-    for a in "$@"; do [ "$prev" = --title ] && t=$a; prev=$a; done
+    t="" bf="" prev=""
+    for a in "$@"; do [ "$prev" = --title ] && t=$a; [ "$prev" = --body-file ] && bf=$a; prev=$a; done
     n=$(jq '[500, (.[].number + 1)] | max' "$FIX/issues.json" 2>/dev/null || echo 500)
+    [ -z "$bf" ] || cp "$bf" "$FIX/body-$n"
     jq --argjson n "$n" --arg t "$t" '. + [{number: $n, title: $t, body: "", labels: []}]' "$FIX/issues.json" >"$FIX/i" && mv "$FIX/i" "$FIX/issues.json"
     echo "https://github.com/acme/app/issues/$n" ;;
   "api repos/acme/app/dependabot/alerts"* | "api repos/acme/app/secret-scanning/alerts"*) echo '[]' | respond ;;
@@ -96,6 +97,9 @@ case "$*" in
   "api repos/acme/app/pulls?head="*)
     n=$(sed -E 's#.*head=acme:[a-z]+/([0-9]+)-.*#\1#' <<<"$*")
     { cat "$FIX/pulls-$n" 2>/dev/null || echo '[]'; } | respond ;;
+  "api repos/acme/app/issues/"*"/sub_issues"*) echo '[]' | respond ;;
+  "api -X POST repos/acme/app/issues/"*"/sub_issues"*) echo "$*" >>"$FIX/sub-issues" ;;
+  "api repos/acme/app/issues/"[0-9]*" --jq .id") echo 1 ;;
   "api repos/acme/app/issues/"*"/comments"*) echo '{}' ;;
   "api repos/acme/app/issues/"*"/labels"*) echo '[]' ;;
   "pr list"*"--state merged"*) cat "$FIX/merged-prs" 2>/dev/null || echo '[]' ;;
@@ -2100,6 +2104,102 @@ fresh
 once || fail "DF2: serve failed: $(cat "$work/out")"
 grep -q '^pr merge' "$GH_LOG" && fail "DF2: a Dependabot pull request was merged: $(grep '^pr ' "$GH_LOG")"
 grep -q "pull request #198, it is external" "$work/out" || fail "DF2: the Dependabot pull request is not left to a human: $(cat "$work/out")"
+
+# GD: gardening of the knowledge notes (#357, spec 325 section 5). Once a day serve files one `chore(knowledge): re-verify <slug>`
+# ticket (S, P2, labelled gardening, under the open epic labelled maintenance, the note as Paths) for a note on the base branch
+# with more than knowledge.churnCommits commits on its paths since `verified`, or verified more than knowledge.staleMonths ago.
+# Real dates here (a commit date is the real clock): the notes are verified relative to today.
+note() { # <slug> <verified> <paths json>
+  mkdir -p "$repo/docs/knowledge"
+  printf -- '---\npaths: %s\nverified: %s\norigin: retro\nkind: pitfall\n---\nBody of %s.\n' "$3" "$2" "$1" >"$repo/docs/knowledge/$1.md"
+}
+churn() { # <dir> <commits>
+  local i
+  mkdir -p "$repo/src/$1"
+  for i in $(seq "$2"); do
+    echo "$i" >>"$repo/src/$1/f.txt"
+    git -C "$repo" add -A
+    git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "feat: change $1 $i"
+  done
+}
+gd_tickets() { jq -r '[.[] | select(.title | startswith("chore(knowledge): re-verify "))] | map(.title | sub("^chore.*verify "; "")) | sort | join(" ")' "$FIX/issues.json"; }
+gd_config() { # <jq filter>: the config on the base branch (it is read from there)
+  jq "$1" "$repo/.claude/senior-mode.json" >"$work/cfg.json" && mv "$work/cfg.json" "$repo/.claude/senior-mode.json"
+  git -C "$repo" -c user.name=t -c user.email=t@t commit -qam "chore: config" --allow-empty
+  git -C "$repo" push -q origin main
+}
+gd_epic='{"number": 7, "title": "Maintenance", "body": "", "labels": [{"name": "maintenance"}]}'
+config '{}'
+board
+churn hot 16
+churn warm 15
+churn today 16
+churn calm 3
+note hot "$(date -u -d '20 days ago' +%F)" '["src/hot/**"]'
+note warm "$(date -u -d '20 days ago' +%F)" '["src/warm/**"]'
+note calm "$(date -u -d '20 days ago' +%F)" '["src/calm/**"]'
+note today "$(date -u +%F)" '["src/today/**"]'
+note old "$(date -u -d '400 days ago' +%F)" '["src/none/**"]'
+note cold "$(date -u -d '500 days ago' +%F)" '["src/none/**"]'
+git -C "$repo" add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "docs(knowledge): notes"
+git -C "$repo" push -q origin main
+now=$(date +%s)
+echo "[$gd_epic]" >"$FIX/issues.json"
+rm -f "$FIX/sub-issues"
+fresh
+SENIOR_MODE_NOW=$now once || fail "GD: serve failed: $(cat "$work/out")"
+[ "$(gd_tickets)" = "cold hot old" ] || fail "GD: wrong notes ticketed ($(gd_tickets)): more than 15 commits since verified, or older than 6 months, only: $(cat "$work/out")"
+grep -q 'F_Paths.*docs/knowledge/hot.md' "$GH_LOG" || fail "GD: the note is not the Paths of its ticket: $(grep -c . "$GH_LOG") calls"
+grep -q 'issues/7/sub_issues' "$FIX/sub-issues" 2>/dev/null || fail "GD: the tickets are not under the maintenance epic: $(cat "$FIX/sub-issues" 2>&1)"
+[ "$(wc -l <"$FIX/sub-issues")" = 3 ] || fail "GD: not three tickets under the epic: $(cat "$FIX/sub-issues")"
+for n in 500 501 502; do
+  grep -q "issues/$n/labels.*labels\[\]=gardening" "$GH_LOG" || fail "GD: #$n is not labelled gardening"
+done
+grep -q 'Given the note `docs/knowledge/cold.md`' "$FIX/body-500" || fail "GD: no acceptance criterion on the note: $(cat "$FIX/body-500" 2>&1)"
+grep -q 'bumps `verified`.*or deletes it, in one pull request' "$FIX/body-500" || fail "GD: the body does not say what the session does: $(cat "$FIX/body-500")"
+grep -q 'filed-by: agent' "$FIX/body-500" || fail "GD: the ticket is not filed as an agent's, so ready would not take it: $(cat "$FIX/body-500")"
+grep -q 'size-option z1\|--single-select-option-id z1' "$GH_LOG" || fail "GD: the ticket is not size S"
+[ -s "$state/gardening-at" ] || fail "GD: the pass is not kept in $state/gardening-at"
+# The same day: no second pass, nothing filed.
+echo "[$gd_epic]" >"$FIX/issues.json"
+SENIOR_MODE_NOW=$((now + 3600)) once || fail "GD: serve failed: $(cat "$work/out")"
+[ -z "$(gd_tickets)" ] || fail "GD: a second pass within the day: $(gd_tickets)"
+# A day later, a ticket open for a note: it is not filed again; the others are.
+echo "[$gd_epic, {\"number\": 8, \"title\": \"chore(knowledge): re-verify hot\", \"body\": \"\", \"labels\": [{\"name\": \"gardening\"}]}]" >"$FIX/issues.json"
+SENIOR_MODE_NOW=$((now + 86400)) once || fail "GD: serve failed: $(cat "$work/out")"
+[ "$(gd_tickets)" = "cold hot old" ] || fail "GD: with hot open, the pass should file cold and old once more ($(gd_tickets))"
+[ "$(jq '[.[] | select(.title == "chore(knowledge): re-verify hot")] | length' "$FIX/issues.json")" = 1 ] || fail "GD: a second ticket for a note that has one open"
+# maintenance.maxOpen caps the open gardening tickets: 3 open, a cap of 4, one more filed (cold, the first in order).
+gd_config '.maintenance = {maxOpen: 4}'
+echo "[$gd_epic$(printf ', {"number": %s, "title": "chore(architecture): v%s", "body": "", "labels": [{"name": "gardening"}]}' 11 1 12 2 13 3)]" >"$FIX/issues.json"
+SENIOR_MODE_NOW=$((now + 2 * 86400)) once || fail "GD: serve failed: $(cat "$work/out")"
+[ "$(gd_tickets)" = "cold" ] || fail "GD: with 3 open and maxOpen 4, exactly one ticket (cold) was expected, got: $(gd_tickets)"
+gd_config '.maintenance = {maxOpen: 3}'
+echo "[$gd_epic$(printf ', {"number": %s, "title": "chore(architecture): v%s", "body": "", "labels": [{"name": "gardening"}]}' 11 1 12 2 13 3)]" >"$FIX/issues.json"
+SENIOR_MODE_NOW=$((now + 3 * 86400)) once || fail "GD: serve failed: $(cat "$work/out")"
+[ -z "$(gd_tickets)" ] || fail "GD: a ticket filed with maxOpen reached: $(gd_tickets)"
+# No epic labelled maintenance: nothing is filed, and it is said.
+gd_config 'del(.maintenance)'
+echo '[]' >"$FIX/issues.json"
+SENIOR_MODE_NOW=$((now + 4 * 86400)) once || fail "GD: serve failed: $(cat "$work/out")"
+[ -z "$(gd_tickets)" ] || fail "GD: tickets filed with no maintenance epic: $(gd_tickets)"
+grep -q 'no open epic labelled maintenance' "$work/out" || fail "GD: the missing epic is not said: $(cat "$work/out")"
+# knowledge.churnCommits: 2 makes the 3 commits of calm one too many, and warm and today the same as before.
+gd_config '.knowledge = {churnCommits: 2}'
+echo "[$gd_epic]" >"$FIX/issues.json"
+SENIOR_MODE_NOW=$((now + 5 * 86400)) once || fail "GD: serve failed: $(cat "$work/out")"
+[ "$(gd_tickets)" = "calm cold hot old warm" ] || fail "GD: churnCommits 2 not applied ($(gd_tickets)); today has no commit after its verified day"
+# No docs/knowledge on the base branch: no pass, no issue list.
+git -C "$repo" rm -rq docs/knowledge src
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: drop notes"
+git -C "$repo" push -q origin main
+gd_config 'del(.knowledge)'
+rm -f "$state/gardening-at"
+echo "[$gd_epic]" >"$FIX/issues.json"
+SENIOR_MODE_NOW=$((now + 6 * 86400)) once || fail "GD: serve failed: $(cat "$work/out")"
+[ -z "$(gd_tickets)" ] || fail "GD: tickets filed with no notes: $(gd_tickets)"
+[ ! -e "$state/gardening-at" ] || fail "GD: a pass kept with no notes"
 
 # AF: the hourly snapshot (#423): one JSON line in snapshots.jsonl the first poll and then once an hour, with the sessions
 # running, the free slots, the Ready tickets that could run, and null where nothing is known (no train, no quota band).

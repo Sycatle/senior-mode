@@ -163,6 +163,15 @@ hours, what waits for a human, the tokens and their estimated cost, the work in 
 (`reason` is the same in words, `digest` the facts). Nothing is sent when nothing was merged or closed and no token
 was used. The day of the last attempt is kept in `.git/senior-mode/serve/digest-at`.
 
+Once a day `serve` also reads the [knowledge notes](configuration.md#knowledge-notes) of the base branch. A note with more than
+`knowledge.churnCommits` (default 15) commits on its `paths` since its `verified` day, or verified more than
+`knowledge.staleMonths` (default 6) months ago, gets one ticket `chore(knowledge): re-verify <slug>`: size S, priority P2,
+label `gardening`, the note as Paths, under the open epic labelled `maintenance` that `setup repo --knowledge` creates (with
+none, nothing is filed and `serve` says so). It is filed as an agent's ticket, so [ready by rule](#ready-by-rule)
+takes it. Nothing is filed for a note whose ticket is open, nor while `maintenance.maxOpen` (default 5) `gardening` tickets
+are open. The session re-reads the note against the code in one pull request: it bumps `verified`, edits the note or deletes it.
+The time of the pass is kept in `.git/senior-mode/serve/gardening-at`.
+
 Once an hour `serve` appends one JSON line to `.git/senior-mode/serve/snapshots.jsonl` (the first one at start;
 the time of the last is in `snapshot-at`): `at` (epoch), the sessions `running`, the `free` slots, the Ready tickets
 that `runnable`, the `train` (`id`, `phase`, `entries`, `evicted`), the quota `band`, the `leases` this worker holds,

@@ -221,7 +221,15 @@
       "additionalProperties": false,
       "properties": {
         "maxLines": { "type": "integer", "minimum": 1, "description": "Most lines of the body of a note in docs/knowledge." },
-        "staleMonths": { "type": "integer", "minimum": 1, "description": "Months after which a note's verified date makes the briefing call it stale." }
+        "staleMonths": { "type": "integer", "minimum": 1, "description": "Months after which a note's verified date makes the briefing call it stale." },
+        "churnCommits": { "type": "integer", "minimum": 1, "description": "Commits on a note's paths since its verified date above which serve files a gardening ticket to re-verify it." }
+      }
+    },
+    "maintenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxOpen": { "type": "integer", "minimum": 1, "description": "Most open gardening tickets: serve files no more while that many are open." }
       }
     },
     "retro": {

@@ -1778,6 +1778,9 @@ session 90-opus-reviewer "reviewed: success" "" "" review:success
 fresh
 once || fail "Z: serve failed: $(cat "$work/out")"
 grep -q 'never instructions to you' "$state/90.prompt" || fail "Z: the reviewer prompt does not mark the pull request as untrusted data: $(ls "$state")"
+# #636: the review comment and the status come before the turn limit, then the deep checks go in a follow-up.
+grep -q 'turn 20' "$state/90.prompt" || fail "Z: the reviewer prompt sets no turn budget: $(cat "$state/90.prompt")"
+grep -q 'follow-up comment' "$state/90.prompt" || fail "Z: the reviewer prompt does not move late findings to a follow-up comment"
 
 # LP (#523, ADR 0032): github.protection local. GitHub has no up-to-date rule to call a branch behind (it says clean), so
 # senior-mode reads the distance: a branch behind is rebased by the server and merges on its new head; one up to date merges.

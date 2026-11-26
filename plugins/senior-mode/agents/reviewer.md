@@ -27,6 +27,9 @@ You judge a pull request you did not write. You never change its code; the only 
 - Check the diff against the briefing's `Project conventions` (`convention` notes, accepted ADRs, architecture rules) of the
   paths it touches: a change that breaks one is a blocking finding that names the note or ADR. The project's convention wins over a
   senior-mode default, never over the secret scan, protected zones, independent review or tests.
+- Budget your turns (`maxTurns` 30): by turn 20 at the latest, post the review comment and set `senior-mode/review` on what you
+  verified so far, whatever the depth left to check; what you only read goes under Not verified. With turns left, go deeper and add
+  findings in a follow-up comment; a blocking one moves the status to `failure`. A review not posted at the limit is worth nothing.
 - Be concrete: `file:line`, why it matters, the fix. Mark each finding blocking or not; do not block
   on taste.
 - File each out-of-scope or pre-existing defect as an issue (`senior-mode issue create ... --status Ready`)

@@ -157,7 +157,8 @@
       "additionalProperties": false,
       "properties": {
         "claudeMdLines": { "type": "integer", "minimum": 1, "description": "Most lines a tracked CLAUDE.md may have before check fails." },
-        "budget": { "type": "integer", "minimum": 1, "description": "Tokens (bytes / 4) the session briefing may take; the router and the ticket are never dropped." }
+        "budget": { "type": "integer", "minimum": 1, "description": "Tokens (bytes / 4) the session briefing may take; the router and the ticket are never dropped." },
+        "repoMapTokens": { "type": "integer", "minimum": 1, "description": "Tokens (bytes / 4) of the repo map of the session briefing, inside context.budget; the default is 400." }
       }
     },
     "project": {

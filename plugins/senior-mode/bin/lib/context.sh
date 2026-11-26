@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # The briefing of a session (SessionStart hook, spec 0001 §15, spec 325 §3), from stable to variable so the start
 # is the same for every ticket: the router, the overrides, the vision, then what governs the ticket's Paths (ADRs,
-# specs, knowledge notes), then the history of those Paths (recurring findings, reverts, merged commits), the related
+# specs, knowledge notes), then the history of those Paths (recurring findings, reverts, then the repo map of
+# repomap.sh, then the merged commits), the related
 # work (open tickets, framing decisions), then the ticket with its spec and criteria last. It fits `context.budget`
 # tokens (bytes / 4): the router and the ticket are never dropped, the lowest ranked items go first. Without GitHub it
 # is built from files, git and the ticket cache, and says so. Never fails.
@@ -170,7 +171,7 @@ context_extras() {
 # taken in that order until $limit bytes (the room the router and the ticket leave) is full.
 # The candidates of context_extras (extra, already ranked) come after the notes, in their order, and go first when the
 # size is short. Arguments: tp (the ticket's Paths, array), spec (its spec file), extra, now (epoch), cutoff (date a
-# note is stale before), limit (bytes), budget (tokens, for the omission line).
+# note is stale before), limit (bytes), budget (tokens, for the omission line), rmhead (the heading of the repo map).
 # shellcheck disable=SC2016 # a jq program, not shell
 CONTEXT_PICK=$PATHS_DEF'
   def unq: gsub("^[\"\u0027]|[\"\u0027]$"; "");
@@ -202,7 +203,7 @@ CONTEXT_PICK=$PATHS_DEF'
     | def heads: [{t: "adr", h: "ADRs that govern these Paths (accepted):"}, {t: "spec", h: "Specs that govern these Paths (accepted):"},
         {t: "note", h: "Knowledge notes on these Paths (the date says how far to trust one):"},
         {t: "finding", h: "Recurring review findings on these Paths (no knowledge note covers them):"},
-        {t: "revert", h: "Reverted in the last 90 days:"}, {t: "history", h: "History of these Paths (merged, most recent first):"},
+        {t: "revert", h: "Reverted in the last 90 days:"}, {t: "repomap", h: $rmhead}, {t: "history", h: "History of these Paths (merged, most recent first):"},
         {t: "related", h: "Open tickets on these Paths:"}, {t: "decision", h: "Framing decisions of this ticket or its epic (newest first):"}];
       def block($n): [heads[] | . as $s | [$c[:$n][] | select(.type == $s.t) | .line] | select(length > 0) | $s.h + "\n" + join("\n")]
         | if length == 0 then "" else "\n" + join("\n\n") end;
@@ -215,7 +216,7 @@ CONTEXT_PICK=$PATHS_DEF'
 # `senior-mode context`: the briefing, on the output.
 context() {
   local root branch issue json spec status criteria head ticket="" tpaths="[]" budget months cutoff fixed res block omit
-  local rc rows epic epic_text extras="[]" offline=0
+  local rc rows epic epic_text extras="[]" offline=0 rmtokens rmrows
   head=$(context_router)
   root=$(git rev-parse --show-toplevel 2>/dev/null) || { printf '%s\n' "$head"; return 0; }
   if [ ! -f "$root/.claude/senior-mode.json" ]; then
@@ -261,6 +262,14 @@ context() {
       [ -n "$extras" ] || extras="[]"
     fi
     [ "$offline" -eq 0 ] || ticket+=$'\n'"GitHub unreachable: related tickets and review findings omitted"
+    if [ "$tpaths" != "[]" ]; then
+      rmtokens=$(config_get context.repoMapTokens 2>/dev/null) || rmtokens=""
+      [[ $rmtokens =~ ^[1-9][0-9]*$ ]] || rmtokens=400
+      # After the findings and reverts (class 2), before the history (class 3): spec 325 §3.
+      rmrows=$(repomap_lines "$root" "$tpaths" "$rmtokens" | jq -Rnc '[inputs | {cls: 2, type: "repomap", line: .}]' 2>/dev/null) || rmrows=""
+      [ -z "$rmrows" ] || [ "$rmrows" = "[]" ] ||
+        extras=$(jq -c --argjson r "$rmrows" '[.[] | select(.cls <= 2)] + $r + [.[] | select(.cls > 2)]' <<<"$extras" 2>/dev/null) || extras="[]"
+    fi
     budget=$(config_get context.budget 2>/dev/null) || budget=""
     [[ $budget =~ ^[1-9][0-9]*$ ]] || budget=2000
     months=$(config_get knowledge.staleMonths 2>/dev/null) || months=""
@@ -268,7 +277,7 @@ context() {
     cutoff=$(date -u -d "$months months ago" +%F)
     fixed=$(printf '%s\n\n%s\n' "$head" "$ticket" | LC_ALL=C wc -c)
     res=$(jq -Rnc --argjson tp "$tpaths" --arg spec "$spec" --argjson extra "$extras" --argjson now "$(date -u +%s)" --arg cutoff "$cutoff" \
-      --argjson limit "$((budget * 4 - fixed))" --argjson budget "$budget" "$CONTEXT_PICK" <<<"$rows" 2>/dev/null) || res=""
+      --argjson limit "$((budget * 4 - fixed))" --argjson budget "$budget" --arg rmhead "$REPOMAP_HEAD" "$CONTEXT_PICK" <<<"$rows" 2>/dev/null) || res=""
     if [ -n "$res" ]; then
       block=$(jq -r .block <<<"$res")
       omit=$(jq -r .omit <<<"$res")

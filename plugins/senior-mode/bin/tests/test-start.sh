@@ -15,6 +15,7 @@ cat >"$work/stub/gh" <<'STUB'
 echo "$*" >>"$GH_LOG"
 case "$*" in
   "issue view "*) echo "$GH_ISSUE" ;;
+  "pr list "*) echo "${GH_PR_MERGED:-0}" ;;
   "project item-add"*) echo "ITEM" ;;
   "project item-edit"*) ;;
   "api graphql --input -") body=$(cat)
@@ -349,6 +350,29 @@ for bad in "abc|q|a" "310||a" "310|q|" "0|q|a"; do
   decide "$i" "$q" "$a" && fail "frame decide accepted '$bad'"
 done
 (cd "$work" && "$cli" frame decide 310 q a) >"$work/out" 2>"$work/err" && fail "frame decide ran outside a repository"
+
+# #639: frame decide says which branch received the line, and refuses on the default branch and on a branch whose pull
+# request is merged; the log merges as a union, so two framings that each log a decision rebase without a conflict.
+decide 312 "Which branch?" "this one" || fail "frame decide failed: $(cat "$work/err")"
+grep -q 'on branch docs/login-flow' "$work/out" || fail "frame decide does not name its branch: $(cat "$work/out")"
+(cd "$repo" && "$cli" frame decide 313 q a) >"$work/out" 2>"$work/err" && fail "frame decide wrote on the default branch"
+grep -q 'default branch' "$work/err" || fail "default branch refusal not explained: $(cat "$work/err")"
+[ ! -e "$repo/docs/decisions.md" ] || fail "frame decide wrote docs/decisions.md on the default branch"
+GH_PR_MERGED=1 decide 314 q a && fail "frame decide wrote on a branch whose pull request is merged"
+grep -q 'merged' "$work/err" || fail "merged branch refusal not explained: $(cat "$work/err")"
+grep -q '#314' "$log" && fail "a decision was logged on a merged branch"
+[ "$(git -C "$wt/frame-login-flow" check-attr merge -- docs/decisions.md | sed 's/.*: //')" = union ] ||
+  fail "frame decide did not set merge=union for the log: $(cat "$wt/frame-login-flow/.gitattributes" 2>&1)"
+(cd "$wt/frame-other-idea" && "$cli" frame decide 320 "Other question?" "other answer") >"$work/out" 2>"$work/err" || fail "decide on the second framing failed: $(cat "$work/err")"
+git -C "$wt/frame-login-flow" add -A && git -C "$wt/frame-login-flow" commit -q -m "docs: decisions of login-flow"
+git -C "$wt/frame-other-idea" add -A && git -C "$wt/frame-other-idea" commit -q -m "docs: decisions of other-idea"
+git -C "$wt/frame-other-idea" rebase -q docs/login-flow >"$work/out" 2>&1 || {
+  git -C "$wt/frame-other-idea" rebase --abort 2>/dev/null
+  fail "two framings that each log a decision conflict on a rebase: $(cat "$work/out")"
+}
+for n in 310 320; do
+  grep -q "#$n" "$wt/frame-other-idea/docs/decisions.md" || fail "the rebased log lost #$n: $(cat "$wt/frame-other-idea/docs/decisions.md")"
+done
 
 # #311: the Given/When/Then criteria of the body become failing test skeletons, the first commit of a new branch.
 body=$'## Context\n\nx\n\n## Acceptance criteria\n\n- Given a user, when she signs in, then she sees "home".\n- [ ] Given a bad token,\n  when it is sent, then the API says 401.\n- When nothing is said, then nothing happens.\n\n```\n- Given code, it is not read\n```\n'

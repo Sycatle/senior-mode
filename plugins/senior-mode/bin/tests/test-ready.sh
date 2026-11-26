@@ -370,5 +370,53 @@ ready --pr 340 || fail "K: the skeleton of #3410 held #341: $(cat "$work/out")"
 changes 340 src/a.sh:10 tests/ticket-341.test.ts:0 tests/ticket_341_test.go:3
 ready --pr 340 || fail "K: a removed skeleton held the ticket: $(cat "$work/out")"
 
+# L: the hierarchy (#358). With hierarchy.enforce a ticket needs a parent epic under a milestone with a Goal: line,
+# unless it carries an exempt label (security, hotfix) or sits under the maintenance epic.
+config '[]'
+cp "$repo/.claude/senior-mode.json" "$work/config.plain"
+parented() { # <number> <parent json>
+  items=$(jq -c --argjson n "$1" --argjson p "$2" 'map(if .content.number == $n then .content.parent = $p else . end)' <<<"$items")
+}
+epic() { # <number> <labels json> <milestone json>
+  jq -nc --argjson n "$1" --argjson l "$2" --argjson m "$3" '{number: $n, labels: {nodes: ($l | map({name: .}))}, milestone: $m}'
+}
+goal='{"title": "v1.0", "description": "Release gate.\nGoal: G1\n"}'
+nogoal='{"title": "v2.0", "description": "Things we would like."}'
+items="[]"
+item 30 Backlog "P2 later" S - "docs/**" '[]' "$criteria$agent"
+item 31 Backlog "P2 later" S - "docs/**" '[]' "$criteria$agent"
+item 32 Backlog "P2 later" S - "docs/**" '[]' "$criteria$agent"
+item 33 Backlog "P2 later" S - "docs/**" '[]' "$criteria$agent"
+item 34 Backlog "P2 later" S - "docs/**" '["hotfix"]' "$criteria$agent"
+item 35 Backlog "P2 later" S low "docs/**" '["security"]' "$criteria$agent"
+item 36 Backlog "P2 later" S - "docs/**" '[]' "$criteria$agent"
+parented 31 "$(epic 200 '["epic"]' "$goal")"
+parented 32 "$(epic 201 '[]' "$nogoal")"
+parented 33 "$(epic 202 '["maintenance"]' null)"
+parented 36 "$(epic 203 '[]' null)"
+board
+jq '.hierarchy = {enforce: true}' "$work/config.plain" >"$repo/.claude/senior-mode.json"
+ready || fail "L: ready failed: $(cat "$work/err")"
+labelled 30 || fail "L: an orphan was not labelled needs-human"
+grep -F 'issues/30/comments' "$GH_LOG" | grep -q 'no parent epic' || fail "L: the comment does not name the missing link: $(grep 'issues/30/comments' "$GH_LOG")"
+labelled 32 || fail "L: an epic whose milestone has no goal was accepted"
+grep -F 'issues/32/comments' "$GH_LOG" | grep -q 'v2.0' || fail "L: the comment does not name the milestone: $(grep 'issues/32/comments' "$GH_LOG")"
+labelled 36 || fail "L: an epic with no milestone was accepted"
+for n in 31 33 34 35; do
+  said "^#$n Status = Ready" || fail "L: #$n (goal, maintenance, exempt label) is not Ready: $(cat "$work/out")"
+  labelled "$n" && fail "L: #$n got needs-human"
+done
+ready --dry-run || fail "L: dry run failed"
+said '^#30 would get needs-human: .*no parent epic' || fail "L: dry run does not say #30 is an orphan: $(cat "$work/out")"
+# hierarchy.exempt replaces the default list.
+jq '.hierarchy = {enforce: true, exempt: ["chore"]}' "$work/config.plain" >"$repo/.claude/senior-mode.json"
+ready --dry-run || fail "L: dry run with exempt failed"
+said '^#34 would get needs-human: .*no parent epic' || fail "L: hierarchy.exempt did not replace the default: $(cat "$work/out")"
+# Enforcement off (the default): nothing changes.
+cp "$work/config.plain" "$repo/.claude/senior-mode.json"
+ready --dry-run || fail "L: dry run without enforcement failed"
+said '^#30 would be Ready' || fail "L: an orphan is refused without hierarchy.enforce: $(cat "$work/out")"
+said '^#32 would be Ready' || fail "L: a goalless milestone is refused without hierarchy.enforce: $(cat "$work/out")"
+
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

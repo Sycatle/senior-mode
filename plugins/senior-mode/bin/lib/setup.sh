@@ -903,7 +903,7 @@ setup_repo() {
     setup_knowledge ${rest[@]+"${rest[@]}"}
     return
   fi
-  local root file tpl pname preset lang name commands='{}' detected pkgs out ours guard owner subjects="" cmdmap dry=false adopt=false fwd=() fmt
+  local root file tpl pname preset lang name commands='{}' detected pkgs out ours guard owner subjects="" cmdmap dry=false adopt=false fwd=() fmt mv mvcur
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   tpl=$(cd "$(dirname "$SELF")/.." && pwd)
@@ -975,8 +975,16 @@ setup_repo() {
   ours=false
   ! grep -q '^# senior-mode:' "$root/.githooks/commit-msg" 2>/dev/null || ours=true
   [ -z "$owner" ] || { ours=false; subjects=".githooks/commit-subjects --branch"; }
+  # minVersion (#666): the plugin version that writes the file, raised and never lowered, so an older plugin says
+  # "update the plugin" instead of one error per key it does not know.
+  mv=$(plugin_version)
+  case $mv in [0-9]*.[0-9]*.[0-9]*) ;; *) mv="" ;; esac
+  mvcur=$(jq -r '.minVersion // empty | strings' "$file" 2>/dev/null) || mvcur=""
+  case $mvcur in [0-9]*.[0-9]*.[0-9]*) ;; *) mvcur="" ;; esac
+  [ -z "$mv" ] || [ -z "$mvcur" ] || [ "$(printf '%s\n%s\n' "$mvcur" "$mv" | sort -V | tail -n 1)" != "$mvcur" ] || mv=""
   out=0
   json_update "$file" '(if has("$schema") then . else {"$schema": $sch} + . end)
+    | if $mv != "" then .minVersion = $mv else . end
     | .preset = $pn | .commands = ($d.commands // {}) + (.commands // {}) + $c
     | if $d.framework then .framework = $d.framework else . end
     | if ($pk | length) > 0 then .packages = ((.packages // {}) as $e
@@ -994,7 +1002,7 @@ setup_repo() {
       else (($p[0].protected // []) + ($p[0].frameworks[.framework // ""].protected // [])) as $g
         | if ($g | length) > 0 then .protected = $g else . end end' \
     --argjson c "$commands" --argjson ours "$ours" --arg sub "$subjects" --argjson guard "$guard" --slurpfile p "$preset" --arg pn "$pname" \
-    --argjson d "$detected" --argjson pk "$pkgs" --arg sch "$CONFIG_SCHEMA_URL" || out=$?
+    --argjson d "$detected" --argjson pk "$pkgs" --arg sch "$CONFIG_SCHEMA_URL" --arg mv "$mv" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
   echo "preset: $pname$(jq -r --argjson d "$detected" '[if $d.typescript == true then "TypeScript"
     elif $d.typescript == false then "JavaScript" else empty end, .framework // empty]

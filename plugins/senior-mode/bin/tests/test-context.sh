@@ -15,6 +15,7 @@ echo "$*" >>"$GH_LOG"
 [ -z "${GH_FAIL:-}" ] || exit 1
 case "$*" in
   *"issue view"*) printf '%s\n' "$GH_ISSUE" ;;
+  *"pr list"*"--head"*) [ -z "${GH_PRS_FAIL:-}" ] || exit 1; printf '%s\n' "${GH_OPEN_PR:-[]}" ;;
   *"pr list"*) [ -z "${GH_PRS_FAIL:-}" ] || exit 1; printf '%s\n' "${GH_PRS:-[]}" ;;
   *"pr view"*) cat "$GH_DIR/pr-$(sed -E 's/.*pr view ([0-9]+).*/\1/' <<<"$*").json" 2>/dev/null || exit 1 ;;
   *"api graphql"*"--input"*) printf '%s\n' "${GH_BOARD:-}" ;;
@@ -323,6 +324,50 @@ grep -qF "History of these Paths" <<<"$out" && fail "history without Paths: $out
 rm -f "$repo/docs/decisions.md" "$repo/docs/knowledge/zz-covered.md"
 echo '{}' >"$repo/.claude/senior-mode.json"
 unset GH_PRS GH_BOARD GH_PATHS
+
+# A resumed session sees the checkpoint of the draft pull request of its branch just before the ticket (#346).
+git -C "$repo" switch -q feat/12-login
+context "$repo"
+grep -qF "Resumed from checkpoint" <<<"$out" && fail "a checkpoint without a pull request: $out"
+GH_OPEN_PR=$(jq -nc --arg b "Closes #12
+
+<!-- senior-mode:checkpoint -->
+Updated 2026-11-26T10:00:00Z
+
+**Done**
+
+- the schema
+
+**Doing**
+
+- the form
+
+**Next**
+
+- docs
+
+**Assumptions**
+
+- none
+<!-- /senior-mode:checkpoint -->
+
+## Checklist
+- [ ] unrelated" '[{number: 40, body: $b}]')
+export GH_OPEN_PR
+context "$repo"
+for want in "Resumed from checkpoint" "- the schema" "- the form" "- docs"; do
+  grep -qF -- "$want" <<<"$out" || fail "checkpoint: missing '$want' in: $out"
+done
+grep -qF "senior-mode:checkpoint" <<<"$out" && fail "checkpoint: the markers are printed: $out"
+grep -qF "unrelated" <<<"$out" && fail "checkpoint: the text around the block is printed: $out"
+[ "$(grep -n "Resumed from checkpoint" <<<"$out" | cut -d: -f1)" -lt "$(grep -n "Current ticket" <<<"$out" | cut -d: -f1)" ] ||
+  fail "checkpoint: not before the ticket: $out"
+[ "$(grep -n "Current ticket" <<<"$out" | cut -d: -f1)" -gt "$(grep -n -- "- docs" <<<"$out" | cut -d: -f1)" ] || fail "checkpoint: after the ticket: $out"
+GH_OPEN_PR='[{"number":40,"body":"Closes #12\nno block here"}]' context "$repo"
+grep -qF "Resumed from checkpoint" <<<"$out" && fail "checkpoint: printed for a body without a block: $out"
+GH_PRS_FAIL=1 context "$repo"
+grep -qF "Resumed from checkpoint" <<<"$out" && fail "checkpoint: printed while GitHub fails: $out"
+unset GH_OPEN_PR
 
 git -C "$repo" switch -q -c spike-oauth
 context "$repo"

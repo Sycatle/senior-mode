@@ -36,10 +36,27 @@ prompt_plan_outcome() {
   echo "- \`$2plan-rejected: <the architect's last reasons>\` when the architect asks for a second revision of the plan, as above;"
 }
 
+# What a ticket session does at each commit (#346): the checkpoint of the draft pull request of its branch, which a session resumed
+# on that branch reads first (`senior-mode context`). The first checkpoint pushes the branch and opens that pull request.
+prompt_checkpoint() {
+  cat <<TEXT
+   At each commit, and before you stop on a decision or a failure, write a checkpoint:
+   \`senior-mode checkpoint --done <t> --doing <t> --next <t> --assumption <t>\` (an option may be given several times, one item each; a
+   list left out is empty). It replaces the \`<!-- senior-mode:checkpoint -->\` block of the draft pull request of the branch, which the
+   first checkpoint opens, and keeps the plan in it. Never edit that block by hand or drop it when you edit the pull request.
+TEXT
+}
+
+# How the pull request is opened by a ticket session (#346): the draft one that its checkpoints opened is filled in and made ready.
+prompt_pr_open() {
+  echo "fill the draft pull request your checkpoints opened (\`gh pr edit\`, from the template, keeping its checkpoint block; \`gh pr ready\` once it is complete; \`gh pr create\` only if there is none)"
+}
+
 # The task of the headless session of one ticket (spec 0001 §10, ADR 0007): number, title, branch.
 run_prompt() {
-  local nl=$'\n' wf dec plan pout
+  local nl=$'\n' wf dec plan pout ck pr
   wf=$(workflow_prompt_block "$1")
+  ck=$(prompt_checkpoint) pr=$(prompt_pr_open)
   dec=$(prompt_decision '')
   plan=$(prompt_plan "$1")
   pout=$(prompt_plan_outcome "$1" '')
@@ -54,10 +71,11 @@ Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode tea
 2. The test-author agent writes failing tests from the acceptance criteria and records the red run;
    the implementer agent makes them pass (skills tdd, verify, commit): tests land in the same commit
    as the code they cover.
+$ck
 3. A \`type:feature\` or \`type:bug\` ticket needs its tests proven: once they are committed, \`senior-mode red-tests verify $1\`
    (they fail on the base and pass on the head; without that record the pull request is not ready; docs and
-   chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; open a pull request from the
-   template with \`Closes #$1\`, the red run and the Self-review table (run the review checklist on your
+   chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; $pr
+   with \`Closes #$1\`, the red run and the Self-review table (run the review checklist on your
    own diff first; one row per acceptance criterion, \`#$1.<k>\`, with a test name or a command and its
    result as evidence); \`senior-mode publish\`; \`senior-mode preview\` (it only acts when \`deploy.previews\` is \`ready\`);
    \`senior-mode item set $1 Status "In review"\`.
@@ -83,8 +101,9 @@ EOF
 # The task of the headless session of a batch: lead $1, branch $2 and the tickets $3 on, one commit and one `Closes`
 # each, one pull request, an outcome line per ticket.
 run_prompt_batch() {
-  local branch=$2 m list="" closes="" nl=$'\n' wf dec
+  local branch=$2 m list="" closes="" nl=$'\n' wf dec ck pr
   wf=$(workflow_prompt_block "$1")
+  ck=$(prompt_checkpoint) pr=$(prompt_pr_open)
   for m in $3; do
     list+="- #$m (\"${RUN_TITLE[$m]}\")"$'\n'
     closes+="\`Closes #$m\`, "
@@ -101,9 +120,10 @@ $list
 2. One ticket after the other: the test-author agent writes failing tests from its acceptance criteria and
    records the red run; the implementer agent makes them pass (skills tdd, verify, commit). One commit per
    ticket, tests in the same commit as the code they cover, its message ending with \`Refs #<n>\`.
+$ck
 3. A \`type:feature\` or \`type:bug\` ticket needs its tests proven: once they are committed, \`senior-mode red-tests verify <n>\`
    (they fail on the base and pass on the head; without that record the pull request is not ready; docs and
-   chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; open ONE pull request from the template
+   chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; $pr, ONE for all the tickets,
    with one \`Closes #<n>\` line per ticket delivered (${closes%, }), the red runs and the Self-review table
    (one row per acceptance criterion, \`#<n>.<k>\`, with its evidence); \`senior-mode publish\`; \`senior-mode preview\` (it only acts when \`deploy.previews\` is \`ready\`);
    \`senior-mode item set <n> Status "In review"\` for each ticket delivered.
@@ -132,8 +152,9 @@ EOF
 # The prompt of a ticket session under serve (role ticket, ADR 0017): it delivers up to a pull request with
 # senior-mode/ci and senior-mode/security published; the reviewer and the integrator are other sessions.
 serve_prompt() {
-  local tests prove nl=$'\n' wf wrong="" dec plan pout
+  local tests prove nl=$'\n' wf wrong="" dec plan pout ck pr
   wf=$(workflow_prompt_block "$1")
+  ck=$(prompt_checkpoint) pr=$(prompt_pr_open)
   plan=$(prompt_plan "$1")
   pout=$(prompt_plan_outcome "$1" '')
   if [ -f "$SERVE_COMMON/senior-mode/runs/$1/red-tests" ]; then
@@ -162,8 +183,9 @@ questions: decide within the ticket, its spec and the project's rules, or give u
 Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode team:
 1. Read the ticket (\`gh issue view $1\`), its spec and its acceptance criteria.${plan:+$nl$plan}
 $tests
-${prove}\`senior-mode check\` passes on a clean tree; push the branch; open a pull request from the
-   template with \`Closes #$1\`, the red run and the Self-review table (run the review checklist on your
+$ck
+${prove}\`senior-mode check\` passes on a clean tree; push the branch; $pr
+   with \`Closes #$1\`, the red run and the Self-review table (run the review checklist on your
    own diff first; one row per acceptance criterion, \`#$1.<k>\`, with a test name or a command and its
    result as evidence); \`senior-mode publish\`; \`senior-mode preview\` (it only acts when \`deploy.previews\` is \`ready\`);
    \`senior-mode item set $1 Status "In review"\`.
@@ -191,8 +213,9 @@ PROMPT
 # run_prompt. The session has the role ticket and cannot set senior-mode/review (ADR 0017): a reviewer session does.
 # Lead $1, branch $2 and the tickets $3 on.
 serve_prompt_batch() {
-  local branch=$2 m list="" closes="" nl=$'\n' wf dec
+  local branch=$2 m list="" closes="" nl=$'\n' wf dec ck pr
   wf=$(workflow_prompt_block "$1")
+  ck=$(prompt_checkpoint) pr=$(prompt_pr_open)
   for m in $3; do
     list+="- #$m (\"${RUN_TITLE[$m]}\")"$'\n'
     closes+="\`Closes #$m\`, "
@@ -209,9 +232,10 @@ $list
 2. One ticket after the other: the test-author agent writes failing tests from its acceptance criteria and
    records the red run; the implementer agent makes them pass (skills tdd, verify, commit). One commit per
    ticket, tests in the same commit as the code they cover, its message ending with \`Refs #<n>\`.
+$ck
 3. A \`type:feature\` or \`type:bug\` ticket needs its tests proven: once they are committed, \`senior-mode red-tests verify <n>\`
    (they fail on the base and pass on the head; without that record the pull request is not ready; docs and
-   chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; open ONE pull request from the template
+   chore tickets are exempt). Then \`senior-mode check\` passes on a clean tree; push the branch; $pr, ONE for all the tickets,
    with one \`Closes #<n>\` line per ticket delivered (${closes%, }), the red runs and the Self-review table
    (one row per acceptance criterion, \`#<n>.<k>\`, with its evidence); \`senior-mode publish\`; \`senior-mode preview\` (it only acts when \`deploy.previews\` is \`ready\`);
    \`senior-mode item set <n> Status "In review"\` for each ticket delivered.

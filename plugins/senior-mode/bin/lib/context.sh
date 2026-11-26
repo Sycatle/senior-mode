@@ -213,9 +213,20 @@ CONTEXT_PICK=$PATHS_DEF'
       | {omit: omit($n), block: block($n)}
     end'
 
+# The checkpoint of the open pull request of the branch $1 (#346), as the lines a resumed session reads before the ticket;
+# nothing when there is no pull request, no block, or GitHub does not answer. Cut to 2500 bytes, the plan of the block last.
+context_checkpoint() {
+  local prs inner
+  prs=$(gh_bound pr list --head "$1" --state open --json body 2>/dev/null) || return 0
+  inner=$(checkpoint_inner "$(jq -r '.[0].body // ""' <<<"$prs" 2>/dev/null)") || return 0
+  [ -n "$inner" ] || return 0
+  printf 'Resumed from checkpoint (the draft pull request of this branch; go on from it instead of exploring again):\n%s\n' \
+    "$(sed '/^$/d' <<<"$inner" | head -c 2500)"
+}
+
 # `senior-mode context`: the briefing, on the output.
 context() {
-  local root branch issue json spec status criteria head ticket="" tpaths="[]" budget months cutoff fixed res block omit
+  local root branch issue json spec status criteria head ticket="" tpaths="[]" budget months cutoff fixed res block omit resumed=""
   local rc rows epic epic_text extras="[]" offline=0 rmtokens rmrows
   head=$(context_router)
   root=$(git rev-parse --show-toplevel 2>/dev/null) || { printf '%s\n' "$head"; return 0; }
@@ -261,6 +272,7 @@ context() {
       extras=$(context_extras "$root" "$tpaths" "$issue" "$epic" "$([ "$rc" -eq 0 ] && echo live || echo cache)") || offline=1
       [ -n "$extras" ] || extras="[]"
     fi
+    [ "$rc" -ne 0 ] || resumed=$(context_checkpoint "$branch")
     [ "$offline" -eq 0 ] || ticket+=$'\n'"GitHub unreachable: related tickets and review findings omitted"
     if [ "$tpaths" != "[]" ]; then
       rmtokens=$(config_get context.repoMapTokens 2>/dev/null) || rmtokens=""
@@ -275,7 +287,7 @@ context() {
     months=$(config_get knowledge.staleMonths 2>/dev/null) || months=""
     [[ $months =~ ^[1-9][0-9]*$ ]] || months=6
     cutoff=$(date -u -d "$months months ago" +%F)
-    fixed=$(printf '%s\n\n%s\n' "$head" "$ticket" | LC_ALL=C wc -c)
+    fixed=$(printf '%s\n\n%s\n\n%s\n' "$head" "$resumed" "$ticket" | LC_ALL=C wc -c)
     res=$(jq -Rnc --argjson tp "$tpaths" --arg spec "$spec" --argjson extra "$extras" --argjson now "$(date -u +%s)" --arg cutoff "$cutoff" \
       --argjson limit "$((budget * 4 - fixed))" --argjson budget "$budget" --arg rmhead "$REPOMAP_HEAD" "$CONTEXT_PICK" <<<"$rows" 2>/dev/null) || res=""
     if [ -n "$res" ]; then
@@ -285,6 +297,7 @@ context() {
   fi
   printf '%s\n' "$head"
   [ -z "$block" ] || printf '%s\n' "$block"
+  [ -z "$resumed" ] || printf '\n%s\n' "$resumed"
   [ -z "$ticket" ] || printf '\n%s\n' "$ticket"
   [ -z "$omit" ] || printf '%s\n' "$omit"
 }

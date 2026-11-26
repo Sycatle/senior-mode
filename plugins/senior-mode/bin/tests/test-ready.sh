@@ -56,7 +56,7 @@ config() { # protected-globs-json
 config '["auth/**"]'
 
 criteria=$'## Context\n\nx\n\n## Acceptance criteria\n\n- Given a, when b, then c.\n'
-# item <number> <status> <priority|-> <size|-> <severity|-> <paths|-> <labels json> <body> [state]
+# item <number> <status> <priority|-> <size|-> <severity|-> <paths|-> <labels json> <body> [state] [milestone] [open blockers json]
 items="[]"
 item() {
   local fields='[]'
@@ -65,8 +65,9 @@ item() {
   [ "$4" = - ] || fields=$(jq -c --arg v "$4" '. + [{name: $v, field: {name: "Size"}}]' <<<"$fields")
   [ "$5" = - ] || fields=$(jq -c --arg v "$5" '. + [{name: $v, field: {name: "Severity"}}]' <<<"$fields")
   [ "$6" = - ] || fields=$(jq -c --arg v "$6" '. + [{text: $v, field: {name: "Paths"}}]' <<<"$fields")
-  items=$(jq -c --argjson n "$1" --argjson f "$fields" --argjson l "$7" --arg b "$8" --arg s "${9:-OPEN}" \
-    '. + [{fieldValues: {nodes: $f}, content: {authorAssociation: "OWNER", number: $n, state: $s, body: $b, labels: {nodes: ($l | map({name: .}))}}}]' <<<"$items")
+  items=$(jq -c --argjson n "$1" --argjson f "$fields" --argjson l "$7" --arg b "$8" --arg s "${9:-OPEN}" --arg m "${10:-}" --argjson bl "${11:-[]}" \
+    '. + [{fieldValues: {nodes: $f}, content: {authorAssociation: "OWNER", number: $n, state: $s, body: $b, labels: {nodes: ($l | map({name: .}))},
+      milestone: (if $m == "" then null else {title: $m} end), blockedBy: {nodes: ($bl | map({number: ., state: "OPEN"}))}}}]' <<<"$items")
 }
 board() { jq -nc --argjson i "$items" '{data: {node: {items: {pageInfo: {hasNextPage: false}, nodes: $i}}}}' >"$FIX/board.json"; }
 pr() { # number state branch body
@@ -604,6 +605,73 @@ changes 600 src/pricing.sh:6
 : >"$GH_LOG"
 ready --pr 600 || fail "S: a pull request with no test file is not ready: $(cat "$work/out")"
 logged "pulls/600/commits" && fail "S: the commits were read for a pull request with no test file"
+
+# T (#612): a person opts tickets into Ready by rule once, `ready --milestone <m>` or `ready <n>...`, kept in the serve
+# dir of the clone (ready-optin); `ready --optin`, the call serve makes at each poll, then sets each one Ready when it
+# passes the rule and has no open blocker. needs-human tickets stay out; one outside the opt-in is untouched.
+optin="$repo/.git/senior-mode/serve/ready-optin"
+rm -f "$optin"
+items="[]"
+item 90 Backlog "P1 next" S - "docs/**" '[]' "$criteria" OPEN "v1.1"
+item 91 Backlog "P1 next" S - "docs/**" '[]' "$criteria" OPEN "v1.1" '[99]'
+item 92 Backlog "P1 next" S - "docs/**" '["needs-human"]' "$criteria" OPEN "v1.1"
+item 93 Backlog "P1 next" S - - '[]' "$criteria" OPEN "v1.1"
+item 94 Backlog "P1 next" S - "docs/**" '[]' "$criteria" OPEN "v1.2"
+item 95 Backlog "P1 next" S - "docs/**" '[]' "$criteria"
+item 96 Ready "P1 next" S - "docs/**" '[]' "$criteria" OPEN "v1.1"
+item 97 Backlog "P1 next" S - "docs/**" '[]' "$criteria" CLOSED "v1.1"
+board
+ready --optin || fail "T: --optin with no opt-in failed: $(cat "$work/err")"
+said '^no candidate: nothing is opted in' || fail "T: an empty opt-in is not said: $(cat "$work/out")"
+logged "item-edit" && fail "T: a ticket became Ready with no opt-in"
+ready --milestone "v1.1" --dry-run || fail "T: --milestone --dry-run failed: $(cat "$work/err")"
+[ ! -e "$optin" ] || fail "T: --dry-run wrote the opt-in"
+said '^#90 would be Ready' || fail "T: dry-run does not name #90: $(cat "$work/out")"
+ready --milestone "v1.1" || fail "T: --milestone failed: $(cat "$work/err")"
+jq -e '.milestones == ["v1.1"]' "$optin" >/dev/null || fail "T: the opt-in does not hold the milestone: $(cat "$optin" 2>&1)"
+said '^#90 Status = Ready' || fail "T: a ticket of the milestone, no framing pull request, is not Ready: $(cat "$work/out")"
+grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 1 || fail "T: only #90 becomes Ready: $(cat "$GH_LOG")"
+said '^#93 needs-human: .*Paths' || fail "T: an opted-in ticket that fails the rule: $(cat "$work/out")"
+labelled 93 || fail "T: #93 not labelled needs-human"
+grep -qF 'issues/93/comments' "$GH_LOG" || fail "T: no comment on #93"
+said '^ready: 2 considered, 1 set Ready, 1 needs-human; skipped ' || fail "T: the summary does not count #93: $(cat "$work/out")"
+said 'skipped .*1 blocked' || fail "T: the blocked ticket is not in the summary: $(cat "$work/out")"
+for n in 91 92 94 95 96 97; do logged "issues/$n/" && fail "T: #$n was touched"; done
+# Later, from the file alone (what serve calls): the blocker closed, #91 is Ready; #92 and the others stay.
+items="[]"
+item 90 Ready "P1 next" S - "docs/**" '[]' "$criteria" OPEN "v1.1"
+item 91 Backlog "P1 next" S - "docs/**" '[]' "$criteria" OPEN "v1.1"
+item 92 Backlog "P1 next" S - "docs/**" '["needs-human"]' "$criteria" OPEN "v1.1"
+item 94 Backlog "P1 next" S - "docs/**" '[]' "$criteria" OPEN "v1.2"
+board
+ready --optin || fail "T: --optin failed: $(cat "$work/err")"
+said '^#91 Status = Ready' || fail "T: a ticket whose blocker closed is not Ready: $(cat "$work/out")"
+grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 1 || fail "T: only #91 becomes Ready: $(cat "$GH_LOG")"
+labelled 91 && fail "T: #91 labelled needs-human"
+for n in 92 94; do logged "issues/$n/" && fail "T: #$n was touched by --optin"; done
+# Tickets by number: opted in and considered at once; they join the milestone opt-in.
+items="[]"
+item 94 Backlog "P1 next" S - "docs/**" '[]' "$criteria" OPEN "v1.2"
+item 95 Backlog "P1 next" S - "docs/**" '[]' "$criteria"
+item 98 Backlog "P1 next" S - "docs/**" '[]' "$criteria"
+board
+ready 94 95 || fail "T: ready <n>... failed: $(cat "$work/err")"
+jq -e '.tickets == [94, 95] and .milestones == ["v1.1"]' "$optin" >/dev/null || fail "T: the opt-in after ready 94 95: $(cat "$optin")"
+for n in 94 95; do said "^#$n Status = Ready" || fail "T: the named ticket #$n is not Ready: $(cat "$work/out")"; done
+logged "issues/98/" && fail "T: #98, outside the opt-in, was touched"
+ready --optin || fail "T: --optin after ready <n>... failed: $(cat "$work/err")"
+logged "issues/98/" && fail "T: --optin touched #98"
+# A milestone nobody has: said, and still kept (a milestone opt-in is open).
+ready --milestone "v9" || fail "T: an empty milestone fails: $(cat "$work/err")"
+grep -q 'v9' "$work/err" || fail "T: an empty milestone is not said: $(cat "$work/err")"
+# What is not an opt-in is refused, and a damaged file is set aside.
+ready --pr 1 --optin && fail "T: --pr with --optin accepted"
+ready --milestone && fail "T: --milestone with no name accepted"
+ready abc && fail "T: a word taken for a ticket number"
+printf 'not json' >"$optin"
+ready --optin || fail "T: a damaged opt-in file fails: $(cat "$work/err")"
+said '^no candidate: nothing is opted in' || fail "T: a damaged opt-in file is not set aside: $(cat "$work/out")"
+rm -f "$optin"
 
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

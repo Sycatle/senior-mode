@@ -838,8 +838,8 @@ serve_report() {
 }
 
 # Ready by rule (#272), once a poll: `ready --pr <n>` for each framing pull request (branch docs/...) merged since
-# the last poll, then `ready` for the tickets agents filed. The time of the last poll that went well is kept in
-# <serve dir>/ready-last: a failure leaves it, so the pull requests are read again at the next poll, and a
+# the last poll, then `ready` for the tickets agents filed, then `ready --optin` for those a person opted in (#612).
+# The time of the last poll that went well is kept in <serve dir>/ready-last: a failure leaves it, so the pull requests are read again at the next poll, and a
 # restart does not miss what merged while serve was down. The first poll only sets the mark.
 serve_ready() {
   local now last prs pr ok=true
@@ -855,6 +855,7 @@ serve_ready() {
     ok=false
   fi
   "$SELF" ready || ok=false
+  "$SELF" ready --optin || ok=false
   [ "$ok" = false ] || state_put "$SERVE_DIR/ready-last" "$now"
 }
 

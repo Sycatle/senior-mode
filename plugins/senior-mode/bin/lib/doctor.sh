@@ -227,6 +227,22 @@ doctor_config() {
   [ "$n" -gt 0 ] || [ "$w" -gt 0 ] || doctor_add ok config "valid against the schema"
 }
 
+# The type:* labels that `issue create --type` puts on a ticket exist on the repository.
+doctor_type_labels() { # slug config-file
+  local have missing="" t l
+  command -v gh >/dev/null || return 0
+  have=$(gh_bound label list --repo "$1" --limit 200 --json name --jq '.[].name' 2>/dev/null) || return 0
+  for t in feature bug task chore spike; do
+    l=$(workflow_label "" "type:$t")
+    grep -qxF "$l" <<<"$have" || missing+="${missing:+ }$l"
+  done
+  if [ -n "$missing" ]; then
+    doctor_add warn "type labels" "$1 lacks the labels $missing, which issue create --type puts on a ticket" "senior-mode setup github"
+  else
+    doctor_add ok "type labels" "the type:* labels of issue create exist on $1"
+  fi
+}
+
 # The board of the config has its fields; the ruleset required by github.protection exists.
 doctor_github() {
   local file missing protection slug n
@@ -242,6 +258,7 @@ doctor_github() {
   else
     doctor_add warn "board fields" "no Project board in the config" "senior-mode setup github"
   fi
+  slug=$(repo_slug 2>/dev/null) && doctor_type_labels "$slug"
   protection=$(jq -r '.github.protection // empty' "$file")
   case $protection in
     ruleset)

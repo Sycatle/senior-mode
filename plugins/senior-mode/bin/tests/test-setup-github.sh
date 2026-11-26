@@ -504,7 +504,9 @@ setup
 logged "copyProjectV2" && fail "copies the template although a Project has the repository's title"
 [ "$(cfg .project.number)" = 5 ] || fail "Project found by title not used: $(cfg .project.number)"
 [ "$(cfg '.project.fields.Status.options.Icebox')" = O_ice ] || fail "a Project's own option was dropped"
-logged "label create type:" && fail "type labels in an organization (issue types instead)"
+for label in type:feature type:bug type:task type:chore type:spike; do
+  logged "label create $label" || fail "label $label not created in an organization"
+done
 
 # A failing Project command stops setup: no duplicate Project, no empty id cached.
 failing() {

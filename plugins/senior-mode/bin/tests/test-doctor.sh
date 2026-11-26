@@ -40,6 +40,10 @@ case "$1 $2" in
     [ "$w" = contents ] && echo abc123 || echo '[]'
     ;;
   "api repos/o/r/rulesets") [ "${GH_STUB_RULESETS:-1}" != fail ] || exit 1; echo "${GH_STUB_RULESETS:-1}" ;;
+  "label list")
+    [ "${GH_STUB_LABELS:-all}" != fail ] || exit 1
+    [ "${GH_STUB_LABELS:-all}" = all ] && printf 'type:feature\ntype:bug\ntype:task\ntype:chore\ntype:spike\n' || printf '%s\n' "$GH_STUB_LABELS"
+    ;;
   *) exit 1 ;;
 esac
 EOF
@@ -74,7 +78,7 @@ expect_fail() { # case what fix
 # A: everything in place: exit 0, every line ok, nothing overridden.
 config "$good"
 doctor || fail "A: doctor failed: $(cat "$work/out" "$work/err")"
-for c in 'gh auth' 'claude login' 'git hooks' config 'board fields' ruleset; do
+for c in 'gh auth' 'claude login' 'git hooks' config 'board fields' 'type labels' ruleset; do
   grep -q "ok .*$c" "$work/out" || fail "A: $c is not ok: $(cat "$work/out")"
 done
 grep -q 'senior-mode plugin' "$work/out" || fail "A: no version line: $(cat "$work/out")"
@@ -164,6 +168,11 @@ config "$(jq -c 'del(.project.fields.Size)' <<<"$good")"
 expect_fail "E1" 'lacks the fields Size' 'senior-mode setup github'
 config "$good"
 GH_STUB_RULESETS=0 expect_fail "E2" 'no active senior-mode ruleset' 'senior-mode setup github'
+GH_STUB_LABELS='type:bug' doctor || fail "E4: a missing type label fails"
+grep -q 'warn .*type labels.*type:feature type:task type:chore type:spike' "$work/out" || fail "E4: the missing labels are not named: $(cat "$work/out")"
+grep -q 'fix: senior-mode setup github' "$work/out" || fail "E4: no fix: $(cat "$work/out")"
+GH_STUB_LABELS=fail doctor || fail "E5: an unreadable label list fails"
+grep -q 'type labels' "$work/out" && fail "E5: type labels reported with no list"
 GH_STUB_RULESETS=fail doctor || fail "E3: an unreadable ruleset fails"
 grep -q 'warn .*could not read the rulesets' "$work/out" || fail "E3: no warning: $(cat "$work/out")"
 

@@ -290,8 +290,8 @@ YML
   fi
 }
 
-# The labels `setup github` creates, as name|color|description; the type labels only on a personal account
-# (organizations use issue types). `setup remove` deletes them again.
+# The labels `setup github` creates, as name|color|description, the type labels too: `issue create --type` always
+# labels with them, on an organization as well. `setup remove` deletes them again.
 LABELS='needs-human|d93f0b|Waiting for a human decision or merge
 needs-info|fbca04|Missing information before work can start
 needs-decision|d93f0b|Waiting for the answer to a question the session could not settle
@@ -307,8 +307,7 @@ type:spike|d4c5f9|Timeboxed research: a note, an ADR or framed tickets, never me
 
 # `setup github --dry-run`: what a run would do, from the config and read-only calls; nothing is written, on GitHub or here.
 setup_plan() { # config-file owner-type checks slug
-  local file=$1 labels=$LABELS merge globs mode
-  [ "$2" = Organization ] || labels+=$'\n'$TYPE_LABELS
+  local file=$1 labels=$LABELS$'\n'$TYPE_LABELS merge globs mode
   merge=$(jq -r '.workflow.merge // "rebase"' "$file")
   globs=$(jq -c '.protected // []' "$file")
   mode=$(jq -r '.ci.mode // "local"' "$file")
@@ -382,8 +381,7 @@ setup_github() {
   setup_cycle "$id" "$file"
   setup_board_workflows "$id"
 
-  labels=$LABELS
-  [ "$owner_type" = Organization ] || labels+=$'\n'$TYPE_LABELS
+  labels=$LABELS$'\n'$TYPE_LABELS
   # The project's own labels that stand for ours (workflow.labels) are not created a second time.
   made=""
   while IFS='|' read -r label color description; do

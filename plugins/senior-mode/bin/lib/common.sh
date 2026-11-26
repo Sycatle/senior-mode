@@ -24,7 +24,7 @@ DEFAULTS='{
   "docs": { "extra": [] },
   "vision": { "maxLines": 100 },
   "knowledge": { "maxLines": 40, "staleMonths": 6, "churnCommits": 15 },
-  "maintenance": { "share": 0.2, "maxOpen": 5 },
+  "maintenance": { "share": 0.2, "maxOpen": 5, "debt": false },
   "survey": { "maxNotes": 30, "maxAdrs": 10, "maxRules": 15 },
   "context": { "budget": 2000 },
   "retro": { "repeat": 3 },

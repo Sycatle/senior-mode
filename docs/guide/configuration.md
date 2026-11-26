@@ -68,6 +68,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `survey.maxAdrs` | `10` | Most retroactive ADRs the adoption survey writes (a positive whole number) |
 | `survey.maxRules` | `15` | Most `architecture.rules` the adoption survey adds (a positive whole number) |
 | `maintenance.maxOpen` | `5` | Most open tickets labelled `gardening`: `serve` files no more while that many are open (a positive whole number) |
+| `maintenance.debt` | `false` | Set by `setup repo --adopt --debt`: `serve` files the next ranked [debt ticket](#debt-tickets) of a legacy project (`adopt.kind`) when a gardening ticket closes, within `maintenance.maxOpen` |
 | `retro.repeat` | `3` | Tickets with the same `cause:<x>` label on the same paths or skill, in the period, that make [`retro`](commands.md#retro) open one improvement ticket aimed at that cause (a positive whole number) |
 | `bestOf.n` | `2` | Candidates [`serve`](autonomy.md#best-of-n) tries for a ticket whose pull request still has changes requested after its 2 fix rounds, that pull request being the first (1 to 3; `1` turns it off) |
 | `ratchet.lint.command` | the preset's | Lint command whose output the [ratchet](#ratchet-for-legacy-code) reads, in a machine format: ESLint (`--format json`), ruff (`--output-format json`), golangci-lint (`--out-format json`), clippy (`--message-format json`), or a list of `{ "file", "rule", "line" }`; the presets of node, python, go and rust have one, the generic preset none |
@@ -598,6 +599,25 @@ A metric that cannot be read is `not measured`, never guessed: `ratchet` and `ch
 (no lint command with a machine format, or output in none of the known ones) or `coverage: not measured: set ratchet.coverage.report`
 (`check` then only warns about it). `senior-mode ratchet` prints the baseline against the tree for lint, coverage and the
 [architecture rules](#architecture-rules), which keep their own baseline.
+
+### Debt tickets
+
+The debt the baselines freeze is not forgotten: `senior-mode setup repo --adopt --debt` files it as `gardening` tickets under the
+[maintenance budget](autonomy.md#maintenance-budget), for a project recorded as `adopt.kind: "legacy"` (an evergreen one gets none:
+it prints `evergreen project, no debt ticket filed`). The sources are `.claude/ratchet-baseline.json` (lint findings, coverage),
+`.claude/architecture-baseline.json` and the survey's dormant zones (nothing imports them and nothing changed for 12 months).
+
+- **One ticket per metric and directory** at depth 2, ranked by findings (or missing coverage) times the directory's changes over 12 months,
+  so what changes most comes first; the dormant zones come last. Size S, P2, label `gardening`, under the epic labelled `maintenance`
+  (`setup repo --knowledge` creates it), filed as an agent's ticket so [ready by rule](autonomy.md#ready-by-rule) takes it.
+- **Kinds.** `lint` fixes the rule with most findings of its directory; `coverage` writes characterization tests, with no behaviour change,
+  for the least covered file of its directory under `ratchet.patchCoverage`; `architecture` fixes the most repeated baselined violation;
+  `dead` is filed with `needs-human` and no agent mark, in Backlog, and neither `ready` nor `pick` takes it: deleting needs you.
+  Each ticket states in Given/When/Then what leaves the baseline, which `check --update-baseline` then lowers.
+- **Fingerprint.** The body ends with `debt-id: debt:<metric>:<dir>`; nothing is filed while an open ticket carries it.
+- **Budget.** At most `maintenance.maxOpen` tickets labelled `gardening` are open, whatever filed them (the first run files up to the room
+  left). The same run records `maintenance.debt: true` in the adoption pull request: once it is merged, [`serve`](autonomy.md#debt-tickets)
+  files the next ranked ticket when one closes. `--dry-run --debt` prints the tickets it would file and files nothing.
 
 ## Affected packages
 

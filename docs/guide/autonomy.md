@@ -184,6 +184,14 @@ label, epic, dedup (none while a ticket of that title is open) and `maintenance.
 repository whose `docs/architecture.md` has no generated block.
 The time of the pass is kept in `.git/senior-mode/serve/gardening-at`.
 
+### Debt tickets
+
+With `maintenance.debt` true and `adopt.kind` `legacy` on the base branch (`setup repo --adopt --debt` writes the first, the adoption pull
+request the second), each poll reads the open `gardening` tickets; when fewer than `maintenance.maxOpen` are open, `serve` files the next
+ranked [debt tickets](configuration.md#debt-tickets) of the baselines, none for a fingerprint an open ticket carries. A merged ticket lowers
+its baseline entry, so the next one comes by itself. A pass that files nothing is not repeated for an hour
+(`.git/senior-mode/serve/debt-at`). It needs the epic labelled `maintenance`, and says so when there is none.
+
 ### Maintenance budget
 
 `maintenance.share` (default 0.2) of the `autonomy.parallel` slots, rounded up, is kept for tickets labelled `gardening`: with

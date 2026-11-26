@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests for `senior-mode untested` (#422, spec 409 section 6): the files a branch changes that have no tests need a
 # characterization commit first; a refactor leaves the pinned assertions as they are. Offline: a local repository.
+# shellcheck disable=SC2016 # test file contents, not expanded here
 set -u
 cli=$(cd "$(dirname "$0")/.." && pwd)/senior-mode
 work=$(mktemp -d)

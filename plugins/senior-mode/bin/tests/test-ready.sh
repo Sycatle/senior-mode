@@ -424,6 +424,16 @@ cp "$work/config.plain" "$repo/.claude/senior-mode.json"
 ready --dry-run || fail "L: dry run without enforcement failed"
 said '^#30 would be Ready' || fail "L: an orphan is refused without hierarchy.enforce: $(cat "$work/out")"
 said '^#32 would be Ready' || fail "L: a goalless milestone is refused without hierarchy.enforce: $(cat "$work/out")"
+# A ticket under a parent that was full says `Part of #200` in its body (#614): it has a parent epic, with no
+# sub-issue link; a `Part of` line elsewhere than on its own line does not count.
+item 37 Backlog "P2 later" S - "docs/**" '[]' "$criteria$agent"$'\nPart of #200\n'
+item 38 Backlog "P2 later" S - "docs/**" '[]' "$criteria$agent"$'\nThis is not Part of #200 at all\n'
+board
+jq '.hierarchy = {enforce: true}' "$work/config.plain" >"$repo/.claude/senior-mode.json"
+ready --dry-run || fail "L: dry run with a Part of line failed"
+said '^#37 would be Ready' || fail "L: a ticket with a Part of line is an orphan: $(cat "$work/out")"
+said '^#38 would get needs-human: .*no parent epic' || fail "L: Part of in a sentence was taken for a parent: $(cat "$work/out")"
+cp "$work/config.plain" "$repo/.claude/senior-mode.json"
 
 # M: skill evals (#368). An improvement ticket (its body carries the `retro-cause:` line) that changes a skill or
 # an agent needs a before/after eval table in its pull request: several runs, an after score not below the before.

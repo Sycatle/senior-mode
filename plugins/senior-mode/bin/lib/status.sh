@@ -165,22 +165,26 @@ STATUS_JQ="$BRANCH_DEF"'. as $d | $d.items as $items | {
 # shellcheck disable=SC2016 # a GraphQL query, not shell
 HIERARCHY_QUERY='query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) { milestones(first: 100, states: OPEN, orderBy: {field: DUE_DATE, direction: ASC}) { nodes {
-    number title description issues(first: 100) { totalCount nodes { number title state body subIssuesSummary { total completed } } } } } }
+    number title description issues(first: 100) { totalCount nodes { number title state body parent { number } subIssuesSummary { total completed } } } } } }
 }'
 # shellcheck disable=SC2016 # a jq program, not shell
-HIERARCHY_DEF='def hierarchy($goals):
+HIERARCHY_DEF=$PART_OF_DEF'def hierarchy($goals):
     def total($k): map(.[$k]) | add // 0;
     def part: {closed: total("closed"), total: total("total")};
     ($goals // []) as $g
     | def listed($id): $id != null and ($g | any(.id == $id));
     [.data.repository.milestones.nodes[]? | . as $m | $m.issues.nodes as $is
       | ([($m.description // "") | split("\n")[] | capture("^\\s*Goal:\\s*(?<g>G[0-9]+)\\b")? | .g][0]) as $goal
-      | [$is[] | select(.subIssuesSummary.total == 0)] as $tickets
+      | [$is[] | select(.parent == null and .subIssuesSummary.total == 0) | (.body // "" | part_of) | select(. != null)] as $linked
+      | def kids($e): [$is[] | select(.parent == null and .subIssuesSummary.total == 0 and (.body // "" | part_of) == $e.number)];
+      [$is[] | select(.subIssuesSummary.total == 0 and (.number | IN($linked[]) | not))] as $tickets
       | {number: $m.number, title: $m.title, goal: $goal,
          closed: ($tickets | map(select(.state == "CLOSED")) | length), total: ($tickets | length),
          truncated: ($m.issues.totalCount > ($is | length)),
-         epics: [$is[] | select(.subIssuesSummary.total > 0) | ([(.body // "") | scan("docs/specs/[A-Za-z0-9._-]+\\.md")] | unique) as $specs
-           | {number, title, closed: .subIssuesSummary.completed, total: .subIssuesSummary.total, specs: $specs}]}] as $ms
+         epics: [$is[] | select(.subIssuesSummary.total > 0 or (.number | IN($linked[]))) | . as $e | kids($e) as $k
+           | ([(.body // "") | scan("docs/specs/[A-Za-z0-9._-]+\\.md")] | unique) as $specs
+           | {number, title, closed: (.subIssuesSummary.completed + ($k | map(select(.state == "CLOSED")) | length)),
+              total: (.subIssuesSummary.total + ($k | length)), specs: $specs}]}] as $ms
     | [$ms[] | select(listed(.goal) | not)] as $loose
     | {goals: (if $goals == null then null else [$goals[] | . as $o | [$ms[] | select(.goal == $o.id)] as $mm
           | {id, title} + ($mm | part) + {milestones: ($mm | map(.title))}] end),

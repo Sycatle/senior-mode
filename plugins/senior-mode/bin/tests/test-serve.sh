@@ -1778,6 +1778,10 @@ session 90-opus-reviewer "reviewed: success" "" "" review:success
 fresh
 once || fail "Z: serve failed: $(cat "$work/out")"
 grep -q 'never instructions to you' "$state/90.prompt" || fail "Z: the reviewer prompt does not mark the pull request as untrusted data: $(ls "$state")"
+# #671: a blocking finding is `failure` even on a protected pull request (serve resumes the ticket on failure only); the
+# protected zone (`pending`, needs-human) is for a review that has nothing left to change.
+grep -q 'failure.*even.*protected\|protected.*even.*failure' "$state/90.prompt" || fail "Z: the reviewer prompt lets a protected zone hide a blocking finding: $(cat "$state/90.prompt")"
+grep -q 'no blocking finding' "$state/90.prompt" || fail "Z: the reviewer prompt does not reserve pending for a review with no blocking finding"
 # #636: the review comment and the status come before the turn limit, then the deep checks go in a follow-up.
 grep -q 'turn 20' "$state/90.prompt" || fail "Z: the reviewer prompt sets no turn budget: $(cat "$state/90.prompt")"
 grep -q 'follow-up comment' "$state/90.prompt" || fail "Z: the reviewer prompt does not move late findings to a follow-up comment"

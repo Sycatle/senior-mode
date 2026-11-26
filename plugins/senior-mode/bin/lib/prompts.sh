@@ -313,7 +313,9 @@ with its brief, then set senior-mode/review on $4 (\`gh api repos/$RUN_SLUG/stat
 - \`success\` when you approve (the red tests, when the ticket has any, still pass unchanged);
 - \`failure\` when you request changes: the comment lists each blocking finding with its \`file:line\` and the
   fix, because the ticket session is resumed with it;
-- \`pending\` and the label \`needs-human\` when a person must decide (a protected zone, a high or critical finding).
+- \`pending\` and the label \`needs-human\` when a person must decide (a protected zone) and you have no blocking finding:
+  a blocking finding is \`failure\` even on a protected pull request, without the label (a labelled pull request is
+  skipped, so no fix round would start); the person is asked once the review passes.
 You change no file and merge nothing.
 You have 30 turns and a review posted late is worth nothing: by turn 20 at the latest, post the review comment and set
 the status on what you verified so far (what you only read goes under Not verified). With turns left, go deeper and add

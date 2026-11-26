@@ -22,7 +22,8 @@ tests or hooks. Set `pending`, never `success`: a maintainer decides the merge.
 
 Run `senior-mode protected` on the branch. Exit 0 lists files: zone touched, so the verdict is at best
 "approve, human merge": label `needs-human`, set `senior-mode/review` `pending`, never `success`, and
-name the files. Exit 1: the globs miss things, so judge migrations, security, auth, permissions,
+name the files. With a blocking finding set `failure` instead, without the label, and name the files anyway:
+the fix round starts, and the person is asked when the review passes. Exit 1: the globs miss things, so judge migrations, security, auth, permissions,
 secrets, payments, CI, infrastructure, major upgrades, L tickets and ADRs yourself.
 
 ## Checklist

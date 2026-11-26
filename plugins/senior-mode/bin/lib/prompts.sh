@@ -81,13 +81,16 @@ EOF
 # The prompt of a ticket session under serve (role ticket, ADR 0017): it delivers up to a pull request with
 # senior-mode/ci and senior-mode/security published; the reviewer and the integrator are other sessions.
 serve_prompt() {
-  local tests prove nl=$'\n' wf
+  local tests prove nl=$'\n' wf wrong=""
   wf=$(workflow_prompt_block "$1")
   if [ -f "$SERVE_COMMON/senior-mode/runs/$1/red-tests" ]; then
+    wrong="
+- \`wrong-test: <finding>\` when a red test is itself wrong, as said above;"
     tests="2. The failing tests are written and committed already, by a test-author session; they are recorded
    and read-only for you (the guard denies editing, moving or deleting them). The implementer agent makes them
-   pass (skills tdd, verify, commit) and may add tests of its own. A red test that is wrong stays as it is:
-   say so in the pull request."
+   pass (skills tdd, verify, commit) and may add tests of its own. A red test that is wrong (it cannot fail for the
+   right reason, or asks for the wrong behaviour) stays as it is: do not work around it, report it with the
+   outcome \`wrong-test: <what is wrong, the test and the fix>\` (below) and stop; the test-author corrects it once."
     # That record proves the tests already (red_blocker, #563): no red-tests verify.
     prove="3. "
   else
@@ -117,7 +120,7 @@ ${prove}\`senior-mode check\` passes on a clean tree; push the branch; open a pu
 
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the pull request is open with senior-mode/ci and senior-mode/security published;
-- \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
+- \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;${wrong}
 - \`failed: environment: <reason>\` when the machine, not the ticket, is the problem (dependencies that cannot be
   installed, a full disk, a check that is red on the base branch too, gh or Claude not signed in): serve pauses
   until it is healthy, and does not count it against the ticket;
@@ -208,6 +211,28 @@ You change no file and merge nothing.
 
 Last, write one line to the file \$SENIOR_MODE_RUN_OUTCOME: \`reviewed: <the state you set>\`, or
 \`failed: <reason>\` when you could not review.
+PROMPT
+}
+
+# The task of the test-author session of an M ticket whose implementer reported a red test as wrong ($4 its finding), once.
+serve_retest_prompt() {
+  cat <<PROMPT
+You are the test-author session (SENIOR_MODE_ROLE=test-author) of ticket #$1 ("$2") for senior-mode serve on
+$RUN_SLUG, in this worktree, on branch $3, called back once. Nobody will answer questions.
+
+The implementer session builds on your red tests and cannot change them. It reports that one of them is wrong:
+
+$4
+
+Use the test-author agent (skill tdd): read the ticket (\`gh issue view $1\`) and its acceptance criteria, check the
+finding against them, and correct the test so that it fails for the right reason on the code as it stands now
+(run it). Commit the correction alone in a \`test:\` commit with the red output in the body. Edit no production code,
+push nothing, open no pull request: the implementer goes on from your commit. If the finding is mistaken, change
+nothing.
+
+Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
+- \`delivered\` once the correction is committed, or when the tests are right as they are;
+- \`failed: <reason>\` otherwise, in one plain sentence.
 PROMPT
 }
 

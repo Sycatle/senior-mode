@@ -340,8 +340,11 @@ run) denies Edit, Write, MultiEdit and NotebookEdit on a listed file, and the Ba
 write, move or delete one (redirections, `tee`, `rm`, `mv`, `cp`, `sed -i`, `truncate`, `git rm`,
 `git mv`, `git checkout`, `git restore`, the same way as the self-protection above), a directory that
 holds one included, and the list itself. The implementer may add tests of its own. A red test that is
-wrong stays as it is: the pull request says so and a human decides, and the review checks that the
-red tests still pass unchanged.
+wrong stays as it is, and the review checks that the red tests still pass unchanged. Under `serve` the
+implementer reports it with the outcome `wrong-test: <finding>` ([#589](https://github.com/Sycatle/senior-mode/issues/589)):
+`serve` starts the `test-author` session again on the same branch with the finding, once, adds the files it
+changed to the red tests, then starts the implementer again. A second `wrong-test` on the same ticket gives
+the ticket up: back in Backlog with `needs-human`, a person decides.
 
 Limits, as for the other guards: a guardrail for honest mistakes, not a sandbox. `bash -c "..."`,
 `eval`, scripts, a variable that stands for a whole path or endpoint, `python -c` and an editor

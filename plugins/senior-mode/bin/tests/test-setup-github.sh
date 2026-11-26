@@ -1009,7 +1009,22 @@ logged '"public":true' && fail "the new Project made public for a private reposi
 echo '{"language": "fr"}' >"$repo/.claude/senior-mode.json"
 migrate && fail "--migrate succeeds with no Project"
 grep -q "no Project to migrate" "$work/err" || fail "no explanation: $(cat "$work/err")"
-(cd "$repo" && "$cli" setup github --dry-run) >/dev/null 2>&1 && fail "--dry-run accepted without --migrate"
+# --dry-run alone (#596): the plan is printed, nothing is written on GitHub or in the repository, with or without a config.
+cp "$repo/.claude/senior-mode.json" "$work/before"
+: >"$GH_LOG"
+(cd "$repo" && "$cli" setup github --dry-run) >"$work/out" 2>"$work/err" || fail "--dry-run alone refused: $(cat "$work/err")"
+for write in "label create" "repo edit" "-X POST" "-X PUT" "-X PATCH" "workflow disable" "workflow enable" "project link" "project copy"; do
+  logged "$write" && fail "--dry-run alone ran '$write'"
+done
+[ "$(mutations)" = 0 ] || fail "--dry-run alone mutated GitHub: $(grep '^{.*mutation(' "$GH_LOG")"
+cmp -s "$work/before" "$repo/.claude/senior-mode.json" || fail "--dry-run alone wrote the config"
+for want in "Project:" "labels: needs-human" "merges: rebase only" "ruleset senior-mode" "dry run: nothing changed"; do
+  grep -qF -- "$want" "$work/out" || fail "--dry-run alone without '$want': $(cat "$work/out")"
+done
+rm "$repo/.claude/senior-mode.json"
+(cd "$repo" && "$cli" setup github --dry-run) >/dev/null 2>&1 || fail "--dry-run alone refused with no config"
+[ ! -e "$repo/.claude/senior-mode.json" ] || fail "--dry-run alone created the config"
+cp "$work/before" "$repo/.claude/senior-mode.json"
 
 # --upgrade (#298): an existing board gets the fields and options of the template it lacks, nothing else.
 # The board predates 0.5: no Severity, Paths, Iteration, Start or End, a Status that still says Todo, a Priority with

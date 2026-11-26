@@ -399,7 +399,10 @@ protected zone is touched, nothing is `needs-human` and the pull request is [rea
 (with `--auto` when the repository allows auto-merge, falling back to a direct merge) and sets Status Done only once
 the pull request reads back as merged. A pull request behind its base is rebased on the server; when `git range-diff`
 shows the same patches, check and publish run again on the new head and the review carries over, otherwise a new
-review is requested. A conflict starts an Opus `integrator` session on `<branch>-r2` (`-r3` once more, then
+review is requested. When the tree of the new head (`git rev-parse <head>^{tree}`) is that of a commit of the pull request
+with `senior-mode/ci` success, check does not run: the status is carried over to the new head with a description naming the
+tree and the commit, publish only adds the security status, and one comment on the pull request says which tree, which
+commit and that no check ran. A conflict starts an Opus `integrator` session on `<branch>-r2` (`-r3` once more, then
 `needs-human`), whose pull request supersedes and closes the old one. An M ticket without recorded red tests gets a
 `test-author` session before its ticket session. A pull request that can never merge on its own (`autonomy.merge`
 off, `github.protection` none, a protected zone, a pull request that is not ready) gets `needs-human` on itself and its ticket, a comment with the reason

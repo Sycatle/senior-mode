@@ -1564,6 +1564,50 @@ session 71-opus-reviewer "reviewed: success" "" "" review:success
 once || fail "X: serve failed: $(cat "$work/out")"
 grep -q '^app-review-71 opus run=1 role=reviewer$' "$CLAUDE_LOG" || fail "X: a new review is not requested: $(cat "$CLAUDE_LOG")"
 
+# XC: a rebase whose new head has the tree of a commit with senior-mode/ci success (#412) runs no check: the status is carried
+# over with a description naming the tree and the commit, one comment says so; another tree runs check and publish as in X.
+config '{}'
+boardx "90:In review:S:P1 next" "91:In review:S:P1 next"
+prs_reset
+old90=$(mkbranch feat/90-x f90.txt)
+config '{}'
+new90=$(mkrebased feat/90-x "$old90")
+pr 190 feat/90-x "$old90" behind
+green "$old90"
+echo "$new90" >"$FIX/rebase-190"
+fresh
+once || fail "XC: serve failed: $(cat "$work/out")"
+tree90=$(git -C "$repo" rev-parse "$new90^{tree}")
+[ "$(git -C "$repo" rev-parse "$old90^{tree}")" = "$tree90" ] || fail "XC: the fixture's trees differ"
+grep -q '^pr update-branch 190 --rebase' "$GH_LOG" || fail "XC: #90 not rebased: $(grep '^pr ' "$GH_LOG")"
+[ ! -e "$state/90.check.log" ] || fail "XC: check ran on a tree that passed it: $(cat "$state/90.check.log")"
+grep -q "statuses/$new90 .*state=success.*context=senior-mode/ci.*description=carried over from ${old90:0:7}: same tree ${tree90:0:12}" "$GH_LOG" ||
+  fail "XC: the status does not name the tree and the commit: $(grep "statuses/$new90" "$GH_LOG")"
+[ "$(status_of "$new90" senior-mode/ci)" = success ] || fail "XC: no senior-mode/ci success on the new head"
+[ "$(grep -c 'issues/190/comments' "$GH_LOG")" = 1 ] || fail "XC: not one comment: $(grep 'issues/190/comments' "$GH_LOG")"
+grep 'issues/190/comments' "$GH_LOG" | grep -q "${tree90:0:12}.*${old90:0:7}.*no check ran\|${old90:0:7}.*${tree90:0:12}.*no check ran" ||
+  fail "XC: the comment does not say the tree, the commit and that no check ran: $(grep 'issues/190/comments' "$GH_LOG")"
+[ "$(status_of "$new90" senior-mode/review)" = success ] || fail "XC: the review is not carried over"
+grep -q "^pr merge 190 --rebase --match-head-commit $new90 " "$GH_LOG" || fail "XC: not merged on the new head: $(grep '^pr ' "$GH_LOG")"
+# Another tree (main moved on): check and publish run as today.
+prs_reset
+old91=$(mkbranch feat/91-x f91.txt)
+echo moved >"$repo/moved-main.txt"
+git -C "$repo" add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "feat: main moves"
+git -C "$repo" push -q origin main
+new91=$(mkrebased feat/91-x "$old91")
+pr 191 feat/91-x "$old91" behind
+green "$old91"
+echo "$new91" >"$FIX/rebase-191"
+fresh
+once || fail "XC: serve failed: $(cat "$work/out")"
+[ "$(git -C "$repo" rev-parse "$old91^{tree}")" != "$(git -C "$repo" rev-parse "$new91^{tree}")" ] || fail "XC: the fixture's trees are the same"
+[ -e "$state/91.check.log" ] || fail "XC: no check on a tree no check passed"
+grep -q "statuses/$new91 .*context=senior-mode/ci" "$GH_LOG" || fail "XC: publish did not run: $(grep statuses "$GH_LOG")"
+grep -q "statuses/$new91 .*context=senior-mode/ci.*description=carried over from" "$GH_LOG" && fail "XC: a status carried over for another tree"
+grep 'issues/191/comments' "$GH_LOG" | grep -q 'check and publish ran again' || fail "XC: the comment does not say check ran: $(grep 'issues/191/comments' "$GH_LOG")"
+
 # Y: a conflict starts an Opus integrator session on the -r2 branch; its pull request supersedes the old one,
 # which is closed; unresolved, the pull request is needs-human. A resolution tried twice is a person's.
 boardx "80:In review:S:P1 next" "81:In review:S:P1 next" "82:In review:S:P1 next"

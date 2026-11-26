@@ -1208,11 +1208,26 @@ serve_do_merge() {
   fi
 }
 
+# The commit among the commits of the pull request that the head $1 has over the base, and $1 itself, whose tree is $2
+# and whose status senior-mode/ci is success (#412): the tree that `check` already passed. Prints its sha.
+serve_tested_from() {
+  local c
+  while IFS= read -r c; do
+    [ "$(git rev-parse "$c^{tree}" 2>/dev/null)" = "$2" ] || continue
+    [ "$(serve_states "$c" 2>/dev/null | jq -r '.["senior-mode/ci"] // empty')" = success ] || continue
+    echo "$c"
+    return 0
+  done < <(git rev-list -n 50 "$1" "^$RUN_BASE" 2>/dev/null; git rev-parse "$1")
+  return 1
+}
+
 # After a rebase of the pull request $2 (ticket $1) from head $3 to head $4 (branch $5): check and publish on
 # the new head, then the review is carried over when `git range-diff` finds the same patches, or asked again
-# when it finds any change (the head has no review status, so the next poll starts a reviewer).
+# when it finds any change (the head has no review status, so the next poll starts a reviewer). A new head whose
+# tree is one that `check` passed with senior-mode/ci success (#412) runs no check: its result is carried over, the
+# description names the tree and the commit, and publish only adds what depends on the head (security).
 serve_requalify() {
-  local t=$1 pr=$2 old=$3 new=$4 ref=$5 wt log="$SERVE_DIR/$1.check.log" same=false cmd ob nb ci review rd
+  local t=$1 pr=$2 old=$3 new=$4 ref=$5 wt log="$SERVE_DIR/$1.check.log" same=false cmd ob nb ci review rd tree from="" ran
   git_bound fetch -q origin 2>/dev/null || true
   if git cat-file -e "$old^{commit}" 2>/dev/null && git cat-file -e "$new^{commit}" 2>/dev/null &&
     ob=$(git merge-base "$old" "$new") && nb=$(git merge-base "$RUN_BASE" "$new") &&
@@ -1221,21 +1236,34 @@ serve_requalify() {
     awk 'NF && $3 != "=" { bad = 1 } END { exit (bad || NR == 0) }' "$SERVE_DIR/$t.range-diff"; then
     same=true
   fi
-  wt=$(worktree_path "$RUN_ROOT" "integrate-$t")
-  git worktree remove --force "$wt" 2>/dev/null || true
-  if ! git worktree add -q --detach "$wt" "$new" 2>/dev/null; then
-    serve_needs_human "$t" "$pr" "it was rebased on $RUN_BASE but a worktree of the new head could not be opened to check it"
-    return 0
-  fi
-  cmd=$(install_command "$wt")
-  [ -z "$cmd" ] || (cd "$wt" && bash -c "$cmd" </dev/null) >"$log" 2>&1 || true
-  (cd "$wt" && "$SELF" check) >>"$log" 2>&1 || true
-  if ! (cd "$wt" && "$SELF" publish) >>"$log" 2>&1; then
+  tree=$(git rev-parse "$new^{tree}" 2>/dev/null) && from=$(serve_tested_from "$old" "$tree") || from=""
+  if [ -n "$from" ]; then
+    log=$SERVE_DIR/$t.carry.log
+    ran="the tree of the new head (\`${tree:0:12}\`) is the tree of \`${from:0:7}\`, which has senior-mode/ci success, so that status is carried over and no check ran"
+    if ! (cd "$RUN_ROOT" && mkdir -p "$(dirname "$(check_record x)")" &&
+      printf 'success\ncarried over from %s: same tree %s, no check ran\n' "${from:0:7}" "${tree:0:12}" >"$(check_record "$new")" &&
+      "$SELF" publish "$new") >"$log" 2>&1; then
+      serve_needs_human "$t" "$pr" "it was rebased on $RUN_BASE but its check result could not be published (log $log)"
+      return 0
+    fi
+  else
+    ran="check and publish ran again"
+    wt=$(worktree_path "$RUN_ROOT" "integrate-$t")
     git worktree remove --force "$wt" 2>/dev/null || true
-    serve_needs_human "$t" "$pr" "it was rebased on $RUN_BASE but its check result could not be published (log $log)"
-    return 0
+    if ! git worktree add -q --detach "$wt" "$new" 2>/dev/null; then
+      serve_needs_human "$t" "$pr" "it was rebased on $RUN_BASE but a worktree of the new head could not be opened to check it"
+      return 0
+    fi
+    cmd=$(install_command "$wt")
+    [ -z "$cmd" ] || (cd "$wt" && bash -c "$cmd" </dev/null) >"$log" 2>&1 || true
+    (cd "$wt" && "$SELF" check) >>"$log" 2>&1 || true
+    if ! (cd "$wt" && "$SELF" publish) >>"$log" 2>&1; then
+      git worktree remove --force "$wt" 2>/dev/null || true
+      serve_needs_human "$t" "$pr" "it was rebased on $RUN_BASE but its check result could not be published (log $log)"
+      return 0
+    fi
+    git worktree remove --force "$wt" 2>/dev/null || true
   fi
-  git worktree remove --force "$wt" 2>/dev/null || true
   rm -f "$SERVE_DIR/rebased-$pr"
   ci=$(serve_states "$new" | jq -r '.["senior-mode/ci"] // empty') || ci=""
   if [ "$ci" != success ]; then
@@ -1247,9 +1275,9 @@ serve_requalify() {
     gh_retry api "repos/$RUN_SLUG/statuses/$new" -f state=success -f context=senior-mode/review \
       -f description="carried over from ${old:0:7}: git range-diff shows the same patches" >/dev/null ||
       echo "#$t: could not carry the review over to ${new:0:7}" >&2
-    gh_bound api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve rebased this pull request on $RUN_BASE (\`${old:0:7}\` to \`${new:0:7}\`): \`git range-diff\` shows the same patches, so the review of \`${old:0:7}\` is carried over; check and publish ran again." >/dev/null || true
+    gh_bound api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve rebased this pull request on $RUN_BASE (\`${old:0:7}\` to \`${new:0:7}\`): \`git range-diff\` shows the same patches, so the review of \`${old:0:7}\` is carried over; $ran." >/dev/null || true
   else
-    gh_bound api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve rebased this pull request on $RUN_BASE (\`${old:0:7}\` to \`${new:0:7}\`): \`git range-diff\` shows changes, so check and publish ran again and a new review is requested." >/dev/null || true
+    gh_bound api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve rebased this pull request on $RUN_BASE (\`${old:0:7}\` to \`${new:0:7}\`): \`git range-diff\` shows changes, so $ran and a new review is requested." >/dev/null || true
   fi
 }
 

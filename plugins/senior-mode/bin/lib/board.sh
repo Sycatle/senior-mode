@@ -680,7 +680,7 @@ BOARD_QUERY='query($project: ID!, $owner: String!, $name: String!, $after: Strin
       content { ... on Issue { number title url state closedAt updatedAt authorAssociation labels(first: 20) { nodes { name } }
         milestone { title dueOn } blockedBy(first: 20) { nodes { number state } }
         parent { number labels(first: 20) { nodes { name } } milestone { title description } }
-        comments(last: 1) { nodes { body authorAssociation } } } } } } } }
+        comments(last: 10) { nodes { body authorAssociation } } } } } } } }
   repository(owner: $owner, name: $name) @include(if: $repo) {
     latestRelease { tagName publishedAt }
     defaultBranchRef { name }
@@ -798,14 +798,16 @@ board_data() {
     def failing: [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
       | select((.state // "") | IN("FAILURE", "ERROR")) // select((.conclusion // "") | IN("FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE"))
       | .context // .name];
-    def lastc($n): ($n.comments.nodes[0] // null) | if . then {body, assoc: .authorAssociation} else null end;
+    def lastc($n): ($n.comments.nodes[-1] // null) | if . then {body, assoc: .authorAssociation} else null end;
+    def decisionc($n): ([($n.comments.nodes // [])[] | select((.body | contains("<!-- senior-mode:decision -->")) and (.authorAssociation | IN("OWNER", "MEMBER", "COLLABORATOR")))][-1] // null)
+      | if . then {body} else null end;
     (.[0].data.repository // {}) as $r
     | {items: [.[].data.node.items.nodes[] | select(.content.number != null) | .updatedAt as $moved | .id as $iid | (.isArchived // false) as $arch | .content as $c
         | {number: $c.number, title: $c.title, url: $c.url, open: ($c.state == "OPEN"), itemId: $iid, archived: $arch, closedAt: $c.closedAt,
            status: status, priority: single("Priority"), size: single("Size"), severity: single("Severity"), paths: (text("Paths") // ""),
            labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation, milestone: $c.milestone.title, due: $c.milestone.dueOn,
            updated: ([$c.updatedAt, $moved] | map(select(. != null)) | max),
-           blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number], last: lastc($c), parent: ($c.parent | epic_of)}
+           blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number], last: lastc($c), decision: decisionc($c), parent: ($c.parent | epic_of)}
         | . + {orphan: orphan($hier)}],
        hierarchy: {enforce: ($hier.enforce == true)},
        prs: [$r.pullRequests.nodes[]? | {number, title, url, branch: .headRefName, labels: [.labels.nodes[].name], failing: failing,

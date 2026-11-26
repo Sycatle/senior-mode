@@ -136,12 +136,14 @@ for not in "0101-old-auth" "0011-old-store" "0013-billing" "ee-billing"; do
   grep -qF "$not" <<<"$out" && fail "'$not' is in the briefing: $out"
 done
 pos() { grep -nF -- "$1" <<<"$out" | head -n 1 | cut -d: -f1; }
-for pair in "0010-sessions 0100-auth" "0100-auth cc-deep" "cc-deep Current ticket"; do
+# A `convention` note opens the briefing's project block, under `Project conventions`, before the ADRs (spec 409 section 4).
+[ "$(pos "Project conventions")" -lt "$(pos aa-conv)" ] || fail "no Project conventions heading before the note: $out"
+for pair in "aa-conv 0010-sessions" "0010-sessions 0100-auth" "0100-auth cc-deep" "cc-deep Current ticket"; do
   a=${pair%% *} b=${pair#* }
   [ "$(pos "$a")" -lt "$(pos "$b")" ] || fail "'$a' should come before '$b': $out"
 done
 # Ranked by the literal prefix of the overlap, then pitfalls, then the newest verified, then the name.
-for pair in "cc-deep bb-pit" "bb-pit dd-newer" "dd-newer aa-conv" "aa-conv ff-old"; do
+for pair in "cc-deep bb-pit" "bb-pit dd-newer" "dd-newer ff-old"; do
   a=${pair%% *} b=${pair#* }
   [ "$(pos "$a")" -lt "$(pos "$b")" ] || fail "'$a' should be ranked before '$b': $out"
 done
@@ -163,9 +165,9 @@ context "$repo"
 full=$(wc -c <<<"$out")
 [ "$full" -le 8000 ] || fail "default budget (2000 tokens) exceeded: $full bytes"
 grep -q "omitted" <<<"$out" && fail "an omission line when everything fits: $out"
-echo "{\"context\":{\"budget\":$(((full - 250) / 4))}}" >"$repo/.claude/senior-mode.json"
+echo "{\"context\":{\"budget\":$(((full - 130) / 4))}}" >"$repo/.claude/senior-mode.json"
 context "$repo"
-[ "$(wc -c <<<"$out")" -le "$(((full - 250) / 4 * 4))" ] || fail "the briefing is over its budget: $(wc -c <<<"$out") bytes"
+[ "$(wc -c <<<"$out")" -le "$(((full - 130) / 4 * 4))" ] || fail "the briefing is over its budget: $(wc -c <<<"$out") bytes"
 for want in "senior-mode is active" "#12 Let people log in" "Given a user with an account" "Given a wrong password" "docs/adr/0010-sessions.md" "docs/knowledge/cc-deep.md"; do
   grep -qF "$want" <<<"$out" || fail "'$want' dropped by the budget: $out"
 done
@@ -198,7 +200,7 @@ git -C "$repo" switch -q -c feat/13-billing
 # shellcheck disable=SC2016 # backticks are Markdown in the issue body
 GH_ISSUE='{"number":13,"title":"Round money","state":"OPEN","projectItems":[],"body":"Spec: `docs/specs/0003-login.md`.\n\n## Acceptance criteria\n- Given a total, then it is rounded."}'
 GH_PATHS='{"data":{"repository":{"issue":{"projectItems":{"nodes":[{"project":{"id":"P"},"fieldValueByName":{"text":"src/billing/**"}}]}}}}}' context "$repo"
-start() { sed -n '1,/^\(ADRs\|Specs\|Knowledge notes\|Current ticket\)/p' <<<"$1" | sed '$d'; }
+start() { sed -n '1,/^\(Project conventions\|ADRs\|Specs\|Knowledge notes\|Current ticket\)/p' <<<"$1" | sed '$d'; }
 billing=$out
 git -C "$repo" switch -q feat/12-login
 context "$repo"

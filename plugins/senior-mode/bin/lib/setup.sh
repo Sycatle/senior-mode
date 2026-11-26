@@ -870,6 +870,10 @@ setup_repo() {
       echo "config: would write"
       workflow_merged "$cur" | jq '{workflow, adopt, ci}' | jq 'with_entries(select(.value != null))'
       [ "$cur" = "$file" ] || rm -f "$cur"
+      if [ "$WF_ADOPT" = legacy ]; then
+        echo
+        survey_apply "$root" "$root" false
+      fi
       echo "dry run: nothing changed"
       return 0
     fi

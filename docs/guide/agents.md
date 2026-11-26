@@ -48,7 +48,8 @@ Designs before code. It compares at least two real alternatives for each hard-to
 writes the spec and ADRs, and splits work into vertical slices of size S or M with their blockers.
 It writes only under `docs/` (by instruction; during `frame` a hook also enforces it). Its project
 memory is a draft, not the record: `retro` promotes each entry to a [knowledge note](configuration.md#knowledge-notes)
-or drops it.
+or drops it. On a legacy project it writes the drafts of the
+[adoption survey](configuration.md#architecture-survey-of-a-legacy-project) from `senior-mode survey`.
 
 ## `test-author`
 

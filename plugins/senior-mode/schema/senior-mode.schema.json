@@ -225,6 +225,15 @@
         "churnCommits": { "type": "integer", "minimum": 1, "description": "Commits on a note's paths since its verified date above which serve files a gardening ticket to re-verify it." }
       }
     },
+    "survey": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxNotes": { "type": "integer", "minimum": 1, "description": "Most knowledge notes (risk zones included) the adoption survey writes into its pull request; the rest are listed." },
+        "maxAdrs": { "type": "integer", "minimum": 1, "description": "Most retroactive ADRs the adoption survey writes." },
+        "maxRules": { "type": "integer", "minimum": 1, "description": "Most architecture rules the adoption survey adds to architecture.rules." }
+      }
+    },
     "maintenance": {
       "type": "object",
       "additionalProperties": false,

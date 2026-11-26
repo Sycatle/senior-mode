@@ -301,6 +301,25 @@ doctor_customization() {
     | . + {nothing: (.profile == "strict" and (.lifts | length) == 0 and (.overrides | length) == 0 and (.values | length) == 0)}' <<<"$DOCTOR_RES"
 }
 
+# The project has a test command (commands.test, or a check named test), and the test files that exist run somewhere (#638):
+# without one, `red-tests verify` stops and nothing checks the suites.
+doctor_tests() {
+  local root file files n
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  file=$root/.claude/senior-mode.json
+  [ -f "$file" ] && jq empty "$file" 2>/dev/null || return 0
+  jq -e '.commands.test // ([.checks[]? | select(.name == "test" or .name == "tests")][0].run) // empty' "$file" >/dev/null && return 0
+  files=$(project_test_files "$root" 5)
+  if [ -n "$files" ]; then
+    n=$(project_test_files "$root" 1000 | grep -c '')
+    doctor_add warn tests "no test command, and $n test files that no check runs, among them $(paste -sd' ' <<<"$files")" \
+      'senior-mode setup repo --command test="<the command that runs them>"'
+  else
+    doctor_add warn tests "no test command: red-tests verify stops, and a pull request has no tests to run" \
+      'senior-mode setup repo --command test="<the command that runs the tests>"'
+  fi
+}
+
 # `senior-mode doctor [--json]`: runs the checks, prints one line per result and the fix under each failure, then the
 # customization of the repository. Exit 1 when a check failed (a warning does not fail).
 doctor() {
@@ -315,6 +334,7 @@ doctor() {
   doctor_hooks
   doctor_config
   doctor_github
+  doctor_tests
   cust=$(doctor_customization)
   out=$(printf '%s\n' "${DOCTOR_CHECKS[@]}" | jq -sc --argjson c "$cust" '{ok: (map(.level == "fail") | any | not), checks: ., customization: $c}')
   if $json; then

@@ -163,6 +163,28 @@ grep -q 'a person must run' "$work/out" && fail "C5: a writable .git asks for a 
 printf '#!/bin/sh\n# senior-mode hook\n' >"$repo/.githooks/pre-push"
 chmod +x "$repo/.githooks/pre-push"
 
+# C6: tests (#638): no test command and test files that no check runs are named; a test command settles it.
+printf 'x\n' >"$repo/tooling.test.mjs"
+mkdir -p "$repo/node_modules/dep"
+printf 'x\n' >"$repo/node_modules/dep/ignored.test.mjs"
+config "$good"
+doctor || fail "C6: a missing test command fails"
+grep -q 'warn .*tests.*no test command' "$work/out" || fail "C6: no warning: $(cat "$work/out")"
+grep -q 'fix: senior-mode setup repo --command test=' "$work/out" || fail "C6: no fix: $(cat "$work/out")"
+grep -q 'warn .*tests.*tooling.test.mjs' "$work/out" || fail "C6: the test files are not named: $(cat "$work/out")"
+grep -q 'ignored.test.mjs' "$work/out" && fail "C6: a file of node_modules is named"
+config "$(jq -c '.commands.test = "node --test"' <<<"$good")"
+doctor || fail "C7: doctor failed with a test command"
+grep -q 'tests' "$work/out" && grep -q 'warn .*tests' "$work/out" && fail "C7: a test command still warns: $(cat "$work/out")"
+config "$(jq -c '.checks = [{"name": "test", "run": "make test"}]' <<<"$good")"
+doctor || fail "C8: doctor failed with a test check"
+grep -q 'warn .*tests' "$work/out" && fail "C8: a test check still warns: $(cat "$work/out")"
+rm -rf "$repo/tooling.test.mjs" "$repo/node_modules"
+config "$good"
+doctor || fail "C9: doctor failed with no test file"
+grep -q 'warn .*tests.*no test command' "$work/out" || fail "C9: no warning for a missing test command: $(cat "$work/out")"
+config "$good"
+
 # D: config validity: the unknown key and its closest, a deprecated value as a warning only.
 config "$(jq -c '.autonomy = {"maxTicket": 3}' <<<"$good")"
 expect_fail "D1" 'did you mean maxTickets' 'edit .claude/senior-mode.json: maxTickets'

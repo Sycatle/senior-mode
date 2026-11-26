@@ -185,5 +185,28 @@ setup "$d"
 (cd "$d" && "$cli" setup repo --command install="make deps") >/dev/null 2>&1 || fail "--command install refused"
 [ "$(cfg "$d" .commands.install)" = "make deps" ] || fail "--command install not stored: $(cfg "$d" .commands.install)"
 
+# #638: no test script, but node:test suites (here under tooling/ of a pnpm workspace): `node --test` is proposed, as the
+# command and the test check. A test file of another runner (no node:test import) proposes nothing.
+d=$(project nodetest '{"name": "ws", "private": true, "scripts": {"lint": "eslint ."}}' pnpm-lock.yaml)
+mkdir -p "$d/tooling/lib" "$d/node_modules/dep"
+printf "import test from 'node:test';\ntest('a', () => {});\n" >"$d/tooling/lib/a.test.mjs"
+printf "import test from 'node:test';\ntest('b', () => {});\n" >"$d/node_modules/dep/b.test.mjs"
+setup "$d"
+[ "$(cfg "$d" .commands.test)" = "node --test" ] || fail "node:test suites: no node --test command: $(cfg "$d" .commands.test)"
+[ "$(check_run "$d" test)" = "node --test" ] || fail "node:test suites: no test check: $(check_run "$d" test)"
+d=$(project nodetest-dep '{"name": "ws"}' pnpm-lock.yaml)
+mkdir -p "$d/node_modules/dep"
+printf "import test from 'node:test';\n" >"$d/node_modules/dep/b.test.mjs"
+setup "$d"
+[ "$(cfg "$d" '.commands.test // "none"')" = none ] || fail "a test file of node_modules gave a test command: $(cfg "$d" .commands.test)"
+d=$(project jesttest '{"name": "app"}' pnpm-lock.yaml)
+printf "describe('a', () => { it('b', () => {}); });\n" >"$d/a.test.js"
+setup "$d"
+[ "$(cfg "$d" '.commands.test // "none"')" = none ] || fail "a jest file gave node --test: $(cfg "$d" .commands.test)"
+d=$(project scripttest '{"name": "app", "scripts": {"test": "vitest run"}}' pnpm-lock.yaml)
+printf "import test from 'node:test';\n" >"$d/a.test.mjs"
+setup "$d"
+[ "$(cfg "$d" .commands.test)" = "pnpm run test" ] || fail "the test script lost to node --test: $(cfg "$d" .commands.test)"
+
 [ "$failures" -eq 0 ] && echo "setup-node: all cases pass"
 exit "$failures"

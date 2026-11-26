@@ -360,6 +360,15 @@ for f in "$plugin/skills/spec/SKILL.md" "$plugin/../../docs/adr/0002-sources-of-
   [ -f "$f" ] || { fail "$f is missing"; continue; }
   grep -qiE 'CI (check )?enforces|enforced in CI|check enforces' "$f" && fail "$f claims the spec drift is enforced in CI: $(grep -iE 'CI (check )?enforces|enforced in CI|check enforces' "$f")"
 done
+# Framing keeps the hierarchy (#361, spec 325 section 7): a milestone cites a goal chosen with the owner, an epic
+# links exactly one spec, every ticket takes --parent; without docs/vision.md framing is unchanged.
+frame_ref="$plugin/skills/frame/reference.md"
+grep -q 'Goal: G' "$frame_ref" || fail "frame reference does not put a Goal: Gn line in a new milestone"
+grep -qiE 'never invent' "$frame_ref" || fail "frame reference does not forbid inventing a goal"
+grep -qiE 'exactly one spec' "$frame_ref" || fail "frame reference does not say an epic links exactly one spec"
+grep -qiE 'every (ticket|slice).*--parent' "$frame_ref" || fail "frame reference does not require --parent on every ticket"
+grep -qiE 'no vision file|without .docs/vision.md' "$frame_ref" || fail "frame reference does not keep framing unchanged without a vision file"
+grep -q 'Goal: G' "$plugin/../../docs/guide/commands.md" || fail "commands guide does not document the Goal: Gn milestone line"
 # Added suppressions (#437): each added line that silences a check or skips a test is a warning line with
 # file and line; the exit code does not change, and Markdown or a lookalike (`exit(`) is not listed.
 config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'

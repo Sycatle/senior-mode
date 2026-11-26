@@ -57,7 +57,10 @@ State: **Available.**
   recorded as assumed; an L spec and any ADR stay `draft` / `proposed`, with `needs-human`.
   When `docs/vision.md` exists (the owner's goals `G1`... and `## Non-goals`), an idea that contradicts a
   non-goal is not framed: `frame` quotes the non-goal and asks you; headless, it labels the issue
-  `needs-human` and stops.
+  `needs-human` and stops. A milestone `frame` creates then has a `Goal: G<n>` line in its description,
+  the goal chosen with you (when none fits it asks, and never invents one; headless it creates no
+  milestone and labels the issue `needs-human`); each epic links exactly one spec and every ticket of the
+  wave is created under its epic (`--parent`). With no vision file framing is unchanged.
   Each question and the option chosen are appended with the date to `docs/decisions.md` (the decision
   log, written with `senior-mode frame decide`) and cited in a `## Framing` section of the ticket body.
 - **Produces.** A spec in `docs/specs/` (light for M, full for L), ADRs in `docs/adr/`, tickets on

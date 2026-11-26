@@ -246,6 +246,19 @@ doctor_type_labels() { # slug config-file
   fi
 }
 
+# Open issues that are not on the Project (#687): `ready` adds them to Backlog; the board has no "Auto-add to project".
+doctor_orphans() {
+  local nums n
+  command -v gh >/dev/null || return 0
+  nums=$(unboarded_issues 2>/dev/null) || return 0
+  n=$(grep -c . <<<"$nums" || true)
+  if [ "$n" -gt 0 ]; then
+    doctor_add warn "board issues" "$n open issue(s) not on the Project, so ready, pick and serve do not see them" "senior-mode ready (adds them to Backlog), or enable \"Auto-add to project\" in the Project workflows"
+  else
+    doctor_add ok "board issues" "every open issue is on the Project"
+  fi
+}
+
 # The board of the config has its fields; the ruleset required by github.protection exists.
 doctor_github() {
   local file missing protection slug n
@@ -258,6 +271,7 @@ doctor_github() {
     else
       doctor_add ok "board fields" "Status, Priority, Size and Severity are in the config of Project #$(jq -r '.project.number // "?"' "$file")"
     fi
+    doctor_orphans
   else
     doctor_add warn "board fields" "no Project board in the config" "senior-mode setup github"
   fi

@@ -394,6 +394,59 @@ ready_items() {
   jq -c "$READY_ITEMS" <<<"$pages" || die "could not read the Project"
 }
 
+# The open issues of the repository that are not on the Project of the config (#687): "Auto-add to project" cannot be
+# enabled through the API, so an issue filed with plain `gh issue create`, by another tool or by hand never reaches
+# the board. One number per line; an issue labelled wontfix is not one. One paginated query, no call per issue.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+UNBOARDED_QUERY='query($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) { issues(states: OPEN, first: 100, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes { number labels(first: 20) { nodes { name } } projectItems(first: 20) { nodes { project { id } } } } } }
+}'
+unboarded_issues() {
+  local project slug page after="" more=true count=0 err
+  project=$(jq -r '.project.id // empty' "$(config_file)")
+  [ -n "$project" ] || return 1
+  slug=$(repo_slug)
+  while [ "$more" = true ]; do
+    page=$(jq -nc --arg q "$UNBOARDED_QUERY" --arg o "${slug%%/*}" --arg n "${slug#*/}" --arg a "$after" \
+      '{query: $q, variables: ({owner: $o, name: $n} + (if $a == "" then {} else {after: $a} end))}' | board_graphql) || return 1
+    err=$(jq -r '.errors[0].message // empty' <<<"$page" 2>/dev/null) || return 1
+    [ -z "$err" ] || return 1
+    jq -e '.data.repository.issues.nodes | type == "array"' <<<"$page" >/dev/null 2>&1 || return 1
+    jq -r --arg p "$project" '.data.repository.issues.nodes[]
+      | select((.labels.nodes | map(.name) | index("wontfix") | not) and ([.projectItems.nodes[].project.id] | index($p) | not)) | .number' <<<"$page"
+    more=$(jq -r '.data.repository.issues.pageInfo.hasNextPage // false' <<<"$page")
+    after=$(jq -r '.data.repository.issues.pageInfo.endCursor // empty' <<<"$page")
+    count=$((count + 1))
+    [ "$count" -lt 20 ] || break
+  done
+}
+
+# Adds the open issues missing from the Project to Backlog (#687), and says which on one line; says nothing when
+# there are none. With $1 = true, only says which would be. Never Ready: a human-filed issue still goes through
+# framing. A failure is a warning: the sweep must not stop `ready`.
+board_sweep() {
+  local nums n added=() dry=${1:-false}
+  nums=$(unboarded_issues) || {
+    echo "ready: cannot list the open issues missing from the Project; not added to the board" >&2
+    return 0
+  }
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    if [ "$dry" = true ]; then
+      added+=("#$n")
+    elif item_set "$n" Status Backlog >/dev/null; then
+      added+=("#$n")
+    else
+      echo "#$n: could not add the issue to the Project" >&2
+    fi
+  done <<<"$nums"
+  [ "${#added[@]}" -eq 0 ] || {
+    [ "$dry" = true ] && echo "would be added to the board: ${added[*]}" || echo "added to the board: ${added[*]}"
+  }
+}
+
 # The protected globs, JSON, as the default branch has them (a branch cannot lift its own zone), else as the
 # working tree has them.
 ready_zones() {
@@ -682,6 +735,7 @@ ready() {
       die "pull request #$pr is not a framing pull request (its branch is not docs/...)"
     nums=$(jq -c --argjson pr "$pr" '[(.body // "") | scan("#([0-9]+)") | .[0] | tonumber | select(. != $pr)] | unique' <<<"$info")
   fi
+  [ -n "$pr" ] || board_sweep "$dry"
   items=$(ready_items) || exit 1
   zones=$(ready_zones) || exit 1
   hier=$(config_get hierarchy) || exit 1

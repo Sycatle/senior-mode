@@ -37,7 +37,10 @@ case "$1 $2" in
       repos/o/r/actions/*) w=actions ;; *) w=projects ;;
     esac
     case " ${GH_STUB_DENY:-} " in *" $w "*) echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2; exit 1 ;; esac
-    [ "$w" = contents ] && echo abc123 || echo '[]'
+    if [ "$w" = contents ]; then echo abc123
+    elif [ "$w" = projects ] && [ -n "${GH_STUB_ORPHANS:-}" ]; then
+      jq -nc --argjson n "$GH_STUB_ORPHANS" '{data: {repository: {issues: {pageInfo: {hasNextPage: false}, nodes: [range(0; $n) | {number: (. + 1), labels: {nodes: []}, projectItems: {nodes: []}}]}}}}'
+    else echo '[]'; fi
     ;;
   "api repos/o/r/rulesets") [ "${GH_STUB_RULESETS:-1}" != fail ] || exit 1; echo "${GH_STUB_RULESETS:-1}" ;;
   "label list")
@@ -214,6 +217,13 @@ config "$(jq -c '.github.protection = "local"' <<<"$good")"
 doctor || fail "E4: github.protection local fails"
 grep -q 'warn .*github.protection is local' "$work/out" || fail "E4: no warning for local: $(cat "$work/out")"
 config "$good"
+
+# E6 (#687): open issues missing from the Project are warned about, with the fix.
+GH_STUB_ORPHANS=3 doctor || fail "E6: orphan issues fail doctor"
+grep -q 'warn .*board issues.*3 open issue(s) not on the Project' "$work/out" || fail "E6: the orphans are not counted: $(cat "$work/out")"
+grep -q 'fix: senior-mode ready' "$work/out" || fail "E6: no fix: $(cat "$work/out")"
+GH_STUB_ORPHANS=0 doctor || fail "E6: no orphan fails doctor"
+grep -q 'ok .*board issues' "$work/out" || fail "E6: no ok line without orphans: $(cat "$work/out")"
 
 # F: customization: a lift names its ADR, a refused one fails; overrides and layer values are listed.
 printf -- '---\nid: 0016\nstatus: proposed\n---\n' >"$repo/docs/adr/0016-lift.md"

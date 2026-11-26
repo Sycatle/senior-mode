@@ -21,6 +21,7 @@ Language: `senior-mode config get language`. Extra documents: `senior-mode confi
 3. README: fix usage and setup that the change made false. Nothing else.
 4. `docs/architecture.md`: update the sections the change touches (components, data flow, external
    services). Absent: create it from `${CLAUDE_SKILL_DIR}/../../templates/<language>/architecture.md`.
+   Then run `senior-mode architecture --write`: it owns the generated block between its markers.
 5. `docs/changelog.md`: one entry per user-visible PR, newest first: what changed for users, in plain
    words, date, PR link. Create it if absent. It is not release-please's `CHANGELOG.md`.
 6. Link every new ADR from `docs/architecture.md` (Decisions).

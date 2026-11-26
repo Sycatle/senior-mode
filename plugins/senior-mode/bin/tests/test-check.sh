@@ -874,5 +874,28 @@ grep -q 'checks\[0\].tier: secret scan is a built-in' "$work/out" || fail "tiers
 config '{"checks":[{"name":"dependency audit","tier":2,"run":"true"}]}'
 run check && fail "tiers: a tier on the dependency audit is accepted"
 
+# The Claude trailer (#634): with commit.coAuthor false, `check` refuses a branch whose own commits carry a Co-Authored-By trailer
+# naming Claude and names the commit; commits of the default branch are not the branch's own; the check runs only with the key.
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+git -C "$repo" switch -q -c feat/634-x
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}],"commit":{"coAuthor":false}}'
+run check || fail "N: a branch with no trailer fails: $(cat "$work/out")"
+grep -q "commit trailers" "$work/out" || fail "N: the trailer check does not run with commit.coAuthor false: $(cat "$work/out")"
+echo a >"$repo/a.txt"
+commit -m "feat: with a trailer" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+bad=$(git -C "$repo" log -1 --format=%h)
+echo b >"$repo/b.txt"
+commit -m "feat: clean" -m "Refs #634"
+run check && fail "N: a branch commit with a Claude trailer passes"
+grep -qF "$bad feat: with a trailer" "$work/out" || fail "N: the commit is not named: $(cat "$work/out")"
+grep -q "feat: clean" "$work/out" && fail "N: a clean commit is named: $(cat "$work/out")"
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
+run check || fail "N: the trailer is refused although commit.coAuthor is not false: $(cat "$work/out")"
+grep -q "commit trailers" "$work/out" && fail "N: the trailer check runs without the key"
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}],"commit":{"coAuthor":false}}'
+run check || fail "N: a trailer already on the default branch fails the branch: $(cat "$work/out")"
+
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

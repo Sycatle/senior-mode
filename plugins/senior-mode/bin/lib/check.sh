@@ -597,6 +597,25 @@ context_hygiene() {
   }
 }
 
+# The commits of the branch (those the default branch lacks) that carry a Claude trailer (#634): a `Co-Authored-By:` line naming
+# Claude or an anthropic.com address, or the `Generated with Claude Code` line. One line per commit, `<short sha> <subject>`; fails
+# when there is one. Enabled by `commit.coAuthor: false` (the check does not run otherwise). Runs as its own process
+# (`senior-mode commit-trailers`).
+commit_trailers() {
+  local base found="" sha
+  base=$(default_branch) || return 0
+  while IFS= read -r sha; do
+    git log -1 --format=%B "$sha" | grep -qiE '^[[:space:]]*co-authored-by:.*(claude|@anthropic\.com)|generated with \[?claude code' ||
+      continue
+    found+=$(git log -1 --format='%h %s' "$sha")$'\n'
+  done < <(git rev-list "$base..HEAD")
+  [ -z "$found" ] || {
+    echo "commit.coAuthor is false and these commits of the branch carry a Claude trailer (reword them):"
+    printf '%s' "$found"
+    return 1
+  }
+}
+
 # The warning of `check` about suppressions the branch adds (#437): a lint or type check silenced, a test
 # skipped. One line per added line, `file:line` and the text. Never fails: review judges each one, and a
 # suppression with its reason written next to it is legitimate. Markdown is prose, not code: left out.
@@ -827,6 +846,10 @@ check() {
   if [ -d "$root/docs/knowledge" ]; then
     names+=("knowledge")
     cmds+=("$(printf '%q' "$SELF") knowledge-check")
+  fi
+  if [ "$(config_get commit.coAuthor 2>/dev/null)" = false ]; then
+    names+=("commit trailers")
+    cmds+=("$(printf '%q' "$SELF") commit-trailers")
   fi
   if [ "$(config_get architecture.rules 2>/dev/null || echo '[]')" != "[]" ]; then
     names+=("architecture")

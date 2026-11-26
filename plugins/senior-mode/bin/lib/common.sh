@@ -6,6 +6,7 @@ DEFAULTS='{
   "serve": { "interval": 60, "grace": 600, "breakerCooldown": 900, "breakerMax": 14400, "backoffBase": 30, "backoffMax": 900, "callTimeout": 60, "unknownBackoffMax": 60, "unknownMaxAttempts": 3 },
   "notify": { "mention": "", "webhook": "", "digest": true, "digestAt": "", "batchMinutes": 60 },
   "agent": { "command": "claude" },
+  "commit": { "coAuthor": true },
   "e2e": { "slots": 2 },
   "limits": { "prLines": 400, "diffLines": { "S": 300, "M": 800, "L": 2000 } },
   "wip": 1,

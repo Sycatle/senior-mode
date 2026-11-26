@@ -387,6 +387,13 @@
       "additionalProperties": false,
       "properties": { "command": { "type": "string", "minLength": 1 } }
     },
+    "commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "coAuthor": { "type": "boolean", "description": "Whether the commits of run and serve sessions may carry Claude Code's Co-Authored-By trailer; false empties attribution.commit for the sessions and makes check refuse a branch whose commits carry one." }
+      }
+    },
     "process": {
       "type": "object",
       "additionalProperties": false,

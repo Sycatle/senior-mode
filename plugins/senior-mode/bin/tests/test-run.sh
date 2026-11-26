@@ -221,7 +221,7 @@ mkdir -p "$repo/.claude"
 fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2", "In review": "o3", "Backlog": "o0", "Done": "o4"}}}'
 config() {
   jq -n --argjson f "$fields" --argjson a "$1" '{project: {id: "PVT_1", owner: "acme", number: 3, fields: $f}, autonomy: $a}
-    + $ARGS.named' ${2:+--argjson github "$2"} ${3:+--argjson agent "$3"} >"$repo/.claude/senior-mode.json"
+    + $ARGS.named' ${2:+--argjson github "$2"} ${3:+--argjson agent "$3"} ${4:+--argjson commit "$4"} >"$repo/.claude/senior-mode.json"
   git -C "$repo" add -A
   git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: config" --allow-empty
   git -C "$repo" push -q origin main
@@ -720,6 +720,16 @@ line=$(grep '^app-172 ' "$CLAUDE_LOG")
 [[ $line == *"--setting-sources project,local"* && $line != *--strict-mcp-config* ]] ||
   fail "M2: --strict-mcp-config passed under a managed MCP config: $line"
 rm -f "$work/managed-mcp.json"
+# #634: commit.coAuthor false empties attribution.commit for the session, whatever the user settings say; by default nothing is passed.
+grep '^app-172 ' "$CLAUDE_LOG" | grep -q -- '--settings' && fail "M2: --settings passed by default: $(grep '^app-172 ' "$CLAUDE_LOG")"
+for us in false true; do
+  config "{\"userSettings\": $us}" '' '' '{"coAuthor": false}'
+  board 173 '[]'
+  session 173-sonnet delivered pr
+  run || fail "M2: run failed with commit.coAuthor false: $(cat "$work/out")"
+  line=$(grep '^app-173 ' "$CLAUDE_LOG")
+  [[ $line == *"--settings {\"attribution\": {\"commit\": \"\"}}"* ]] || fail "M2: the session of commit.coAuthor false (userSettings $us) keeps the trailer: $line"
+done
 config '{"userSettings": true}'
 git -C "$repo" rm -q .mcp.json && git -C "$repo" -c user.name=t -c user.email=t@t commit -qm "chore: no mcp" && git -C "$repo" push -q origin main
 rm -f "$CLAUDE_CONFIG_DIR/.claude.json"

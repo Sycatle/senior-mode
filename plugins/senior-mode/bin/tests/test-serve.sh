@@ -2514,5 +2514,28 @@ jq -nc '{cause: "deps", since: 1799999000, probe: "expensive", nextProbe: 179999
 SENIOR_MODE_NOW=1800000000 once || fail "PK: serve failed: $(cat "$work/out")"
 [ "$(cat "$work/installs")" = "root" ] || fail "PK: without packages the root command did not run once: $(cat "$work/installs")"
 
+# BR: an end that waits for a person (#672) does not count for the circuit breaker: the ticket is needs-human, back in
+# Backlog, and serve goes on. An outgrown ticket that is only too big counts, as does a failed one.
+config '{"parallel": 3, "maxConsecutiveFailures": 2, "escalate": false}' '{"breakerCooldown": 100}'
+board 40 41
+session 40-sonnet "outgrown: needs a person: the rebased branch needs a force push, denied to agents"
+session 41-sonnet "outgrown: a person must choose between the two documented options"
+fresh
+SENIOR_MODE_NOW=1800000000 once || fail "BR: serve failed: $(cat "$work/out")"
+[ ! -e "$state/paused" ] || fail "BR: two ends that wait for a person paused serve: $(cat "$state/paused")"
+grep -q 'issues/40/labels.*needs-human' "$GH_LOG" || fail "BR: #40 not needs-human: $(cat "$GH_LOG")"
+grep -q 'issues/41/labels.*needs-human' "$GH_LOG" || fail "BR: #41 not needs-human: $(cat "$GH_LOG")"
+board 43
+session 43-sonnet delivered pr
+SENIOR_MODE_NOW=1800000001 once || fail "BR: serve failed: $(cat "$work/out")"
+started 43 || fail "BR: serve did not go on launching: $(cat "$work/out")"
+board 40 41
+session 40-sonnet "outgrown: needs a data migration"
+session 41-sonnet "outgrown: touches twelve modules"
+fresh
+SENIOR_MODE_NOW=1800000000 once || fail "BR: serve failed: $(cat "$work/out")"
+[ "$(sed -n 1p "$state/paused" 2>/dev/null)" = 1800000100 ] || fail "BR: two outgrown tickets did not trip the breaker: $(cat "$work/out")"
+rm -f "$state/paused" "$state/breaker"
+
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

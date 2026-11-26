@@ -20,6 +20,20 @@ git -C "$repo" remote set-head origin main
 g switch -c feat/1-shared && g push -u origin feat/1-shared
 g switch -c feat/2-local
 
+# gh answers only the pull request lookup of a lease-protected force push (#635): the count of open pull requests of a branch,
+# 1 for each branch listed in $work/open-prs, else 0.
+mkdir -p "$work/stub"
+cat >"$work/stub/gh" <<'STUB'
+#!/usr/bin/env bash
+[ "$1 $2" = "pr list" ] || exit 1
+head=""
+while [ $# -gt 0 ]; do [ "$1" = --head ] && head=$2; shift; done
+grep -qxF -- "$head" "$OPEN_PRS" 2>/dev/null && echo 1 || echo 0
+STUB
+chmod +x "$work/stub/gh"
+export PATH="$work/stub:$PATH" OPEN_PRS="$work/open-prs"
+: >"$OPEN_PRS"
+
 decide() { # command [cwd] -> deny or allow
   out=$(jq -nc --arg c "$1" --arg d "${2:-$repo}" \
     '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' | "$hook")
@@ -367,6 +381,45 @@ expect allow 'git commit -m "docs: explain why --no-verify and -n are denied"'
 expect allow 'git log -n 5 --format=%s'
 expect allow 'git reset --hard HEAD~1' feat/2-local
 expect allow 'git reset --soft HEAD~1' main
+
+# #635: the reset rule reads the branch the reset applies to (a switch earlier in the command moves it), and its own target.
+expect allow 'git switch feat/1-shared && git reset -q --hard origin/feat/1-shared && git merge origin/main' main
+expect allow 'git switch feat/1-shared && git reset -q --hard origin/feat/1-shared && git merge origin/main' feat/2-local
+expect allow 'git checkout feat/1-shared && git reset --hard origin/feat/1-shared' main
+expect allow 'git reset --hard origin/feat/1-shared' feat/1-shared
+expect allow 'git reset --hard feat/1-shared@{upstream}' feat/1-shared
+expect allow 'git switch feat/2-local && git reset --hard HEAD~1' main
+expect allow 'git switch -c feat/9-new && git reset --hard HEAD~1' main
+expect deny 'git switch feat/1-shared && git reset --hard HEAD~1' main
+expect deny 'git switch feat/1-shared && git reset --hard origin/main' main
+expect deny 'git switch main && git reset --hard origin/main' feat/2-local
+expect deny 'git switch main && git reset --hard origin/feat/1-shared' feat/2-local
+expect deny 'git reset --hard origin/feat/1-shared' main
+expect deny 'git reset --hard origin/main' main
+
+# #635: --force-with-lease only on the branch of an open ticket pull request, never on the default branch.
+echo feat/1-shared >"$OPEN_PRS"
+expect allow 'git push --force-with-lease origin feat/1-shared' feat/2-local
+expect allow 'git push --force-with-lease' feat/1-shared
+expect allow 'git push -u --force-with-lease origin HEAD' feat/1-shared
+expect allow 'git push --force-with-lease=feat/1-shared:abc123 origin feat/1-shared' feat/2-local
+expect allow 'git push --force-with-lease --force-if-includes origin feat/1-shared' feat/2-local
+expect allow 'git switch feat/1-shared && git push --force-with-lease' main
+expect deny 'git push --force-with-lease origin feat/2-local' feat/2-local
+expect deny 'git push --force-with-lease' feat/2-local
+expect deny 'git push --force-with-lease origin feat/1-shared --force' feat/2-local
+expect deny 'git push --force origin feat/1-shared' feat/2-local
+expect deny 'git push -f origin feat/1-shared' feat/2-local
+expect deny 'git push --force-with-lease origin +feat/1-shared' feat/2-local
+expect deny 'git push --force-with-lease origin feat/1-shared:main' feat/2-local
+expect deny 'git push --force-with-lease origin HEAD:refs/heads/main' feat/1-shared
+expect deny 'git push --force-if-includes origin feat/2-local' feat/2-local
+printf 'main\nhotfix-x\nfeat/1-shared\n' >"$OPEN_PRS"
+expect deny 'git push --force-with-lease origin main' feat/1-shared
+expect deny 'git push --force-with-lease origin HEAD' main
+expect deny 'git push --force-with-lease origin hotfix-x' feat/2-local
+: >"$OPEN_PRS"
+expect deny 'git push --force-with-lease origin feat/1-shared' feat/2-local
 expect allow 'echo git push --force'
 expect allow 'gh pr merge 3 --rebase --delete-branch'
 expect allow 'gh pr comment 3 --body "merge with --admin is for humans"'

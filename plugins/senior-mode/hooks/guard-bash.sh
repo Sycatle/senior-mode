@@ -6,6 +6,9 @@
 # (spec 130); in a session whose SENIOR_MODE_ROLE is not `reviewer`, posting the commit status
 # senior-mode/review (spec 131, ADR 0017); with no role (a manual session) that is allowed. Also credentials
 # in a git URL (#434), and local content sent out by gh gist, curl or wget outside egress.allow (#435).
+# A `git switch <b>` or `git checkout <b>` earlier in the same command moves the branch the git that follows runs on (like a `cd`).
+# `git reset --hard` is read on that branch, and is allowed back to its own remote branch (`origin/<b>`), which drops only local
+# commits; a lease-protected force push (--force-with-lease) is allowed on the branch of an open ticket pull request (#635).
 # Prints a deny decision, or nothing to allow.
 # A guardrail for honest mistakes, not a sandbox: `bash -c "..."`, `eval` and the like are not parsed, and
 # a variable that stands for a whole word is not followed (`git push origin $B`, `gh api -X $M ...`), nor is a
@@ -182,6 +185,9 @@ check_upload() {
 }
 
 current() { git -C "$dir" symbolic-ref --short -q HEAD; }
+# The branch the git of this segment is on: the one an earlier `git switch` or `git checkout` of the command moved to, else the checked out one.
+declare -A moved=()
+branch_now() { if [ -n "${moved[$dir]:-}" ]; then printf '%s\n' "${moved[$dir]}"; else current; fi; }
 is_default() {
   local head
   head=$(git -C "$dir" symbolic-ref --short -q refs/remotes/origin/HEAD)
@@ -240,15 +246,28 @@ var_default() { # ref, as written: [+]src:dst
   return 1
 }
 
+# A ticket branch of senior-mode (`<type>/<n>-<slug>`, or the project's pattern) with an open pull request, and neither the default
+# branch nor a branch that merged: the one branch where a lease-protected force push is allowed (#635). A pull request that cannot be
+# read counts as none.
+lease_ok() { # branch
+  local br=$1 re=${SENIOR_MODE_BRANCH_RE:-'^[a-z]+/(?<n>[0-9]+)(-|$)'} open
+  [ -n "$br" ] && ! is_default "$br" || return 1
+  # The pattern of the project is a PCRE (named group); the shipped one is `<type>/<n>-<slug>`.
+  jq -e -n --arg b "$br" --arg re "$re" '$b | test($re)' >/dev/null 2>&1 || return 1
+  open=$(cd "$dir" 2>/dev/null && timeout 10 gh pr list --head "$br" --state open --json number --jq length 2>/dev/null) || return 1
+  [[ $open =~ ^[1-9][0-9]*$ ]]
+}
+
 check_push() {
-  local remote="" dst refs=() a r
+  local remote="" dst refs=() a r lease=false
   for a in "$@"; do
     case $a in
-      --force-with-lease* | +*:* | -f) deny_force ;;
+      --force-with-lease* | --force-if-includes) lease=true ;;
+      +*:* | -f) deny_force ;;
       --*)
         abbr "$a" --force 3 && deny_force
-        abbr "$a" --force-with-lease 3 && deny_force
-        abbr "$a" --force-if-includes 3 && deny_force
+        abbr "$a" --force-with-lease 3 && lease=true
+        abbr "$a" --force-if-includes 3 && lease=true
         abbr "$a" --all 2 || abbr "$a" --mirror 1 || abbr "$a" --branches 1 &&
           deny "pushing every branch is denied: it includes the default branch."
         ;;
@@ -257,14 +276,17 @@ check_push() {
       *) if [ -z "$remote" ]; then remote=$a; else refs+=("$a"); fi ;;
     esac
   done
-  [ ${#refs[@]} -gt 0 ] || refs=("$(current)")
+  [ ${#refs[@]} -gt 0 ] || refs=("$(branch_now)")
   for r in "${refs[@]}"; do
     [ "${r#+}" = "$r" ] || deny_force
     var_default "$r" && deny "pushing to the default branch is denied: a variable splits the name of the ref ($r), so write it out."
     dst=${r##*:}
-    [ "$dst" = HEAD ] && dst=$(current)
+    [ "$dst" = HEAD ] && dst=$(branch_now)
     dst=${dst#refs/heads/}
     is_default "$dst" && deny "pushing to the default branch ($dst) is denied: open a pull request from a branch."
+    if $lease && ! lease_ok "$dst"; then
+      deny "force-push is denied: it rewrites history others may have fetched. Push new commits instead. --force-with-lease is allowed only on the branch of an open pull request for a ticket (<type>/<n>-<slug>), never on the default branch (${dst:-no branch here})."
+    fi
   done
 }
 
@@ -453,12 +475,37 @@ while IFS= read -r segment; do
       fi
       ;;
     reset)
+      hard=false target=""
       for a in ${args[@]+"${args[@]}"}; do
-        abbr "$a" --hard 1 || continue
-        b=$(current)
-        [ -n "$b" ] && is_shared "$b" &&
-          deny "reset --hard on $b, a shared branch, is denied: use git revert, or reset a local branch."
+        if abbr "$a" --hard 1; then hard=true
+        elif [[ $a != -* && -z $target ]]; then target=$a
+        fi
       done
+      $hard || continue
+      br=$(branch_now)
+      if [ -n "$br" ] && is_shared "$br"; then
+        # Back to its own remote branch drops local commits only, never what others have: allowed, except on the default branch.
+        own=false
+        case $target in "origin/$br" | "$br@{upstream}" | "$br@{u}" | '@{upstream}' | '@{u}') own=true ;; esac
+        if is_default "$br" || [ "$own" = false ]; then
+          deny "reset --hard on $br, a shared branch, is denied: use git revert, or reset a local branch."
+        fi
+      fi
+      ;;
+    switch | checkout)
+      # The branch the commands after this one run on: the new one of -c, -C, -b, -B, else an existing branch (local, or origin's).
+      new=false nb=""
+      for a in ${args[@]+"${args[@]}"}; do
+        case $a in
+          -c | -C | -b | -B | --create | --force-create | --orphan) new=true ;;
+          -*) ;;
+          *) nb=$a; break ;;
+        esac
+      done
+      if [[ -n $nb && $nb != *\$* ]] && { $new || git -C "$dir" rev-parse -q --verify "refs/heads/$nb" >/dev/null ||
+        git -C "$dir" rev-parse -q --verify "refs/remotes/origin/$nb" >/dev/null; }; then
+        moved[$dir]=$nb
+      fi
       ;;
   esac
 done < <(tr ';|&()`' '\n' <<<"$command")

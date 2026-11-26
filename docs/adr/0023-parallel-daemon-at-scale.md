@@ -80,6 +80,6 @@ Amending 0017 (orchestration):
   to the repository; the lease is coordination, not a security boundary. Sandbox proof must confirm that custom refs work on a
   Free private repository under the ruleset.
 - Stacking and the train need `--force-with-lease` pushes of daemon-owned ticket branches; no agent session gains that right
-  (the guard still denies it to them).
+  (the guard still denies it to them, except `--force-with-lease` on the ticket branch of their own open pull request, #635).
 - The weights, the quota bands and the 72-hour aging are first values, measured by the week-long run (#158) and changed by a
   later ADR or the configuration.

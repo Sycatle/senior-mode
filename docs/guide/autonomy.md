@@ -652,7 +652,7 @@ neither `needs-human` nor `needs-info`: with `--pr`, the tickets named (`#n`) in
 framing pull request `n` (its branch must be `docs/...`); without it, the tickets an agent filed, that is
 whose body ends with `filed-by: agent` (`issue create` adds it in an unattended session).
 
-- **Definition of Ready**: acceptance criteria (a list under an `Acceptance criteria` heading), Size,
+- **Definition of Ready**: acceptance criteria (a list under an `Acceptance criteria`, `Acceptance` or `Criteria` heading, any level, case-insensitive), Size,
   Priority and Paths (the text field of the board, globs separated by commas; a board without the field
   counts as no Paths). A ticket that passes is set Ready.
   A ticket can declare the tools its tests or its work need with a `Needs: git-filter-repo, jq` line in its body
@@ -683,7 +683,7 @@ request that closes no ticket is held to neither.
   The answer says by how much it is over.
 - **Self-review** (#356): before asking for review, the session runs the review checklist on its own diff and
   fills the "Self-review" table of the pull request template: one row per acceptance criterion of each ticket
-  closed (the top-level bullets under the issue's "Acceptance criteria" heading, numbered from 1), its first
+  closed (the top-level bullets under the issue's "Acceptance criteria" (or `Acceptance`, `Criteria`) heading, numbered from 1), its first
   cell starting with `#<ticket>.<k>` (`<k>` alone for a single ticket), its last cell the evidence: a test name,
   or a command and its result. A missing row or an empty evidence (`-`, `TODO`, `n/a`) is named. A ticket with
   no acceptance criteria needs no row. It adds to the independent review, never replaces it (ADR 0019).

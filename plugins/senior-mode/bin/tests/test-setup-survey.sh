@@ -123,13 +123,13 @@ grep -qF 'docs/knowledge/n4.md' <<<"$body" || fail "n4 not listed in the pull re
 grep -qF 'docs/knowledge/risk-old.md' <<<"$body" || fail "the risk zone left out is not listed"
 # ADRs: numbered after the existing one; no stated reason is never high; low is proposed.
 a1=$(show "$b" docs/adr/0008-layers.md)
-grep -qx 'confidence: high' <<<"$a1" && grep -qx 'status: accepted' <<<"$a1" && grep -qx 'retroactive: true' <<<"$a1" || fail "ADR with a stated reason: $a1"
+{ grep -qx 'confidence: high' <<<"$a1" && grep -qx 'status: accepted' <<<"$a1" && grep -qx 'retroactive: true' <<<"$a1"; } || fail "ADR with a stated reason: $a1"
 grep -q 'The README says so' <<<"$a1" || fail "the evidenced Why was rewritten: $a1"
 a2=$(show "$b" docs/adr/0009-result.md)
 grep -qx 'confidence: medium' <<<"$a2" || fail "high without evidence not downgraded: $a2"
-grep -qi 'not documented' <<<"$a2" && ! grep -q 'errors are values' <<<"$a2" || fail "an invented Why was kept: $a2"
+{ grep -qi 'not documented' <<<"$a2" && ! grep -q 'errors are values' <<<"$a2"; } || fail "an invented Why was kept: $a2"
 a3=$(show "$b" docs/adr/0010-views.md)
-grep -qx 'confidence: low' <<<"$a3" && grep -qx 'status: proposed' <<<"$a3" || fail "low is not proposed: $a3"
+{ grep -qx 'confidence: low' <<<"$a3" && grep -qx 'status: proposed' <<<"$a3"; } || fail "low is not proposed: $a3"
 grep -qi 'not documented' <<<"$a3" || fail "low without 'not documented': $a3"
 # Rules and baseline; the invalid rule is refused; protected is only proposed.
 [ "$(show "$b" .claude/senior-mode.json | jq -c '[.architecture.rules[].id]')" = '["ui-not-api"]' ] || fail "rules: $(show "$b" .claude/senior-mode.json)"

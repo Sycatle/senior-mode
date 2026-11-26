@@ -2371,5 +2371,43 @@ SENIOR_MODE_NOW=1800003600 once || fail "AF: serve failed: $(cat "$work/out")"
 tail -n 1 "$snaps" | jq -e '.at == 1800003600 and .train == {id: "t1", phase: "checking", entries: 2, evicted: 1} and .band == "reserve 72%" and .held == "paused"' >/dev/null ||
   fail "AF: train, band or hold not in the snapshot: $(tail -n 1 "$snaps")"
 
+# PK: serve installs like start does (#554, spec 325 section 8.1): the base probe runs the install plan, the root's command and
+# one per Go module, each in its directory; a module that fails to install turns the probe red. With no packages the root
+# command runs alone, as before.
+packages_config() { # <root install> <module a install> <module b install>
+  config '{}'
+  mkdir -p "$repo/svc/a" "$repo/svc/b"
+  echo "module a" >"$repo/svc/a/go.mod"
+  echo "module b" >"$repo/svc/b/go.mod"
+  jq --arg r "$1" --arg a "$2" --arg b "$3" '.commands.install = $r
+    | .packages = {".": {preset: "go", commands: {install: $r}}, "svc/a": {preset: "go", commands: {install: $a}}, "svc/b": {preset: "go", commands: {install: $b}}}' \
+    "$repo/.claude/senior-mode.json" >"$work/cfg" && mv "$work/cfg" "$repo/.claude/senior-mode.json"
+  git -C "$repo" add -A
+  git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: packages"
+  git -C "$repo" push -q origin main
+  fresh
+  mkdir -p "$state"
+  jq -nc '{cause: "deps", since: 1799999000, probe: "expensive", nextProbe: 1799999500, detail: "the install command fails"}' >"$state/held"
+  : >"$work/installs"
+}
+board
+packages_config "echo root \$(basename \$PWD) >>$work/installs" "echo a \$(basename \$PWD) >>$work/installs" "echo b \$(basename \$PWD) >>$work/installs"
+SENIOR_MODE_NOW=1800000000 once || fail "PK: serve failed: $(cat "$work/out")"
+[ "$(tr '\n' ';' <"$work/installs")" = "root probe-env;a a;b b;" ] || fail "PK: the probe did not install the root and each module in its directory: $(cat "$work/installs")"
+[ ! -e "$state/held" ] || fail "PK: a green install plan kept the hold: $(cat "$state/held")"
+packages_config "echo root >>$work/installs" "echo a >>$work/installs; exit 1" "echo b >>$work/installs"
+SENIOR_MODE_NOW=1800000000 once || fail "PK: serve failed: $(cat "$work/out")"
+[ -s "$state/held" ] || fail "PK: a module that fails to install did not turn the probe red: $(cat "$work/out")"
+config '{}'
+jq --arg r "echo root >>$work/installs" '.commands.install = $r' "$repo/.claude/senior-mode.json" >"$work/cfg" && mv "$work/cfg" "$repo/.claude/senior-mode.json"
+git -C "$repo" -c user.name=t -c user.email=t@t commit -qam "chore: install command"
+git -C "$repo" push -q origin main
+fresh
+mkdir -p "$state"
+jq -nc '{cause: "deps", since: 1799999000, probe: "expensive", nextProbe: 1799999500, detail: "x"}' >"$state/held"
+: >"$work/installs"
+SENIOR_MODE_NOW=1800000000 once || fail "PK: serve failed: $(cat "$work/out")"
+[ "$(cat "$work/installs")" = "root" ] || fail "PK: without packages the root command did not run once: $(cat "$work/installs")"
+
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

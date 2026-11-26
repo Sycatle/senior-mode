@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests for `senior-mode architecture` (#347, spec 325 §6.4): the generated map, its block in docs/architecture.md and
 # the drift warning of `check`. Offline.
+# shellcheck disable=SC2016 # backticks in the expected Markdown, not command substitutions
 set -u
 cli=$(cd "$(dirname "$0")/.." && pwd)/senior-mode
 work=$(mktemp -d)
@@ -110,4 +111,5 @@ grep -q 'out of date' "$work/out" && fail "warning with no block recorded: $(cat
 
 run architecture --bogus && fail "an unknown option is accepted"
 
-[ "$failures" -eq 0 ] && echo "test-architecture: ok" || { echo "test-architecture: $failures failure(s)"; exit 1; }
+[ "$failures" -eq 0 ] && echo "architecture: all cases pass"
+exit "$failures"

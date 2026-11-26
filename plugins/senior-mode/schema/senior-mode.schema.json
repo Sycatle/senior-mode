@@ -254,7 +254,8 @@
       "additionalProperties": false,
       "properties": {
         "share": { "type": "number", "minimum": 0, "maximum": 1, "description": "Share of autonomy.parallel slots serve keeps for Ready gardening tickets (ceil of share times parallel); 0 reserves none." },
-        "maxOpen": { "type": "integer", "minimum": 1, "description": "Most open gardening tickets: serve files no more while that many are open." }
+        "maxOpen": { "type": "integer", "minimum": 1, "description": "Most open gardening tickets: serve files no more while that many are open." },
+        "debt": { "type": "boolean", "description": "Turns the legacy debt of the baselines into gardening tickets: set by setup repo --adopt --debt, then serve files the next ranked ticket when one closes, within maxOpen. Needs adopt.kind legacy." }
       }
     },
     "bestOf": {

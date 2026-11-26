@@ -2456,6 +2456,67 @@ rm -f "$state/gardening-at"
 once || fail "GA: serve failed: $(cat "$work/out")"
 [ ! -e "$state/gardening-at" ] || fail "GA: a pass kept with no architecture.md and no notes"
 
+# DB: debt tickets (#424, spec 409 section 7). With maintenance.debt and adopt.kind legacy on the base branch, serve files the next
+# ranked ticket of the baselines when the open gardening tickets leave room under maintenance.maxOpen, none for an open fingerprint;
+# a pass that files nothing waits an hour. Real dates: the churn of src/db<i> is its i commits.
+db_titles() { jq -r '[.[] | select(.number >= 500) | .title | sub("^chore\\(lint\\): fix no-var findings in src/"; "")] | join(" ")' "$FIX/issues.json"; }
+db_baseline() { # <last directory number>
+  jq -nc --argjson n "$1" '{version: 1, lint: {total: ($n * 3), files: ([range(1; $n + 1)] | map({key: "src/db\(.)/a.ts", value: {"no-var": 3}}) | from_entries)}}' >"$repo/.claude/ratchet-baseline.json"
+  git -C "$repo" add -A
+  git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: ratchet baseline" --allow-empty
+  git -C "$repo" push -q origin main
+}
+config '{}'
+board
+for i in 1 2 3; do
+  mkdir -p "$repo/src/db$i"
+  for k in $(seq "$i"); do
+    echo "export const v$k = $i" >>"$repo/src/db$i/a.ts"
+    git -C "$repo" add -A
+    git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "feat: db$i $k"
+  done
+done
+db_baseline 3
+echo "[$gd_epic]" >"$FIX/issues.json"
+fresh
+# Not turned on: nothing is filed.
+SENIOR_MODE_NOW=$now once || fail "DB: serve failed: $(cat "$work/out")"
+[ -z "$(db_titles)" ] || fail "DB: debt tickets without maintenance.debt: $(db_titles)"
+# Turned on, a legacy project, room for two: the two most findings times churn, db3 then db2, under the epic, as agent's tickets.
+gd_config '.maintenance = {maxOpen: 2, debt: true} | .adopt = {kind: "legacy"}'
+rm -f "$FIX/sub-issues"
+SENIOR_MODE_NOW=$now once || fail "DB: serve failed: $(cat "$work/out")"
+[ "$(db_titles)" = "db3 db2" ] || fail "DB: expected db3 db2, got: $(db_titles): $(cat "$work/out")"
+[ "$(wc -l <"$FIX/sub-issues")" = 2 ] || fail "DB: the tickets are not under the maintenance epic: $(cat "$FIX/sub-issues" 2>&1)"
+grep -qx 'debt-id: debt:lint:src/db3' "$FIX/body-500" || fail "DB: no fingerprint in the first ticket: $(cat "$FIX/body-500" 2>&1)"
+grep -q 'filed-by: agent' "$FIX/body-500" || fail "DB: the ticket is not an agent's, so ready would not take it: $(cat "$FIX/body-500")"
+! git -C "$repo" worktree list | grep -q '/tree ' || fail "DB: a worktree is left: $(git -C "$repo" worktree list)"
+# db3 is fixed and merged (its entry left the baseline), db2 is still open: the next ranked ticket, db1, is filed on the next poll.
+db_baseline 2
+jq -nc --argjson e "$gd_epic" '[$e, {number: 501, title: "chore(lint): fix no-var findings in src/db2", body: "debt-id: debt:lint:src/db2\n", labels: [{name: "gardening"}]}]' >"$FIX/issues.json"
+SENIOR_MODE_NOW=$((now + 60)) once || fail "DB: serve failed: $(cat "$work/out")"
+[ "$(db_titles)" = "db2 db1" ] || fail "DB: expected db1 filed next, within maxOpen: $(db_titles)"
+# Nothing left to file waits an hour: a debt that appears meanwhile is filed after it.
+jq -nc '{version: 1, lint: {total: 0, files: {}}}' >"$repo/.claude/ratchet-baseline.json"
+git -C "$repo" add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -qm "chore: empty baseline"
+git -C "$repo" push -q origin main
+echo "[$gd_epic]" >"$FIX/issues.json"
+SENIOR_MODE_NOW=$((now + 120)) once || fail "DB: serve failed: $(cat "$work/out")"
+[ -z "$(db_titles)" ] || fail "DB: a ticket with no debt left: $(db_titles)"
+[ "$(cat "$state/debt-at")" = $((now + 120)) ] || fail "DB: the empty pass is not kept: $(cat "$state/debt-at" 2>&1)"
+db_baseline 3
+SENIOR_MODE_NOW=$((now + 180)) once || fail "DB: serve failed: $(cat "$work/out")"
+[ -z "$(db_titles)" ] || fail "DB: a pass within the hour: $(db_titles)"
+SENIOR_MODE_NOW=$((now + 120 + 3600)) once || fail "DB: serve failed: $(cat "$work/out")"
+[ "$(db_titles)" = "db3 db2" ] || fail "DB: the pass after the hour did not file db3 db2: $(db_titles)"
+# An evergreen project, or maintenance.debt turned off: none.
+gd_config '.adopt = {kind: "evergreen"}'
+echo "[$gd_epic]" >"$FIX/issues.json"
+rm -f "$state/debt-at"
+SENIOR_MODE_NOW=$((now + 9000)) once || fail "DB: serve failed: $(cat "$work/out")"
+[ -z "$(db_titles)" ] || fail "DB: debt tickets for an evergreen project: $(db_titles)"
+
 # AF: the hourly snapshot (#423): one JSON line in snapshots.jsonl the first poll and then once an hour, with the sessions
 # running, the free slots, the Ready tickets that could run, and null where nothing is known (no train, no quota band).
 config '{"parallel": 2}'

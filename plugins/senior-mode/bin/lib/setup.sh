@@ -903,7 +903,7 @@ setup_repo() {
     setup_knowledge ${rest[@]+"${rest[@]}"}
     return
   fi
-  local root file tpl pname preset lang name commands='{}' detected pkgs out ours guard owner subjects="" cmdmap dry=false adopt=false fwd=() fmt mv mvcur
+  local root file tpl pname preset lang name commands='{}' detected pkgs out ours guard owner subjects="" cmdmap dry=false adopt=false debt=false fwd=() fmt mv mvcur
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   tpl=$(cd "$(dirname "$SELF")/.." && pwd)
@@ -918,6 +918,7 @@ setup_repo() {
     case $1 in
       --dry-run) dry=true; shift; continue ;;
       --adopt) adopt=true; shift; continue ;;
+      --debt) debt=true; fwd+=(--debt); shift; continue ;;
     esac
     [ "$1" = --command ] && [[ ${2:-} == ?*=?* ]] || usage
     jq -e --arg k "${2%%=*}" '.commands + ["install"] | index($k)' "$preset" >/dev/null ||
@@ -927,6 +928,7 @@ setup_repo() {
     shift 2
   done
   [ "$dry" = false ] || [ "$adopt" = false ] || usage
+  [ "$debt" = false ] || [ "$adopt" = true ] || [ "$dry" = true ] || [ -n "${WF_ADOPTING:-}" ] || usage
   [ ! -f "$file" ] || jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; fix or remove it, then run setup again"
   # What the project already does (spec 409): read first, nothing written yet.
   cmdmap='{}'
@@ -947,11 +949,13 @@ setup_repo() {
         echo
         survey_apply "$root" "$root" false
       fi
+      [ "$debt" = false ] || debt_adopt "$root" --dry-run
       echo "dry run: nothing changed"
       return 0
     fi
     [ "$cur" = "$file" ] || rm -f "$cur"
     workflow_adopt_pr "$root" "$(workflow_report)" ${fwd[@]+"${fwd[@]}"}
+    [ "$debt" = false ] || debt_adopt "$root"
     return 0
   fi
   mkdir -p "$root/.claude"
@@ -985,6 +989,7 @@ setup_repo() {
   out=0
   json_update "$file" '(if has("$schema") then . else {"$schema": $sch} + . end)
     | if $mv != "" then .minVersion = $mv else . end
+    | if $debt then .maintenance.debt = true else . end
     | .preset = $pn | .commands = ($d.commands // {}) + (.commands // {}) + $c
     | if $d.framework then .framework = $d.framework else . end
     | if ($pk | length) > 0 then .packages = ((.packages // {}) as $e
@@ -1002,7 +1007,7 @@ setup_repo() {
       else (($p[0].protected // []) + ($p[0].frameworks[.framework // ""].protected // [])) as $g
         | if ($g | length) > 0 then .protected = $g else . end end' \
     --argjson c "$commands" --argjson ours "$ours" --arg sub "$subjects" --argjson guard "$guard" --slurpfile p "$preset" --arg pn "$pname" \
-    --argjson d "$detected" --argjson pk "$pkgs" --arg sch "$CONFIG_SCHEMA_URL" --arg mv "$mv" || out=$?
+    --argjson d "$detected" --argjson pk "$pkgs" --arg sch "$CONFIG_SCHEMA_URL" --arg mv "$mv" --argjson debt "$debt" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
   echo "preset: $pname$(jq -r --argjson d "$detected" '[if $d.typescript == true then "TypeScript"
     elif $d.typescript == false then "JavaScript" else empty end, .framework // empty]

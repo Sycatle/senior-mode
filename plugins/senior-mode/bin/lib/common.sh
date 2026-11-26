@@ -27,6 +27,7 @@ DEFAULTS='{
   "survey": { "maxNotes": 30, "maxAdrs": 10, "maxRules": 15 },
   "context": { "budget": 2000 },
   "retro": { "repeat": 3 },
+  "bestOf": { "n": 2 },
   "architecture": { "rules": [] },
   "github": { "protection": "", "requiredChecks": true },
   "deploy": { "previews": "platform" }

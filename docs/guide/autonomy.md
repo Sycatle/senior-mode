@@ -741,6 +741,17 @@ is not fatal: it is set aside as `<file>.corrupt-<epoch>` (kept 7 days, said onc
 the temporary files of a write that a kill cut are removed. A `serve.pid` whose process is not a `senior-mode` is
 replaced; one that is refuses the second `serve`.
 
+### Best-of-N
+
+A ticket whose pull request still has changes requested after its 2 fix rounds has failed once. With
+`bestOf.n` at its default of 2 (3 at most; `1` turns it off), `serve` then tries one more candidate instead of
+calling a person: a new session starts from the base branch, on `<branch>-b2` in its own worktree
+(`-b3` for a third), told what the first attempt got wrong and not to copy it. The candidates run one after
+the other; each takes a slot and counts against `autonomy.sessionsPerHour`. The first candidate whose
+review passes merges like any pull request, and the other pull requests of the ticket are closed with a
+comment that names the winner. A candidate whose review fails is closed, with no fix rounds. When every
+candidate has failed, the ticket is `needs-human` as before. A ticket that never failed runs once.
+
 ### The watchdog
 
 At each poll `serve` looks at the activity of every live session: the worktree (`HEAD`, `git status`, the newest file

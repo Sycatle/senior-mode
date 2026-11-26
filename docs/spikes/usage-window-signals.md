@@ -9,7 +9,7 @@ Feeds #376 (spec `docs/specs/327-parallelism-and-scale.md` §6).
 | Source | Exists | Fields |
 | --- | --- | --- |
 | `rate_limit_event` in the stream | yes | see below |
-| Statusline input | not observed | not run (see below) |
+| Statusline input | yes, per the changelog (not run) | `rate_limits`: 5-hour and 7-day windows, `used_percentage`, `resets_at` (see below) |
 | Final `result` JSON | no | no rate or limit field |
 | None | fallback | reactive hold of §6 |
 
@@ -33,9 +33,19 @@ in both runs made. Captured sample (session ids and uuid dropped):
 
 ### 2. Statusline input
 
-Claude Code documents a statusline command that receives session JSON on stdin. Testing it needed a `statusLine` entry in a
-`.claude/settings.json`, which the run's guard rails refuse an agent to write, so it was **not tested**. A statusline is an
-interactive-UI feature and is not known to run under `-p`; #376 does not depend on it.
+Claude Code documents a statusline command that receives session JSON on stdin. Running it needed a `statusLine` entry in a
+`.claude/settings.json`, which the run's guard rails refuse an agent to write, so it was **not run and no sample was
+captured**. What the Claude Code changelog (`~/.claude/cache/changelog.md`, read on 2.1.326) records:
+
+- 2.1.80: "Added `rate_limits` field to statusline scripts for displaying Claude.ai rate limit usage (5-hour and 7-day
+  windows with `used_percentage` and `resets_at`)". So the field exists from 2.1.80, hence on 2.1.311. The changelog does not
+  give the exact keys of the two windows or the unit of `resets_at`.
+- It is only filled for Claude.ai subscribers; a later fix stops it showing a window's pre-reset percentage after the
+  window reset while the session was idle (the value is refreshed by API calls, as for the stream event).
+- `rate_limits.spend_limit` (`used_usd`, `limit_usd`, `period`) exists only behind a Claude apps gateway: not relevant here.
+
+Nothing in the changelog or in `claude --help` says the statusline command runs under `-p`; it is an interactive-UI feature.
+#376 does not depend on it: the stream event (§1) carries the same two windows without a settings entry.
 
 ### 3. Final `result` JSON
 

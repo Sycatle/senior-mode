@@ -52,6 +52,8 @@ usage() {
 . "$LIB/status.sh"
 # shellcheck source=lib/context.sh
 . "$LIB/context.sh"
+# shellcheck source=lib/repomap.sh
+. "$LIB/repomap.sh"
 # shellcheck source=lib/retro-learn.sh
 . "$LIB/retro-learn.sh"
 # shellcheck source=lib/retro-notes.sh

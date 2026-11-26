@@ -36,6 +36,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `setup-remove.sh`: `setup remove` (files through a pull request, ruleset, labels, workflows).
 - `status.sh`: `status`, hygiene, health, `retro`, `statusline`.
 - `context.sh`: `context` (the session briefing: selection, ranking and budget of specs, ADRs and notes).
+- `checkpoint.sh`: `checkpoint` (the `senior-mode:checkpoint` block of the ticket's draft pull request; read back by `context` and by the plan guard of `run`).
 - `repomap.sh`: the repo map of the briefing (symbols and signatures of the ticket's Paths, ctags or regex, index cached by tree sha).
 - `retro-learn.sh`: failure causes and improvement tickets of `retro`.
 - `retro-notes.sh`: notes to merge or delete and agent memory drafts, the facts of the `retro` knowledge pull request.

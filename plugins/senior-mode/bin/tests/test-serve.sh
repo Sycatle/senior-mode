@@ -1323,6 +1323,10 @@ outcome_of 66 failed UP
 grep -q 'no plan' "$state/66.json" || fail "UP: the reason does not say the plan is missing: $(cat "$state/66.json")"
 outcome_of 67 delivered UP
 grep -q 'Plan first' "$state/67.prompt" && fail "UP: an S ticket has a plan step"
+# #346: the ticket session writes a checkpoint at each commit and fills in the draft pull request.
+for want in 'senior-mode checkpoint --done' 'senior-mode:checkpoint -->' 'gh pr ready'; do
+  grep -qF -- "$want" "$state/67.prompt" || fail "UP: the ticket prompt misses '$want'"
+done
 rm -f "$FIX"/plan-6*
 config '{}'
 

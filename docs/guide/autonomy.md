@@ -381,8 +381,17 @@ plans and the architect's answers, set it back to Backlog and keep its branch an
 Opus and the circuit breaker does not count it. A session that says `delivered` without a last answer `approve` in
 the file, or after two `revise`, is a failed ticket (`no plan: ...`). An S ticket, and a batch, have no plan step. Under
 `serve` the red tests of an M ticket are written before its plan, by the `test-author` session; the plan comes before the
-implementer's code. Until session checkpoints exist ([#346](https://github.com/Sycatle/senior-mode/issues/346)) the plan file is the plan block;
+implementer's code. The plan lives in the checkpoint block of the pull request too (below): `senior-mode checkpoint` copies the plan
+file into it, and a session that delivers with no plan file (resumed in a new session, the file empty) is checked against the plan in the block;
 the size is the one the serve process read from the board, so a ticket resumed by a restarted `serve` has no plan check.
+
+**Session checkpoints ([#346](https://github.com/Sycatle/senior-mode/issues/346)).** The prompt of a ticket session (`run`, `serve`,
+single ticket or batch) asks for `senior-mode checkpoint --done <t> --doing <t> --next <t> --assumption <t>` at each commit and before
+it stops on a decision or a failure. The first one pushes the branch and opens the draft pull request of the ticket; each rewrites its
+`<!-- senior-mode:checkpoint -->` block (done, doing, next, assumptions, plan) and nothing else. When the session delivers it fills
+that pull request in from the template, keeping the block, and marks it ready (`serve` ignores a draft). A session resumed on the
+branch (a decision reply, the reviewer's findings, a restart) gets the block in its briefing as `Resumed from checkpoint`, just before
+the ticket (`senior-mode context`), instead of exploring the code again; the `decision:` comment on the ticket carries the block too.
 
 Limits, as for the other guards: a guardrail for honest mistakes, not a sandbox. `bash -c "..."`,
 `eval`, scripts, a variable that stands for a whole path or endpoint, `python -c` and an editor

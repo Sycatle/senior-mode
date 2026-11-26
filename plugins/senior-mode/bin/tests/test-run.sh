@@ -1273,7 +1273,10 @@ config '{"maxTickets": 3}'
 board 710 '[]' 711 '[]' 712 '["needs-decision"]'
 session 710-sonnet "decision: Which table owns the audit trail? | Add a new table audit_log | done: tests written, next: the migration"
 session 711-sonnet delivered pr
+# #346: the checkpoint block of the draft pull request of the ticket goes in the comment.
+echo '[{"number": 810, "body": "Closes #710\n\n<!-- senior-mode:checkpoint -->\n**Done**\n\n- the audit schema\n<!-- /senior-mode:checkpoint -->\n\nafter"}]' >"$FIX/pulls-710"
 run || fail "Y: run failed: $(cat "$work/out")"
+rm -f "$FIX/pulls-710"
 grep -q 'app-710 opus' "$CLAUDE_LOG" && fail "Y: a decision was retried on Opus"
 grep -q 'app-711' "$CLAUDE_LOG" || fail "Y: the run did not go on with the next ticket"
 grep -q 'app-712' "$CLAUDE_LOG" && fail "Y: a needs-decision ticket was picked"
@@ -1283,6 +1286,11 @@ c=$(grep -A8 'issues/710/comments -f body=<!-- senior-mode:decision' "$GH_LOG" |
 for want in 'Which table owns the audit trail?' 'Add a new table audit_log' 'tests written, next: the migration'; do
   grep -qF "$want" <<<"$c" || fail "Y: the comment on #710 misses '$want': $c"
 done
+c=$(grep -A24 'issues/710/comments -f body=<!-- senior-mode:decision' "$GH_LOG" || true)
+for want in 'Checkpoint block of the draft pull request' '- the audit schema'; do
+  grep -qF -- "$want" <<<"$c" || fail "Y: the comment on #710 misses the checkpoint block ('$want'): $c"
+done
+grep -qF 'senior-mode:checkpoint' <<<"$c" && fail "Y: the markers of the block are in the comment on #710"
 grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" || fail "Y: #710 not set back to Ready"
 grep -q 'item-edit.*--single-select-option-id o0' "$GH_LOG" && fail "Y: #710 was set back to Backlog"
 jq -e '.outcome == "decision" and .reason == "Which table owns the audit trail?"' "$repo/.git/senior-mode/runs/"*/710.json >/dev/null ||
@@ -1312,8 +1320,8 @@ rm -f "$FIX"/decisions.json "$FIX"/comments-72*
 # (no Opus retry here: escalate is off); a plan rejected twice is `plan-rejected`: needs-human with both plans in a comment,
 # back in Backlog, not a failure.
 config '{"maxTickets": 8, "parallel": 3, "escalate": false, "maxConsecutiveFailures": 9}'
-board 901 '[]' 902 '[]' 903 '[]' 904 '[]' 905 '[]' 906 '[]'
-for n in 901 903 904 905 906; do size_of "$n" M; done
+board 901 '[]' 902 '[]' 903 '[]' 904 '[]' 905 '[]' 906 '[]' 907 '[]'
+for n in 901 903 904 905 906 907; do size_of "$n" M; done
 session 901-sonnet delivered pr
 printf 'plan 1:\nedit a.sh\narchitect 1: revise: the spec wants b.sh too\nplan 2:\nedit a.sh and b.sh\narchitect 2: approve\n' >"$FIX/plan-901"
 session 902-sonnet delivered pr
@@ -1326,6 +1334,10 @@ session 905-sonnet delivered pr
 printf 'plan 1:\nfirst\narchitect 1: revise: no\nplan 2:\nsecond\narchitect 2: revise: no\n' >"$FIX/plan-905"
 session 906-sonnet delivered pr
 printf 'plan 1:\nfirst\narchitect 1: revise: no\n' >"$FIX/plan-906"
+# #346: with no plan file, the plan in the checkpoint block of the pull request counts.
+session 907-sonnet delivered pr
+echo none >"$FIX/plan-907"
+echo '.[0].body = "Closes #907\n\n<!-- senior-mode:checkpoint -->\n**Plan**\n\n```text\nplan 1:\nedit a.sh\narchitect 1: approve\n```\n<!-- /senior-mode:checkpoint -->"' >"$FIX/external-907"
 run || fail "PL: run failed: $(cat "$work/out")"
 runs=$(find "$repo/.git/senior-mode/runs" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
 for want in 'Plan first (size M)' 'at most 15 lines' 'architect agent' 'architect 1: approve' 'architect 1: revise' 'plan-rejected: <the architect' 'SENIOR_MODE_RUN_PLAN'; do
@@ -1333,6 +1345,14 @@ for want in 'Plan first (size M)' 'at most 15 lines' 'architect agent' 'architec
 done
 grep -qF 'No code' "$runs/901.prompt" || grep -qF 'no code' "$runs/901.prompt" || fail "PL: the prompt does not forbid code before approve"
 grep -q 'Plan first\|plan-rejected' "$runs/902.prompt" && fail "PL: an S ticket has a plan step"
+# #346: every ticket session writes a checkpoint at each commit and fills the draft pull request it opened.
+for t in 901 902; do
+  for want in 'senior-mode checkpoint --done' 'senior-mode:checkpoint -->' 'gh pr ready'; do
+    grep -qF -- "$want" "$runs/$t.prompt" || fail "PL: the prompt of #$t misses '$want'"
+  done
+done
+grep -q '^Failed.*#907' "$work/out" && fail "PL: #907, whose plan is in the checkpoint block, failed: $(cat "$work/out")"
+outcome_is_delivered 907
 grep -q '^Failed.*#901' "$work/out" && fail "PL: #901, approved after one revise, failed: $(cat "$work/out")"
 outcome_is_delivered 901
 outcome_is_delivered 902
@@ -1349,7 +1369,7 @@ grep -q 'Waiting for a human: #904.*rejected twice' "$work/out" || fail "PL: rep
 grep -q 'Failed: #904' "$work/out" && fail "PL: a rejected plan was reported as a failure"
 jq -e '.outcome == "plan-rejected" and .reason == "it still ignores ADR 0012"' "$runs/904.json" >/dev/null ||
   fail "PL: #904 not recorded as plan-rejected: $(cat "$runs/904.json")"
-rm -f "$FIX"/plan-9*
+rm -f "$FIX"/plan-9* "$FIX"/external-907
 
 [ "$failures" -eq 0 ] && echo "run: all cases pass"
 exit "$((failures > 0))"

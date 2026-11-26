@@ -443,15 +443,24 @@ serve_probe_main() {
   esac
 }
 
+# The install plan of the worktree $1, as `start` runs it (#323, #554): the root's command, then one per Go module, each in
+# its directory. Runs them all; returns 1 when one fails.
+serve_install() {
+  local dir cmd rc=0
+  while IFS=$'\t' read -r dir cmd; do
+    (cd "$1/$dir" && net_bound 900 bash -c "$cmd" </dev/null) || rc=1
+  done < <(install_plan "$1")
+  return "$rc"
+}
+
 # Probe: the install command of the base branch passes on a detached worktree of it, as its sessions would find it.
 serve_probe_deps() {
-  local wt cmd rc=0
+  local wt rc=0
   git_bound fetch -q origin 2>/dev/null || true
   wt=$(worktree_path "$RUN_ROOT" "probe-env")
   git worktree remove --force "$wt" 2>/dev/null || true
   git worktree add -q --detach "$wt" "$RUN_BASE" 2>/dev/null || return 0
-  cmd=$(install_command "$wt")
-  if [ -n "$cmd" ] && ! (cd "$wt" && net_bound 900 bash -c "$cmd" </dev/null) >/dev/null 2>&1; then rc=1; fi
+  serve_install "$wt" >/dev/null 2>&1 || rc=1
   git worktree remove --force "$wt" 2>/dev/null || true
   [ "$rc" -eq 0 ] || echo "the install command fails on $RUN_BASE"
   return "$rc"
@@ -1227,7 +1236,7 @@ serve_tested_from() {
 # tree is one that `check` passed with senior-mode/ci success (#412) runs no check: its result is carried over, the
 # description names the tree and the commit, and publish only adds what depends on the head (security).
 serve_requalify() {
-  local t=$1 pr=$2 old=$3 new=$4 ref=$5 wt log="$SERVE_DIR/$1.check.log" same=false cmd ob nb ci review rd tree from="" ran
+  local t=$1 pr=$2 old=$3 new=$4 ref=$5 wt log="$SERVE_DIR/$1.check.log" same=false ob nb ci review rd tree from="" ran
   git_bound fetch -q origin 2>/dev/null || true
   if git cat-file -e "$old^{commit}" 2>/dev/null && git cat-file -e "$new^{commit}" 2>/dev/null &&
     ob=$(git merge-base "$old" "$new") && nb=$(git merge-base "$RUN_BASE" "$new") &&
@@ -1254,8 +1263,7 @@ serve_requalify() {
       serve_needs_human "$t" "$pr" "it was rebased on $RUN_BASE but a worktree of the new head could not be opened to check it"
       return 0
     fi
-    cmd=$(install_command "$wt")
-    [ -z "$cmd" ] || (cd "$wt" && bash -c "$cmd" </dev/null) >"$log" 2>&1 || true
+    serve_install "$wt" >"$log" 2>&1 || true
     (cd "$wt" && "$SELF" check) >>"$log" 2>&1 || true
     if ! (cd "$wt" && "$SELF" publish) >>"$log" 2>&1; then
       git worktree remove --force "$wt" 2>/dev/null || true

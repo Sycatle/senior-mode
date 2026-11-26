@@ -100,5 +100,8 @@
   "autonomy": {
     "parallel": 4,
     "merge": true
+  },
+  "commit": {
+    "coAuthor": false
   }
 }

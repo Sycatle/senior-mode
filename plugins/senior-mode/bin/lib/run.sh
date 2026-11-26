@@ -53,6 +53,11 @@ run_session_flags() {
     plugin=${plugin:-$(dirname "$(dirname "$SELF")")}
   fi
   [ -z "$plugin" ] || SESSION_FLAGS+=(--plugin-dir "$plugin")
+  # commit.coAuthor false (#634): no Co-Authored-By trailer in the commits of a session, whatever the user settings say (--settings
+  # ranks above the user, project and local settings).
+  if [ "$(config_get agent.command)" = claude ] && [ "$(config_get commit.coAuthor)" = false ]; then
+    SESSION_FLAGS+=(--settings '{"attribution": {"commit": ""}}')
+  fi
 }
 
 # Marks the directory $1 as trusted for Claude Code before a session starts there (#350): a headless session in an

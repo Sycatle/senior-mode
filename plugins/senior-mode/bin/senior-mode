@@ -183,6 +183,10 @@ case "${1:-}" in
     [ $# -eq 1 ] || usage
     context_hygiene
     ;;
+  commit-trailers)
+    [ $# -eq 1 ] || usage
+    commit_trailers
+    ;;
   audit)
     [ $# -eq 1 ] || usage
     audit_scan

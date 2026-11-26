@@ -170,6 +170,11 @@ label `gardening`, the note as Paths, under the open epic labelled `maintenance`
 none, nothing is filed and `serve` says so). It is filed as an agent's ticket, so [ready by rule](#ready-by-rule)
 takes it. Nothing is filed for a note whose ticket is open, nor while `maintenance.maxOpen` (default 5) `gardening` tickets
 are open. The session re-reads the note against the code in one pull request: it bumps `verified`, edits the note or deletes it.
+The same pass compares the generated block of `docs/architecture.md` on the base branch with the map of its tree, rules and ADRs
+(`senior-mode architecture --check`); when it is out of date, it files one ticket `chore(architecture): regenerate
+docs/architecture.md` (the file as Paths) that the `docs` skill does by running `senior-mode architecture --write`. The same
+label, epic, dedup (none while a ticket of that title is open) and `maintenance.maxOpen` apply, and nothing is filed for a
+repository whose `docs/architecture.md` has no generated block.
 The time of the pass is kept in `.git/senior-mode/serve/gardening-at`.
 
 ### Maintenance budget

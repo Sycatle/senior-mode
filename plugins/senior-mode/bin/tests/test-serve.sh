@@ -2287,6 +2287,66 @@ fresh
 once || fail "MB: serve failed: $(cat "$work/out")"
 [ "$(mb_started 31 32 33 40 41)" = "31 32 40 41" ] || fail "MB: share 0.5 of 4 slots keeps two for gardening: $(mb_started 31 32 33 40 41)"
 
+# GA: gardening of docs/architecture.md (#347, spec 325 section 6.4). When the generated block on the base branch is out of date,
+# the daily pass files one `chore(architecture): regenerate docs/architecture.md` ticket (S, P2, labelled gardening, under the
+# maintenance epic, docs/architecture.md as Paths) for the docs skill, within the same budget and dedup as the knowledge notes.
+ga_title="chore(architecture): regenerate docs/architecture.md"
+ga_tickets() { jq -r --arg t "$ga_title" '[.[] | select(.title == $t)] | length' "$FIX/issues.json"; }
+ga_push() { # <message>
+  git -C "$repo" add -A
+  git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "$1"
+  git -C "$repo" push -q origin main
+}
+config '{}'
+board
+mkdir -p "$repo/docs"
+printf '# Architecture\n\nIntro written by hand.\n' >"$repo/docs/architecture.md"
+(cd "$repo" && "$cli" architecture --write >/dev/null) || fail "GA: architecture --write failed"
+ga_push "docs: architecture"
+echo "[$gd_epic]" >"$FIX/issues.json"
+fresh
+once || fail "GA: serve failed: $(cat "$work/out")"
+[ "$(ga_tickets)" = 0 ] || fail "GA: a ticket for an architecture.md that is current: $(cat "$work/out")"
+# A new directory: the map drifts, one ticket is filed.
+mkdir -p "$repo/src/newmod"
+echo x >"$repo/src/newmod/a.txt"
+ga_push "feat: newmod"
+rm -f "$FIX/sub-issues"
+fresh
+once || fail "GA: serve failed: $(cat "$work/out")"
+[ "$(ga_tickets)" = 1 ] || fail "GA: no ticket for the drifting architecture.md: $(cat "$work/out")"
+n=$(jq -r --arg t "$ga_title" '.[] | select(.title == $t) | .number' "$FIX/issues.json")
+grep -q 'docs` skill runs `senior-mode architecture --write`' "$FIX/body-$n" || fail "GA: the body does not name the docs skill and the command: $(cat "$FIX/body-$n" 2>&1)"
+grep -q 'filed-by: agent' "$FIX/body-$n" || fail "GA: the ticket is not filed as an agent's: $(cat "$FIX/body-$n")"
+grep -q "issues/$n/labels.*labels\[\]=gardening" "$GH_LOG" || fail "GA: #$n is not labelled gardening"
+grep -q 'F_Paths.*docs/architecture.md' "$GH_LOG" || fail "GA: docs/architecture.md is not the Paths of the ticket"
+grep -q 'issues/7/sub_issues' "$FIX/sub-issues" 2>/dev/null || fail "GA: the ticket is not under the maintenance epic: $(cat "$FIX/sub-issues" 2>&1)"
+! git -C "$repo" worktree list | grep -q '/tree ' || fail "GA: a worktree is left: $(git -C "$repo" worktree list)"
+# The next day, the ticket still open: no duplicate.
+rm -f "$state/gardening-at"
+once || fail "GA: serve failed: $(cat "$work/out")"
+[ "$(ga_tickets)" = 1 ] || fail "GA: a second ticket while one is open: $(ga_tickets)"
+# At the cap of maintenance.maxOpen (one open gardening ticket, a cap of one): none is filed.
+gd_config '.maintenance = {maxOpen: 1}'
+echo "[$gd_epic, {\"number\": 9, \"title\": \"chore(deps): x\", \"body\": \"\", \"labels\": [{\"name\": \"gardening\"}]}]" >"$FIX/issues.json"
+rm -f "$state/gardening-at"
+once || fail "GA: serve failed: $(cat "$work/out")"
+[ "$(ga_tickets)" = 0 ] || fail "GA: a ticket filed with maintenance.maxOpen reached"
+# After `architecture --write` the map is current: nothing is filed, and no pass is kept for a repository with neither notes nor a drift.
+gd_config 'del(.maintenance)'
+(cd "$repo" && "$cli" architecture --write >/dev/null) || fail "GA: architecture --write failed"
+ga_push "docs: architecture"
+echo "[$gd_epic]" >"$FIX/issues.json"
+rm -f "$state/gardening-at"
+once || fail "GA: serve failed: $(cat "$work/out")"
+[ "$(ga_tickets)" = 0 ] || fail "GA: a ticket for a current architecture.md"
+# No docs/architecture.md, no block: no pass.
+git -C "$repo" rm -q docs/architecture.md
+ga_push "docs: drop architecture"
+rm -f "$state/gardening-at"
+once || fail "GA: serve failed: $(cat "$work/out")"
+[ ! -e "$state/gardening-at" ] || fail "GA: a pass kept with no architecture.md and no notes"
+
 # AF: the hourly snapshot (#423): one JSON line in snapshots.jsonl the first poll and then once an hour, with the sessions
 # running, the free slots, the Ready tickets that could run, and null where nothing is known (no train, no quota band).
 config '{"parallel": 2}'

@@ -1708,19 +1708,60 @@ serve_note_churn() {
       /^@/ { if (hit) c++; hit = 0; next } NF && ($0 in set) { hit = 1 } END { if (hit) c++; print c + 0 }'
 }
 
+# Files one gardening ticket (#357): $1 its title, $2 its body, $3 its Paths, $4 the maintenance epic, $5 the
+# gardening label. Size S, priority P2, filed as an agent's ticket, so `ready` takes it. Fails when it was not filed.
+serve_garden_file() {
+  local title=$1 text=$2 paths=$3 epic=$4 gl=$5 body out n
+  body=$(mktemp)
+  printf '%s' "$text" >"$body"
+  if out=$(SENIOR_MODE_RUN=1 "$SELF" issue create --title "$title" --body-file "$body" --size S --priority "P2 later" --type chore \
+    --paths "$paths" --parent "$epic" </dev/null) && n=$(sed -nE '1s/^#([0-9]+) .*/\1/p' <<<"$out") && [ -n "$n" ]; then
+    gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f "labels[]=$gl" >/dev/null || echo "serve: could not label #$n $gl" >&2
+    echo "serve: gardening ticket #$n filed: $title"
+    rm -f "$body"
+    return 0
+  fi
+  echo "serve: gardening ticket not filed: $title" >&2
+  rm -f "$body"
+  return 1
+}
+
+# Does the generated block of docs/architecture.md on the base branch $1 differ from the map of its tree (#347)? The map is read
+# from a detached worktree of the base branch, as `senior-mode architecture --check` would; nothing without the file or its block.
+serve_architecture_drift() {
+  local tmp warn
+  git show "$1:docs/architecture.md" 2>/dev/null | grep -qE "$ARCH_OPEN_RE" || return 1
+  tmp=$(mktemp -d)
+  if git -c core.hooksPath=/dev/null worktree add -q --detach "$tmp/tree" "$1" >/dev/null 2>&1; then
+    warn=$(cd "$tmp/tree" && "$SELF" architecture --check 2>/dev/null) || warn=""
+    git worktree remove --force "$tmp/tree" >/dev/null 2>&1 || true
+  else
+    warn=""
+    echo "serve: cannot read the base branch to compare docs/architecture.md; no architecture gardening" >&2
+  fi
+  rm -rf "$tmp"
+  git worktree prune >/dev/null 2>&1 || true
+  [ -n "$warn" ]
+}
+
 # Gardening of the knowledge notes (#357, spec 325 section 5). Once a day, each note of docs/knowledge on the base branch
 # with more than knowledge.churnCommits commits on its `paths` since `verified`, or verified more than knowledge.staleMonths
 # ago, gets one S ticket `chore(knowledge): re-verify <slug>`, labelled gardening, under the open epic labelled maintenance,
 # with the note as Paths. None is filed for a note whose title is open already, once maintenance.maxOpen gardening tickets
-# are open, nor without the epic (`setup repo --knowledge` creates it). The time of the pass is kept in <serve dir>/gardening-at.
+# are open, nor without the epic (`setup repo --knowledge` creates it). The same pass files `chore(architecture): regenerate
+# docs/architecture.md` (#347, spec 325 section 6.4) when the generated block of docs/architecture.md on the base branch is out
+# of date, for the docs skill, which runs `senior-mode architecture --write`; it counts in the same budget and dedup.
+# The time of the pass is kept in <serve dir>/gardening-at.
 serve_gardening() {
-  local now last base months churn max cutoff issues epic gl ml open note slug title raw verified globs why n body out fm
+  local now last base months churn max cutoff issues epic gl ml open note slug title raw verified globs why n body fm notes=false arch=false
   now=$(serve_now)
   last=$(cat "$SERVE_DIR/gardening-at" 2>/dev/null || true)
   [[ $last =~ ^[0-9]+$ ]] && [ $((now - last)) -lt 86400 ] && return 0
   base=$RUN_BASE
   git rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1 || return 0
-  git cat-file -e "$base:docs/knowledge" 2>/dev/null || return 0
+  ! git cat-file -e "$base:docs/knowledge" 2>/dev/null || notes=true
+  serve_architecture_drift "$base" && arch=true
+  [ "$notes" = true ] || [ "$arch" = true ] || return 0
   state_put "$SERVE_DIR/gardening-at" "$now"
   months=$(config_get knowledge.staleMonths)
   churn=$(config_get knowledge.churnCommits)
@@ -1742,6 +1783,12 @@ serve_gardening() {
     return 0
   }
   open=$(jq -r --arg l "$gl" '[.[] | select(any(.labels[]?; .name == $l))] | length' <<<"$issues")
+  title="chore(architecture): regenerate docs/architecture.md"
+  if [ "$arch" = true ] && [ "$open" -lt "$max" ] && ! jq -e --arg t "$title" 'any(.[]; .title == $t)' <<<"$issues" >/dev/null; then
+    body=$(printf '## Context\n\nThe generated block of `docs/architecture.md` is out of date: the tree, the architecture rules or the ADR list changed since it was written (`senior-mode architecture --check` warns).\n\n## Acceptance criteria\n\n- Given `docs/architecture.md` out of date, when the `docs` skill runs `senior-mode architecture --write`, then `senior-mode architecture --check` prints no warning and only the block between the markers changed, in one pull request.\n')
+    serve_garden_file "$title" "$body" docs/architecture.md "$epic" "$gl" && open=$((open + 1))
+  fi
+  [ "$notes" = true ] || return 0
   while IFS= read -r note; do
     [ "$open" -lt "$max" ] || break
     slug=$(basename "$note" .md)
@@ -1759,18 +1806,9 @@ serve_gardening() {
       [ "${n:-0}" -gt "$churn" ] || continue
       why="has $n commits on its \`paths\` since it was verified on $verified (more than \`knowledge.churnCommits\`, $churn)"
     fi
-    body=$(mktemp)
-    printf '## Context\n\nThe knowledge note `%s` %s. A note is true only when someone checked it against the code.\n\n## Acceptance criteria\n\n- Given the note `%s`, when the session re-reads it against its paths %s, then it bumps `verified` to today, edits the note to match the code, or deletes it, in one pull request.\n' \
-      "$note" "$why" "$note" "$(jq -r 'join(", ")' <<<"$globs")" >"$body"
-    if out=$(SENIOR_MODE_RUN=1 "$SELF" issue create --title "$title" --body-file "$body" --size S --priority "P2 later" --type chore \
-      --paths "$note" --parent "$epic" </dev/null) && n=$(sed -nE '1s/^#([0-9]+) .*/\1/p' <<<"$out") && [ -n "$n" ]; then
-      gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f "labels[]=$gl" >/dev/null || echo "serve: could not label #$n $gl" >&2
-      echo "serve: gardening ticket #$n filed: $title"
-      open=$((open + 1))
-    else
-      echo "serve: gardening ticket not filed: $title" >&2
-    fi
-    rm -f "$body"
+    body=$(printf '## Context\n\nThe knowledge note `%s` %s. A note is true only when someone checked it against the code.\n\n## Acceptance criteria\n\n- Given the note `%s`, when the session re-reads it against its paths %s, then it bumps `verified` to today, edits the note to match the code, or deletes it, in one pull request.\n' \
+      "$note" "$why" "$note" "$(jq -r 'join(", ")' <<<"$globs")")
+    serve_garden_file "$title" "$body" "$note" "$epic" "$gl" && open=$((open + 1))
   done < <(git ls-tree --name-only "$base" docs/knowledge/ | grep -E '^docs/knowledge/[^/]+\.md$' | LC_ALL=C sort)
 }
 

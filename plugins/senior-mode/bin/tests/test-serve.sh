@@ -1035,61 +1035,82 @@ SENIOR_MODE_NOW=1800000000 once || fail "AB: serve failed: $(cat "$work/out")"
 [ ! -e "$state/held" ] && outcome_of 81 failed AB
 
 # AB2: a `failed: environment:` with a cause serve has no pattern for, and a probe that is always green (#569), is not
-# launched again in a loop: it holds for 1, 2 minutes, the third end is needs-human with the last output and no more
-# launch, one alert for the pause, nothing sent by the retries. A new commit on the base branch lets it start again with
-# a fresh count; `--resume` also starts the count again.
-config '{}' '{}' '{"webhook": "https://hooks.example/h"}'
-board 691
+# launched again in a loop: the ticket waits 1, 2 minutes, the third end is needs-human with the last output and no more
+# launch, one alert for the ticket, nothing sent by the retries. A new commit on the base branch lets it start again with
+# a fresh count; `--resume` also starts the count again. Only that ticket waits (#630): the others keep launching, and a
+# ticket labelled needs-human is launched by neither the retry nor `--resume`.
+config '{"parallel": 2, "ticketsPerHour": 100, "sessionsPerHour": 100}' '{}' '{"webhook": "https://hooks.example/h"}'
+board 691 692
 session 691-sonnet "failed: environment: the build box is haunted"
+session 692-sonnet delivered pr
 fresh
 : >"$CURL_LOG"
 launches=0
-poll691() { SENIOR_MODE_NOW=$1 once || fail "AB2: serve failed: $(cat "$work/out")"; if started 691; then launches=$((launches + 1)); fi; }
+other=0
+poll691() {
+  SENIOR_MODE_NOW=$1 once || fail "AB2: serve failed: $(cat "$work/out")"
+  if started 691; then launches=$((launches + 1)); fi
+  if started 692; then other=$((other + 1)); fi
+}
 poll691 1800000000
 [ "$launches" = 1 ] || fail "AB2: the first launch is missing: $(cat "$work/out")"
-[ "$(jq -r .cause "$state/held" 2>/dev/null)" = unknown ] || fail "AB2: no unknown hold: $(cat "$state/held" 2>&1)"
-[ "$(jq -r .retryAt "$state/held")" = 1800000060 ] || fail "AB2: the first backoff is not 1 minute: $(cat "$state/held")"
+[ ! -e "$state/held" ] || fail "AB2: an unknown failure of one ticket holds every launch: $(cat "$state/held")"
+[ "$(cut -d' ' -f1 "$state/691.envhold" 2>/dev/null)" = 1800000060 ] || fail "AB2: the first backoff is not 1 minute: $(cat "$state/691.envhold" 2>&1)"
 grep -q 'issues/691/' "$GH_LOG" && fail "AB2: the first end made the ticket needs-human"
 poll691 1800000030
 [ "$launches" = 1 ] || fail "AB2: relaunched inside the backoff: $(cat "$work/out")"
+[ "$other" = 2 ] || fail "AB2: the other ticket did not launch while #691 waits: $other $(cat "$work/out")"
 poll691 1800000061
 [ "$launches" = 2 ] || fail "AB2: no retry after the backoff: $(cat "$work/out")"
-[ "$(jq -r .retryAt "$state/held")" = 1800000181 ] || fail "AB2: the second backoff is not 2 minutes: $(cat "$state/held")"
+[ "$(cut -d' ' -f1 "$state/691.envhold")" = 1800000181 ] || fail "AB2: the second backoff is not 2 minutes: $(cat "$state/691.envhold")"
 poll691 1800000150
 [ "$launches" = 2 ] || fail "AB2: relaunched inside the second backoff: $(cat "$work/out")"
 poll691 1800000182
 [ "$launches" = 3 ] || fail "AB2: no third launch: $(cat "$work/out")"
 grep -q 'issues/691/labels' "$GH_LOG" || fail "AB2: the third end did not raise needs-human: $(cat "$GH_LOG")"
 grep -q 'the build box is haunted' "$state/questions" || fail "AB2: the decision has no error output: $(cat "$state/questions" 2>&1)"
-[ "$(jq -r .retryAt "$state/held")" = 0 ] || fail "AB2: attempts used up but a retry is planned: $(cat "$state/held")"
+[ "$(cut -d' ' -f1 "$state/691.envhold")" = 0 ] || fail "AB2: attempts used up but a retry is planned: $(cat "$state/691.envhold")"
 for t in 1800000300 1800010000 1800090000; do poll691 "$t"; done
 [ "$launches" = 3 ] || fail "AB2: $launches launches of one ticket with nothing changed: $(cat "$work/out")"
 grep -q 'attempts used up' "$work/out" || fail "AB2: the stop is not said: $(cat "$work/out")"
-[ "$(grep -c '"event":"environment"' "$CURL_LOG")" = 1 ] || fail "AB2: not one alert for the pause: $(cat "$CURL_LOG")"
+[ "$(grep -c '"event":"environment"' "$CURL_LOG")" = 1 ] || fail "AB2: not one alert for the ticket: $(cat "$CURL_LOG")"
 [ "$(grep -c '"event":"recovered"' "$CURL_LOG")" = 0 ] || fail "AB2: a retry sent recovered: $(cat "$CURL_LOG")"
 [ ! -e "$state/paused" ] && [ ! -e "$state/691.json" ] || fail "AB2: the unknown failures counted for the breaker"
 # A new commit on the base branch: one new attempt, counted from 1.
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "fix: something"
 git -C "$repo" push -q origin main
 poll691 1800090060
-[ "$launches" = 4 ] || fail "AB2: a change on the base branch did not lift the hold: $(cat "$work/out")"
-[ "$(jq -r .retryAt "$state/held")" = 1800090120 ] || fail "AB2: the count did not start again: $(cat "$state/held")"
-# --resume lifts the hold and starts the count again.
+[ "$launches" = 4 ] || fail "AB2: a change on the base branch did not lift the wait: $(cat "$work/out")"
+[ "$(cut -d' ' -f1 "$state/691.envhold")" = 1800090120 ] || fail "AB2: the count did not start again: $(cat "$state/691.envhold")"
+# --resume lifts the wait and starts the count again.
 (cd "$repo" && "$cli" serve --resume) >"$work/out" 2>&1 || fail "AB2: --resume failed: $(cat "$work/out")"
-[ ! -e "$state/held" ] && [ ! -e "$state/691.envfail" ] || fail "AB2: --resume left the count: $(ls "$state")"
+[ ! -e "$state/691.envhold" ] && [ ! -e "$state/691.envfail" ] || fail "AB2: --resume left the count: $(ls "$state")"
+# A ticket labelled needs-human is not launched, by the retry or after --resume (#630).
+items="[]"
+fitem 691 Ready '["needs-human"]' "x"
+fitem 692 Ready '[]' "x"
+fboard
+fresh
+launches=0
+other=0
+poll691 1800100000
+poll691 1800100061
+[ "$launches" = 0 ] || fail "AB2: a needs-human ticket was launched: $(cat "$work/out")"
+[ "$other" = 2 ] || fail "AB2: the ticket without the label did not launch: $other"
 # The backoff is capped by serve.unknownBackoffMax and the attempts by serve.unknownMaxAttempts.
 config '{}' '{"unknownBackoffMax": 1, "unknownMaxAttempts": 3}'
+board 691
 fresh
 launches=0
 poll691 1800100000
 poll691 1800100061
-[ "$(jq -r .retryAt "$state/held")" = 1800100121 ] || fail "AB2: the second backoff is not capped at 1 minute: $(cat "$state/held")"
+[ "$(cut -d' ' -f1 "$state/691.envhold")" = 1800100121 ] || fail "AB2: the second backoff is not capped at 1 minute: $(cat "$state/691.envhold")"
 config '{}' '{"unknownMaxAttempts": 2}'
 fresh
 launches=0
 poll691 1800200000
 poll691 1800200061
-[ "$(jq -r .retryAt "$state/held")" = 0 ] && [ "$launches" = 2 ] || fail "AB2: two attempts are not the cap: $launches $(cat "$state/held")"
+[ "$(cut -d' ' -f1 "$state/691.envhold")" = 0 ] && [ "$launches" = 2 ] || fail "AB2: two attempts are not the cap: $launches $(cat "$state/691.envhold")"
 
 # AC: the breaker counts ticket failures only; its pause is min(serve.breakerMax, serve.breakerCooldown * 2^(trips-1)),
 # 15, 30, 60, 120 then 240 minutes by default, and the trips start again after 24 hours without one (#377).

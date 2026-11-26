@@ -7,6 +7,27 @@ doctor_add() { # level name message [fix]
     '{level: $l, name: $n, message: $m} + (if $f != "" then {fix: $f} else {} end)')")
 }
 
+# The installed plugin is not older than the checkout of its marketplace (#607): a restart refreshes the checkout, not the
+# plugin, and a marketplace declared by managed settings answers "not found" to `claude plugin marketplace update`.
+# Silent without an install record or a checkout (a CLI run from a clone).
+doctor_plugin_lag() {
+  local cfg=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins root installed dir src market
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || root=""
+  installed=$(jq -r --arg root "$root" '[.plugins // {} | to_entries[] | select(.key | startswith("senior-mode@")) | .value[]
+    | select((.projectPath // $root) == $root) | .version // empty] | .[]' "$cfg/installed_plugins.json" 2>/dev/null | sort -V | tail -n 1) || installed=""
+  dir=$(jq -r '.["senior-mode"].installLocation // empty' "$cfg/known_marketplaces.json" 2>/dev/null) || dir=""
+  dir=${dir:-$cfg/marketplaces/senior-mode}
+  src=$(jq -r '[.plugins[] | select(.name == "senior-mode") | .source | strings] | first // empty' "$dir/.claude-plugin/marketplace.json" 2>/dev/null) || src=""
+  market=$(jq -r '.version // empty' "$dir/${src:-.}/.claude-plugin/plugin.json" 2>/dev/null) || market=""
+  [ -n "$installed" ] && [ -n "$market" ] || return 0
+  if [ "$installed" != "$market" ] && [ "$(printf '%s\n%s\n' "$installed" "$market" | sort -V | tail -n 1)" = "$market" ]; then
+    doctor_add warn "plugin version" "the installed plugin is $installed, its marketplace is at $market" \
+      "claude plugin update senior-mode@senior-mode, then restart Claude Code (a marketplace declared by managed settings: docs/guide/self-hosting.md, \"Update a managed install\")"
+  else
+    doctor_add ok "plugin version" "$installed installed, $market in its marketplace"
+  fi
+}
+
 # The settings fix of a session in the Claude Code sandbox: an excluded command leaves the sandbox only when it is the
 # whole command line (`cd x && senior-mode doctor` and `gh ... | jq` stay sandboxed).
 DOCTOR_SANDBOX_FIX='add "senior-mode *" to sandbox.excludedCommands in the managed settings, and run senior-mode alone on its command line (docs/guide/self-hosting.md, "Claude Code sandbox")'
@@ -268,6 +289,7 @@ doctor() {
   [ "${1:-}" != --json ] || json=true
   DOCTOR_CHECKS=()
   doctor_tools
+  doctor_plugin_lag
   doctor_gh
   doctor_claude
   doctor_hooks

@@ -47,6 +47,20 @@ Link the CLI for use outside Claude: `ln -s ~/.claude/plugins/marketplaces/senio
 Upgrading is replacing `<sha>` in both places, `git checkout <sha>` in that marketplace checkout, and
 restarting the units. Keep a dated backup of the settings each time.
 
+### Update a managed install
+
+When the marketplace is declared by the managed settings (`extraKnownMarketplaces`, `strictKnownMarketplaces`, a pinned
+`ref`), a new version takes three steps, and `claude plugin marketplace update senior-mode` answers "Marketplace
+'senior-mode' not found" (it only knows marketplaces you added yourself):
+
+1. As root, change the policy: replace `<sha>` (or remove the `ref`) in both places.
+2. Restart Claude Code: it refreshes the marketplace checkout, but leaves the installed plugin at its old version.
+3. As the user, run `claude plugin update senior-mode@senior-mode`, then restart Claude Code again.
+
+`senior-mode doctor` compares the installed plugin with the checkout of its marketplace and warns
+`the installed plugin is 0.6.0, its marketplace is at 0.8.0` with the command of step 3. A config written for a newer
+version reports the same way (`minVersion`, see [Configuration](configuration.md#validation-and-the-json-schema)).
+
 ## 3. Sandbox and permissions of the sessions
 
 `serve` starts sessions with `--permission-mode bypassPermissions`: the managed settings must not set

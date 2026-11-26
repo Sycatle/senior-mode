@@ -7,6 +7,8 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 failures=0
 unset SANDBOX_RUNTIME
+export CLAUDE_CONFIG_DIR="$work/claude-home"
+mkdir -p "$CLAUDE_CONFIG_DIR"
 export GH_CONFIG_DIR="$work/gh-config"
 mkdir -p "$GH_CONFIG_DIR"
 
@@ -113,6 +115,24 @@ GH_STUB_FINE=1 GH_STUB_DENY="checks" expect_fail "B10" 'the fine-grained token l
 grep -q 'gh auth refresh' "$work/out" && fail "B10: still suggests gh auth refresh: $(cat "$work/out")"
 GH_STUB_FINE=1 GH_STUB_DENY="statuses projects" expect_fail "B11" 'lacks the permissions Commit statuses, Projects' 'grant the permissions Contents, Pull requests, Issues, Commit statuses and Workflows: read and write'
 GH_STUB_FINE=1 GH_TOKEN=github_pat_x GH_STUB_DENY="pulls issues actions" expect_fail "B12" 'lacks the permissions Pull requests, Issues, Actions' 'grant the permissions .*organization Projects: read and write'
+
+# B13: the installed plugin lags the checkout of its marketplace (#607).
+cc=$CLAUDE_CONFIG_DIR/plugins
+mkdir -p "$cc/marketplaces/senior-mode/.claude-plugin" "$cc/marketplaces/senior-mode/plugins/senior-mode/.claude-plugin" "$cc/cache/senior-mode/senior-mode/0.6.0/.claude-plugin"
+echo '{"name":"senior-mode","plugins":[{"name":"senior-mode","source":"./plugins/senior-mode"}]}' >"$cc/marketplaces/senior-mode/.claude-plugin/marketplace.json"
+echo '{"version":"0.8.0"}' >"$cc/marketplaces/senior-mode/plugins/senior-mode/.claude-plugin/plugin.json"
+echo '{"version":"0.6.0"}' >"$cc/cache/senior-mode/senior-mode/0.6.0/.claude-plugin/plugin.json"
+jq -nc --arg p "$cc/cache/senior-mode/senior-mode/0.6.0" --arg o "$work/elsewhere" \
+  '{version: 2, plugins: {"senior-mode@senior-mode": [{scope: "project", projectPath: $o, installPath: "/nope", version: "9.9.9"}, {scope: "user", installPath: $p, version: "0.6.0"}]}}' >"$cc/installed_plugins.json"
+doctor || fail "B13: a lagging plugin fails: $(cat "$work/out")"
+grep -q 'warn .*plugin version: the installed plugin is 0.6.0, its marketplace is at 0.8.0' "$work/out" || fail "B13: no warning: $(cat "$work/out")"
+grep -q 'fix: claude plugin update senior-mode@senior-mode' "$work/out" || fail "B13: no update command: $(cat "$work/out")"
+jq -nc --arg p "$cc/cache/senior-mode/senior-mode/0.6.0" '{version: 2, plugins: {"senior-mode@senior-mode": [{scope: "user", installPath: $p, version: "0.8.0"}]}}' >"$cc/installed_plugins.json"
+doctor || fail "B14: an up to date plugin fails"
+grep -q 'ok .*plugin version: 0.8.0 installed' "$work/out" || fail "B14: not ok: $(cat "$work/out")"
+rm "$cc/installed_plugins.json"
+doctor || fail "B15: no install record fails"
+grep -q 'plugin version' "$work/out" && fail "B15: reports without an install record: $(cat "$work/out")"
 
 # C: git hooks.
 rm "$repo/.githooks/pre-push"

@@ -40,8 +40,9 @@ case "$*" in
   "api repos/acme/app --jq "*) echo "{\"allow_auto_merge\": $(cat "$FIX/allow-auto" 2>/dev/null || echo false)}" | respond ;;
   "api repos/acme/app/commits/"*"/status"*)
     sha=$(sed -E 's#^api repos/acme/app/commits/([^/ ]+)/status.*#\1#' <<<"$*")
-    { cat "$FIX/status-$sha" 2>/dev/null || true; } | jq -Rn '[inputs | split(" ") | {key: .[0], value: .[1]}] | from_entries
-      | to_entries | {statuses: map({context: .key, state: .value})}' | respond ;;
+    # A line of $FIX/status-<sha> is "<context> <state> [<epoch it was set at>]"; the last line of a context wins.
+    { cat "$FIX/status-$sha" 2>/dev/null || true; } | jq -Rn '[inputs | split(" ") | {key: .[0], value: {state: .[1], at: .[2]}}] | from_entries
+      | to_entries | {statuses: map({context: .key, state: .value.state, updated_at: (.value.at | if . then tonumber | todate else null end)})}' | respond ;;
   "api repos/acme/app/statuses/"*)
     sha=$(sed -E 's#^api repos/acme/app/statuses/([^ ]+) .*#\1#' <<<"$*")
     st="" cx=""
@@ -2556,6 +2557,53 @@ fresh
 once || fail "BQ: serve failed: $(cat "$work/out")"
 outcome_of 51 failed BQ
 rm -f "$FIX/open-prs.json"
+
+# BP: a pull request left at "approve, human merge" is looked at again (#674). The reviewer labelled it needs-human, so
+# the pass over the pull requests skipped it. Once per head it gets a fresh review when the review rules changed after its
+# review (CLAUDE.md or the config on the base branch), or when it is behind and its review is older than
+# serve.pendingReviewHours; a conflict goes to the integrator.
+config '{"parallel": 3}'
+sha90=$(mkbranch feat/90-x f90.txt)
+sha91=$(mkbranch feat/91-x f91.txt)
+sha92=$(mkbranch feat/92-x f92.txt)
+boardx "90:In review:S:P1 next" "91:In review:S:P1 next" "92:In review:S:P1 next"
+prs_reset
+pr 190 feat/90-x "$sha90" clean needs-human
+pr 191 feat/91-x "$sha91" clean needs-human
+pr 192 feat/92-x "$sha92" dirty needs-human
+# 90: the review is older than the last change of the config; 91: newer; 92: older, in conflict.
+st "$sha90" "senior-mode/ci success" "senior-mode/review pending 1700000000"
+st "$sha91" "senior-mode/ci success" "senior-mode/review pending 1799990000"
+st "$sha92" "senior-mode/ci success" "senior-mode/review pending 1700000000"
+session 90-opus-reviewer "reviewed: success" "" "" review:success
+session 92-opus-integrator "failed: not here"
+fresh
+once || fail "BP: serve failed: $(cat "$work/out")"
+grep -q '^app-review-90 opus run=1 role=reviewer$' "$CLAUDE_LOG" || fail "BP: no new review of #190: $(cat "$CLAUDE_LOG")"
+grep -q 'second review' "$state/90.prompt" || fail "BP: the prompt does not say it is a second review: $(cat "$state/90.prompt")"
+grep -q '^app-review-91' "$CLAUDE_LOG" && fail "BP: #191 reviewed again although its review is newer than the rules"
+grep -q '^app-92-r2 opus run=1 role=integrator$' "$CLAUDE_LOG" || fail "BP: the conflict of #192 is not given to the integrator: $(cat "$CLAUDE_LOG")"
+# Once per head: the next poll does not start another review of #190.
+prs_reset
+pr 190 feat/90-x "$sha90" clean needs-human
+st "$sha90" "senior-mode/ci success" "senior-mode/review pending 1700000000"
+once || fail "BP: serve failed: $(cat "$work/out")"
+grep -q '^app-review-90' "$CLAUDE_LOG" && fail "BP: #190 reviewed twice on the same head"
+# Behind its base: a review older than serve.pendingReviewHours (12) gets a fresh one, a younger one does not.
+rm -f "$state/rereview-"*
+prs_reset
+pr 191 feat/91-x "$sha91" behind needs-human
+st "$sha91" "senior-mode/ci success" "senior-mode/review pending 1799990000"
+once || fail "BP: serve failed: $(cat "$work/out")"
+grep -q '^app-review-91' "$CLAUDE_LOG" && fail "BP: a pull request behind with a recent review was reviewed again"
+st "$sha91" "senior-mode/ci success" "senior-mode/review pending 1799940000"
+once || fail "BP: serve failed: $(cat "$work/out")"
+grep -q '^app-review-91 opus run=1 role=reviewer$' "$CLAUDE_LOG" || fail "BP: no new review of #191, behind with an old review: $(cat "$CLAUDE_LOG")"
+# A review that is not pending is not this pass's.
+rm -f "$state/rereview-"*
+st "$sha91" "senior-mode/ci success" "senior-mode/review failure 1700000000"
+once || fail "BP: serve failed: $(cat "$work/out")"
+grep -q '^app-review-91' "$CLAUDE_LOG" && fail "BP: a failed review of a needs-human pull request was reviewed again"
 
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

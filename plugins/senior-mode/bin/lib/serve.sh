@@ -1098,16 +1098,18 @@ serve_stuck() {
 }
 
 # The pull requests of tickets In review, in `pick` order, as `ticket pr sha branch title` lines: open, not a draft,
-# not needs-human, on a branch named <type>/<ticket>-... $1 is the board, $2 the open pull requests.
+# not needs-human, on a branch named <type>/<ticket>-... $1 is the board, $2 the open pull requests. With $3 = held, the
+# needs-human ones instead (serve_pending).
 # shellcheck disable=SC2016 # a jq program, not shell
 serve_candidates() {
-  local re
+  local re held=false
+  [ "${3:-}" != held ] || held=true
   re=$(workflow_branch_re "$RUN_ROOT")
-  jq -r --slurpfile d <(printf '%s' "$1") --argjson map "$(workflow_branch_map_json)" --arg re "${re:-^[a-z]+/(?<n>[0-9]+)(-|\$)}" '$d[0] as $d | [.[] | . as $p
+  jq -r --argjson held "$held" --slurpfile d <(printf '%s' "$1") --argjson map "$(workflow_branch_map_json)" --arg re "${re:-^[a-z]+/(?<n>[0-9]+)(-|\$)}" '$d[0] as $d | [.[] | . as $p
       | ((try ($p.head.ref | capture($re) | .n | tonumber) catch null) // $map[$p.head.ref]) as $t
       | select($t != null)
       | ($d.items[] | select(.number == $t and .open and .status == "In review")) as $i
-      | select((($i.labels | index("needs-human")) // ([$p.labels[]?.name] | index("needs-human"))) | not)
+      | select(((($i.labels | index("needs-human")) // ([$p.labels[]?.name] | index("needs-human"))) != null) == $held)
       | select(.draft | not)
       | {t: $t, pr: $p.number, sha: $p.head.sha, ref: $p.head.ref, title: $i.title,
          k: ([($i.priority // "") | scan("^P([0-9]+)") | .[0] | tonumber] | first // 99)}]
@@ -1525,7 +1527,7 @@ serve_review_model() {
 # than the implementer's (serve_review_model), in a detached worktree of that head (ADR 0017, 0019: no reviewer, no
 # review; the status stays unset and the next poll after a usage limit's reset tries again).
 serve_review() {
-  local t=$1 pr=$2 sha=$3 ref=$4 wt model
+  local t=$1 pr=$2 sha=$3 ref=$4 again=${5:-} wt model
   model=$(serve_review_model "$t")
   serve_can_launch "$t" || return 0
   git_bound fetch -q origin "$ref" 2>/dev/null || true
@@ -1541,9 +1543,60 @@ serve_review() {
   RUN_BRANCH[$t]=$ref
   SERVE_PR[$t]=$pr
   SERVE_SHA[$t]=$sha
-  serve_review_prompt "$t" "${RUN_TITLE[$t]:-}" "$pr" "$sha" "$model" | state_write "$RUN_DIR/$t.prompt"
+  serve_review_prompt "$t" "${RUN_TITLE[$t]:-}" "$pr" "$sha" "$model" "$again" | state_write "$RUN_DIR/$t.prompt"
   echo "#$t: reviewing pull request #$pr on $model"
   if run_launch "$t" "$model"; then running+=("$t"); else git worktree remove --force "$wt" 2>/dev/null || true; fi
+}
+
+# The time (epoch) of the last change of the review rules on the base branch: CLAUDE.md and the project config (protected
+# list, review settings). Nothing when the history has none.
+serve_rules_changed() {
+  git_bound fetch -q origin 2>/dev/null || true
+  git log -1 --format=%ct "$RUN_BASE" -- CLAUDE.md .claude/senior-mode.json 2>/dev/null || true
+}
+
+# The time (epoch) senior-mode/review was last set on commit $1; nothing when it is not set.
+serve_review_stamp() {
+  gh_retry api "repos/$RUN_SLUG/commits/$1/status" \
+    --jq '[.statuses[] | select(.context == "senior-mode/review") | .updated_at | fromdateiso8601] | first // empty'
+}
+
+# The pull requests that wait for a person after a review left senior-mode/review pending (#674): the reviewer labels them
+# needs-human, so the pass of serve_prs skips them, and none was ever looked at again. Once per head, one gets a fresh
+# reviewer session (serve_review) when the review rules changed on the base branch since the review (serve_rules_changed),
+# or when it is behind its base and the review is older than serve.pendingReviewHours; one in conflict with its base is
+# resolved on a -rN branch by the integrator (serve_conflict), at most one per poll. $1 is the board, $2 the open pull requests.
+serve_pending() {
+  local t pr sha ref title states ci stamp changed="" fetched=false moved=false pull state due
+  while IFS=$'\t' read -r t pr sha ref title; do
+    [ -n "$t" ] || continue
+    [ "$SERVE_TERM" = false ] || break
+    serve_busy "$t" && continue
+    states=$(serve_states "$sha") || continue
+    [ "$(jq -r '.["senior-mode/review"] // empty' <<<"$states")" = pending ] || continue
+    stamp=$(serve_review_stamp "$sha") || continue
+    [[ $stamp =~ ^[0-9]+$ ]] || continue
+    RUN_TITLE[$t]=$title
+    pull=$(gh_retry api "repos/$RUN_SLUG/pulls/$pr") || continue
+    state=$(jq -r '.mergeable_state // "unknown"' <<<"$pull")
+    if [ "$state" = dirty ]; then
+      if [ "$moved" = false ] && serve_conflict "$t" "$pr" "$ref"; then moved=true; fi
+      continue
+    fi
+    [ "$(state_get "$SERVE_DIR/rereview-$pr" '[0-9a-f]+')" != "$sha" ] || continue
+    ci=$(jq -r '.["senior-mode/ci"] // empty' <<<"$states")
+    [ "$ci" = success ] || continue
+    if [ "$fetched" = false ]; then
+      changed=$(serve_rules_changed)
+      fetched=true
+    fi
+    due=false
+    [[ $changed =~ ^[0-9]+$ ]] && [ "$changed" -gt "$stamp" ] && due=true
+    [ "$state" != behind ] || [ $(($(serve_now) - stamp)) -lt $((SERVE_PENDING_HOURS * 3600)) ] || due=true
+    [ "$due" = true ] || continue
+    state_put "$SERVE_DIR/rereview-$pr" "$sha"
+    serve_review "$t" "$pr" "$sha" "$ref" again
+  done < <(serve_candidates "$1" "$2" held)
 }
 
 # Every pull request of a ticket In review, in `pick` order: its head decides. CI success and no review
@@ -1580,6 +1633,7 @@ serve_prs() {
         ;;
     esac
   done < <(serve_candidates "$data" "$prs")
+  serve_pending "$data" "$prs"
 }
 
 # Is the free slot kept for gardening (#351)? Of the slots of `maintenance.share`, those not taken by a session of a
@@ -1983,7 +2037,7 @@ serve_loop() {
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP="" RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_REQUIRED RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP="" RUN_ON_EXIT=serve_end RUN_FINISH=serve_finish RUN_PROMPT=serve_prompt RUN_PROMPT_BATCH=serve_prompt_batch RUN_LAUNCH_LOG RUN_RECONCILE=1
   local SERVE_DIR SERVE_COMMON SERVE_TERM=false SERVE_PARALLEL SERVE_PER_HOUR SERVE_TICKETS_PER_HOUR SERVE_MIN_MEM SERVE_COOLDOWN SERVE_GRACE
-  local SERVE_BREAKER_MAX SERVE_BACKOFF_BASE SERVE_BACKOFF_MAX SERVE_MIN_DISK SERVE_STARTUP SERVE_UNKNOWN_MAX SERVE_UNKNOWN_CAP GH_CALL_TIMEOUT GH_DOWN_FILE
+  local SERVE_BREAKER_MAX SERVE_BACKOFF_BASE SERVE_BACKOFF_MAX SERVE_MIN_DISK SERVE_STARTUP SERVE_UNKNOWN_MAX SERVE_UNKNOWN_CAP SERVE_PENDING_HOURS GH_CALL_TIMEOUT GH_DOWN_FILE
   local SERVE_HELD="" SERVE_GUARDS="" SERVE_WAIT=""
   run_prepare serve
   # ADR 0018: under serve everything green merges, unless the repository sets autonomy.merge itself.
@@ -1999,6 +2053,7 @@ serve_loop() {
   SERVE_STARTUP=$(serve_int autonomy.startupSeconds 0)
   SERVE_UNKNOWN_MAX=$(serve_int serve.unknownMaxAttempts 1)
   SERVE_UNKNOWN_CAP=$(serve_int serve.unknownBackoffMax 1)
+  SERVE_PENDING_HOURS=$(serve_int serve.pendingReviewHours 1)
   SERVE_STALL=$(serve_int autonomy.stallMinutes 1)
   SERVE_STARTUP_MIN=$(serve_int autonomy.startupMinutes 1)
   GH_CALL_TIMEOUT=$(serve_int serve.callTimeout 1)

@@ -320,7 +320,12 @@ You change no file and merge nothing.
 You have 30 turns and a review posted late is worth nothing: by turn 20 at the latest, post the review comment and set
 the status on what you verified so far (what you only read goes under Not verified). With turns left, go deeper and add
 what you find in a follow-up comment; a finding that blocks changes the status to \`failure\`.
-
+${6:+
+This is a second review: an earlier one left senior-mode/review pending and the pull request labelled needs-human, and
+the review rules or the base branch have moved since. Judge it again under the rules as they stand now. When you
+approve it, set \`success\` and remove the label needs-human from the pull request and from ticket #$1, so that it is
+merged; when it still needs a person, set \`pending\` again and say what changed or did not.
+}
 Last, write one line to the file \$SENIOR_MODE_RUN_OUTCOME: \`reviewed: <the state you set>\`, or
 \`failed: <reason>\` when you could not review.
 PROMPT

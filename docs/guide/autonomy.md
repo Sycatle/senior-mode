@@ -137,6 +137,12 @@ at best "approve, human merge" and `senior-mode/review` stays `pending`. A block
 is still `failure` (without the label), so the fix round starts; the person is asked when the review passes. The `ops` agent never merges
 a `needs-human` pull request.
 
+Under [`serve`](commands.md), a pull request left at "approve, human merge" is not forgotten. Once per head commit it gets
+a fresh reviewer session when `CLAUDE.md` or `.claude/senior-mode.json` (the protected list, the review settings) changed on
+the base branch after its review, or when it is behind its base and its review is older than `serve.pendingReviewHours`
+(12). A second review that approves sets `success` and removes the label. One that conflicts with the base branch is
+resolved by the integrator on a `-r2` branch, whose pull request is reviewed like any other.
+
 ### Alerts
 
 `senior-mode serve` (and `run`) tells the human instead of waiting to be watched. A ticket that is

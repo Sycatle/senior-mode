@@ -7,10 +7,14 @@
 #   WF_JSON      the detected `workflow` object
 #   WF_ROWS      one line per finding: path, JSON value, evidence, status (new, assumed or kept), tab separated
 #   WF_UNMAPPED  what senior-mode cannot follow, with what it does instead
+#   WF_NOTES     what was not recorded for lack of history, printed in the report
 #   WF_ASKS      the questions the CLI cannot ask: it takes the recommended answer and marks it assumed
 #   WF_ND        true when something differs from senior-mode's defaults (only then is `workflow` written)
 #   WF_ADOPT     evergreen or legacy
 #   WF_CI_MODE   existing when the project's CI runs on pull requests
+
+# The fewest merged pull requests a convention (pr.title, pr.link) is inferred from.
+WF_MIN_PRS=5
 
 wf_put() { # path json evidence [assumed]
   WF_JSON=$(jq -c --arg p "$1" --argjson v "$2" 'setpath($p | split("."); $v)' <<<"$WF_JSON")
@@ -238,7 +242,9 @@ wf_pr() {
     [ "$own" = false ] || { wf_put pr.template "\"$tpl\"" "the pull request template of the repository"; WF_ND=true; }
   fi
   merged=$(jq -r 'length' <<<"$WF_PRS")
-  if [ "$merged" -gt 0 ]; then
+  if [ "$merged" -gt 0 ] && [ "$merged" -lt "$WF_MIN_PRS" ]; then
+    WF_NOTES+=("\`pr.title\` and \`pr.link\`: not enough history ($merged of $WF_MIN_PRS merged pull requests needed), default kept")
+  elif [ "$merged" -gt 0 ]; then
     titles=$(jq -r '.[].title' <<<"$WF_PRS")
     cs=$(wf_share '^[a-z]+(\([^)]*\))?!?: .+' <<<"$titles")
     ts=$(wf_share '^\[?[A-Z][A-Z0-9]+-[0-9]+' <<<"$titles")
@@ -514,7 +520,7 @@ wf_adopt() {
 # $3 the templates directory of the plugin. Sets the WF_* state; nothing is written.
 workflow_detect() {
   WF_ROOT=$1 WF_CMDS=$2 WF_TPL=$3
-  WF_JSON='{}' WF_ROWS=() WF_UNMAPPED=() WF_ASKS=() WF_ND=false WF_ADOPT="" WF_ADOPT_WHY="" WF_CI_MODE="" WF_SLUG="" WF_PRS='[]'
+  WF_JSON='{}' WF_ROWS=() WF_UNMAPPED=() WF_ASKS=() WF_NOTES=() WF_ND=false WF_ADOPT="" WF_ADOPT_WHY="" WF_CI_MODE="" WF_SLUG="" WF_PRS='[]'
   WF_ADOPT_ASSUMED="" WF_ASSUME_INT="" WF_ASSUME_FMT=""
   git -C "$WF_ROOT" rev-parse -q --verify HEAD >/dev/null 2>&1 || return 0
   if git -C "$WF_ROOT" remote get-url origin >/dev/null 2>&1 && command -v gh >/dev/null; then
@@ -574,6 +580,7 @@ workflow_report() {
     case $st in assumed) st=" (assumed)" ;; kept) st=" (kept)" ;; *) st="" ;; esac
     echo "- \`$path\`: \`$val\` — $ev$st"
   done
+  for row in "${WF_NOTES[@]}"; do echo "- $row"; done
   if [ -n "$WF_ADOPT" ]; then
     st=""
     [ -z "$WF_ADOPT_ASSUMED" ] || st=" (assumed)"

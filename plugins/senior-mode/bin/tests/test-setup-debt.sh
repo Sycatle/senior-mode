@@ -97,7 +97,7 @@ adopt --adopt --debt || fail "adopt --debt failed: $(cat "$work/err")"
 [ "$(issues | wc -l)" = 5 ] || fail "not five tickets: $(issues)"
 [ "$(issues | head -n 1)" = 'chore(lint): fix no-var findings in src/d8' ] || fail "the first ticket is not src/d8: $(issues)"
 [ "$(fps)" = "lint:src/d4 lint:src/d5 lint:src/d6 lint:src/d7 lint:src/d8" ] || fail "wrong directories or fingerprints: $(fps)"
-[ "$(wc -l <"$FIX/sub-issues")" = 5 ] && grep -q 'issues/7/sub_issues' "$FIX/sub-issues" || fail "the tickets are not under the maintenance epic: $(cat "$FIX/sub-issues" 2>&1)"
+{ [ "$(wc -l <"$FIX/sub-issues")" = 5 ] && grep -q 'issues/7/sub_issues' "$FIX/sub-issues"; } || fail "the tickets are not under the maintenance epic: $(cat "$FIX/sub-issues" 2>&1)"
 [ "$(jq '[.[] | select(.number >= 500 and (.labels | map(.name) | index("gardening")))] | length' "$FIX/issues.json")" = 5 ] || fail "not labelled gardening"
 body=$(jq -r '.[] | select(.title | endswith("src/d8")) | .body' "$FIX/issues.json")
 grep -qF 'The baseline lists 3 lint findings in `src/d8`' <<<"$body" || fail "the body does not say what the baseline holds: $body"

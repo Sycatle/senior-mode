@@ -502,6 +502,12 @@ ticket: it is no failure, nothing goes to Opus and the circuit breaker does not 
 that comment removes both labels at the next poll (the start of a `run`); the ticket is then picked again and its
 session reads the reply as the decision, from the checkpoint and the commits already on the branch.
 
+Before a session stops on a question (`decision:`, or `outgrown: needs a person` for a choice), it looks for the answer in what
+the project already settled (#679). Its prompt carries the 10 newest lines of `docs/decisions.md` linked to the ticket (or to
+each ticket of a batch) or to its epic, and the standing rules: an accepted ADR is superseded by a new ADR, never edited; a
+reversible choice is the recommended option. A question that a line or a rule answers is applied, not asked; a session that
+does stop says in its question what it checked.
+
 `run` and `serve` start every session the same way on any machine (#348, #350):
 
 - **Project settings only.** `--setting-sources project,local --strict-mcp-config`, plus `--mcp-config` with

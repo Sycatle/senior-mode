@@ -1,6 +1,33 @@
 # shellcheck shell=bash
-# What an unattended ticket session does with a choice it cannot settle (#363); $1 the prefix of the outcome line (`#<n> ` for a batch).
+# What the project already settled, for a session about to stop on a question (#679): the lines of docs/decisions.md linked to the
+# tickets $1 (space separated) or to their epic (the 10 newest, the log being oldest first), and the standing rules. A session that
+# ends `outgrown: needs a person` or `decision:` must have found that neither answers its question.
+prompt_standing() {
+  local n alt="" epic lines root=${RUN_ROOT:-.}
+  for n in $1; do
+    alt+="${alt:+|}$n"
+    epic=$(context_board "$root" "$n" 2>/dev/null | jq -r '.parent.number // empty' 2>/dev/null) || epic=""
+    [ -z "$epic" ] || alt+="|$epic"
+  done
+  lines=""
+  [ -z "$alt" ] || [ ! -f "$root/docs/decisions.md" ] ||
+    lines=$(grep -E "^- [0-9]{4}-[0-9]{2}-[0-9]{2} #($alt):" "$root/docs/decisions.md" | tail -n 10 | cut -c1-300 || true)
+  cat <<TEXT
+Before you stop on a question (\`decision:\`, or \`outgrown: needs a person\` for a choice), look for its answer in what the project
+settled; a question they answer is not yours to ask, apply the answer:
+- docs/decisions.md, the lines of the ticket(s) of this session and of their epic:
+${lines:-  (none)}
+- Standing rules: an accepted ADR is superseded by a new ADR, never edited or amended; a reversible choice is the recommended option;
+  the spec and the ADRs it cites decide what they cover.
+When you do stop on a question, say in its text what you checked: \`(checked docs/decisions.md, the ADRs and the spec: neither answers it)\`.
+TEXT
+}
+
+# What an unattended ticket session does with a choice it cannot settle (#363); $1 the prefix of the outcome line (`#<n> ` for a batch),
+# $2 the tickets of the session.
 prompt_decision() {
+  prompt_standing "$2"
+  echo
   cat <<TEXT
 A choice that is hard to reverse (a schema, a public interface, a deletion, a new dependency, security) and that you cannot
 settle from the code, the spec or the ADRs is not yours to make. Commit the work in progress on the branch and stop with the
@@ -78,7 +105,7 @@ run_prompt() {
   local nl=$'\n' wf dec plan pout ck pr
   wf=$(workflow_prompt_block "$1")
   ck=$(prompt_checkpoint) pr=$(prompt_pr_open)
-  dec=$(prompt_decision '')
+  dec=$(prompt_decision '' "$1")
   plan=$(prompt_plan "$1")
   pout=$(prompt_plan_outcome "$1" '')
   cat <<EOF
@@ -132,7 +159,7 @@ run_prompt_batch() {
     list+="- #$m (\"${RUN_TITLE[$m]}\")"$'\n'
     closes+="\`Closes #$m\`, "
   done
-  dec=$(prompt_decision '#<n> ')
+  dec=$(prompt_decision '#<n> ' "$3")
   cat <<EOF
 You are one batch session of an autonomous senior-mode run on $RUN_SLUG. Nobody will answer
 questions: decide within the tickets, their specs and the project's rules, or give up as described below.
@@ -202,7 +229,7 @@ serve_prompt() {
    the implementer agent makes them pass (skills tdd, verify, commit): tests land in the same commit
    as the code they cover."
   fi
-  dec=$(prompt_decision '')
+  dec=$(prompt_decision '' "$1")
   cat <<PROMPT
 You are one ticket session (SENIOR_MODE_ROLE=ticket) of senior-mode serve on $RUN_SLUG. Nobody will answer
 questions: decide within the ticket, its spec and the project's rules, or give up as described below.
@@ -250,7 +277,7 @@ serve_prompt_batch() {
     list+="- #$m (\"${RUN_TITLE[$m]}\")"$'\n'
     closes+="\`Closes #$m\`, "
   done
-  dec=$(prompt_decision '#<n> ')
+  dec=$(prompt_decision '#<n> ' "$3")
   cat <<PROMPT
 You are one batch session (SENIOR_MODE_ROLE=ticket) of senior-mode serve on $RUN_SLUG. Nobody will answer
 questions: decide within the tickets, their specs and the project's rules, or give up as described below.

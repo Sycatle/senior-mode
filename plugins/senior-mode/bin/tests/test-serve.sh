@@ -794,6 +794,7 @@ grep -qi 'at most 2 fix rounds\|reviewer agent reviews the pull request' "$state
 grep -q 'you never set it' "$state/21.prompt" || fail "J: the batch prompt does not forbid senior-mode/review"
 grep -q 'delivered.*senior-mode/ci and senior-mode/security' "$state/21.prompt" || fail "J: the batch prompt does not end at ci and security"
 grep -q '#22 ("Ticket 22")' "$state/21.prompt" || fail "J: the batch prompt does not list #22"
+grep -q 'Standing rules' "$state/21.prompt" || fail "J: the batch prompt does not carry the standing rules (#679)"
 # A ticket the batch session gives up is no longer of the batch: the merge of its pull request leaves it open.
 board 21 22
 paths_of 21 'src/a/**'
@@ -1242,6 +1243,7 @@ grep -q '^app-60 sonnet run=1 role=ticket$' "$CLAUDE_LOG" || fail "R: the ticket
 grep -q 'SENIOR_MODE_ROLE=ticket' "$state/60.prompt" || fail "R: the prompt does not name the role"
 grep -qi 'at most 2 fix rounds\|reviewer agent reviews the pull request' "$state/60.prompt" && fail "R: the ticket session is still asked to review"
 grep -q 'never set it' "$state/60.prompt" || fail "R: the prompt does not forbid senior-mode/review"
+grep -q 'Standing rules' "$state/60.prompt" || fail "R: the prompt does not carry the standing rules (#679)"
 
 # S: In review with CI success and no review status: a reviewer session on Opus, role reviewer, in a worktree of
 # the head that is gone afterwards. Nothing starts without CI success, with a review status, or with needs-human.

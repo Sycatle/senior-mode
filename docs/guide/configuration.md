@@ -137,6 +137,11 @@ warning: preset: "typescript" is deprecated, use "node"
 - A **deprecated** key or value is a warning, with its replacement; `check` prints it under the `ok`
   of the step.
 
+- A file written for a **newer plugin** is one error, not one per unknown key: when `minVersion` (the oldest
+  senior-mode that reads the file) is above the installed version, `config validate` and `doctor` say
+  `this config needs senior-mode >= 0.8.0, installed 0.6.0: update the plugin` with the update command, and report
+  nothing else of that file. Without `minVersion`, an unknown key keeps its message above.
+
 A key that the plugin reads but the schema lacks is a bug of the plugin: a test keeps every key of the
 defaults in the schema.
 

@@ -7,6 +7,7 @@
   "additionalProperties": false,
   "properties": {
     "$schema": { "type": "string", "description": "This schema, for the editor." },
+    "minVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$", "description": "The oldest senior-mode that reads this file. A plugin older than this reports one version mismatch (update the plugin) instead of one error per key it does not know." },
     "language": { "type": "string", "enum": ["en", "fr"], "description": "Language of the templates and of what Claude writes for you." },
     "lsp": { "type": "boolean", "description": "The answer to the language server proposal of setup: `true` when you enable it in Claude Code, `false` when you decline. Any value stops the proposal." },
     "preset": {

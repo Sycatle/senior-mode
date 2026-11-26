@@ -30,6 +30,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `packages.sh`: monorepo `packages` (workspaces, Cargo, Go modules) for `setup repo`, and `install_plan` for `start`.
 - `setup-knowledge.sh`: `setup repo --knowledge` (migration to the long-lived project layout: ADR paths, notes from agent drafts, vision draft,
   baseline, labels, maintenance epic, orphans).
+- `survey.sh`: `survey` (measures as JSON) and the architecture survey of `setup repo --adopt` on a legacy project (drafts in `.claude/survey/`).
 - `setup-workflow.sh`: detection of the project's workflow for `setup repo` (`--dry-run`, `--adopt`).
 - `workflow.sh`: reading the detected `workflow` (branch pattern, base, merge flag, PR gaps) for start, run, serve, status, clean.
 - `setup-answers.sh`: `setup detect` and `setup answers` (the three questions: detection, profile, config layers).

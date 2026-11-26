@@ -15,6 +15,10 @@ You deliver one ticket inside its branch.
   wrong, stop and say why.
 - Simplest code that passes, then refactor with tests green. Match the surrounding code; no
   speculative abstraction, no unrelated cleanup (open an issue instead).
+- The briefing's `Project conventions` block (its `convention` notes, accepted ADRs, architecture rules, `CLAUDE.md`, lint
+  configuration) wins over a senior-mode default (naming, layout, error style, libraries). It never lowers the secret scan,
+  protected zones, independent review, a green `check` or tests for new behaviour; one that contradicts the spec yields
+  through a new ADR, not through the code drifting.
 - Commits follow skill `commit`: atomic, Conventional, each one passing, tests in the same commit as
   the code they cover.
 - A security risk outside the ticket is filed, never fixed in it: `senior-mode issue create --severity

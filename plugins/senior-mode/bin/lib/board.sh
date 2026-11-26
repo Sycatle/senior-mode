@@ -619,8 +619,10 @@ ready_delivery() {
 # framing pull request n (branch docs/...) names; without it, those an agent filed. A ticket with nothing
 # missing (see ready_missing) is set Ready; any other gets `needs-human` and a comment that says what is
 # missing, and is left alone until a person removes the label. --dry-run only says what would happen.
+# It always ends with a summary line (#610): the tickets considered and what became of them, and the open tickets
+# it skipped, by reason; with no candidate, "no candidate: <reason>" with the counts.
 ready() {
-  local pr="" dry=false slug info items zones hier nums="null" it n why
+  local pr="" dry=false slug info items zones hier nums="null" it n why considered=0 made=0 held=0 skipped line
   while [ $# -gt 0 ]; do
     case $1 in
       --pr)
@@ -652,11 +654,21 @@ ready() {
   while IFS= read -r it; do
     n=$(jq -r '.number' <<<"$it")
     why=$(ready_missing "$it" "$zones" "$hier" | jq -r 'join(", ")')
+    considered=$((considered + 1))
     if [ -z "$why" ]; then
-      if [ "$dry" = true ]; then echo "#$n would be Ready"; else item_set "$n" Status Ready || echo "#$n: could not set Ready" >&2; fi
+      if [ "$dry" = true ]; then
+        made=$((made + 1))
+        echo "#$n would be Ready"
+      elif item_set "$n" Status Ready; then
+        made=$((made + 1))
+      else
+        echo "#$n: could not set Ready" >&2
+      fi
     elif [ "$dry" = true ]; then
+      held=$((held + 1))
       echo "#$n would get needs-human: $why"
     else
+      held=$((held + 1))
       gh_retry api "repos/$slug/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
         echo "#$n: could not label the ticket needs-human" >&2
       gh_bound api "repos/$slug/issues/$n/comments" -f body="senior-mode: this ticket is not Ready by rule. Missing: $why. Fix it and remove the needs-human label; \`senior-mode ready\` checks it again." \
@@ -665,6 +677,29 @@ ready() {
     fi
   done < <(jq -c --argjson nums "$nums" "$TRUST_DEF"'.[] | select(.open and trusted and .status == "Backlog" and (.labels | index("needs-human") | not)
     and (.labels | index("needs-info") | not)) | select(if $nums == null then .agent else (.number | IN($nums[])) end)' <<<"$items")
+  skipped=$(jq -r --argjson nums "$nums" "$TRUST_DEF"'[.[] | select(.open) | (if .status != "Backlog" then "not Backlog"
+      elif (trusted | not) then "not trusted"
+      elif (.labels | index("needs-human")) then "needs-human"
+      elif (.labels | index("needs-info")) then "needs-info"
+      elif $nums == null and (.agent | not) then "not agent-filed"
+      elif $nums != null and (.number | IN($nums[]) | not) then "not named in the pull request"
+      else empty end)] as $r
+    | ([.[] | select(.open) | .number] as $open | if $nums == null then [] else [$nums[] | select(IN($open[]) | not)] end | length) as $gone
+    | ($r + [range(0; $gone) | "named in the pull request but not an open ticket of the board"]) as $all
+    | ([$all | group_by(.)[] | {r: .[0], n: length}] | sort_by(-.n) | map("\(.n) \(.r)") | join(", ")) as $by
+    | "\($all | length)\(if ($all | length) > 0 then ": " + $by else "" end)"' <<<"$items") || skipped="?"
+  if [ "$considered" -eq 0 ]; then
+    if [ -n "$pr" ]; then
+      if [ "$nums" = "[]" ]; then line="pull request #$pr names no ticket"; else line="pull request #$pr names $(jq 'length' <<<"$nums") ticket(s), none a Backlog ticket it can make Ready"; fi
+    else
+      line="no open Backlog ticket filed by an agent can be considered"
+    fi
+    echo "no candidate: $line; skipped $skipped"
+  elif [ "$dry" = true ]; then
+    echo "ready: $considered considered, $made would be Ready, $held would get needs-human; skipped $skipped"
+  else
+    echo "ready: $considered considered, $made set Ready, $held needs-human; skipped $skipped"
+  fi
 }
 
 # What the hygiene report reads of a pull request and of a branch (the board query and its follow-up).

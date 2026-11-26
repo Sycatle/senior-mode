@@ -100,6 +100,9 @@ grep -F 'issues/11/comments' "$GH_LOG" | grep -q 'acceptance criteria' || fail "
 grep -F 'issues/11/comments' "$GH_LOG" | grep -q 'Paths' || fail "A: comment on #11 does not name Paths"
 grep -F 'issues/12/comments' "$GH_LOG" | grep -q 'Size, Priority' || fail "A: comment on #12 does not name Size and Priority: $(grep 'issues/12/comments' "$GH_LOG")"
 said '^#11 needs-human: .*acceptance criteria.*Paths' || fail "A: #11 report: $(cat "$work/out")"
+# The summary (#610): considered, what became of them, and the open tickets skipped by reason.
+said '^ready: 4 considered, 2 set Ready, 2 needs-human; skipped 5: 2 named in the pull request but not an open ticket of the board, 1 needs-human, 1 not Backlog, 1 not named in the pull request$' ||
+  fail "A: no summary: $(cat "$work/out")"
 for n in 13 14 15 99 18; do
   grep -q "issues/${n}[/ ]" "$GH_LOG" && fail "A: #$n was touched: $(grep "issues/$n" "$GH_LOG")"
 done
@@ -112,6 +115,7 @@ logged "/labels" && fail "B: dry run labelled"
 logged "/comments" && fail "B: dry run commented"
 said '^#10 would be Ready' || fail "B: dry run does not say #10 would be Ready: $(cat "$work/out")"
 said '^#11 would get needs-human: .*acceptance criteria' || fail "B: dry run does not say what #11 lacks: $(cat "$work/out")"
+said '^ready: 4 considered, 2 would be Ready, 2 would get needs-human; skipped 5: ' || fail "B: no dry-run summary: $(cat "$work/out")"
 
 # C: not a merged framing pull request.
 pr 101 OPEN docs/wave "#10"
@@ -470,6 +474,22 @@ ready --pr 130 || fail "N: ready failed: $(cat "$work/err")"
 labelled 120 || fail "N: #120, whose tool is absent, is not held back"
 said '^#120 needs-human: .*tool not installed: no-such-tool-632' || fail "N: the missing tool is not named: $(cat "$work/out")"
 said '^#121 Status = Ready' || fail "N: #121, whose tool is there, is not Ready: $(cat "$work/out")"
+
+# O (#610): the summary also ends a run with no candidate, and says why.
+pr 131 MERGED docs/wave-o "Framing: nothing filed yet, see the board."
+ready --pr 131 --dry-run || fail "O: ready failed: $(cat "$work/err")"
+said '^no candidate: pull request #131 names no ticket; skipped 2: 2 not named in the pull request$' || fail "O: a pull request naming no ticket is not said: $(cat "$work/out")"
+pr 132 MERGED docs/wave-o "Framing: #121."
+ready --pr 132 || fail "O: ready failed: $(cat "$work/err")"
+said '^ready: 1 considered, 1 set Ready, 0 needs-human; skipped 1: 1 not named in the pull request$' || fail "O: summary after one ticket: $(cat "$work/out")"
+items="[]"
+item 140 Backlog "P1 next" S - "docs/**" '[]' "$criteria"
+item 141 Backlog "P1 next" S - "docs/**" '["needs-human"]' "$criteria$agent"
+board
+ready --dry-run || fail "O: ready failed: $(cat "$work/err")"
+said '^no candidate: no open Backlog ticket filed by an agent can be considered; skipped 2: 1 needs-human, 1 not agent-filed$' ||
+  fail "O: no agent ticket is not said: $(cat "$work/out")"
+logged "item-add" && fail "O: a run with no candidate set a Status"
 
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

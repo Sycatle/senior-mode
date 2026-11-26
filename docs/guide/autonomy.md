@@ -679,7 +679,8 @@ request that closes no ticket is held to neither.
   referenced (`Refs #n`, `Closes #n`) by at least one commit of the branch; the tickets with none are named.
   A single-ticket pull request is not held to it.
 - **Size budget** (#303): the lines the pull request changes (additions and deletions; lockfiles, generated
-  files and fixtures are left out) must not exceed the budget of the Size of its ticket,
+  files and fixtures are left out, and the globs of `limits.diffExclude`; test lines weigh 0.5 and documentation
+  lines 0.25 by default, [`limits.diffWeights`](configuration.md#keys-the-plugin-reads-today), #637) must not exceed the budget of the Size of its ticket,
   [`limits.diffLines`](configuration.md#keys-the-plugin-reads-today) (S 300, M 800, L 2000); a batch sums the budgets of its tickets.
   The answer says by how much it is over.
 - **Self-review** (#356): before asking for review, the session runs the review checklist on its own diff and

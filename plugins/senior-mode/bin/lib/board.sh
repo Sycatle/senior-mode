@@ -471,12 +471,28 @@ diff_countable() {
   esac
 }
 
+# The kind of a changed file for the size budget (#637): `tests` (a test directory or a test file by name), `docs`
+# (documentation: docs/, a README, Markdown; not the Markdown of a skill, an agent or a command, which is code that
+# an agent runs) or `code`. Tests and docs weigh less than code (`limits.diffWeights`).
+diff_kind() {
+  case $1 in
+    */skills/* | */agents/* | */commands/*) ;;
+    docs/* | */docs/* | README* | */README* | CHANGELOG* | */CHANGELOG* | *.md | *.mdx) echo docs; return ;;
+  esac
+  case $1 in
+    test/* | tests/* | */test/* | */tests/* | __tests__/* | */__tests__/* | spec/* | */spec/* | *.test.* | *.spec.* | *_test.* | test_*.* | */test_*.* | test-*.* | */test-*.* | *-test.*)
+      echo tests ;;
+    *) echo code ;;
+  esac
+}
+
 # What stops the pull request $2 of $1 (owner/name) from being ready to merge on account of the tickets it
 # closes, in one phrase, or nothing. $3 is its REST object and $4 its changed files as `<path>\t<changed lines>`
 # lines. Starts with "not ready: " when the pull request itself is at fault (#297, #303):
 # - it closes a spike ticket (label type:spike) and changes a file outside docs/ (#321);
 # - it closes several tickets and some are named by no commit (`Refs #n` or `Closes #n`): one commit per ticket;
-# - its changed lines, lockfiles, generated and fixture files left out, exceed the sum of the budgets
+# - its changed lines, lockfiles, generated and fixture files (and the globs of limits.diffExclude) left out, test
+#   and documentation lines weighing less than code (limits.diffWeights, #637), exceed the sum of the budgets
 #   (limits.diffLines) of the Size of the tickets it closes.
 # A pull request that closes no ticket, or one, with a commit of its own, is only held to the second rule.
 # Other phrases say what could not be read.
@@ -506,7 +522,7 @@ self_review_gaps() {
 }
 
 delivery_blocker() {
-  local slug=$1 pr=$2 pull=$3 files=$4 tickets=() n missing="" msgs size cfg budget total=0 lines=0 path changed sizes="" gaps outside spike hot hotfix=false
+  local slug=$1 pr=$2 pull=$3 files=$4 tickets=() n missing="" msgs size cfg budget total=0 lines=0 code=0 tests=0 docs=0 excluded=() weights skip glob detail path changed sizes="" gaps outside spike hot hotfix=false
   mapfile -t tickets < <(pr_closed_tickets "$(jq -r '.body // ""' <<<"$pull")")
   [ "${#tickets[@]}" -gt 0 ] || return 0
   # A spike (#321) ends in a note, an ADR or framed tickets, never in code: only docs/ may change.
@@ -569,12 +585,30 @@ delivery_blocker() {
   done
   # The whole pull request of a hotfix is capped at one S, not at the sum of its tickets.
   [ "$hotfix" != true ] || total=$(jq -r '.S' <<<"$cfg")
+  mapfile -t excluded < <(config_get limits.diffExclude 2>/dev/null | jq -r '.[]?' 2>/dev/null)
+  weights=$(config_get limits.diffWeights 2>/dev/null) || weights='{"tests": 0.5, "docs": 0.25}'
   while IFS=$'\t' read -r path changed; do
     [[ ${changed:-} =~ ^[0-9]+$ ]] || continue
-    ! diff_countable "$path" || lines=$((lines + changed))
+    diff_countable "$path" || continue
+    skip=false
+    for glob in ${excluded[@]+"${excluded[@]}"}; do
+      # shellcheck disable=SC2053 # the glob is the point
+      [[ $path == $glob ]] && skip=true
+    done
+    [ "$skip" = false ] || continue
+    case $(diff_kind "$path") in
+      tests) tests=$((tests + changed)) ;;
+      docs) docs=$((docs + changed)) ;;
+      *) code=$((code + changed)) ;;
+    esac
   done <<<"$files"
+  lines=$(jq -r --argjson c "$code" --argjson t "$tests" --argjson d "$docs" \
+    '($c + $t * (.tests // 0.5) + $d * (.docs // 0.25)) | ceil' <<<"$weights")
   [ "$lines" -le "$total" ] || {
-    echo "not ready: $lines changed lines, $((lines - total)) over the size budget of $total (limits.diffLines: $sizes)"
+    detail=""
+    [ $((tests + docs)) -eq 0 ] ||
+      detail=" ($code of code, $tests of tests counted at $(jq -r '.tests // 0.5' <<<"$weights"), $docs of docs counted at $(jq -r '.docs // 0.25' <<<"$weights"))"
+    echo "not ready: $lines changed lines$detail, $((lines - total)) over the size budget of $total (limits.diffLines: $sizes)"
     return 0
   }
   gaps=$(skeleton_blocker "$slug" "$pr" "$pull" "$files")

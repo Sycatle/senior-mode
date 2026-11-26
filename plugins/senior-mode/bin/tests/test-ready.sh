@@ -511,5 +511,29 @@ changes 420 src/a.sh:10
 ready --pr 420 && fail "P: a pull request without a Self-review table is ready"
 said 'no row with evidence for #403.1, #403.2 ' || fail "P: the criteria under ## Criteria are not read: $(cat "$work/out")"
 
+# Q (#637): the size budget weighs test lines at 0.5 and documentation lines at 0.25 (limits.diffWeights), and
+# skips the globs of limits.diffExclude; a skill or an agent is code.
+size 301 S
+delivery 430 "Closes #301" "feat: a"
+changes 430 src/a.sh:100 tests/test-a.sh:200 plugins/x/bin/tests/b.test.ts:200
+ready --pr 430 || fail "Q: 100 code and 400 test lines (300 weighted) are not ready: $(cat "$work/out")"
+changes 430 src/a.sh:100 tests/test-a.sh:402
+ready --pr 430 && fail "Q: 100 code and 402 test lines (301 weighted) are ready"
+said 'pull request #430 is not ready: 301 changed lines \(100 of code, 402 of tests counted at 0.5, 0 of docs counted at 0.25\), 1 over the size budget of 300' ||
+  fail "Q: the code and test counts are not said: $(cat "$work/out")"
+changes 430 src/a.sh:200 README.md:200 docs/guide/x.md:200
+ready --pr 430 || fail "Q: 200 code and 400 doc lines (300 weighted) are not ready: $(cat "$work/out")"
+changes 430 src/a.sh:100 plugins/x/skills/y/SKILL.md:201
+ready --pr 430 && fail "Q: the Markdown of a skill was weighed as documentation"
+changes 430 src/a.sh:10 src/gen/a.ts:1000 src/gen/deep/b.ts:1000
+ready --pr 430 && fail "Q: unlisted generated files were not counted"
+jq '.limits = {diffExclude: ["src/gen/*"]}' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+ready --pr 430 || fail "Q: limits.diffExclude is not applied: $(cat "$work/out")"
+jq '.limits = {diffWeights: {tests: 1}}' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+changes 430 src/a.sh:100 tests/test-a.sh:201
+ready --pr 430 && fail "Q: limits.diffWeights.tests = 1 not applied"
+said '301 changed lines' || fail "Q: the configured weight is not applied: $(cat "$work/out")"
+config '["auth/**"]'
+
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

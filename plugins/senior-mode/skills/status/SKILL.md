@@ -33,6 +33,8 @@ Summarise in the configured language, in this order, skipping empty sections:
    A "Spec drift" section: an accepted spec whose code changed with no `Spec-Unchanged:`; suggest
    updating the spec or adding the line to the pull request.
 3. Done since last time, in progress, in review, blocked.
+   A "Progress" section (tickets closed / total per goal, milestone, epic): one line per goal; a
+   drift flag ("no Goal: line", "no spec") is fixed by editing the milestone or the epic.
 4. Next ticket and the release state.
 
 Keep ticket numbers, drop tool vocabulary. For a digest, write for a reader who has never opened the

@@ -139,9 +139,64 @@ STATUS_JQ="$BRANCH_DEF"'. as $d | $d.items as $items | {
   release: {latest: $d.release, pr: ([$d.prs[] | select(.branch | startswith("release-please")) | {number, title}][0])}
 }'
 
+# The hierarchy of spec 325 §7 (#353): progress per goal, milestone and epic, from a milestone query. A ticket is an issue
+# of a milestone with no sub-issue, an epic one with sub-issues (its own progress is that of its sub-issues). The goal of
+# a milestone is its `Goal: Gn` description line; the goals are those of docs/vision.md ($goals, null without one: the goal
+# level is then left out, and so is its drift). Drift: a milestone with no goal (or one the vision does not list), an epic
+# with no spec or more than one in its body.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+HIERARCHY_QUERY='query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) { milestones(first: 100, states: OPEN, orderBy: {field: DUE_DATE, direction: ASC}) { nodes {
+    number title description issues(first: 100) { totalCount nodes { number title state body subIssuesSummary { total completed } } } } } }
+}'
+# shellcheck disable=SC2016 # a jq program, not shell
+HIERARCHY_DEF='def hierarchy($goals):
+    def total($k): map(.[$k]) | add // 0;
+    def part: {closed: total("closed"), total: total("total")};
+    ($goals // []) as $g
+    | def listed($id): $id != null and ($g | any(.id == $id));
+    [.data.repository.milestones.nodes[]? | . as $m | $m.issues.nodes as $is
+      | ([($m.description // "") | split("\n")[] | capture("^\\s*Goal:\\s*(?<g>G[0-9]+)\\b")? | .g][0]) as $goal
+      | [$is[] | select(.subIssuesSummary.total == 0)] as $tickets
+      | {number: $m.number, title: $m.title, goal: $goal,
+         closed: ($tickets | map(select(.state == "CLOSED")) | length), total: ($tickets | length),
+         truncated: ($m.issues.totalCount > ($is | length)),
+         epics: [$is[] | select(.subIssuesSummary.total > 0) | ([(.body // "") | scan("docs/specs/[A-Za-z0-9._-]+\\.md")] | unique) as $specs
+           | {number, title, closed: .subIssuesSummary.completed, total: .subIssuesSummary.total, specs: $specs}]}] as $ms
+    | [$ms[] | select(listed(.goal) | not)] as $loose
+    | {goals: (if $goals == null then null else [$goals[] | . as $o | [$ms[] | select(.goal == $o.id)] as $mm
+          | {id, title} + ($mm | part) + {milestones: ($mm | map(.title))}] end),
+       noGoal: (if $goals == null then null else ({milestones: ($loose | map(.title))} + ($loose | part)) end),
+       milestones: $ms,
+       drift: ((if $goals == null then [] else [$loose[]
+           | {kind: "milestone", number, title, why: (if .goal == null then "no Goal: line in its description" else "Goal: \(.goal) is not in docs/vision.md" end)}] end)
+         + [$ms[].epics[] | select(.specs | length != 1)
+           | {kind: "epic", number, title, why: (if (.specs | length) == 0 then "no spec in its body" else "\(.specs | length) specs in its body" end)}]),
+       note: null};'
+# shellcheck disable=SC2016 # a jq program, not shell
+HIERARCHY_TEXT_DEF='def hierarchy_lines:
+    def mline($why): "    \(.title): \(.closed)/\(.total) tickets" + $why + (if .truncated then " (first 100 issues only)" else "" end);
+    def eline: "      #\(.number) \(.title): \(.closed)/\(.total) sub-issues"
+      + (if (.specs | length) == 0 then ", no spec in its body" elif (.specs | length) > 1 then ", \(.specs | length) specs in its body" else "" end);
+    . as $h
+    | if $h.note then "Progress: not read (\($h.note))"
+      elif ($h.milestones | length) == 0 then empty
+      else
+        "Progress\(if ($h.drift | length) > 0 then " (\($h.drift | length) drift)" else "" end)",
+        (if $h.goals == null then
+           ($h.milestones[] | "  \(.title): \(.closed)/\(.total) tickets" + (if .goal then " (\(.goal))" else "" end), (.epics[] | eline))
+         else
+           ($h.goals[] | "  \(.id) \(.title): \(.closed)/\(.total) tickets",
+             (. as $g | $h.milestones[] | select(.goal == $g.id) | mline(""), (.epics[] | eline))),
+           (if ($h.noGoal.milestones | length) > 0 then "  No goal: \($h.noGoal.closed)/\($h.noGoal.total) tickets",
+             ($h.milestones[] | select(.title as $t | $h.noGoal.milestones | index($t))
+               | mline(if .goal == null then ", no Goal: line" else ", Goal: \(.goal) is not in docs/vision.md" end), (.epics[] | eline)) else empty end)
+         end)
+      end;'
+
 # The same, in plain words; $head says which period it covers.
 # shellcheck disable=SC2016 # a jq program, not shell
-STATUS_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" else ($ls[] | "  " + .) end);
+STATUS_TEXT_JQ="$HIERARCHY_TEXT_DEF"'def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" else ($ls[] | "  " + .) end);
   def ticket: "#\(.number) \(.title)";
   def age_text: if . == null then "age unknown" elif . < 3600 then "\(. / 60 | floor)m" elif . < 86400 then "\(. / 3600 | floor)h" else "\(. / 86400 | floor)d" end;
   "senior-mode · \(.repository) · \(.generatedAt)", "",
@@ -161,6 +216,7 @@ STATUS_TEXT_JQ='def sec($h; $ls): $h, (if ($ls | length) == 0 then "  nothing" e
       (.commits[:5][] | "  \(.sha) \(.subject)"),
       (if (.commits | length) > 5 then "  ... and \((.commits | length) - 5) more" else empty end)]) else empty end),
   (if .specDriftNote then "Spec drift: not checked (\(.specDriftNote))" else empty end),
+  (.hierarchy // empty | hierarchy_lines),
   (if .audit then empty else "Dependency audit: off (audit: false)" end),
   (if .process.profile != "strict" then "Process profile: \(.process.profile)" else empty end),
   (.process.lifted[]? | "WARNING locked gate lifted: \(.rule) (profile \(.profile), \(.adr))"),
@@ -471,6 +527,24 @@ health_publish() {
   printf '%s\n' "$health"
 }
 
+# The goals of docs/vision.md under $1 (the root) as [{id, title}], null when there is no file.
+vision_goals() {
+  local file=$1/docs/vision.md
+  [ -f "$file" ] || { echo null; return 0; }
+  md_section "$file" Goals | sed -nE 's/^[-*][[:space:]]+\**(G[0-9]+)\**[[:space:]]*[:.-]?[[:space:]]*(.*)$/\1\t\2/p' |
+    jq -Rsc 'split("\n") | map(select(. != "") | split("\t") | {id: .[0], title: ((.[1] // "") | gsub("\\*\\*"; "") | .[:80])})'
+}
+
+# The hierarchy report ($1 the root): one more GitHub call. It never fails the report: an unreadable answer is a `note`.
+hierarchy_report() {
+  local slug answer
+  slug=$(repo_slug)
+  answer=$(jq -nc --arg q "$HIERARCHY_QUERY" --arg o "${slug%%/*}" --arg n "${slug#*/}" '{query: $q, variables: {owner: $o, name: $n}}' |
+    gh_retry api graphql --input - 2>/dev/null) && jq -e '.data.repository.milestones' >/dev/null 2>&1 <<<"$answer" ||
+    { echo '{"goals": null, "noGoal": null, "milestones": [], "drift": [], "note": "could not be read"}'; return 0; }
+  jq -c --argjson g "$(vision_goals "$1")" "$HIERARCHY_DEF"' hierarchy($g)' <<<"$answer"
+}
+
 # What only this machine knows (#319): whether `serve` runs here, and when the last retro ran. $1 the git common dir,
 # $2 now in seconds. The retro mark starts at the first status, so a new repository is not told a retro is due.
 # Prints {serve: {running, pid}, retro: {lastDays, due}}.
@@ -526,6 +600,7 @@ status_once() {
   # The spec drift reads git, and GitHub only for the pull requests of the commits it needs; it never fails the report.
   specs=$(spec_drift 2>/dev/null) || specs='{"drift": [], "note": "could not be read"}'
   out=$(jq -c --argjson s "$specs" '. + {specDrift: $s.drift, specDriftNote: $s.note}' <<<"$out") || return 1
+  out=$(jq -c --argjson h "$(hierarchy_report "$root")" '. + {hierarchy: $h}' <<<"$out") || return 1
   out=$(jq -c --argjson l "$(local_facts "$(git rev-parse --path-format=absolute --git-common-dir)" "$now_s")" '. + $l' <<<"$out") || return 1
   # The report is out before --fix touches anything.
   [ "$json" = true ] || jq -r --arg head "$head" "$HYGIENE_DEF$STATUS_TEXT_JQ" <<<"$out"

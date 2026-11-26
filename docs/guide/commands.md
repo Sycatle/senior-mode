@@ -112,8 +112,8 @@ State: **Available.**
 
 - **Purpose.** A cheap, plain-language dashboard: done since last time, in progress, in review,
   blocked or missing information, waiting for a human (`needs-human` pull requests, failing
-  statuses), the next Ready tickets, and the release state. One GitHub call. Each ticket In progress
-  shows the path of its worktree.
+  statuses), the next Ready tickets, and the release state. Two GitHub calls (the board, then the milestones).
+  Each ticket In progress shows the path of its worktree.
 - **Asks.** Nothing. Ask "where are we?" or "état", or type `/senior-mode:status`.
 - **Produces.** A summary in the `language` of your config, with what needs you first. Ask for "the
   week for the client" and it runs `senior-mode status --since 7d`, a digest without jargon.
@@ -123,6 +123,7 @@ State: **Available.**
   and `due`). Both are read from `.git/senior-mode/`, on this machine.
 - **Live view.** `senior-mode status --watch` in a terminal or tmux pane redraws every 30 seconds.
 - **Spec drift.** A "Spec drift" section (and `specDrift` in `--json`) lists, for each spec of `docs/specs/` with `status: accepted`, the commits that touched its `paths` since the spec file last changed and carry no `Spec-Unchanged: <reason>` line, in their message or in the body of a pull request they belong to (the pull requests GitHub associates with the commit, whatever the merge method and the subject; a commit with no pull request is listed). Only the first-parent history counts, so a merge is one entry. The pull requests are read in batched GitHub calls (50 commits each), and only for commits that need it. Offline, or without `gh`, the section is skipped and `Spec drift: not checked` says why (`specDriftNote` in `--json`). Nothing is listed when there is no accepted spec or no drift.
+- **Progress.** A "Progress" section (and `hierarchy` in `--json`) shows closed / total tickets per goal of `docs/vision.md`, per open milestone and, under each milestone, closed / total sub-issues per epic ([spec 325](../specs/325-long-lived-projects.md) §7). A milestone belongs to the goal named by a `Goal: G2` line of its description; a ticket is an issue of the milestone with no sub-issue, an epic one with sub-issues. Drift is counted in the header and flagged on its line: a milestone with no `Goal:` line (listed under "No goal", as is one naming a goal the vision does not have) and an epic with no `docs/specs/` path in its body or with more than one. Without `docs/vision.md` the goal level and its drift are left out; a milestone is read up to its first 100 issues. If GitHub does not answer the milestone query the section says `not read` and the rest of the report stays.
 - **Health.** `senior-mode status --publish` posts the board's health (on track, at risk, off track, with the counts, the tickets that need a human, failing pull requests and drift) as a Project status update; it cannot be combined with `--watch`. `senior-mode retro` posts it on each pass.
 - **Cycle.** `setup github` adds an Iteration field (`board.iterationDays` days, default 14) and Start and End dates; `start` sets Start and the current iteration, a merge sets End. `run` archives items Done for more than `board.archiveAfterDays` days (default 14); archived items stay in `retro`. `senior-mode retro --iteration [<name>]` reviews one iteration (the current one by default).
 - Only the plain run moves the "since last time" mark (kept in `.claude/senior-mode/`, ignored by git);

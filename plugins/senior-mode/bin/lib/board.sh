@@ -805,11 +805,12 @@ TRUST_DEF='def trusted: . as $i | (($i.labels | index("triage")) | not)
     and ((["OWNER", "MEMBER", "COLLABORATOR"] | index($i.assoc // "")) != null or ($i.labels | index("qualified")) != null);'
 
 # The tickets `run` and `next` take (spec 0001 §7): Ready, open, trusted, not size L, not blocked (open
-# "blocked by" link, `blocked` label), not waiting for information (`needs-info`). Sorted by Priority
+# "blocked by" link, `blocked` label), not waiting for information (`needs-info`) or for a decision (`needs-decision`, #363). Sorted by Priority
 # (P0 first), a critical Severity ahead of the others, then milestone due date, then number.
 # shellcheck disable=SC2016 # a jq program, not shell
 PICK_DEF=$TRUST_DEF'def pick: [.items[] | select(.open and trusted and .status == "Ready" and .size != "L" and (.blockers | length == 0)
-    and ((.labels | index("blocked")) | not) and ((.labels | index("needs-info")) | not))]
+    and ((.labels | index("blocked")) | not) and ((.labels | index("needs-info")) | not)
+    and ((.labels | index("needs-decision")) | not))]
   | sort_by([([(.priority // "") | scan("^P([0-9]+)") | .[0] | tonumber] | first // 99),
     (if .severity == "critical" then 0 else 1 end), (.due // "9999"), .number]);'
 

@@ -422,6 +422,17 @@ report. A headless session in a workspace Claude Code does not trust yet ignores
 interactively and accept the trust prompt, or pass the permissions on the command line. `senior-mode run`
 passes `--permission-mode bypassPermissions` and relies on the guard hooks.
 
+A choice that is hard to reverse (a schema, a public interface, a deletion, a new dependency, security) that a
+ticket session cannot settle from the code, the spec or the ADRs does not wait and is not guessed (#363). The
+session commits its work in progress and ends with `decision: <question> | <recommended option> | <checkpoint>`
+(`#n decision: ...` in a batch). `run` and `serve` post a comment (marked `<!-- senior-mode:decision -->`) with the
+question, the recommended option and the checkpoint, label the ticket `needs-decision` and `needs-human` (the
+alert and the webhook as for any question), set it back to Ready, keep its branch and worktree, and start another
+ticket: it is no failure, nothing goes to Opus and the circuit breaker does not count it. A Ready ticket labelled
+`needs-decision` is never picked. A reply on the ticket by a collaborator (`OWNER`, `MEMBER`, `COLLABORATOR`) after
+that comment removes both labels at the next poll (the start of a `run`); the ticket is then picked again and its
+session reads the reply as the decision, from the checkpoint and the commits already on the branch.
+
 `run` and `serve` start every session the same way on any machine (#348, #350):
 
 - **Project settings only.** `--setting-sources project,local --strict-mcp-config`, plus `--mcp-config` with

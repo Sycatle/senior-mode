@@ -1502,6 +1502,7 @@ serve_poll() {
   fi
   serve_recover
   serve_ready
+  run_decisions
   if ! data=$(board_data false); then
     echo "serve: cannot read the board; trying again at the next poll" >&2
     return 0

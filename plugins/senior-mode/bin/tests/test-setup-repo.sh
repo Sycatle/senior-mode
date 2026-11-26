@@ -65,6 +65,16 @@ grep -q "CODEOWNERS: the protected zones are not owned yet; rerun senior-mode se
 git -C "$new" check-ignore -q .claude/agent-memory/reviewer/MEMORY.md || fail "agent memory not ignored"
 grep -q '^.gitignore: .claude/agent-memory/ ignored' "$work/out" || fail "ignore not reported: $(cat "$work/out")"
 
+# The decision log merges as a union (#639): parallel framings that each log a decision do not conflict. An existing
+# .gitattributes is extended, and a rerun adds nothing.
+[ "$(git -C "$new" check-attr merge -- docs/decisions.md | sed 's/.*: //')" = union ] || fail "setup did not set merge=union on docs/decisions.md: $(cat "$new/.gitattributes" 2>&1)"
+grep -q '^.gitattributes: docs/decisions.md merges as a union' "$work/out" || fail "union not reported: $(cat "$work/out")"
+printf '*.png binary' >"$new/.gitattributes"
+setup "$new"
+[ "$(cat "$new/.gitattributes")" = "$(printf '*.png binary\ndocs/decisions.md merge=union')" ] || fail ".gitattributes not extended: $(cat "$new/.gitattributes")"
+setup "$new"
+[ "$(grep -c 'docs/decisions.md' "$new/.gitattributes")" -eq 1 ] || fail "rerun duplicated the attribute: $(cat "$new/.gitattributes")"
+
 # docs/vision.md is the owner's (#342): setup repo proposes to protect it while no glob of `protected` covers it,
 # and says nothing once one does (the generic preset's globs do not).
 grep -q "docs/vision.md: add it to protected" "$work/out" || fail "no proposal to protect docs/vision.md: $(cat "$work/out")"

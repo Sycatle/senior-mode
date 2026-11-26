@@ -1022,6 +1022,7 @@ setup_repo() {
 
   setup_claude_md "$root" "$tpl/$lang" "$name"
   setup_gitignore "$root"
+  decisions_attributes "$root"
   if [ -n "$(find "$root" "$root/.github" "$root/docs" -maxdepth 1 -iname 'pull_request_template*' 2>/dev/null)" ]; then
     echo "pull request template: kept"
   else

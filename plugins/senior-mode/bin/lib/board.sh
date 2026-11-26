@@ -1089,17 +1089,37 @@ frame_start() {
   echo "worktree $path"
 }
 
+# The decision log merges as a union (#639): two branches that each append a line to the end of docs/decisions.md would
+# conflict on the same last lines. Adds `docs/decisions.md merge=union` to the .gitattributes of the root $1, unless the
+# attributes already say it.
+decisions_attributes() {
+  local root=$1 file=$1/.gitattributes
+  [ "$(git -C "$root" check-attr merge -- docs/decisions.md | sed 's/.*: //')" != union ] || return 0
+  [ ! -s "$file" ] || [ -z "$(tail -c1 "$file")" ] || echo >>"$file"
+  echo "docs/decisions.md merge=union" >>"$file"
+  echo ".gitattributes: docs/decisions.md merges as a union (parallel framings do not conflict on the log)"
+}
+
 # senior-mode frame decide <issue> <question> <answer> (#310): appends the line `- <date> #<issue>: <question> ->
 # <answer>` to docs/decisions.md of the repository it runs in (created with its title), the log of what the owner
-# chose while framing. A line already there is not added again, so a rerun is safe; the file is committed with the
-# framing, never written to the default branch from here.
+# chose while framing, and says which branch received it. A line already there is not added again, so a rerun is safe;
+# the file is committed with the framing: it refuses the default branch and a branch whose pull request is merged (#639).
 frame_decide() {
-  local root file q a line
+  local root file q a line branch base merged common
   [[ ${1:-} =~ ^[1-9][0-9]*$ ]] || usage
   q=$(tr -s '[:space:]' ' ' <<<"${2:-}" | sed 's/^ //; s/ $//')
   a=$(tr -s '[:space:]' ' ' <<<"${3:-}" | sed 's/^ //; s/ $//')
   [ -n "$q" ] && [ -n "$a" ] || die "frame decide needs a question and an answer"
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  branch=$(git -C "$root" branch --show-current)
+  common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)
+  base=$(start_base "${common%/.git}") || base=""
+  [ -z "$branch" ] || [ "$branch" != "${base#origin/}" ] ||
+    die "frame decide: $branch is the default branch; run it in the framing's worktree (senior-mode frame start <idea>)"
+  if [ -n "$branch" ]; then
+    merged=$(gh_retry pr list --head "$branch" --state merged --json number -q length 2>/dev/null) || merged=0
+    [ "${merged:-0}" = 0 ] || die "frame decide: the pull request of $branch is merged; frame again on a new branch (senior-mode frame start <idea>)"
+  fi
   file=$root/docs/decisions.md
   line="- $(date -u +%F) #$1: $q -> $a"
   if [ ! -f "$file" ]; then
@@ -1108,11 +1128,12 @@ frame_decide() {
       'What the owner chose when a request was framed, one line per question, oldest first: date, ticket, question, answer.' \
       'Written by `senior-mode frame decide`; an answer taken without the owner ends with "(assumed)".' '' >"$file"
   fi
+  decisions_attributes "$root"
   if grep -qxF -- "$line" "$file"; then
-    echo "decision already logged: #$1"
+    echo "decision already logged: #$1 on branch ${branch:-(detached HEAD)}"
   else
     printf '%s\n' "$line" >>"$file"
-    echo "decision logged: #$1"
+    echo "decision logged: #$1 on branch ${branch:-(detached HEAD)}"
   fi
 }
 

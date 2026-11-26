@@ -286,12 +286,18 @@ Runs before every Bash command, in any repository where the plugin is enabled. I
   an abbreviation of them, `push -f` (any short cluster with `f`), `commit -n` or `core.hooksPath` (the
   value is read anywhere in the command). Reading any of these keys is allowed;
 - `gh alias set` and `gh alias import`: an alias hides the command it runs from this guard;
-- force-push: `--force`, `-f`, `--force-with-lease`, `--force-if-includes`, a `+` refspec;
+- force-push: `--force`, `-f`, `--force-with-lease`, `--force-if-includes`, a `+` refspec. One exception: a
+  lease-protected push (`--force-with-lease`, alone or with `--force-if-includes`) of a ticket branch
+  (`<type>/<n>-<slug>`) that has an open pull request is allowed, so that a session can rebase its own branch or reword its
+  commits; never on the default branch, on a branch with no open pull request (merged included), or when
+  `gh pr list` cannot say;
 - pushing every branch: `--all`, `--mirror`, `--branches`;
 - pushing to the default branch (open a pull request instead), also when a variable splits its name
   (`ma${x}in`, `HEAD:ma${x}in`); a ref that is only a variable (`HEAD:$BRANCH`) is not followed;
 - `git reset --hard` on a shared branch (the default branch, or one that exists on `origin` or has
-  an upstream);
+  an upstream). The branch is the one the reset applies to: a `git switch <b>` or `git checkout <b>` earlier in the same
+  command moves it, as a `cd` does. Resetting a branch that is not the default one to its own remote branch
+  (`origin/<b>`, `<b>@{upstream}`) is allowed: it drops local commits only;
 - `gh pr merge --admin`, and a merge through `gh api` with `PUT` on `pulls/<n>/merge`, even when
   the number is a variable. `env`, `sudo`, `xargs` and the like in front of `gh` or `git` do not
   hide the command, and the endpoint is read up to any character that cannot continue the path

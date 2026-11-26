@@ -653,7 +653,17 @@ run_review() {
   fi
 }
 
-# The open pull requests of the session $1's branch (the REST list, on stdout) for a session that said `delivered`. Under
+# The open pull request that names ticket $1 in a `Closes`, `Fixes`, `Resolves` or `Supersedes` line of its body, as a
+# one-element list (the latest): the ticket's fix may have gone to another branch than the one its session started (#675).
+# Nothing ("[]") when there is none.
+run_pulls_by_ticket() {
+  gh_retry api "repos/$RUN_SLUG/pulls?state=open&per_page=100" |
+    jq -c --arg re "(closes|fixes|resolves|supersedes) +#$1([^0-9]|$)" \
+      '[.[] | select((.body // "") | test($re; "i"))] | sort_by(-.number) | .[:1]'
+}
+
+# The open pull requests of the session $1's branch (the REST list, on stdout), else the one that closes or supersedes its
+# ticket (run_pulls_by_ticket), for a session that said `delivered`. Under
 # serve (RUN_RECONCILE), a branch with commits and no pull request of any state gets one (spec 373, section 2): the branch
 # is pushed when the remote is behind (never forced), then the pull request opened with `Closes #<n>` for each ticket of
 # the session; opened once, because a head that has a pull request, open or not, is left alone. Returns 1 when GitHub could
@@ -663,6 +673,10 @@ run_pulls() {
   branch=${RUN_BRANCH[$n]}
   head=${RUN_SLUG%%/*}:$branch
   pulls=$(gh_retry api "repos/$RUN_SLUG/pulls?head=$head&state=open") || return 1
+  if jq -e 'length == 0' <<<"$pulls" >/dev/null; then
+    all=$(run_pulls_by_ticket "$n") || return 1
+    ! jq -e 'length > 0' <<<"$all" >/dev/null || pulls=$all
+  fi
   if [ -z "${RUN_RECONCILE:-}" ] || jq -e 'length > 0' <<<"$pulls" >/dev/null; then
     printf '%s\n' "$pulls"
     return 0

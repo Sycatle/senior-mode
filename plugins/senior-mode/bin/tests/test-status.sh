@@ -257,6 +257,46 @@ for bad in "--max 0" "--max x" "--max" "--nope"; do
   run pick $bad && fail "pick accepted: $bad"
 done
 
+# Hierarchy (#358): an orphan has no parent epic (unless exempt: security, hotfix, or under the maintenance epic) or
+# an epic whose milestone has no `Goal:` line. With hierarchy.enforce pick leaves it out; without, pick is unchanged
+# and status warns.
+cp "$FIX/page-first.json" "$FIX/page-first.keep"
+cp "$repo/.claude/senior-mode.json" "$work/config.hier"
+parented() { # <item json> <parent number> <labels json> <milestone json>
+  jq -c --argjson n "$2" --argjson l "$3" --argjson m "$4" '.content.parent = {number: $n, labels: {nodes: ($l | map({name: .}))}, milestone: $m}' <<<"$1"
+}
+goal='{"title": "v1.0", "description": "Release gate.\nGoal: G1"}'
+nogoal='{"title": "v2.0", "description": "No goal here."}'
+hier=$(jq -sc '.' < <(
+  parented "$(item 10 Ready "P1 next" S null '[]' '[]')" 201 '["maintenance"]' null
+  parented "$(item 11 Ready "P0 now" M null '[]' '[]')" 200 '["epic"]' "$goal"
+  parented "$(item 16 Ready "P0 now" S null '[]' "$closed98")" 202 '[]' "$nogoal"
+  item 12 Ready "P1 next" M null '["hotfix"]' '[]'
+  item 40 Ready "P1 next" S null '[]' '[]'
+  parented "$(item 41 Ready "P1 next" S null '[]' '[]')" 203 '[]' "$goal"
+  item 200 Backlog "P1 next" M null '["epic"]' '[]'))
+jq -c --argjson n "$hier" '.data.node.items.nodes = $n' "$FIX/page-first.keep" >"$FIX/page-first.json"
+run pick --json || fail "pick with parents failed: $(cat "$work/err")"
+base=$(json 'map(.number)')
+[ "$base" = "[11,16,10,12,40,41]" ] || fail "pick changed with hierarchy.enforce off: $base"
+run status --json --since 7d || fail "status --json with orphans failed: $(cat "$work/err")"
+[ "$(json '[.orphans[].number] | sort')" = "[16,40]" ] || fail "status orphans: $(json '.orphans')"
+json '.orphans[] | select(.number == 16) | .why' | grep -q 'v2.0' || fail "the orphan #16 does not name its milestone: $(json '.orphans')"
+json '.orphans[] | select(.number == 40) | .why' | grep -q 'no parent epic' || fail "the orphan #40 does not name the missing parent: $(json '.orphans')"
+run status --since 7d || fail "status with orphans failed: $(cat "$work/err")"
+grep -qE '^Orphans \(2\)' "$work/out" || fail "plain status does not warn about orphans: $(cat "$work/out")"
+grep -qF "#40 Ticket 40: no parent epic" "$work/out" || fail "plain status lacks #40: $(cat "$work/out")"
+jq '.hierarchy = {enforce: true}' "$work/config.hier" >"$repo/.claude/senior-mode.json"
+run pick --json || fail "pick with hierarchy.enforce failed: $(cat "$work/err")"
+[ "$(json 'map(.number)')" = "[11,10,12,41]" ] || fail "pick with hierarchy.enforce: $(json 'map(.number)')"
+run pick || fail "plain pick with hierarchy.enforce failed"
+grep -qE '^#(16|40) ' "$work/out" && fail "plain pick returns an orphan: $(cat "$work/out")"
+jq '.hierarchy = {enforce: true, exempt: ["chore"]}' "$work/config.hier" >"$repo/.claude/senior-mode.json"
+run pick --json || fail "pick with hierarchy.exempt failed"
+[ "$(json 'map(.number)')" = "[11,10,41]" ] || fail "hierarchy.exempt does not replace the default: $(json 'map(.number)')"
+cp "$work/config.hier" "$repo/.claude/senior-mode.json"
+cp "$FIX/page-first.keep" "$FIX/page-first.json"
+
 # #17 has a worktree in the data dir, #21 none (#224).
 wt17=$work/xdg/senior-mode/worktrees/app-0/17
 git -C "$repo" worktree add -q -b feat/17-thing "$wt17"
@@ -329,7 +369,7 @@ for want in "Done in the last 7d" "#5 Ticket 5" "2 pull requests merged" "In pro
   "Release" "v0.1.2" "pull request #32"; do
   grep -qF -- "$want" "$work/out" || fail "plain status lacks '$want': $(cat "$work/out")"
 done
-grep -qF "#13" "$work/out" && fail "an L ticket is listed: $(cat "$work/out")"
+grep -qE "^  #13 P" "$work/out" && fail "an L ticket is listed as next: $(cat "$work/out")"
 
 grep -qF "#17 Ticket 17 (worktree $(cd "$wt17" && pwd -P))" "$work/out" ||
   fail "plain status does not show the worktree of #17: $(cat "$work/out")"

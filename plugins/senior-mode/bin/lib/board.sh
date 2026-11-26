@@ -344,17 +344,31 @@ READY_QUERY='query($project: ID!, $after: String) { node(id: $project) { ... on 
   nodes { fieldValues(first: 20) { nodes {
       ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
       ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } }
-    content { ... on Issue { number state body labels(first: 20) { nodes { name } } } } } } } } }'
+    content { ... on Issue { number state body labels(first: 20) { nodes { name } }
+      parent { number labels(first: 20) { nodes { name } } milestone { title description } } } } } } } } }'
+# The hierarchy (spec 325 §7, #358): the reason a ticket is an orphan, null when it is not. A ticket needs a parent epic
+# under a milestone whose description has a `Goal:` line, unless it carries a label of the list $ex (hierarchy.exempt)
+# or sits under the maintenance epic (label `maintenance`); an epic (label `epic`) needs no parent. Its input has `labels`
+# and `parent`, the epic as {number, labels, milestone: {title, description}} or null (`epic_of` reads it from GraphQL).
+# shellcheck disable=SC2016 # a jq program, not shell
+ORPHAN_DEF='def epic_of: if . then {number, labels: [.labels.nodes[].name], milestone} else null end;
+  def orphan($ex): if any(.labels[]; . as $l | $ex | index($l) != null) or (.labels | index("epic")) != null then null
+    elif .parent == null then "no parent epic"
+    elif (.parent.labels | index("maintenance")) != null then null
+    elif .parent.milestone == null then "its epic #\(.parent.number) has no milestone, so no Goal"
+    elif (.parent.milestone.description // "" | test("(^|\n)[ \t]*Goal:[ \t]*\\S")) then null
+    else "the milestone \"\(.parent.milestone.title)\" of its epic #\(.parent.number) has no Goal: line" end;'
+
 # The Status of an item, GitHub's default Todo read as Backlog (#556): on some organisations an option named Backlog
 # makes GitHub put every issue back to it after each move, so the board keeps Todo. Needs a def single($f).
 # shellcheck disable=SC2016 # a jq program, not shell
 STATUS_DEF='def status: single("Status") | if . != null and ascii_downcase == "todo" then "Backlog" else . end;'
 # shellcheck disable=SC2016 # a jq program, not shell
-READY_ITEMS='def single($f): [.fieldValues.nodes[]? | select(.field.name == $f and .name != null) | .name][0];
+READY_ITEMS=$ORPHAN_DEF'def single($f): [.fieldValues.nodes[]? | select(.field.name == $f and .name != null) | .name][0];
   def text($f): [.fieldValues.nodes[]? | select(.field.name == $f and .text != null) | .text][0];
   '$STATUS_DEF'
   [.[].data.node.items.nodes[]? | select(.content.number != null) | .content as $c
-    | {number: $c.number, open: ($c.state == "OPEN"), body: ($c.body // ""), labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation,
+    | {number: $c.number, open: ($c.state == "OPEN"), body: ($c.body // ""), labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation, parent: ($c.parent | epic_of),
        status: status, priority: single("Priority"), size: single("Size"), severity: single("Severity"),
        agent: (($c.body // "") | test("(^|\n)filed-by: agent[ \t]*(\n|$)")),
        paths: ((text("Paths") // "") | gsub("[\\[\\]\"\u0027]"; "") | [split("[,\\s]+"; null)[] | select(length > 0)])}]'
@@ -413,17 +427,19 @@ ready_in_zone() {
 # What stops the ticket $1 (an item of ready_items) from being Ready, as a JSON array of reasons, empty when
 # nothing does. The Definition of Ready for any ticket: acceptance criteria (a list under an "Acceptance
 # criteria" heading), Size, Priority, Paths. A ticket an agent filed, with $2 the protected globs: also size S,
-# no high or critical security severity, no Paths in a protected zone.
+# no high or critical security severity, no Paths in a protected zone. $3 is the hierarchy settings as JSON
+# ({enforce, exempt}): when enforced, an orphan (see ORPHAN_DEF) lacks its link to a goal.
 # shellcheck disable=SC2016 # a jq program, not shell
 ready_missing() {
-  local it=$1 zones=$2 reasons hits="" p
-  reasons=$(jq -c '[(if (.body | test("(^|\n)#{1,6}[ \t]*acceptance criteria[ \t]*\n+[ \t]*([-*]|[0-9]+[.)])[ \t]+\\S"; "i")) then empty else "acceptance criteria" end),
+  local it=$1 zones=$2 hier=${3:-'{"enforce": false}'} reasons hits="" p
+  reasons=$(jq -c --argjson h "$hier" "$ORPHAN_DEF"'[(if (.body | test("(^|\n)#{1,6}[ \t]*acceptance criteria[ \t]*\n+[ \t]*([-*]|[0-9]+[.)])[ \t]+\\S"; "i")) then empty else "acceptance criteria" end),
     (if .size == null then "Size" else empty end), (if .priority == null then "Priority" else empty end),
     (if (.paths | length) == 0 then "Paths" else empty end),
     (if .agent then
       (if .size != null and .size != "S" then "size \(.size) (a ticket an agent filed is Ready only when S)" else empty end),
       (if .severity == "high" or .severity == "critical" then "\(.severity) security severity (a ticket an agent filed is never Ready by rule)" else empty end)
-     else empty end)]' <<<"$it")
+     else empty end),
+    (if $h.enforce == true then orphan($h.exempt // []) | if . then "hierarchy: \(.)" else empty end else empty end)]' <<<"$it")
   if jq -e .agent <<<"$it" >/dev/null; then
     while IFS= read -r p; do
       ! ready_in_zone "$zones" "$p" || hits+=${hits:+, }$p
@@ -596,7 +612,7 @@ ready_delivery() {
 # missing (see ready_missing) is set Ready; any other gets `needs-human` and a comment that says what is
 # missing, and is left alone until a person removes the label. --dry-run only says what would happen.
 ready() {
-  local pr="" dry=false slug info items zones nums="null" it n why
+  local pr="" dry=false slug info items zones hier nums="null" it n why
   while [ $# -gt 0 ]; do
     case $1 in
       --pr)
@@ -624,9 +640,10 @@ ready() {
   fi
   items=$(ready_items) || exit 1
   zones=$(ready_zones) || exit 1
+  hier=$(config_get hierarchy) || exit 1
   while IFS= read -r it; do
     n=$(jq -r '.number' <<<"$it")
-    why=$(ready_missing "$it" "$zones" | jq -r 'join(", ")')
+    why=$(ready_missing "$it" "$zones" "$hier" | jq -r 'join(", ")')
     if [ -z "$why" ]; then
       if [ "$dry" = true ]; then echo "#$n would be Ready"; else item_set "$n" Status Ready || echo "#$n: could not set Ready" >&2; fi
     elif [ "$dry" = true ]; then
@@ -658,6 +675,7 @@ BOARD_QUERY='query($project: ID!, $owner: String!, $name: String!, $after: Strin
         ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } }
       content { ... on Issue { number title url state closedAt updatedAt authorAssociation labels(first: 20) { nodes { name } }
         milestone { title dueOn } blockedBy(first: 20) { nodes { number state } }
+        parent { number labels(first: 20) { nodes { name } } milestone { title description } }
         comments(last: 1) { nodes { body authorAssociation } } } } } } } }
   repository(owner: $owner, name: $name) @include(if: $repo) {
     latestRelease { tagName publishedAt }
@@ -749,7 +767,7 @@ board_graphql() {
 # requests; the latest release. The last four are empty unless $1 is true.
 # shellcheck disable=SC2016 # a jq program, not shell
 board_data() {
-  local with_repo=${1:-false} repo file project slug after="" page pages="[]" more=true count=0 err data
+  local with_repo=${1:-false} repo file project slug after="" page pages="[]" more=true count=0 err data hier
   repo=$with_repo
   file=$(config_file)
   project=$(jq -r '.project.id // empty' "$file")
@@ -769,7 +787,8 @@ board_data() {
     count=$((count + 1))
     [ "$count" -lt 20 ] || break
   done
-  data=$(jq -c "$HYGIENE_NODES"'def single($f): [.fieldValues.nodes[] | select(.field.name == $f) | .name][0];
+  hier=$(config_get hierarchy) || exit 1
+  data=$(jq -c --argjson hier "$hier" "$HYGIENE_NODES$ORPHAN_DEF"'def single($f): [.fieldValues.nodes[] | select(.field.name == $f) | .name][0];
     def text($f): [.fieldValues.nodes[] | select(.field.name == $f) | .text][0];
     '"$STATUS_DEF"'
     def failing: [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
@@ -782,7 +801,9 @@ board_data() {
            status: status, priority: single("Priority"), size: single("Size"), severity: single("Severity"), paths: (text("Paths") // ""),
            labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation, milestone: $c.milestone.title, due: $c.milestone.dueOn,
            updated: ([$c.updatedAt, $moved] | map(select(. != null)) | max),
-           blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number], last: lastc($c)}],
+           blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number], last: lastc($c), parent: ($c.parent | epic_of)}
+        | . + {orphan: orphan($hier.exempt // [])}],
+       hierarchy: {enforce: ($hier.enforce == true)},
        prs: [$r.pullRequests.nodes[]? | {number, title, url, branch: .headRefName, labels: [.labels.nodes[].name], failing: failing,
          updated: .updatedAt, last: lastc(.)}],
        branches: [$r.branches.nodes[]?.name],
@@ -808,7 +829,8 @@ TRUST_DEF='def trusted: . as $i | (($i.labels | index("triage")) | not)
 # "blocked by" link, `blocked` label), not waiting for information (`needs-info`). Sorted by Priority
 # (P0 first), a critical Severity ahead of the others, then milestone due date, then number.
 # shellcheck disable=SC2016 # a jq program, not shell
-PICK_DEF=$TRUST_DEF'def pick: [.items[] | select(.open and trusted and .status == "Ready" and .size != "L" and (.blockers | length == 0)
+PICK_DEF=$TRUST_DEF'def pick: . as $d | [.items[] | select(.open and trusted and .status == "Ready" and .size != "L" and (.blockers | length == 0)
+    and ($d.hierarchy.enforce != true or .orphan == null)
     and ((.labels | index("blocked")) | not) and ((.labels | index("needs-info")) | not))]
   | sort_by([([(.priority // "") | scan("^P([0-9]+)") | .[0] | tonumber] | first // 99),
     (if .severity == "critical" then 0 else 1 end), (.due // "9999"), .number]);'

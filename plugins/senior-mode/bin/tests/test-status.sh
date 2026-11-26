@@ -115,6 +115,7 @@ items=$(jq -sc '.' < <(
   item 21 "In progress" "P1 next" M null '[]' "$open99"
   item 22 "In review" "P1 next" M null '["needs-human"]' '[]'
   item 23 Ready "P0 now" S null '["needs-info"]' '[]'
+  item 50 Ready "P0 now" S null '["needs-human"]' '[]'
   item 24 Backlog "P1 next" S null '["needs-decision", "needs-human"]' '[]'
   item 25 Backlog "P1 next" S null '["needs-decision", "needs-human"]' '[]'
   item 24 "In review" "P1 next" S null '[]' '[]' CLOSED
@@ -169,7 +170,7 @@ run() { : >"$GH_LOG"; : >"$FIX/bodies"; : >"$FIX/status-updates"; (cd "$repo" &&
 calls() { wc -l <"$GH_LOG" | tr -d ' '; }
 json() { jq -c "$1" "$work/out"; }
 
-# pick: Priority, then milestone due date, then number; blocked, needs-info and size L are left out.
+# pick: Priority, then milestone due date, then number; blocked, needs-info, needs-human (#603) and size L are left out.
 run pick || fail "pick exited non-zero: $(cat "$work/err")"
 want='11
 16
@@ -369,9 +370,9 @@ echo $(($(date +%s) - 86400)) >"$common/senior-mode/retro-last"
 [ "$(json '.inReview | map([.number, .pr])')" = "[[18,30],[22,31]]" ] || fail "in review: $(json .inReview)"
 [ "$(json '.blocked | map(.number)')" = "[14,15,19,21,23]" ] || fail "blocked: $(json .blocked)"
 [ "$(json '.blocked[] | select(.number == 21) | .reasons')" = '["waits for #99"]' ] || fail "blocked reasons: $(json .blocked)"
-[ "$(json '.waiting | map([.kind, .number])')" = '[["pull request",30],["pull request",31],["ticket",22],["ticket",24],["ticket",25]]' ] || fail "waiting: $(json .waiting)"
+[ "$(json '.waiting | map([.kind, .number])')" = '[["pull request",30],["pull request",31],["ticket",22],["ticket",24],["ticket",25],["ticket",50]]' ] || fail "waiting: $(json .waiting)"
 [ "$(json '.waiting[0].why')" = '"failing: senior-mode/ci"' ] || fail "failing statuses: $(json .waiting)"
-[ "$(json '.decisions | map([.number, .kind])')" = '[[23,"framing"],[22,"needs-human"],[24,"needs-decision"],[25,"needs-decision"],[19,"framing"],[31,"pull-request"],[33,"framing"]]' ] ||
+[ "$(json '.decisions | map([.number, .kind])')" = '[[23,"framing"],[50,"needs-human"],[22,"needs-human"],[24,"needs-decision"],[25,"needs-decision"],[19,"framing"],[31,"pull-request"],[33,"framing"]]' ] ||
   fail "decisions: $(json '.decisions | map([.number, .kind])')"
 [ "$(json '.decisions[] | select(.number == 22) | .question')" = '"keep SQLite or move to Postgres?"' ] || fail "question: $(json .decisions)"
 # #621: a needs-decision ticket shows the question and the recommended option of its last decision comment, even with a later
@@ -395,7 +396,7 @@ run status --json --since 2h || fail "--since 2h failed"
 run status --since 7d || fail "status --since 7d failed: $(cat "$work/err")"
 for want in "Done in the last 7d" "#5 Ticket 5" "2 pull requests merged" "In progress" "#17 Ticket 17" "In review" \
   "#18 Ticket 18 (pull request #30)" "Blocked or missing information" "#19 Ticket 19: needs information" \
-  "Decisions (7)" "#24 Ticket 24 · needs-decision · 3d: Keep SQLite or move to Postgres? (recommended: Keep SQLite)" "#25 Ticket 25 · needs-decision" "#22 Ticket 22 · needs-human · 3d: keep SQLite or move to Postgres?" "#31 Ticket 22 slice · pull-request · 5d: pull request #31 cannot merge" \
+  "Decisions (8)" "#24 Ticket 24 · needs-decision · 3d: Keep SQLite or move to Postgres? (recommended: Keep SQLite)" "#25 Ticket 25 · needs-decision" "#22 Ticket 22 · needs-human · 3d: keep SQLite or move to Postgres?" "#31 Ticket 22 slice · pull-request · 5d: pull request #31 cannot merge" \
   "#33 docs: frame the export · framing · 1d: Approve or amend the framing" "Failing checks (1)" "pull request #30 Ticket 18 slice: failing: senior-mode/ci" "Next Ready" "#11 P0 now · M · Ticket 11" \
   "Release" "v0.1.2" "pull request #32"; do
   grep -qF -- "$want" "$work/out" || fail "plain status lacks '$want': $(cat "$work/out")"
@@ -438,11 +439,11 @@ echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claud
 # Board drift (#124): closed but not Done (#24, #26), open but Done (#25), In progress or In review with
 # no open pull request and no branch (#21; #17 has a branch, #18 and #22 a pull request).
 run status --json --since 7d || fail "status --json failed: $(cat "$work/err")"
-[ "$(json '.drift | map([.number, .kind])')" = '[[24,"closed"],[26,"closed"],[25,"open-done"],[21,"stale"]]' ] ||
+[ "$(json '.drift | map([.number, .kind])')" = '[[24,"closed"],[26,"closed"],[25,"open-done"],[21,"stale"],[50,"needs-human-ready"]]' ] ||
   fail "drift: $(json .drift)"
 json 'has("fixed")' | grep -qx false || fail "fixed listed without --fix"
 run status --since 7d || fail "status failed: $(cat "$work/err")"
-for want in "Board drift (4)" "#24 Ticket 24: closed but In review" "#26 Ticket 26: closed but Backlog" \
+for want in "Board drift (5)" "#50 Ticket 50: Ready but labelled needs-human" "#24 Ticket 24: closed but In review" "#26 Ticket 26: closed but Backlog" \
   "#25 Ticket 25: open but Done" "#21 Ticket 21: In progress with no open pull request and no branch"; do
   grep -qF -- "$want" "$work/out" || fail "drift section lacks '$want': $(cat "$work/out")"
 done
@@ -451,7 +452,7 @@ grep -q 'pr list' "$GH_LOG" && fail "status without --fix cleaned the repository
 # A local branch that was never pushed counts as a branch: #21 is not stale while one exists.
 git -C "$repo" branch feat/21-local-only
 run status --json --since 7d || fail "status --json with a local branch failed: $(cat "$work/err")"
-[ "$(json '.drift | map(.number)')" = '[24,26,25]' ] || fail "a local branch does not count: $(json .drift)"
+[ "$(json '.drift | map(.number)')" = '[24,26,25,50]' ] || fail "a local branch does not count: $(json .drift)"
 git -C "$repo" branch -q -D feat/21-local-only
 # --fix sets the closed ones Done and leaves the rest, saying why.
 cfg_fields='{"project": {"id": "PVT_1", "owner": "acme", "number": 3, "fields": {"Status": {"id": "F_S",
@@ -545,7 +546,7 @@ want='["staging","chore/60-lost","feat/61-wip","fix/70-a#b","fix/71-100%","feat/
 # and has not moved for hygiene.days: #27 has a remote branch, #28 moved yesterday, #35 has an old issue but
 # was moved to In progress yesterday (a Status change touches the board item, not the issue).
 [ "$(json '.hygiene.orphans | map(.number)')" = "[21]" ] || fail "orphans: $(json .hygiene.orphans)"
-[ "$(json '.drift | map(.number)')" = "[24,26,25,28,35]" ] || fail "an orphan is also drift: $(json .drift)"
+[ "$(json '.drift | map(.number)')" = "[24,26,25,28,35,50]" ] || fail "an orphan is also drift: $(json .drift)"
 run status --since 7d || fail "status with hygiene failed: $(cat "$work/err")"
 n=$(jq -r '.hygiene | (.stale + .branches + .superseded + .orphans) | length' < <(cd "$repo" && "$cli" status --json --since 7d))
 for want in "Hygiene ($n)" "pull request #50 PR 50: no activity for 20 days" "pull request #53 PR 53: no activity for 25 days" \

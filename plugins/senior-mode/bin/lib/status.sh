@@ -71,7 +71,8 @@ ticket_trees() {
 }
 
 # The drift of the board: tickets whose Status says something their issue does not (closed but not Done, open
-# but Done, In progress or In review with no branch and no open pull request). $locals the local branch names.
+# but Done, In progress or In review with no branch and no open pull request, Ready but labelled `needs-human`: `pick`
+# never takes it, #603). $locals the local branch names.
 # shellcheck disable=SC2016 # a jq program, not shell
 DRIFT_DEF="$BRANCH_DEF"'def drift($d; $locals): $d.items as $items
   | ([$items[] | select((.open | not) and .status != "Done")
@@ -79,7 +80,9 @@ DRIFT_DEF="$BRANCH_DEF"'def drift($d; $locals): $d.items as $items
     + [$items[] | select(.open and .status == "Done") | {number, title, kind: "open-done", why: "open but Done"}]
     + [$items[] | select(.open and (.status | IN("In progress", "In review"))) | . as $i
       | select([$d.hygiene.prs[].branch, $d.hygiene.branches[].name, $locals[]] | any(test(bre($i.number))) | not)
-      | {number, title, kind: "stale", why: "\(.status) with no open pull request and no branch"}]);'
+      | {number, title, kind: "stale", why: "\(.status) with no open pull request and no branch"}]
+    + [$items[] | select(.open and .status == "Ready" and (.labels | index("needs-human")))
+      | {number, title, kind: "needs-human-ready", why: "Ready but labelled needs-human"}]);'
 
 # The decisions (#308): everything that waits for the human, from board_data and $now. A ticket with `needs-human`
 # (kind needs-human), a pull request with `needs-human` (pull-request), a ticket in framing (an open ticket with
@@ -266,6 +269,9 @@ status_fix() {
       open-done)
         jq -nc --argjson n "$n" --arg t "$title" --arg w "$why" '{number: $n, title: $t, fixed: false,
           line: "left: #\($n) \($t): \($w); a human decides whether it is finished (close it) or not (move it back)"}' ;;
+      needs-human-ready)
+        jq -nc --argjson n "$n" --arg t "$title" --arg w "$why" '{number: $n, title: $t, fixed: false,
+          line: "left: #\($n) \($t): \($w); a human takes it, or moves it back out of Ready"}' ;;
       *)
         jq -nc --argjson n "$n" --arg t "$title" --arg w "$why" '{number: $n, title: $t, fixed: false,
           line: "left: #\($n) \($t): \($w); a human decides whether to resume it or move it back to Ready"}' ;;

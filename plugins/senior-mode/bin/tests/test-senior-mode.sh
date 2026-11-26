@@ -181,6 +181,20 @@ expect 1 - item get
 expect 1 - item get abc
 
 expect 1 - bogus
+
+# `--version` and `version` print the plugin version and the commit of the checkout it runs from, in or out of a repository (#615).
+plugin=$(dirname "$cli")/..
+want="senior-mode $(jq -r .version "$plugin/.claude-plugin/plugin.json") ($(git -C "$plugin" rev-parse --short HEAD))"
+for arg in --version version; do
+  expect 0 "$want" "$arg"
+  [ "$(cd "$work" && "$cli" "$arg")" = "$want" ] || fail "senior-mode $arg fails outside a repository"
+done
+expect 1 - version extra
+# Run from a copy that is no checkout (the plugin cache), the commit is unknown.
+mkdir "$work/cache"
+cp -r "$plugin/bin" "$plugin/.claude-plugin" "$work/cache/"
+[ "$(cd "$work" && "$work/cache/bin/senior-mode" --version)" = "senior-mode $(jq -r .version "$plugin/.claude-plugin/plugin.json") (unknown)" ] ||
+  fail "senior-mode --version from a copy without git: $(cd "$work" && "$work/cache/bin/senior-mode" --version 2>&1)"
 (cd "$work" && "$cli" config get language 2>/dev/null) && fail "works outside a git repository"
 
 [ "$failures" -eq 0 ] && echo "senior-mode: all cases pass"

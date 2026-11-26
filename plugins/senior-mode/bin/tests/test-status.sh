@@ -306,6 +306,21 @@ grep -qE '^#(16|40) ' "$work/out" && fail "plain pick returns an orphan: $(cat "
 jq '.hierarchy = {enforce: true, exempt: ["chore"]}' "$work/config.hier" >"$repo/.claude/senior-mode.json"
 run pick --json || fail "pick with hierarchy.exempt failed"
 [ "$(json 'map(.number)')" = "[11,10,41]" ] || fail "hierarchy.exempt does not replace the default: $(json 'map(.number)')"
+# The maintenance budget (#351): the gardening slots in use out of the reserved ones, and the open gardening tickets.
+jq '.autonomy.parallel = 4 | .maintenance = {share: 0.2, maxOpen: 5}' "$work/config.hier" >"$repo/.claude/senior-mode.json"
+gard=$(jq -sc '.' < <(
+  item 50 "In progress" "P2 later" S null '["gardening"]' '[]'
+  item 51 Ready "P2 later" S null '["gardening"]' '[]'
+  item 52 "In progress" "P1 next" S null '[]' '[]'
+  item 53 Backlog "P2 later" S null '["gardening"]' '[]' '[]' CLOSED))
+jq -c --argjson n "$gard" '.data.node.items.nodes = $n' "$FIX/page-first.keep" >"$FIX/page-first.json"
+run status --json --since 7d || fail "status --json with gardening tickets failed: $(cat "$work/err")"
+[ "$(json '.maintenance')" = '{"reservedSlots":1,"parallel":4,"maxOpen":5,"slotsUsed":1,"open":2}' ] || fail "status maintenance: $(json '.maintenance')"
+run status --since 7d || fail "status with gardening tickets failed: $(cat "$work/err")"
+grep -qF 'Maintenance: 1 of 1 reserved gardening slots used (of 4), 2 open gardening tickets (at most 5)' "$work/out" || fail "plain status lacks the maintenance line: $(cat "$work/out")"
+jq '.autonomy.parallel = 4 | .maintenance = {share: 0}' "$work/config.hier" >"$repo/.claude/senior-mode.json"
+run status --json --since 7d || fail "status --json with share 0 failed: $(cat "$work/err")"
+[ "$(json '.maintenance.reservedSlots')" = 0 ] || fail "status reserves a slot with share 0: $(json '.maintenance')"
 cp "$work/config.hier" "$repo/.claude/senior-mode.json"
 cp "$FIX/page-first.keep" "$FIX/page-first.json"
 

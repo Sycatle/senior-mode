@@ -1489,12 +1489,29 @@ serve_prs() {
   done < <(serve_candidates "$data" "$prs")
 }
 
+# Is the free slot kept for gardening (#351)? Of the slots of `maintenance.share`, those not taken by a session of a
+# gardening ticket (`$garden`, the numbers of the open gardening tickets, space-padded) are held back while a Ready gardening
+# ticket could start: the feature ticket $4 cannot take the last of them. Without such a ticket the slot goes to features.
+serve_gardening_holds() {
+  local data=$1 reserved=$2 garden=$3 n=$4 g=0 r q keep
+  [[ $garden != *" $n "* ]] || return 1
+  for r in "${running[@]}"; do
+    [[ $garden != *" $r "* ]] || g=$((g + 1))
+  done
+  keep=$((reserved - g))
+  [ "$keep" -gt 0 ] && [ $((SERVE_PARALLEL - ${#running[@]} - 1)) -lt "$keep" ] || return 1
+  for q in "${queue[@]}"; do
+    [[ $garden == *" $q "* && " ${running[*]} " != *" $q "* ]] && [ -n "$(pick_free "$data" "$(run_busy)" "$(run_entry "$q")")" ] && return 0
+  done
+  return 1
+}
+
 # One poll: reads the sessions that ended, trips the breaker, then looks at the pull requests In review
 # (reviewer sessions, the ticket sessions resumed with findings, at most one merge) and, unless held or at a
 # ceiling, starts the Ready tickets in `pick` order while there is a free slot. A hold (breaker, usage limit)
 # stops every launch, reviewers and integrator sessions included; a merge needs no session and goes on.
 serve_poll() {
-  local now reason data prs n size title batch begins capped ticket_wait="" started_before diag cause why
+  local now reason data prs n size title batch begins capped ticket_wait="" started_before diag cause why reserved garden="" garden_said=false
   local -a queue=()
   now=$(serve_now)
   RUN_STOP=""
@@ -1558,8 +1575,18 @@ serve_poll() {
     fi
     queue+=("$n")
   done < <(queue_lines "$data")
+  # The maintenance budget (#351): the numbers of the open gardening tickets, only when a slot is reserved.
+  reserved=$(maintenance_reserved "$SERVE_PARALLEL") || reserved=0
+  if [ "$reserved" -gt 0 ]; then
+    garden=" $(jq -r --arg l "$(workflow_label "" gardening)" '[.items[] | select(.open and (.labels | index($l))) | .number] | join(" ")' <<<"$data") "
+  fi
   for n in "${queue[@]}"; do
     serve_can_launch || break
+    if [ "$reserved" -gt 0 ] && serve_gardening_holds "$data" "$reserved" "$garden" "$n"; then
+      [ "$garden_said" = true ] || echo "serve: the last free slot is kept for a gardening ticket (maintenance.share $(config_get maintenance.share))"
+      garden_said=true
+      continue
+    fi
     # Its Paths overlap nothing running, and a ticket with no Paths runs alone (#152).
     [ -n "$(pick_free "$data" "$(run_busy)" "$(run_entry "$n")")" ] || continue
     # A ticket begins with its first session: not a transient resume, nor an M ticket's implementer after its tests.
@@ -1846,6 +1873,7 @@ serve_loop() {
   SERVE_PER_HOUR=$(serve_int autonomy.sessionsPerHour 0)
   SERVE_MIN_MEM=$(serve_int autonomy.minMemoryMB 0)
   SERVE_PARALLEL=$(serve_int autonomy.parallel 1)
+  maintenance_reserved "$SERVE_PARALLEL" >/dev/null
   # A ticket costs several role sessions (#355): the safety cap is 6 per slot unless the repository sets one.
   [ "$SERVE_PER_HOUR" -gt 0 ] || SERVE_PER_HOUR=$((6 * SERVE_PARALLEL))
   SERVE_COMMON=$(git rev-parse --path-format=absolute --git-common-dir)

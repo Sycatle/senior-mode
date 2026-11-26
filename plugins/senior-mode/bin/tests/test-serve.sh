@@ -2246,6 +2246,41 @@ SENIOR_MODE_NOW=$((now + 6 * 86400)) once || fail "GD: serve failed: $(cat "$wor
 [ -z "$(gd_tickets)" ] || fail "GD: tickets filed with no notes: $(gd_tickets)"
 [ ! -e "$state/gardening-at" ] || fail "GD: a pass kept with no notes"
 
+# MB: the maintenance budget (#351, spec 325 section 6.1). maintenance.share of autonomy.parallel, rounded up, is kept for Ready
+# gardening tickets: feature tickets cannot take the last reserved slot while one waits; with none waiting the slot goes to features.
+mb_sessions() { local n; for n in "$@"; do session "$n-sonnet" delivered pr; done; }
+mb_started() { local n out=""; for n in "$@"; do ! started "$n" || out="$out $n"; done; echo "${out# }"; }
+mb_sessions 31 32 33 34 35 40 41
+config '{"parallel": 4}'
+boardx "31:Ready:S:P1 next" "32:Ready:S:P1 next" "33:Ready:S:P1 next" "34:Ready:S:P1 next" "35:Ready:S:P1 next" "40:Ready:S:P2 later:gardening"
+fresh
+once || fail "MB: serve failed: $(cat "$work/out")"
+[ "$(mb_started 31 32 33 34 35 40 41)" = "31 32 33 40" ] || fail "MB: share 0.2 of 4 slots keeps one for gardening, expected 31 32 33 40: $(mb_started 31 32 33 34 35 40 41)"
+grep -q 'the last free slot is kept for a gardening ticket' "$work/out" || fail "MB: the held slot is not said: $(cat "$work/out")"
+# No Ready gardening ticket: the slot goes to features.
+boardx "31:Ready:S:P1 next" "32:Ready:S:P1 next" "33:Ready:S:P1 next" "34:Ready:S:P1 next" "35:Ready:S:P1 next"
+fresh
+once || fail "MB: serve failed: $(cat "$work/out")"
+[ "$(mb_started 31 32 33 34 35)" = "31 32 33 34" ] || fail "MB: with no gardening ticket the four slots go to features: $(mb_started 31 32 33 34 35)"
+# A gardening ticket In progress in no queue does not hold the slot either: only a Ready one that could start does.
+boardx "31:Ready:S:P1 next" "32:Ready:S:P1 next" "33:Ready:S:P1 next" "34:Ready:S:P1 next" "40:In progress:S:P2 later:gardening"
+fresh
+once || fail "MB: serve failed: $(cat "$work/out")"
+[ "$(mb_started 31 32 33 34)" = "31 32 33 34" ] || fail "MB: a gardening ticket that is not Ready holds a slot: $(mb_started 31 32 33 34)"
+# maintenance.share 0: nothing is reserved, pick order as before.
+gd_config '.maintenance = {share: 0}'
+boardx "31:Ready:S:P1 next" "32:Ready:S:P1 next" "33:Ready:S:P1 next" "34:Ready:S:P1 next" "35:Ready:S:P1 next" "40:Ready:S:P2 later:gardening"
+fresh
+once || fail "MB: serve failed: $(cat "$work/out")"
+[ "$(mb_started 31 32 33 34 35 40 41)" = "31 32 33 34" ] || fail "MB: share 0 reserves nothing: $(mb_started 31 32 33 34 35 40 41)"
+grep -q 'kept for a gardening ticket' "$work/out" && fail "MB: a slot is kept with share 0: $(cat "$work/out")"
+# share 0.5 of 4 slots keeps two, gardening first or not: two features and two gardening tickets.
+gd_config '.maintenance = {share: 0.5}'
+boardx "31:Ready:S:P1 next" "32:Ready:S:P1 next" "33:Ready:S:P1 next" "40:Ready:S:P2 later:gardening" "41:Ready:S:P2 later:gardening"
+fresh
+once || fail "MB: serve failed: $(cat "$work/out")"
+[ "$(mb_started 31 32 33 40 41)" = "31 32 40 41" ] || fail "MB: share 0.5 of 4 slots keeps two for gardening: $(mb_started 31 32 33 40 41)"
+
 # AF: the hourly snapshot (#423): one JSON line in snapshots.jsonl the first poll and then once an hour, with the sessions
 # running, the free slots, the Ready tickets that could run, and null where nothing is known (no train, no quota band).
 config '{"parallel": 2}'

@@ -22,7 +22,7 @@ DEFAULTS='{
   "docs": { "extra": [] },
   "vision": { "maxLines": 100 },
   "knowledge": { "maxLines": 40, "staleMonths": 6, "churnCommits": 15 },
-  "maintenance": { "maxOpen": 5 },
+  "maintenance": { "share": 0.2, "maxOpen": 5 },
   "context": { "budget": 2000 },
   "retro": { "repeat": 3 },
   "architecture": { "rules": [] },
@@ -41,6 +41,15 @@ config_file() {
   [ -f "$file" ] || die "no .claude/senior-mode.json here; run /senior-mode:setup"
   jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; run /senior-mode:setup to repair it"
   printf '%s\n' "$file"
+}
+
+# The slots of $1 parallel slots that serve keeps for gardening tickets (#351): ceil(maintenance.share * $1), 0 when the
+# share is 0.
+maintenance_reserved() {
+  local share
+  share=$(config_get maintenance.share)
+  [[ $share =~ ^(0|1|0?\.[0-9]+|1\.0+)$ ]] || die "maintenance.share must be a number from 0 to 1, not $share"
+  awk -v s="$share" -v p="$1" 'BEGIN { r = s * p - 1e-9; n = int(r); if (r > n) n++; printf "%d\n", (n < 0 ? 0 : n) }'
 }
 
 # owner/name of the origin remote, from an https or ssh URL.

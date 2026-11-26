@@ -62,6 +62,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `knowledge.maxLines` | `40` | Lines the body of a [knowledge note](#knowledge-notes) may have; `check` fails above it (a positive whole number) |
 | `knowledge.staleMonths` | `6` | Months after which the [briefing](commands.md#the-senior-mode-script) marks a note `stale` and `check` warns about it (a positive whole number) |
 | `knowledge.churnCommits` | `15` | Commits on a note's `paths` since its `verified` date above which [`serve`](autonomy.md#alerts) files a gardening ticket to re-verify the note (a positive whole number) |
+| `maintenance.share` | `0.2` | Share of `autonomy.parallel` kept for Ready `gardening` tickets, rounded up (0.2 of 4 slots keeps 1): [`serve`](autonomy.md#maintenance-budget) does not let a feature ticket take the last of them while a gardening ticket waits; `0` reserves nothing (a number from 0 to 1) |
 | `maintenance.maxOpen` | `5` | Most open tickets labelled `gardening`: `serve` files no more while that many are open (a positive whole number) |
 | `retro.repeat` | `3` | Tickets with the same `cause:<x>` label on the same paths or skill, in the period, that make [`retro`](commands.md#retro) open one improvement ticket aimed at that cause (a positive whole number) |
 | `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |

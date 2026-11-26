@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #579: the timing cases of test-serve.sh (G, AG) and test-run.sh (T) must not fail under load. They wait on an event
+# #579: the timing cases of test-serve.sh (G, AG) and test-run.sh (T) and the --watch case of test-status.sh must not fail under load. They wait on an event
 # or a bounded poll, never on a wall-clock budget ($SECONDS or date +%s compared to a number) or a fixed sleep of the
 # claude stub, and they say in a note which time unit they use. This test reads those cases and checks that.
 set -u
@@ -26,6 +26,7 @@ check_case() { # <name> <file> <start regex> <end regex>
 check_case "serve G" "$here/test-serve.sh" '^# G: TERM stops' '^# J: alerts'
 check_case "serve AG" "$here/test-serve.sh" '^# AG: the watchdog' '^unset SENIOR_MODE_TIMEOUT_UNIT'
 check_case "run T" "$here/test-run.sh" '^# T: a ticket session script' '^# U: tickets whose Paths'
+check_case "status watch" "$here/test-status.sh" '^# --watch redraws until stopped' '^run status --watch --json'
 
 # The "slow" session of serve G ends on an event, not after a fixed sleep.
 grep -Eq '^\s*slow\) sleep [0-9.]+ ;;' "$here/test-serve.sh" &&

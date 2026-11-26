@@ -102,7 +102,7 @@ ${dec}
 
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the pull request is open with senior-mode/ci, senior-mode/review and senior-mode/security set;
-- \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;${pout:+$nl$pout}
+- \`outgrown: <reason>\` if the ticket is bigger than its size; `outgrown: needs a person: <what>` when only a person can go on (a push you are denied, a choice between documented options), which is no failure;${pout:+$nl$pout}
 - \`decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
 - \`blocked: #<issue or pull request> <reason>\` when the code it changes is not on the base branch yet (an open pull request or ticket must land first);
 - \`duplicate: #<original> <reason>\` when the work is already merged, or another open issue asks for the same (look for one with the same title before you start);
@@ -155,7 +155,7 @@ ${dec}
 Last, write one line per ticket to the file \$SENIOR_MODE_RUN_OUTCOME, each starting with the ticket number:
 - \`#<n> delivered\` once its commit is in the pull request, open with senior-mode/ci, senior-mode/review and
   senior-mode/security set;
-- \`#<n> outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
+- \`#<n> outgrown: <reason>\` if the ticket is bigger than its size; `outgrown: needs a person: <what>` when only a person can go on (a push you are denied, a choice between documented options), which is no failure;
 - \`#<n> decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
 - \`#<n> blocked: #<issue or pull request> <reason>\` when the code it changes is not on the base branch yet (an open pull request or ticket must land first);
 - \`#<n> duplicate: #<original> <reason>\` when the work is already merged, or another open issue asks for the same (look for one with the same title before you start);
@@ -214,7 +214,7 @@ ${dec}
 
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the pull request is open with senior-mode/ci and senior-mode/security published;
-- \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;${wrong}${pout:+$nl$pout}
+- \`outgrown: <reason>\` if the ticket is bigger than its size; `outgrown: needs a person: <what>` when only a person can go on (a push you are denied, a choice between documented options), which is no failure;${wrong}${pout:+$nl$pout}
 - \`decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
 - \`blocked: #<issue or pull request> <reason>\` when the code it changes is not on the base branch yet (an open pull request or ticket must land first);
 - \`duplicate: #<original> <reason>\` when the work is already merged, or another open issue asks for the same (look for one with the same title before you start);
@@ -269,7 +269,7 @@ ${dec}
 Last, write one line per ticket to the file \$SENIOR_MODE_RUN_OUTCOME, each starting with the ticket number:
 - \`#<n> delivered\` once its commit is in the pull request, open with senior-mode/ci and senior-mode/security
   published;
-- \`#<n> outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
+- \`#<n> outgrown: <reason>\` if the ticket is bigger than its size; `outgrown: needs a person: <what>` when only a person can go on (a push you are denied, a choice between documented options), which is no failure;
 - \`#<n> decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
 - \`#<n> blocked: #<issue or pull request> <reason>\` when the code it changes is not on the base branch yet (an open pull request or ticket must land first);
 - \`#<n> duplicate: #<original> <reason>\` when the work is already merged, or another open issue asks for the same (look for one with the same title before you start);

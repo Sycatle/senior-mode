@@ -270,14 +270,27 @@ $what \`$log\`. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the workt
   for n in $(run_members "$s"); do notify needs-human "$n" "$reason"; done
 }
 
-# A ticket the run stops working on: back to Backlog with a comment, kept worktree and branch.
+# Does the reason of an `outgrown:` verdict say that the ticket waits for a person (#672): a decision to take, a push
+# that only a person can make (`needs a person`, `a person must choose`, `force push denied`)? Such an end is no failure
+# of the work.
+run_waits_person() {
+  grep -qiE '(needs?|requires?|waits? for|waiting for|asks?) (a |an )?(person|human)|(person|human) (must|has to|should|needs to) (push|decide|choose)|human (decision|push)|force[- ]push' <<<"$1"
+}
+
+# A ticket the run stops working on: back to Backlog with a comment, kept worktree and branch. When it waits for a
+# person ($3 = person, #672) it is labelled needs-human and does not count for the circuit breaker.
 run_giveup() {
-  local n=$1 reason=$2
+  local n=$1 reason=$2 wait=${3:-}
   (item_set "$n" Status Backlog) >/dev/null || echo "#$n: could not set the Status Backlog" >&2
   gh_bound api "repos/$RUN_SLUG/issues/$n/comments" -f body="An autonomous senior-mode run stopped working on this ticket: $reason
 
 It is back in Backlog. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the worktree \`${RUN_WT[$n]}\`." \
     >/dev/null || echo "#$n: could not comment on the ticket" >&2
+  if [ "$wait" = person ]; then
+    RUN_WAITING+=("#$n ${RUN_TITLE[$n]}: waiting for a person: $reason (branch ${RUN_BRANCH[$n]} kept)")
+    notify needs-human "$n" "$reason"
+    return 0
+  fi
   RUN_FAILED+=("#$n ${RUN_TITLE[$n]}: $reason (branch ${RUN_BRANCH[$n]} kept)")
   RUN_FAILS=$((RUN_FAILS + 1))
   [ "$RUN_FAILS" -lt "$RUN_MAXFAIL" ] || RUN_STOP="$RUN_FAILS failed ticket(s) in a row (autonomy.maxConsecutiveFailures)"
@@ -743,9 +756,13 @@ run_finish_batch() {
   for m in "${bad[@]}"; do
     case ${out[$m]} in
       outgrown:*)
-        RUN_STOP="#$m outgrew its size"
         run_record "$m" outgrown "${out[$m]#outgrown: }" "$n"
-        run_giveup "$m" "it outgrew its size: ${out[$m]#outgrown: }"
+        if run_waits_person "${out[$m]#outgrown: }"; then
+          run_giveup "$m" "it waits for a person: ${out[$m]#outgrown: }" person
+        else
+          RUN_STOP="#$m outgrew its size"
+          run_giveup "$m" "it outgrew its size: ${out[$m]#outgrown: }"
+        fi
         ;;
       decision:*) run_decision "$m" "${out[$m]#decision: }" "$n" ;;
       blocked:*) run_blocked "$m" "${out[$m]#blocked: }" "$n" ;;
@@ -795,9 +812,13 @@ run_finish() {
       fi
       ;;
     outgrown:*)
-      RUN_STOP="#$n outgrew its size"
       run_record "$n" outgrown "${outcome#outgrown: }"
-      run_giveup "$n" "it outgrew its size: ${outcome#outgrown: }"
+      if run_waits_person "${outcome#outgrown: }"; then
+        run_giveup "$n" "it waits for a person: ${outcome#outgrown: }" person
+      else
+        RUN_STOP="#$n outgrew its size"
+        run_giveup "$n" "it outgrew its size: ${outcome#outgrown: }"
+      fi
       ;;
     decision:*) run_decision "$n" "${outcome#decision: }" ;;
     plan-rejected:*) run_plan_rejected "$n" "${outcome#plan-rejected: }" ;;

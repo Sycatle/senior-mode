@@ -568,7 +568,9 @@ command, not a model, applies these bounds:
   (`autonomy.escalate`, default true).
 - **Circuit breaker:** after `autonomy.maxConsecutiveFailures` failed tickets in a row (default 2), or
   as soon as a ticket outgrows its size, no new ticket starts. A failed ticket goes back to Backlog
-  with a comment that says why; its branch and worktree are kept. Under `serve` the pause lasts
+  with a comment that says why; its branch and worktree are kept. A session that ends `outgrown: needs a person: <what>`
+  (a push it is denied, a choice between documented options) is not a failure: the ticket gets `needs-human`, goes back to
+  Backlog and does not count for the breaker. Under `serve` the pause lasts
   `serve.breakerCooldown` (15 minutes), doubled at each further pause up to `serve.breakerMax` (4 hours);
   a merge, `serve --resume` or 24 hours without a pause start the count again. Only a ticket's own
   failure counts: transient and environment ends never do.

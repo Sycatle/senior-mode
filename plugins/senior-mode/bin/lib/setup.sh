@@ -304,9 +304,26 @@ type:task|c5def5|Work that is neither a feature nor a bug
 type:chore|ededed|Maintenance with no user-visible change
 type:spike|d4c5f9|Timeboxed research: a note, an ADR or framed tickets, never merged code'
 
+# `setup github --dry-run`: what a run would do, from the config and read-only calls; nothing is written, on GitHub or here.
+setup_plan() { # config-file owner-type checks slug
+  local file=$1 labels=$LABELS merge globs mode
+  [ "$2" = Organization ] || labels+=$'\n'$TYPE_LABELS
+  merge=$(jq -r '.workflow.merge // "rebase"' "$file")
+  globs=$(jq -c '.protected // []' "$file")
+  mode=$(jq -r '.ci.mode // "local"' "$file")
+  echo "Project: found, or copied from the template, with the fields Status, Priority, Size, Severity, Paths and its cycle"
+  echo "labels: $(cut -d'|' -f1 <<<"$labels" | paste -sd' ')"
+  echo "merges: $merge$([ "$merge" != rebase ] || echo " only"), branches deleted after merge"
+  [ "$globs" = "[]" ] || echo "CODEOWNERS: owner for the protected zones $globs"
+  echo "default branch: ruleset senior-mode$([ "$3" = true ] || echo ", no status check required (github.requiredChecks is false)")"
+  echo "workflows: ci.mode $mode"
+  echo "security: Dependabot alerts, secret scanning with push protection, Dependabot version updates"
+  echo "dry run: nothing changed; senior-mode setup github does it"
+}
+
 setup_github() {
   local root file slug owner name owner_type owner_node private template project number id how fields labels label color description err ci="" globs checks review=false codeowner codeowners_owns=false reason
-  local migrate=false dry=false upgrade=false made merge ctx
+  local migrate=false dry=false upgrade=false made merge ctx scratch=""
   while [ $# -gt 0 ]; do
     case $1 in
       --ci) [ "${2:-}" = local ] || [ "${2:-}" = actions ] || [ "${2:-}" = existing ] || usage; ci=$2; shift 2 ;;
@@ -316,12 +333,17 @@ setup_github() {
       *) usage ;;
     esac
   done
-  [ "$dry" = false ] || [ "$migrate" = true ] || [ "$upgrade" = true ] || usage
   [ "$upgrade" = false ] || { [ "$migrate" = false ] && [ -z "$ci" ]; } || usage
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
-  mkdir -p "$root/.claude"
-  [ -f "$file" ] || echo '{}' >"$file"
+  if [ "$dry" = true ] && [ "$migrate" = false ] && [ "$upgrade" = false ] && [ ! -f "$file" ]; then
+    file=$(mktemp)
+    echo '{}' >"$file"
+    scratch=$file
+  else
+    mkdir -p "$root/.claude"
+    [ -f "$file" ] || echo '{}' >"$file"
+  fi
   jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; fix or remove it, then run setup again"
   if [ -n "$ci" ] && [ "$dry" = false ]; then
     { jq --arg m "$ci" '.ci.mode = $m' "$file" >"$file.tmp" && mv "$file.tmp" "$file"; } ||
@@ -342,6 +364,11 @@ setup_github() {
   if [ "$migrate" = true ]; then
     setup_migrate "$file" "$dry"
     [ "$dry" = false ] || return 0
+  fi
+  if [ "$dry" = true ]; then
+    setup_plan "$file" "$owner_type" "$checks" "$slug"
+    [ -z "$scratch" ] || rm -f "$scratch"
+    return 0
   fi
   project=$(setup_project "$file" "$owner" "$name" "$slug") || die "could not find or copy the Project"
   read -r number id how <<<"$project"

@@ -294,6 +294,7 @@ YML
 # (organizations use issue types). `setup remove` deletes them again.
 LABELS='needs-human|d93f0b|Waiting for a human decision or merge
 needs-info|fbca04|Missing information before work can start
+needs-decision|d93f0b|Waiting for the answer to a question the session could not settle
 blocked|b60205|Blocked by something outside this ticket
 security|ee0701|A security risk, with its Severity on the board
 triage|fbca04|External report, not qualified yet: serve never picks it

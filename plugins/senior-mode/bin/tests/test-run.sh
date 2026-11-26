@@ -95,7 +95,11 @@ case "$*" in
   "api repos/acme/app/compare/"*)
     n=$(sed -E 's#.*\.\.\.sha([0-9]+).*#\1#' <<<"$*")
     echo "{\"behind_by\": $(cat "$FIX/behind-$n" 2>/dev/null || echo 0)}" | respond ;;
-  "api repos/acme/app/issues/"*"/comments"*) echo '{}' ;;
+  "api repos/acme/app/issues?labels=needs-decision"*) respond <"$FIX/decisions.json" 2>/dev/null || echo '[]' | respond ;;
+  "api repos/acme/app/issues/"*"/comments"*)
+    n=$(sed -E 's#.*/issues/([0-9]+)/comments.*#\1#' <<<"$*")
+    if [[ " $* " != *" -f "* ]] && [ -f "$FIX/comments-$n" ]; then respond <"$FIX/comments-$n"; else echo '{}'; fi ;;
+  "api -X DELETE repos/acme/app/issues/"*"/labels/"*) ;;
   "api repos/acme/app/issues/"*"/labels"*) echo '[]' ;;
   "pr merge"*) ;;
   "pr list"*) echo '[]' ;;
@@ -1217,6 +1221,48 @@ for n in 581 582 583; do grep -q "pr merge $n" "$GH_LOG" && fail "X2: merged the
 grep -qx 'pr merge 584 --rebase --match-head-commit sha484 -R acme/app' "$GH_LOG" || fail "X2: a collaborator's pull request not merged: $(grep merge "$GH_LOG")"
 for n in 481 482 483; do grep -q "Waiting for a human.*#$n.*external" "$work/out" || fail "X2: #$n not reported as external: $(cat "$work/out")"; done
 rm -f "$FIX"/external-48*
+
+# Y: an irreversible choice the session cannot settle (#363) goes to the decision inbox: the question and a recommended
+# option in a comment, `needs-decision` (and `needs-human`, the inbox until a decision list exists), the ticket back to
+# Ready, the work kept; no retry on Opus, the run goes on with the next ticket; a ticket labelled needs-decision is
+# not picked.
+config '{"maxTickets": 3}'
+board 710 '[]' 711 '[]' 712 '["needs-decision"]'
+session 710-sonnet "decision: Which table owns the audit trail? | Add a new table audit_log | done: tests written, next: the migration"
+session 711-sonnet delivered pr
+run || fail "Y: run failed: $(cat "$work/out")"
+grep -q 'app-710 opus' "$CLAUDE_LOG" && fail "Y: a decision was retried on Opus"
+grep -q 'app-711' "$CLAUDE_LOG" || fail "Y: the run did not go on with the next ticket"
+grep -q 'app-712' "$CLAUDE_LOG" && fail "Y: a needs-decision ticket was picked"
+grep -q 'issues/710/labels -f labels\[\]=needs-decision' "$GH_LOG" || fail "Y: #710 not labelled needs-decision"
+grep -q 'issues/710/labels -f labels\[\]=needs-human' "$GH_LOG" || fail "Y: #710 not labelled needs-human"
+c=$(grep -A8 'issues/710/comments -f body=<!-- senior-mode:decision' "$GH_LOG" || true)
+for want in 'Which table owns the audit trail?' 'Add a new table audit_log' 'tests written, next: the migration'; do
+  grep -qF "$want" <<<"$c" || fail "Y: the comment on #710 misses '$want': $c"
+done
+grep -q 'item-edit.*--single-select-option-id o1' "$GH_LOG" || fail "Y: #710 not set back to Ready"
+grep -q 'item-edit.*--single-select-option-id o0' "$GH_LOG" && fail "Y: #710 was set back to Backlog"
+jq -e '.outcome == "decision" and .reason == "Which table owns the audit trail?"' "$repo/.git/senior-mode/runs/"*/710.json >/dev/null ||
+  fail "Y: #710 not recorded as a decision: $(cat "$repo"/.git/senior-mode/runs/*/710.json)"
+grep -q 'Waiting for a human: #710' "$work/out" || fail "Y: report misses #710 waiting for a decision: $(cat "$work/out")"
+grep -q 'Failed: #710' "$work/out" && fail "Y: a decision was reported as a failure"
+
+# Y2: a reply of a collaborator after the question removes the labels (the ticket is Ready, so it is picked again);
+# no reply, or a reply of a non-collaborator, or only senior-mode's own comments, leave them.
+config '{}'
+board 722 '[]'
+echo '[{"number": 720}, {"number": 721}, {"number": 723}]' >"$FIX/decisions.json"
+mark='<!-- senior-mode:decision -->'
+jq -n --arg m "$mark" '[{body: "@owner this needs a human", author_association: "OWNER"}, {body: ($m + "\nQuestion"), author_association: "OWNER"},
+  {body: "Go with audit_log", author_association: "COLLABORATOR"}]' >"$FIX/comments-720"
+jq -n --arg m "$mark" '[{body: ($m + "\nQuestion"), author_association: "OWNER"}, {body: "<!-- senior-mode:status -->", author_association: "OWNER"}]' >"$FIX/comments-721"
+jq -n --arg m "$mark" '[{body: ($m + "\nQuestion"), author_association: "OWNER"}, {body: "me too", author_association: "NONE"}]' >"$FIX/comments-723"
+run || fail "Y2: run failed: $(cat "$work/out")"
+grep -q 'DELETE repos/acme/app/issues/720/labels/needs-decision' "$GH_LOG" || fail "Y2: #720 answered but needs-decision kept"
+grep -q 'DELETE repos/acme/app/issues/720/labels/needs-human' "$GH_LOG" || fail "Y2: #720 answered but needs-human kept"
+grep -q 'DELETE repos/acme/app/issues/721/' "$GH_LOG" && fail "Y2: #721 has no reply"
+grep -q 'DELETE repos/acme/app/issues/723/' "$GH_LOG" && fail "Y2: #723 has a reply of a non-collaborator"
+rm -f "$FIX"/decisions.json "$FIX"/comments-72*
 
 [ "$failures" -eq 0 ] && echo "run: all cases pass"
 exit "$((failures > 0))"

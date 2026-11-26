@@ -1,8 +1,22 @@
 # shellcheck shell=bash
+# What an unattended ticket session does with a choice it cannot settle (#363); $1 the prefix of the outcome line (`#<n> ` for a batch).
+prompt_decision() {
+  cat <<TEXT
+A choice that is hard to reverse (a schema, a public interface, a deletion, a new dependency, security) and that you cannot
+settle from the code, the spec or the ADRs is not yours to make. Commit the work in progress on the branch and stop with the
+outcome \`$1decision: <the question> | <your recommended option> | <checkpoint: what is done, what comes next>\` (one line).
+The run posts the question with your option, labels the ticket \`needs-decision\` and starts another ticket. When you are
+started on a ticket with such a comment (\`gh issue view <n> --comments\`, the \`senior-mode:decision\` one) and a reply after
+it, the reply is the decision: go on from its checkpoint and the commits on the branch. A reversible choice stays yours:
+take the recommended option and say so in the pull request.
+TEXT
+}
+
 # The task of the headless session of one ticket (spec 0001 §10, ADR 0007): number, title, branch.
 run_prompt() {
-  local nl=$'\n' wf
+  local nl=$'\n' wf dec
   wf=$(workflow_prompt_block "$1")
+  dec=$(prompt_decision '')
   cat <<EOF
 You are one ticket session of an autonomous senior-mode run on $RUN_SLUG. Nobody will answer
 questions: decide within the ticket, its spec and the project's rules, or give up as described below.
@@ -28,9 +42,12 @@ Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode tea
    you meet outside this ticket is filed, never fixed here: \`senior-mode issue create --severity ...
    --kind ... --path ... --rule ...\` (no exploit detail in the body).${wf:+$nl$nl$wf}
 
+${dec}
+
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the pull request is open with senior-mode/ci, senior-mode/review and senior-mode/security set;
 - \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
+- \`decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
 - \`failed: <reason>\` otherwise, in one plain sentence.
 EOF
 }
@@ -38,12 +55,13 @@ EOF
 # The task of the headless session of a batch: lead $1, branch $2 and the tickets $3 on, one commit and one `Closes`
 # each, one pull request, an outcome line per ticket.
 run_prompt_batch() {
-  local branch=$2 m list="" closes="" nl=$'\n' wf
+  local branch=$2 m list="" closes="" nl=$'\n' wf dec
   wf=$(workflow_prompt_block "$1")
   for m in $3; do
     list+="- #$m (\"${RUN_TITLE[$m]}\")"$'\n'
     closes+="\`Closes #$m\`, "
   done
+  dec=$(prompt_decision '#<n> ')
   cat <<EOF
 You are one batch session of an autonomous senior-mode run on $RUN_SLUG. Nobody will answer
 questions: decide within the tickets, their specs and the project's rules, or give up as described below.
@@ -70,10 +88,13 @@ $list
 6. A ticket you cannot deliver does not stop the others: remove its commits from the branch (rebase them
    out) and leave its \`Closes\` out of the pull request. It goes back alone.
 
+${dec}
+
 Last, write one line per ticket to the file \$SENIOR_MODE_RUN_OUTCOME, each starting with the ticket number:
 - \`#<n> delivered\` once its commit is in the pull request, open with senior-mode/ci, senior-mode/review and
   senior-mode/security set;
 - \`#<n> outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
+- \`#<n> decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
 - \`#<n> failed: <reason>\` otherwise, in one plain sentence.
 EOF
 }
@@ -81,7 +102,7 @@ EOF
 # The prompt of a ticket session under serve (role ticket, ADR 0017): it delivers up to a pull request with
 # senior-mode/ci and senior-mode/security published; the reviewer and the integrator are other sessions.
 serve_prompt() {
-  local tests prove nl=$'\n' wf wrong=""
+  local tests prove nl=$'\n' wf wrong="" dec
   wf=$(workflow_prompt_block "$1")
   if [ -f "$SERVE_COMMON/senior-mode/runs/$1/red-tests" ]; then
     wrong="
@@ -101,6 +122,7 @@ serve_prompt() {
    the implementer agent makes them pass (skills tdd, verify, commit): tests land in the same commit
    as the code they cover."
   fi
+  dec=$(prompt_decision '')
   cat <<PROMPT
 You are one ticket session (SENIOR_MODE_ROLE=ticket) of senior-mode serve on $RUN_SLUG. Nobody will answer
 questions: decide within the ticket, its spec and the project's rules, or give up as described below.
@@ -118,9 +140,12 @@ ${prove}\`senior-mode check\` passes on a clean tree; push the branch; open a pu
    branch with the reviewer's findings. A risk you meet outside this ticket is filed, never fixed here:
    \`senior-mode issue create --severity ... --kind ... --path ... --rule ...\` (no exploit detail in the body).${wf:+$nl$nl$wf}
 
+${dec}
+
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the pull request is open with senior-mode/ci and senior-mode/security published;
 - \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;${wrong}
+- \`decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
 - \`failed: environment: <reason>\` when the machine, not the ticket, is the problem (dependencies that cannot be
   installed, a full disk, a check that is red on the base branch too, gh or Claude not signed in): serve pauses
   until it is healthy, and does not count it against the ticket;
@@ -132,12 +157,13 @@ PROMPT
 # run_prompt. The session has the role ticket and cannot set senior-mode/review (ADR 0017): a reviewer session does.
 # Lead $1, branch $2 and the tickets $3 on.
 serve_prompt_batch() {
-  local branch=$2 m list="" closes="" nl=$'\n' wf
+  local branch=$2 m list="" closes="" nl=$'\n' wf dec
   wf=$(workflow_prompt_block "$1")
   for m in $3; do
     list+="- #$m (\"${RUN_TITLE[$m]}\")"$'\n'
     closes+="\`Closes #$m\`, "
   done
+  dec=$(prompt_decision '#<n> ')
   cat <<PROMPT
 You are one batch session (SENIOR_MODE_ROLE=ticket) of senior-mode serve on $RUN_SLUG. Nobody will answer
 questions: decide within the tickets, their specs and the project's rules, or give up as described below.
@@ -162,10 +188,13 @@ $list
 5. A ticket you cannot deliver does not stop the others: remove its commits from the branch (rebase them
    out) and leave its \`Closes\` out of the pull request. It goes back alone.
 
+${dec}
+
 Last, write one line per ticket to the file \$SENIOR_MODE_RUN_OUTCOME, each starting with the ticket number:
 - \`#<n> delivered\` once its commit is in the pull request, open with senior-mode/ci and senior-mode/security
   published;
 - \`#<n> outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
+- \`#<n> decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
 - \`#<n> failed: environment: <reason>\` when the machine, not the ticket, is the problem (dependencies that cannot
   be installed, a full disk, a check that is red on the base branch too, gh or Claude not signed in);
 - \`#<n> failed: <reason>\` otherwise, in one plain sentence.

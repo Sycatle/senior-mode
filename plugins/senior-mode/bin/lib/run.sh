@@ -9,6 +9,9 @@ agent_bin() {
   printf '%s\n' "$HOME/.local/bin/$cmd"
 }
 
+# What the comment of a question to the decision inbox starts with (#363), so that the reply after it is found.
+RUN_DECISION_MARK='<!-- senior-mode:decision -->'
+
 # A session is a ticket or, for a batch (#263), the tickets delivered together in one worktree, by one session and one
 # pull request. Its key (the number the RUN_* arrays and the session files use) is the lead, the first of
 # RUN_BATCH[lead], the space-separated numbers of the batch. The tickets of a session, lead first.
@@ -276,6 +279,51 @@ It is back in Backlog. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in th
   notify failed "$n" "$reason"
 }
 
+# A ticket whose session stopped on a choice it cannot settle (#363): the outcome `decision: <question> | <recommended
+# option> | <checkpoint>`, $2 being what follows `decision: `. The question goes to the inbox as needs-human (the alert and
+# the webhook, as for any question) and as needs-decision, in a comment that carries the recommended option and the
+# checkpoint; the ticket goes back to Ready, so a reply is all it waits for (run_decisions), its branch and worktree kept.
+# Not a failure: no retry on Opus, nothing counted for the circuit breaker, the run goes on with the other tickets.
+run_decision() {
+  local n=$1 q=$2 rec="" chk=""
+  if [[ $q == *" | "* ]]; then rec=${q#* | }; q=${q%% | *}; fi
+  if [[ $rec == *" | "* ]]; then chk=${rec#* | }; rec=${rec%% | *}; fi
+  run_record "$n" decision "$q" "${3:-$n}"
+  notify needs-human "$n" "decision needed: $q"
+  gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-decision' >/dev/null ||
+    echo "#$n: could not label the ticket needs-decision" >&2
+  gh_bound api "repos/$RUN_SLUG/issues/$n/comments" -f body="$RUN_DECISION_MARK
+An autonomous senior-mode session needs a decision it cannot settle from the code, the spec or the ADRs, and that is hard to reverse.
+
+**Question:** $q
+
+**Recommended option:** ${rec:-none given}
+
+**Checkpoint:** ${chk:-none given}. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the worktree \`${RUN_WT[$n]}\`.
+
+Reply on this ticket: the labels \`needs-decision\` and \`needs-human\` go and the ticket is picked again, with your answer." \
+    >/dev/null || echo "#$n: could not comment on the ticket" >&2
+  (item_set "$n" Status Ready) >/dev/null || echo "#$n: could not set the Status Ready" >&2
+  RUN_WAITING+=("#$n ${RUN_TITLE[$n]}: waiting for a decision: $q (branch ${RUN_BRANCH[$n]} kept)")
+}
+
+# The tickets labelled needs-decision whose question got a reply (#363): a comment after the last decision comment of
+# senior-mode, by a collaborator (OWNER, MEMBER or COLLABORATOR) and not senior-mode's own. Their labels needs-decision and
+# needs-human are removed; the ticket is Ready, so the next pick takes it and the session reads the answer in its comments.
+run_decisions() {
+  local n
+  for n in $(gh_retry api "repos/$RUN_SLUG/issues?labels=needs-decision&state=open&per_page=100" --jq '.[].number' 2>/dev/null); do
+    gh_retry api "repos/$RUN_SLUG/issues/$n/comments?per_page=100" --paginate --jq '.[] | {body, a: .author_association}' 2>/dev/null |
+      jq -se --arg m "$RUN_DECISION_MARK" 'to_entries | (map(select(.value.body | contains($m))) | last | .key // null) as $i
+        | $i != null and any(.[$i + 1:][].value; (.body | contains("<!-- senior-mode:") | not) and (.a | IN("OWNER", "MEMBER", "COLLABORATOR")))' \
+        >/dev/null || continue
+    gh_retry api -X DELETE "repos/$RUN_SLUG/issues/$n/labels/needs-decision" >/dev/null ||
+      { echo "#$n: could not remove needs-decision" >&2; continue; }
+    gh_retry api -X DELETE "repos/$RUN_SLUG/issues/$n/labels/needs-human" >/dev/null 2>&1 || true
+    echo "#$n: decision answered; it is picked again"
+  done
+}
+
 # Kills the process group of the session script $1 (<name>.sh, its group in <name>.pgid), the ticket
 # number or docs; $2 names it in the message when it cannot be stopped.
 run_kill() {
@@ -461,7 +509,7 @@ run_merge() {
 }
 
 # Writes the outcome of a ticket, the file `retro` reads: $RUN_DIR/<n>.json holds {ticket, outcome
-# (delivered, outgrown or failed), escalated (the ticket went to Opus), reason (the last failure the
+# (delivered, outgrown, decision or failed), escalated (the ticket went to Opus), reason (the last failure the
 # session reported, null for a clean delivery), model (of the last session), finishedAt}. $2 is the
 # outcome and $3 the reason, possibly empty; $4 the session of the ticket when it is not its own (a batch).
 # Spec 0001 section 10.
@@ -531,7 +579,7 @@ run_pulls() {
 }
 
 # Reads how a finished batch session went (#263): one outcome line per ticket in its outcome file, `#<n> delivered`,
-# `#<n> outgrown: <reason>` or `#<n> failed: <reason>`; a file without such lines gives its first line to every
+# `#<n> outgrown: <reason>`, `#<n> decision: <question> | ...` (run_decision) or `#<n> failed: <reason>`; a file without such lines gives its first line to every
 # ticket. The delivered ones are merged or left for a human with their one pull request; each of the others goes
 # back alone as a ticket would (run_giveup: Backlog, needs-human, a comment), the delivered ones are not held back.
 # When none is delivered the session goes on Opus as a ticket would. Returns 1 when the session goes on.
@@ -561,7 +609,7 @@ run_finish_batch() {
       done_=()
     fi
   fi
-  if [ ${#done_[@]} -eq 0 ] && [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ] && [[ ${out[*]} != *outgrown:* ]]; then
+  if [ ${#done_[@]} -eq 0 ] && [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ] && [[ ${out[*]} != *outgrown:* ]] && [[ ${out[*]} != *decision:* ]]; then
     why=${out[$n]#failed: }
     printf '\nA first attempt on Sonnet gave up: %s\nIts work is in this worktree; build on it or reset it.\n' "$why" | state_append "$RUN_DIR/$n.prompt"
     RUN_ESCALATED[$n]=true
@@ -592,6 +640,7 @@ run_finish_batch() {
         run_record "$m" outgrown "${out[$m]#outgrown: }" "$n"
         run_giveup "$m" "it outgrew its size: ${out[$m]#outgrown: }"
         ;;
+      decision:*) run_decision "$m" "${out[$m]#decision: }" "$n" ;;
       *)
         run_record "$m" failed "${out[$m]#failed: }" "$n"
         run_giveup "$m" "${out[$m]#failed: }"
@@ -637,6 +686,7 @@ run_finish() {
       run_record "$n" outgrown "${outcome#outgrown: }"
       run_giveup "$n" "it outgrew its size: ${outcome#outgrown: }"
       ;;
+    decision:*) run_decision "$n" "${outcome#decision: }" ;;
     *)
       if [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ]; then
         printf '\nA first attempt on Sonnet gave up: %s\nIts work is in this worktree; build on it or reset it.\n' \
@@ -959,6 +1009,7 @@ run() {
   RUN_DIR=$(git rev-parse --path-format=absolute --git-common-dir)/senior-mode/runs/$RUN_STAMP
   "$SELF" clean || echo "senior-mode: clean failed; the run goes on" >&2
   security_alerts
+  run_decisions
   data=$(board_data false) || exit 1
   board_archive "$data"
   while IFS=$'\t' read -r n size title batch; do

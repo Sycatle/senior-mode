@@ -991,7 +991,7 @@ statusline() {
   parts=${parts:-$branch}
   record=$(check_record "$(git rev-parse HEAD 2>/dev/null)") || true
   if [ -f "$record" ]; then
-    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    if [ -n "$(worktree_status 2>/dev/null)" ]; then
       state="check stale"
     elif [ "$(sed -n 1p "$record")" = success ]; then
       state="check ok"

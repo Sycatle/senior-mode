@@ -97,6 +97,29 @@ instead of asking you to log in or install. Having `gh *` in `excludedCommands` 
 An excluded command leaves the sandbox only when it is the whole command line: run `senior-mode doctor` alone,
 not `cd x && senior-mode doctor`, and do not pipe `gh ... | jq`.
 
+### The main checkout under the Claude Code sandbox
+
+An interactive session with the sandbox on, working in the main checkout, hits these. None is a senior-mode
+failure; each has a workaround.
+
+- `git switch -c` and `git push -u` print `could not lock config file .git/config`: the sandbox keeps
+  `.git/config` read-only, and both try to record the upstream of the branch. The branch is created and the
+  push goes through. Use `git switch -c <branch> --no-track origin/main` and `git push origin HEAD` to keep
+  the output clean.
+- `.claude/settings.json` is read-only. A branch switch that changes it fails halfway ("unable to unlink").
+  If your branches do not change it, `git update-index --skip-worktree .claude/settings.json` stops git
+  from touching it; undo with `--no-skip-worktree` before you edit it in a commit.
+- `senior-mode check` says `dependencies not installed`, and `pnpm install` fails because the pnpm store and
+  `$XDG_RUNTIME_DIR` are read-only. Point both at a writable place:
+  `XDG_RUNTIME_DIR="$TMPDIR/run" pnpm install --store-dir "$TMPDIR/pnpm-store"` (create `$TMPDIR/run` first).
+- `.git/hooks` cannot be written, so `setup repo` cannot install the git hooks from the session: run it from a
+  terminal outside the sandbox.
+- The sandbox leaves empty files and directories at the paths it protects (`.mcp.json`, `.claude/skills`,
+  `.claude/commands`, `.claude/agents`, `.vscode`, `.idea`, `.bashrc`, `.zshrc`, `.profile`, `.gitconfig`,
+  `.gitmodules`, `.ripgreprc` and the like). `check` does not count them as uncommitted changes, so it
+  still records its result for `publish`; a file of the same name with content is a change. To keep them out of
+  `git status` too, add them to `.git/info/exclude` from a terminal outside the sandbox.
+
 ## 4. The GitHub token
 
 `serve` and the sessions use `GH_TOKEN`. A fine-grained personal access token is scoped to **one owner**

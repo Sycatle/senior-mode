@@ -4,6 +4,34 @@ check_record() {
   printf '%s/%s\n' "$(git rev-parse --git-path senior-mode/checks)" "$1"
 }
 
+# What the Claude Code sandbox puts in the tree to keep a path read-only (#640): an empty file or directory at each
+# of these paths, untracked, that `git status` then reports.
+SANDBOX_MOUNTS=(.bashrc .bash_profile .zshrc .zprofile .profile .gitconfig .gitmodules .ripgreprc .mcp.json
+  .vscode .idea .claude/commands .claude/agents .claude/skills)
+
+# `git status --porcelain` without the sandbox's mount points: an untracked entry at one of SANDBOX_MOUNTS that
+# holds no byte is not a change. One with content is the user's own file and is kept.
+worktree_status() {
+  local line path m root
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  git status --porcelain | while IFS= read -r line; do
+    if [ "${line:0:2}" = "??" ]; then
+      path=${line:3}
+      path=${path%/}
+      for m in "${SANDBOX_MOUNTS[@]}"; do
+        [ "$path" = "$m" ] || continue
+        if [ -d "$root/$path" ]; then
+          [ -z "$(find "$root/$path" -type f -size +0 2>/dev/null | head -n 1)" ] || break
+        else
+          [ ! -s "$root/$path" ] || break
+        fi
+        continue 2
+      done
+    fi
+    printf '%s\n' "$line"
+  done
+}
+
 # How many full logs of failed checks are kept; the oldest go first.
 CHECK_LOGS_KEEP=20
 
@@ -1026,7 +1054,7 @@ check() {
     echo "note: narrowed to the pushed paths, result not recorded for publishing"
   elif [ "$changed" = true ]; then
     echo "note: --changed run, result not recorded for publishing"
-  elif [ -z "$(git status --porcelain)" ]; then
+  elif [ -z "$(worktree_status)" ]; then
     mkdir -p "$(dirname "$(check_record x)")"
     printf '%s\n%s\n' "$state" "$description" >"$(check_record "$(git rev-parse HEAD)")"
   else

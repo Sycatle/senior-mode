@@ -1327,6 +1327,8 @@ grep -q 'Plan first' "$state/67.prompt" && fail "UP: an S ticket has a plan step
 for want in 'senior-mode checkpoint --done' 'senior-mode:checkpoint -->' 'gh pr ready'; do
   grep -qF -- "$want" "$state/67.prompt" || fail "UP: the ticket prompt misses '$want'"
 done
+# #632: the ticket session starts with the preflight.
+grep -qF 'senior-mode preflight 67' "$state/67.prompt" || fail "UP: the ticket prompt does not start with the preflight"
 rm -f "$FIX"/plan-6*
 config '{}'
 

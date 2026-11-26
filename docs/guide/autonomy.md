@@ -643,6 +643,9 @@ whose body ends with `filed-by: agent` (`issue create` adds it in an unattended 
 - **Definition of Ready**: acceptance criteria (a list under an `Acceptance criteria` heading), Size,
   Priority and Paths (the text field of the board, globs separated by commas; a board without the field
   counts as no Paths). A ticket that passes is set Ready.
+  A ticket can declare the tools its tests or its work need with a `Needs: git-filter-repo, jq` line in its body
+  (words separated by commas or spaces); one that is not on this machine's PATH keeps the ticket out of Ready, with the
+  tool named in the comment, and a session [checks them again](commands.md#the-senior-mode-script) at its start (`senior-mode preflight`).
 - **Agent-filed tickets** also need size S, a Severity that is not high or critical, and Paths outside the
   `protected` zones of the default branch. The match is cautious: a Paths glob counts as in a zone when it, or a
   file name made from it, matches a protected glob, or when it shares its fixed directory start with one.

@@ -711,7 +711,7 @@ run_finish_batch() {
       done_=()
     fi
   fi
-  if [ ${#done_[@]} -eq 0 ] && [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ] && [[ ${out[*]} != *outgrown:* ]] && [[ ${out[*]} != *decision:* ]] && [[ ${out[*]} != *blocked:* ]] && [[ ${out[*]} != *duplicate:* ]]; then
+  if [ ${#done_[@]} -eq 0 ] && [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ] && [[ ${out[*]} != *outgrown:* ]] && [[ ${out[*]} != *decision:* ]] && [[ ${out[*]} != *blocked:* ]] && [[ ${out[*]} != *duplicate:* ]] && [[ ${out[*]} != *"failed: environment:"* ]]; then
     why=${out[$n]#failed: }
     printf '\nA first attempt on Sonnet gave up: %s\nIts work is in this worktree; build on it or reset it.\n' "$why" | state_append "$RUN_DIR/$n.prompt"
     RUN_ESCALATED[$n]=true
@@ -799,7 +799,8 @@ run_finish() {
     blocked:*) run_blocked "$n" "${outcome#blocked: }" ;;
     duplicate:*) run_duplicate "$n" "${outcome#duplicate: }" ;;
     *)
-      if [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ]; then
+      # An environment that Opus would meet again (#632) is not retried.
+      if [ "$RUN_ESCALATE" = true ] && [ "${RUN_MODEL[$n]}" = sonnet ] && [[ $outcome != "failed: environment:"* ]]; then
         printf '\nA first attempt on Sonnet gave up: %s\nIts work is in this worktree; build on it or reset it.\n' \
           "${outcome#failed: }" | state_append "$RUN_DIR/$n.prompt"
         RUN_ESCALATED[$n]=true

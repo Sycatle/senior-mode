@@ -654,7 +654,8 @@ grep -q '^pr view' "$GH_LOG" && fail "L: a pull request was read on the first po
 [ -f "$state/ready-last" ] || fail "L: no mark kept: $(ls "$state")"
 grep -q 'issues/81' "$GH_LOG" || fail "L: ready was not run for the agent-filed tickets on the first poll: $(cat "$GH_LOG")"
 fresh
-echo 1799999900 >"$state/ready-last" 2>/dev/null || { mkdir -p "$state"; echo 1799999900 >"$state/ready-last"; }
+mkdir -p "$state"
+echo 1799999900 >"$state/ready-last"
 once || fail "L: serve failed: $(cat "$work/out")"
 grep -q '^pr view 300 ' "$GH_LOG" || fail "L: ready --pr 300 not run: $(cat "$GH_LOG")"
 grep -q '^pr view 301 \|^pr view 302 ' "$GH_LOG" && fail "L: a pull request that is not a new framing one was read: $(cat "$GH_LOG")"

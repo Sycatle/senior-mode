@@ -824,6 +824,12 @@ toml_version() {
 # installs the dependencies of a new worktree, which has no check.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_repo() {
+  if [[ " $* " == *" --knowledge "* ]]; then
+    local arg rest=()
+    for arg in "$@"; do [ "$arg" = --knowledge ] || rest+=("$arg"); done
+    setup_knowledge ${rest[@]+"${rest[@]}"}
+    return
+  fi
   local root file tpl pname preset lang name commands='{}' detected pkgs out ours guard owner subjects="" cmdmap dry=false adopt=false fwd=() fmt
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json

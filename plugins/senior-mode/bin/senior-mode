@@ -254,7 +254,7 @@ case "${1:-}" in
     ;;
   item)
     case ${2:-} in
-      set) shift 2; item_set "$@" ;;
+      set) shift 2; item_set_checked "$@" ;;
       get) shift 2; item_get "$@" ;;
       *) usage ;;
     esac

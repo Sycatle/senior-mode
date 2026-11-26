@@ -72,7 +72,7 @@ ticket_trees() {
 
 # The drift of the board: tickets whose Status says something their issue does not (closed but not Done, open
 # but Done, In progress or In review with no branch and no open pull request, Ready but labelled `needs-human`: `pick`
-# never takes it, #603). $locals the local branch names.
+# never takes it, #603; Backlog with an open pull request: something turned the Status back, #633). $locals the local branch names.
 # shellcheck disable=SC2016 # a jq program, not shell
 DRIFT_DEF="$BRANCH_DEF"'def drift($d; $locals): $d.items as $items
   | ([$items[] | select((.open | not) and .status != "Done")
@@ -82,7 +82,10 @@ DRIFT_DEF="$BRANCH_DEF"'def drift($d; $locals): $d.items as $items
       | select([$d.hygiene.prs[].branch, $d.hygiene.branches[].name, $locals[]] | any(test(bre($i.number))) | not)
       | {number, title, kind: "stale", why: "\(.status) with no open pull request and no branch"}]
     + [$items[] | select(.open and .status == "Ready" and (.labels | index("needs-human")))
-      | {number, title, kind: "needs-human-ready", why: "Ready but labelled needs-human"}]);'
+      | {number, title, kind: "needs-human-ready", why: "Ready but labelled needs-human"}]
+    + [$items[] | select(.open and .status == "Backlog") | . as $i
+      | select([$d.hygiene.prs[].branch] | any(test(bre($i.number))))
+      | {number, title, kind: "reverted", why: "Backlog with an open pull request: a Project workflow may have reset the Status"}]);'
 
 # The decisions (#308): everything that waits for the human, from board_data and $now. A ticket with `needs-human`
 # (kind needs-human), a pull request with `needs-human` (pull-request), a ticket in framing (an open ticket with
@@ -272,6 +275,16 @@ status_fix() {
       needs-human-ready)
         jq -nc --argjson n "$n" --arg t "$title" --arg w "$why" '{number: $n, title: $t, fixed: false,
           line: "left: #\($n) \($t): \($w); a human takes it, or moves it back out of Ready"}' ;;
+      reverted)
+        if (item_set "$n" Status "In review") >/dev/null; then
+          jq -nc --argjson n "$n" --arg t "$title" '{number: $n, title: $t, fixed: true,
+            line: "fixed: #\($n) \($t): a pull request is open, Status set to In review"}'
+        else
+          rc=1
+          jq -nc --argjson n "$n" --arg t "$title" '{number: $n, title: $t, fixed: false,
+            line: "not fixed: #\($n) \($t): could not set the Status In review"}'
+        fi
+        ;;
       *)
         jq -nc --argjson n "$n" --arg t "$title" --arg w "$why" '{number: $n, title: $t, fixed: false,
           line: "left: #\($n) \($t): \($w); a human decides whether to resume it or move it back to Ready"}' ;;

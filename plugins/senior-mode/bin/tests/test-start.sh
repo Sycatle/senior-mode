@@ -413,5 +413,46 @@ if command -v go >/dev/null; then
   (cd "$work/gomod" && go test ./... >/dev/null 2>&1) && fail "a go skeleton passes"
 fi
 
+# #416: `--base <ref>` starts a new branch from origin/<ref> (a stacked pull request) and says so; a branch of the
+# ticket on origin only comes back as a local branch that tracks it; a branch that exists wins over --base; a
+# missing ref stops before anything is created.
+git -C "$other" checkout -q -b feat/200-base main
+echo stacked >"$other/stacked.txt"
+git -C "$other" add -A
+git -C "$other" commit -q -m "feat: base"
+git -C "$other" push -q origin feat/200-base
+git -C "$other" checkout -q -b feat/420-remote-work main
+echo remote >"$other/remote.txt"
+git -C "$other" add -A
+git -C "$other" commit -q -m "feat: remote work"
+git -C "$other" push -q origin feat/420-remote-work
+issue "feat: stacked" '{"name": "type:feature"}'
+start 410 --base feat/200-base || fail "start --base failed: $(cat "$work/err")"
+[ -f "$wt/410/stacked.txt" ] || fail "--base: the worktree is not made from origin/feat/200-base"
+grep -qx "base origin/feat/200-base" "$work/out" || fail "--base: the base used is not printed: $(cat "$work/out")"
+git -C "$repo" config --get "branch.feat/410-stacked.remote" >/dev/null && fail "--base: the new branch tracks its base"
+start 410 --base feat/200-base || fail "rerun with --base failed: $(cat "$work/err")"
+grep -qx "base feat/200-base ignored: the branch feat/410-stacked exists" "$work/out" || fail "--base on an existing branch: $(cat "$work/out")"
+[ "$(grep -c ignored "$work/out")" -eq 1 ] || fail "the ignored base is not said once: $(cat "$work/out")"
+issue "feat: remote work" '{"name": "type:feature"}'
+start 420 || fail "start of a branch on origin failed: $(cat "$work/err")"
+grep -qx "branch feat/420-remote-work" "$work/out" || fail "remote branch name: $(cat "$work/out")"
+[ -f "$wt/420/remote.txt" ] || fail "the commits of the remote branch are missing"
+[ "$(git -C "$repo" config --get branch.feat/420-remote-work.remote)" = origin ] || fail "the local branch does not track origin"
+[ "$(git -C "$repo" config --get branch.feat/420-remote-work.merge)" = refs/heads/feat/420-remote-work ] || fail "wrong upstream branch"
+[ "$(git -C "$wt/420" rev-list --count origin/main..HEAD)" -eq 1 ] || fail "a skeleton or a stray commit on the remote branch"
+git -C "$repo" worktree remove "$wt/420"
+git -C "$repo" branch -q -D feat/420-remote-work
+start 420 --base feat/200-base || fail "remote branch with --base failed: $(cat "$work/err")"
+[ -f "$wt/420/remote.txt" ] && [ ! -f "$wt/420/stacked.txt" ] || fail "--base won over the branch on origin"
+grep -q "^base feat/200-base ignored" "$work/out" || fail "--base on a remote branch not said: $(cat "$work/out")"
+issue "feat: no such base" '{"name": "type:feature"}'
+start 430 --base no/such-ref && fail "--base with a missing ref succeeded"
+grep -q "no/such-ref" "$work/err" || fail "missing ref not named: $(cat "$work/err")"
+[ ! -e "$wt/430" ] || fail "a worktree was created for a missing base"
+git -C "$repo" show-ref -q --verify "refs/heads/feat/430-no-such-base" && fail "a branch was created for a missing base"
+start 430 --base && fail "--base without a value succeeded"
+start 430 --nope && fail "an unknown flag succeeded"
+
 [ "$failures" -eq 0 ] && echo "start: all cases pass"
 exit "$failures"

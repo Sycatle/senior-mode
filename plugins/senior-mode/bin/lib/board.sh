@@ -1102,10 +1102,11 @@ decisions_attributes() {
 
 # senior-mode frame decide <issue> <question> <answer> (#310): appends the line `- <date> #<issue>: <question> ->
 # <answer>` to docs/decisions.md of the repository it runs in (created with its title), the log of what the owner
-# chose while framing, and says which branch received it. A line already there is not added again, so a rerun is safe;
-# the file is committed with the framing: it refuses the default branch and a branch whose pull request is merged (#639).
+# chose while framing, comments it on the ticket, and says which branch received it. A line already there is not added
+# again, nor a comment, so a rerun is safe; the file is committed with the framing: it refuses the default branch and a
+# branch whose pull request is merged (#639).
 frame_decide() {
-  local root file q a line branch base merged common
+  local root file q a line branch base merged common new marker
   [[ ${1:-} =~ ^[1-9][0-9]*$ ]] || usage
   q=$(tr -s '[:space:]' ' ' <<<"${2:-}" | sed 's/^ //; s/ $//')
   a=$(tr -s '[:space:]' ' ' <<<"${3:-}" | sed 's/^ //; s/ $//')
@@ -1129,11 +1130,27 @@ frame_decide() {
       'Written by `senior-mode frame decide`; an answer taken without the owner ends with "(assumed)".' '' >"$file"
   fi
   decisions_attributes "$root"
-  if grep -qxF -- "$line" "$file"; then
-    echo "decision already logged: #$1 on branch ${branch:-(detached HEAD)}"
-  else
+  new=false
+  if ! grep -qxF -- "$line" "$file"; then
     printf '%s\n' "$line" >>"$file"
+    new=true
+  fi
+  # The ticket gets the decision too (#673): a session that stopped to ask the question reads its answer there. A marker
+  # keeps a rerun from commenting twice, and a rerun after a failed comment still posts it.
+  marker="<!-- frame-decision: $1 $(printf '%s' "$q|$a" | cksum | cut -d' ' -f1) -->"
+  if ! gh_retry issue view "$1" --json comments -q '.comments[].body' 2>/dev/null | grep -qF -- "$marker"; then
+    gh_retry issue comment "$1" --body "Decision taken while framing: $q -> $a
+
+- Question: $q
+- Answer: $a
+
+$marker" >/dev/null || die "frame decide: the line is in docs/decisions.md but the comment on #$1 could not be written; run it again"
+    new=true
+  fi
+  if [ "$new" = true ]; then
     echo "decision logged: #$1 on branch ${branch:-(detached HEAD)}"
+  else
+    echo "decision already logged: #$1 on branch ${branch:-(detached HEAD)}"
   fi
 }
 

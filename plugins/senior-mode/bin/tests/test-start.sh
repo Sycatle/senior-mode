@@ -16,6 +16,7 @@ echo "$*" >>"$GH_LOG"
 case "$*" in
   "issue view "*) echo "$GH_ISSUE" ;;
   "pr list "*) echo "${GH_PR_MERGED:-0}" ;;
+  "issue comment "*) [ -z "${GH_COMMENT_FAIL:-}" ] || { echo "comment refused" >&2; exit 1; } ;;
   "project item-add"*) echo "ITEM" ;;
   "project item-edit"*) ;;
   "api graphql --input -") body=$(cat)
@@ -350,6 +351,29 @@ for bad in "abc|q|a" "310||a" "310|q|" "0|q|a"; do
   decide "$i" "$q" "$a" && fail "frame decide accepted '$bad'"
 done
 (cd "$work" && "$cli" frame decide 310 q a) >"$work/out" 2>"$work/err" && fail "frame decide ran outside a repository"
+
+# #673: the decision is also commented on its ticket (a session that stopped to ask the question reads it there), once
+# the file and the comment are both written; a rerun does not comment twice, and one after a failed comment does.
+: >"$GH_LOG"
+GH_COMMENT_FAIL=1 decide 330 "Comment first?" "yes, after the file" && fail "frame decide succeeded although the comment failed"
+grep -q 'decision logged' "$work/out" && fail "decision reported as logged before its comment was written: $(cat "$work/out")"
+grep -q 'comment' "$work/err" || fail "failed comment not explained: $(cat "$work/err")"
+decide 330 "Comment first?" "yes, after the file" || fail "frame decide rerun after a failed comment failed: $(cat "$work/err")"
+grep -q 'decision logged: #330' "$work/out" || fail "decision not reported after its comment: $(cat "$work/out")"
+[ "$(grep -c -- '- .* #330: Comment first' "$log")" -eq 1 ] || fail "the failed run left the line twice: $(cat "$log")"
+grep -q '^issue comment 330 ' "$GH_LOG" || fail "no comment on #330: $(cat "$GH_LOG")"
+for want in 'Comment first?' 'yes, after the file'; do
+  grep -qF -- "$want" "$GH_LOG" || fail "the comment does not quote '$want': $(cat "$GH_LOG")"
+done
+marker=$(grep -o '<!-- frame-decision: [^>]*-->' "$GH_LOG" | head -n 1)
+[ -n "$marker" ] || fail "the comment has no marker for a rerun: $(cat "$GH_LOG")"
+: >"$GH_LOG"
+saved_issue=$GH_ISSUE
+GH_ISSUE=$(jq -nc --arg m "$marker" '{title: "t", state: "OPEN", labels: [], comments: [{body: $m}]}')
+decide 330 "Comment first?" "yes, after the file" || fail "frame decide rerun failed: $(cat "$work/err")"
+GH_ISSUE=$saved_issue
+grep -q '^issue comment' "$GH_LOG" && fail "a rerun commented twice: $(cat "$GH_LOG")"
+grep -q 'decision already logged: #330' "$work/out" || fail "rerun not reported: $(cat "$work/out")"
 
 # #639: frame decide says which branch received the line, and refuses on the default branch and on a branch whose pull
 # request is merged; the log merges as a union, so two framings that each log a decision rebase without a conflict.

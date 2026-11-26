@@ -1040,7 +1040,25 @@ wip_check() {
     die "work in progress is at its limit (wip $limit): $others. Finish it first (merge, or set it back to Ready), or raise wip in .claude/senior-mode.json"
 }
 
-# senior-mode start <issue>: the worktree and the branch `<type>/<issue>-<slug>` of a ticket, then Status
+# The branch of issue $2 on origin in the repository $1 (`<type>/<issue>-<slug>`, or the project's branch pattern
+# when $3 is true, a detected workflow), without `origin/`; fails when there is none.
+start_remote_branch() {
+  local b
+  while IFS= read -r b; do
+    b=${b#origin/}
+    [ "$b" != HEAD ] && [ "$b" != origin ] || continue
+    if [ "$3" = true ]; then
+      [ "$(workflow_branch_issue "$b" "$1")" = "$2" ] || continue
+    else
+      [[ $b =~ ^(feat|fix|chore)/$2(-|$) ]] || continue
+    fi
+    printf '%s\n' "$b"
+    return 0
+  done < <(git -C "$1" for-each-ref --format='%(refname:short)' refs/remotes/origin)
+  return 1
+}
+
+# senior-mode start <issue> [--base <ref>]: the worktree and the branch `<type>/<issue>-<slug>` of a ticket, then Status
 # In progress. Shared by `next` and `run`. The branch type follows the `type:` label (feature: feat, bug:
 # fix, task and chore: chore; feat without a label). The branch starts from the default branch, fetched
 # first when origin answers; the worktree is `<data dir>/senior-mode/worktrees/<repo>/<issue>` (#224, see `worktree_path`).
@@ -1050,11 +1068,22 @@ wip_check() {
 # its pull request goes.
 # Rerunning reuses the branch and the worktree, wherever an earlier start put it. A new worktree gets its dependencies (a node one that
 # lost them too), installed with the project's install command (#110); a failed install only warns, and
-# `check` says what is missing. Prints `branch <name>` and `worktree <path>`.
+# `check` says what is missing. Prints `branch <name>` and `worktree <path>`. A branch of the ticket on origin and not here comes
+# back as a local branch that tracks it. `--base <ref>` starts a new branch from origin/<ref> (a stacked pull request) and prints
+# `base origin/<ref>`; a branch of the ticket, local or on origin, wins over it (`base <ref> ignored: ...`).
 start() {
-  [ $# -eq 1 ] && [[ $1 =~ ^[1-9][0-9]*$ ]] || usage
-  local issue=$1 slug info state title labels type common main name base branch path existing created=false cmd dir
-  local body target kind="ticket" key="" pat wf=false fresh=false
+  local issue="" base_ref="" arg
+  while [ $# -gt 0 ]; do
+    arg=$1
+    shift
+    case $arg in
+      --base) [ $# -gt 0 ] && [ -n "$1" ] || usage; base_ref=${1#origin/}; shift ;;
+      *) [ -z "$issue" ] && [[ $arg =~ ^[1-9][0-9]*$ ]] || usage; issue=$arg ;;
+    esac
+  done
+  [ -n "$issue" ] || usage
+  local slug info state title labels type common main name base branch path existing created=false cmd dir
+  local body target kind="ticket" key="" pat wf=false fresh=false remote ignored=""
   slug=$(repo_slug)
   info=$(gh_retry issue view "$issue" --repo "$slug" --json title,labels,state,body) || die "cannot read issue #$issue"
   state=$(jq -r '.state' <<<"$info")
@@ -1104,13 +1133,28 @@ start() {
   existing=$(branch_worktree "$main" "$branch")
   if [ -n "$existing" ]; then
     path=$existing
+    [ -z "$base_ref" ] || ignored="base $base_ref ignored: the branch $branch exists"
   else
     created=true
     path=$(worktree_path "$main" "$issue")
     [ ! -e "$path" ] || die "$path exists and is not the worktree of $branch"
+    remote=""
     if ! git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
       git -C "$main" fetch -q origin 2>/dev/null || true
-      if [ "$wf" = true ]; then
+      remote=$(start_remote_branch "$main" "$issue" "$wf") || remote=""
+    fi
+    if [ -n "$remote" ]; then
+      [ -z "$base_ref" ] || ignored="base $base_ref ignored: the branch $remote exists on origin"
+      branch=$remote
+      git -C "$main" worktree add -q --track -b "$branch" "$path" "origin/$branch" >/dev/null || die "cannot create the worktree"
+    elif ! git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
+      if [ -n "$base_ref" ]; then
+        git -C "$main" rev-parse -q --verify "origin/$base_ref^{commit}" >/dev/null ||
+          git -C "$main" fetch -q origin "$base_ref" 2>/dev/null || true
+        git -C "$main" rev-parse -q --verify "origin/$base_ref^{commit}" >/dev/null || die "the base origin/$base_ref does not exist: nothing was created"
+        base=origin/$base_ref
+        target=$base_ref
+      elif [ "$wf" = true ]; then
         base=$(workflow_ref "$main" "$target") || die "the branch $target of the project's workflow does not exist: cannot start $branch from it"
       else
         base=$(start_base "$main") || die "no default branch to start $branch from"
@@ -1118,13 +1162,15 @@ start() {
       git -C "$main" worktree add -q --no-track -b "$branch" "$path" "$base" >/dev/null || die "cannot create the worktree"
       fresh=true
     else
+      [ -z "$base_ref" ] || ignored="base $base_ref ignored: the branch $branch exists"
       git -C "$main" worktree add -q "$path" "$branch" >/dev/null || die "cannot create the worktree"
     fi
   fi
   if [ "$wf" = true ]; then (cd "$main" && workflow_record_branch "$branch" "$issue"); fi
   echo "branch $branch"
   echo "worktree $path"
-  [ "$wf" != true ] || echo "base $target"
+  if [ "$wf" = true ]; then echo "base $target"; elif [ "$fresh" = true ] && [ -n "$base_ref" ]; then echo "base $base"; fi
+  [ -z "$ignored" ] || echo "$ignored"
   if [ "$created" = true ] || deps_missing "$path"; then
     while IFS=$'\t' read -r dir cmd; do
       echo "senior-mode: installing dependencies: $cmd" >&2

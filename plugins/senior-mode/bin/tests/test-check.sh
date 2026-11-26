@@ -855,7 +855,7 @@ grep -qx 'lint api' "$PK_LOG" || fail "packages: a dependency removed by the dif
 # Tiers (spec 474 §2): a check with no tier is tier 2, a tier 3 check waits for the heavy run.
 tlog="$work/tiers.log"
 : >"$tlog"
-config "$(jq -n --arg l "$tlog" '{checks: [{name: "plain", run: ("echo plain >>" + $l)}, {name: "two", tier: 2, run: ("echo two >>" + $l)},
+config "$(jq -n --arg l "$tlog" '{audit: false, checks: [{name: "plain", run: ("echo plain >>" + $l)}, {name: "two", tier: 2, run: ("echo two >>" + $l)},
   {name: "slow", tier: 3, run: ("echo slow >>" + $l)}]}')"
 run check || fail "tiers: check fails: $(cat "$work/out")"
 [ "$(paste -sd' ' "$tlog")" = "plain two" ] || fail "tiers: check did not run tier 2 only: $(cat "$tlog")"
@@ -879,20 +879,20 @@ run check --tier 3
 run check
 [ -e "$repo/.git/senior-mode/checks/$(sha)" ] || fail "tiers: a tier 2 run is not recorded for publishing"
 # No tier 3 check: --tier 3 has nothing to run and passes; a failing tier 3 check fails it.
-config '{"checks":[{"name":"lint","run":"true"}]}'
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
 run check --tier 3 || fail "tiers: check --tier 3 without a tier 3 check fails: $(cat "$work/out")"
 grep -q '0/0 checks passed' "$work/out" || fail "tiers: summary of an empty heavy run: $(cat "$work/out")"
-config '{"checks":[{"name":"slow","tier":3,"run":"echo boom; exit 1"}]}'
+config '{"audit":false,"checks":[{"name":"slow","tier":3,"run":"echo boom; exit 1"}]}'
 run check || fail "tiers: a failing tier 3 check fails the tier 2 run: $(cat "$work/out")"
 run check --tier 3 && fail "tiers: a failing tier 3 check passes check --tier 3"
 grep -q 'FAIL  slow' "$work/out" || fail "tiers: failing tier 3 check not named: $(cat "$work/out")"
 # A tier other than 2 or 3, or a tier on a built-in check, is a configuration error naming the key.
-config '{"checks":[{"name":"lint","run":"true"},{"name":"slow","tier":4,"run":"true"}]}'
+config '{"audit":false,"checks":[{"name":"lint","run":"true"},{"name":"slow","tier":4,"run":"true"}]}'
 run check && fail "tiers: tier 4 is accepted"
 grep -q 'checks\[1\].tier must be 2 or 3, not 4' "$work/out" || fail "tiers: tier 4 error does not name the key: $(cat "$work/out")"
 run config validate && fail "tiers: config validate accepts tier 4"
 grep -q 'checks\[1\].tier' "$work/out" || fail "tiers: config validate does not name the key: $(cat "$work/out")"
-config '{"checks":[{"name":"secret scan","tier":3,"run":"true"}]}'
+config '{"audit":false,"checks":[{"name":"secret scan","tier":3,"run":"true"}]}'
 run check && fail "tiers: a tier on the secret scan is accepted"
 grep -q 'checks\[0\].tier: secret scan is a built-in' "$work/out" || fail "tiers: built-in tier error: $(cat "$work/out")"
 config '{"checks":[{"name":"dependency audit","tier":2,"run":"true"}]}'

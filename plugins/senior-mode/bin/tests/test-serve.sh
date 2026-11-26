@@ -1428,6 +1428,7 @@ for want in 'senior-mode checkpoint --done' 'senior-mode:checkpoint -->' 'gh pr 
 done
 # #632: the ticket session starts with the preflight.
 grep -qF 'senior-mode preflight 67' "$state/67.prompt" || fail "UP: the ticket prompt does not start with the preflight"
+grep -qF 'senior-mode untested' "$state/67.prompt" || fail "UP: the ticket prompt does not ask for characterization tests"
 rm -f "$FIX"/plan-6*
 config '{}'
 

@@ -30,6 +30,7 @@ case "$*" in
     if [ -f "$f" ]; then cat "$f"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
   "api repos/acme/app/pulls/"*"/files"*) respond <"$FIX/files-$(sed -E 's#.*/pulls/([0-9]+)/files.*#\1#' <<<"$*").json" ;;
   "api repos/acme/app/pulls/"*"/commits"*) respond <"$FIX/commits-$(sed -E 's#.*/pulls/([0-9]+)/commits.*#\1#' <<<"$*").json" ;;
+  "api repos/acme/app/commits/"*) respond <"$FIX/commit-${2##*/}.json" ;;
   "api repos/acme/app/pulls/"*) respond <"$FIX/pull-${2##*/}.json" ;;
   "issue view "*) n=$(sed -E 's#^issue view ([0-9]+) .*#\1#' <<<"$*")
     if [ -f "$FIX/issue-$n.json" ]; then respond <"$FIX/issue-$n.json"; else echo '{"body": ""}'; fi ;;
@@ -563,6 +564,36 @@ logged "issues/700" && fail "R: ready --pr added #700"
 rm -f "$FIX/orphans.json"
 ready || fail "R: ready failed: $(cat "$work/err")"
 said 'added to the board' && fail "R: something is added with no orphan: $(cat "$work/out")"
+# S (#422): a refactor that edits the assertions a characterization commit pinned is not ready; a behaviour change, or a
+# refactor that only adds to them, is.
+commits_of() { # pull-request sha:subject...
+  local n=$1 c
+  shift
+  for c in "$@"; do jq -nc --arg s "${c%%:*}" --arg m "${c#*:}" '{sha: $s, commit: {message: $m}}'; done | jq -sc . >"$FIX/commits-$n.json"
+}
+commit_files() { # sha filename patch
+  jq -nc --arg f "$2" --arg p "$3" '{files: [{filename: $f, patch: $p}]}' >"$FIX/commit-$1.json"
+}
+size 601 S
+delivery 600 "Closes #601" "feat: a"
+changes 600 src/pricing.sh:6 tests/test-pricing.sh:8
+commit_files c1 tests/test-pricing.sh $'@@ -0,0 +1,2 @@\n+price is 10'
+commit_files c2 src/pricing.sh $'@@ -1 +1 @@\n-old\n+new'
+commit_files c3 tests/test-pricing.sh $'@@ -1,2 +1,2 @@\n-price is 10\n+price is 12'
+commits_of 600 "c1:test(pricing): characterize price" "c2:refactor(pricing): reshape" "c3:refactor(pricing): follow"
+ready --pr 600 && fail "S: a refactor that edits a pinned assertion is ready"
+said 'pull request #600 is not ready: a refactor edits what a characterization commit pinned: c3 \(tests/test-pricing.sh\)' ||
+  fail "S: the pinned edit is not named: $(cat "$work/out")"
+commits_of 600 "c1:test(pricing): characterize price" "c2:feat(pricing): reshape" "c3:feat(pricing): follow"
+ready --pr 600 || fail "S: a behaviour change that edits an assertion is not ready: $(cat "$work/out")"
+commit_files c3 tests/test-pricing.sh $'@@ -2,0 +3 @@\n+another case'
+commits_of 600 "c1:test(pricing): characterize price" "c2:refactor(pricing): reshape" "c3:refactor(pricing): more"
+ready --pr 600 || fail "S: a refactor that only adds a case is not ready: $(cat "$work/out")"
+# No test file in the pull request: its commits are not read.
+changes 600 src/pricing.sh:6
+: >"$GH_LOG"
+ready --pr 600 || fail "S: a pull request with no test file is not ready: $(cat "$work/out")"
+logged "pulls/600/commits" && fail "S: the commits were read for a pull request with no test file"
 
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

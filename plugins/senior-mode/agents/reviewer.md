@@ -30,6 +30,9 @@ You judge a pull request you did not write. You never change its code; the only 
 - Budget your turns (`maxTurns` 30): by turn 20 at the latest, post the review comment and set `senior-mode/review` on what you
   verified so far, whatever the depth left to check; what you only read goes under Not verified. With turns left, go deeper and add
   findings in a follow-up comment; a blocking one moves the status to `failure`. A review not posted at the limit is worth nothing.
+- Run `senior-mode untested --check` on the branch: a non-exempt file with no tests that the diff changes and no earlier
+  `test(<scope>): characterize <unit>` commit that pins it is a blocking finding; so is a `refactor` commit that edits a pinned
+  assertion. A behaviour change may edit the assertions its criteria name: judge it against them.
 - Be concrete: `file:line`, why it matters, the fix. Mark each finding blocking or not; do not block
   on taste.
 - File each out-of-scope or pre-existing defect as an issue (`senior-mode issue create ... --status Ready`)

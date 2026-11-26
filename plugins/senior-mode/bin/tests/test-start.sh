@@ -20,6 +20,7 @@ case "$*" in
   "project item-add"*) echo "ITEM" ;;
   "project item-edit"*) ;;
   "api graphql --input -") body=$(cat)
+    if [ -n "${GH_ITEM:-}" ] && grep -q projectItems <<<"$body"; then cat "$GH_ITEM"; exit 0; fi
     if grep -q ProjectV2IterationField <<<"$body"; then cat "${GH_ITERATION:-/dev/null}"; exit 0; fi
     jq -nc --argjson i "${GH_IN_PROGRESS:-[]}" '{data: {node: {items: {
     pageInfo: {hasNextPage: false}, nodes: ($i | map({fieldValues: {nodes: [{name: "In progress", field: {name: "Status"}}]},
@@ -501,6 +502,27 @@ grep -q "no/such-ref" "$work/err" || fail "missing ref not named: $(cat "$work/e
 git -C "$repo" show-ref -q --verify "refs/heads/feat/430-no-such-base" && fail "a branch was created for a missing base"
 start 430 --base && fail "--base without a value succeeded"
 start 430 --nope && fail "an unknown flag succeeded"
+
+# #422: the files the ticket's Paths name that have no tests are said at start, to be characterized first; the exempt ones too.
+legacy="$work/legacy"
+git clone -q "$work/origin.git" "$legacy"
+echo 'legacy() { echo 1; }' >"$legacy/src-legacy.sh"
+echo 'export type A = string' >"$legacy/types.ts"
+git -C "$legacy" add -A
+git -C "$legacy" commit -q -m "chore: legacy code"
+git -C "$legacy" push -q origin HEAD:main
+jq -nc '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"}, fieldValues: {nodes:
+  [{text: "src-legacy.sh, types.ts", field: {name: "Paths"}}]}}]}}}}}' >"$work/item.json"
+export GH_ITEM="$work/item.json"
+issue "feat: touch legacy" '{"name": "type:feature"}'
+start 440 || fail "start with Paths failed: $(cat "$work/err")"
+grep -q '^untested src-legacy.sh: no coverage data' "$work/out" || fail "the untested file is not said: $(cat "$work/out")"
+grep -q '^exempt types.ts: types or constants' "$work/out" || fail "the exempt file is not said: $(cat "$work/out")"
+grep -q 'characterize <unit>' "$work/out" || fail "the characterization step is not said: $(cat "$work/out")"
+unset GH_ITEM
+issue "feat: touch nothing known" '{"name": "type:feature"}'
+start 441 || fail "start without Paths failed: $(cat "$work/err")"
+grep -q 'untested' "$work/out" && fail "an untested file is said with no Paths: $(cat "$work/out")"
 
 [ "$failures" -eq 0 ] && echo "start: all cases pass"
 exit "$failures"

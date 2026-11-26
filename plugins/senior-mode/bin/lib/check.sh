@@ -810,6 +810,11 @@ check() {
     names+=("architecture")
     cmds+=("$(printf '%q' "$SELF") architecture-check")
   fi
+  # docs/architecture.md is compared with the map once it holds the generated block (#347).
+  if grep -qE '^<!-- senior-mode:architecture sha=[0-9a-f]+ -->$' "$root/docs/architecture.md" 2>/dev/null; then
+    names+=("architecture.md")
+    cmds+=("$(printf '%q' "$SELF") architecture --check")
+  fi
   nbuiltin=${#names[@]}
   bases=("${names[@]}")
   if [ "$changed" = true ]; then

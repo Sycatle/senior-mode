@@ -20,6 +20,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `state.sh`: `state_write` (tmp + `mv`), `state_update` (flock), `state_get`/`state_num`/`state_json` (tolerant readers).
   Every write under the serve dir goes through it (`.github/scripts/state-writes.sh` checks `run.sh` and `serve.sh`).
 - `board.sh`: Project items and fields, `issue create`, security alerts, `ready`, `pick`, `start`.
+- `architecture.sh`: `architecture` (the generated map and its block in `docs/architecture.md`).
 - `release.sh`: `release` (release-please).
 - `check.sh`: `check`, spec drift, `security_verdict`, `publish`.
 - `guard.sh`: `secret_scan`, `audit`, `e2e_lock`, slots, `protected`, `red_tests`.

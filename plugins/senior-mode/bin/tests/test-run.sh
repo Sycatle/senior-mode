@@ -64,6 +64,9 @@ case "$*" in
     [ -z "${ALERTS_ERR:-}" ] || { echo "$ALERTS_ERR" >&2; exit 1; }
     f=${2#repos/acme/app/}; f=$FIX/${f%%/*}.json
     if [ -f "$f" ]; then respond <"$f"; else echo '[]' | respond; fi ;;
+  "api graphql -f owner="*)
+    n=$(sed -nE '1s/.* -F n=([0-9]+) .*/\1/p' <<<"$*")
+    cat "$FIX/parent-$n" 2>/dev/null || exit 1 ;;
   "issue list"*) respond <"$FIX/issues.json" ;;
   "issue create"*)
     f=$(FLAG=--body-file arg "$@")
@@ -384,6 +387,23 @@ grep -q 'app-38 opus' "$CLAUDE_LOG" && fail "C3: an environment failure was retr
 grep -qF 'senior-mode preflight 38' "$(run_dir)/38.prompt" || fail "C3: the prompt of #38 does not start with the preflight: $(head -n 8 "$(run_dir)/38.prompt")"
 grep -qF 'senior-mode untested' "$(run_dir)/38.prompt" || fail "C3: the prompt of #38 does not ask for characterization tests"
 grep -q 'Failed.*#38.*environment: gh cannot authenticate' "$work/out" || fail "C3: report misses the cause: $(cat "$work/out")"
+
+# C4 (#679): the prompt carries the lines of docs/decisions.md of the ticket and of its epic, and the standing rules, and asks
+# to show that neither answers a question before stopping on it; another ticket's line is not carried.
+mkdir -p "$repo/docs"
+printf '%s\n' '# Decisions' '- 2026-11-20 #39: amend ADR 0012 or supersede it? -> supersede it with a new ADR' \
+  '- 2026-11-21 #390: which store? -> sqlite' '- 2026-11-22 #77: unrelated question -> unrelated answer' >"$repo/docs/decisions.md"
+config '{}'
+board 39 '[]'
+echo '{"data": {"repository": {"issue": {"parent": {"number": 390, "title": "Epic"}, "projectItems": {"nodes": []}}}}}' >"$FIX/parent-39"
+session 39-sonnet delivered
+run || fail "C4: run failed: $(cat "$work/out")"
+for want in 'amend ADR 0012 or supersede it? -> supersede it with a new ADR' 'which store? -> sqlite' 'never edited or amended' \
+  'neither answers it'; do
+  grep -qF -- "$want" "$(run_dir)/39.prompt" || fail "C4: the prompt of #39 misses '$want'"
+done
+grep -qF 'unrelated answer' "$(run_dir)/39.prompt" && fail "C4: the prompt of #39 carries the decision of #77"
+rm -f "$repo/docs/decisions.md" "$FIX/parent-39"
 
 # D: merging on but no protection on the server, and a needs-human label: nothing merges. --max 1.
 config '{"merge": true}' '{"protection": "none"}'

@@ -38,7 +38,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `packages` | none | The packages of a monorepo, by directory: `{ "packages/api": { "preset": "node", "commands": { ... }, "deps": ["packages/shared"] } }`, written by `setup repo` from the manifests of npm, pnpm and yarn workspaces (`workspaces`, `pnpm-workspace.yaml`), a Cargo workspace (`members` and `exclude`, path dependencies) and Go (every tracked `go.mod`, or the `use` of a `go.work`; `require` and local `replace` between them). The commands run in the package directory; `install` runs once at the root, except for Go, once per module. A rerun reads `preset`, `commands` and `deps` again without changing what you edited, and writes no key for a repository without a workspace. With `packages`, `check` runs [only the packages the diff affects](#affected-packages) |
 | `framework` | none | `next` when Next.js is a dependency; the node preset then adds `middleware.*`, `src/middleware.*`, `proxy.*` and `src/proxy.*` to `protected` |
 | `envGuard.forbidden` | none | Strings, or `/regex/` patterns, that must never appear on an agent machine; turns on the `env guard` check |
-| `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks) |
+| `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks); an optional `"tier"` (2, the default, or 3) says [when it runs](#checks) |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, even an empty one; `senior-mode protected` and the reviewer read it, and `setup github` maps it to [CODEOWNERS](autonomy.md#code-owners) |
 | `ci.mode` | `local` | `local`, `actions` or `existing` (the project's own CI is reused, see [CI mode](#ci-mode)) |
 | `workflow.ci.jobs`, `workflow.ci.required` | detected | With `ci.mode` `existing`: the jobs of the project's CI that cover a check (`{ "context", "covers" }`, one per job) and its required status contexts; setup writes both, see [Following the project's workflow](#following-the-projects-workflow) |
@@ -268,6 +268,12 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   directory (the 20 latest are kept) and its path is printed as `full log: <path>` under those lines.
   A check whose first output line is `skipped: <reason>` passes and prints `skip <name>: <reason>`,
   so a check that had nothing to do is visible instead of a silent `ok`.
+- A check may say when it runs with `"tier": 2` or `"tier": 3`. A check with no `tier` is tier 2, so an existing
+  configuration behaves as before. `senior-mode check` and the `pre-push` hook run tier 2; a tier 3 check (the
+  heavy ones) is skipped there with `heavy: <name> runs after the push`. `senior-mode check --tier 3` runs the
+  tier 3 checks alone, and `senior-mode check --all` runs both tiers. A tier 3 run is not recorded for `publish`.
+  Any other tier, or a `tier` on the `secret scan` or the `dependency audit` (built-in, always tier 2), is a
+  configuration error that names the key (`checks[1].tier must be 2 or 3, not 4`).
 - On a push the `pre-push` hook gives the checks the paths the push changes, in a file named by
   `SENIOR_MODE_CHANGED_FILES` (unset when they cannot be worked out: a deletion, a new branch with no
   base). A check that can narrow itself to them does; the others ignore it. A narrowed run is not

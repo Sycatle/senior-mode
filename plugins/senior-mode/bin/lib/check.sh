@@ -747,25 +747,45 @@ ci_job_states() {
 # the command of every selected package, run in its directory, and says "3 of 12 packages" in the recorded description;
 # --all, a file outside every package or --pre-push run the checks as they are. With --update-baseline only the
 # architecture baseline is rewritten (see architecture_check).
+# The configuration errors of the `tier` keys of the checks of the config file $1, one per line: a tier is 2 or 3, and
+# the built-in checks (secret scan, dependency audit) are tier 2 and cannot be moved.
+check_tier_errors() {
+  jq -r '.checks // [] | to_entries[] | select(.value | has("tier")) | .key as $i | .value
+    | if (.name == "secret scan" or .name == "dependency audit") then "checks[\($i)].tier: \(.name) is a built-in check of tier 2, it cannot take a tier"
+      elif (.tier != 2 and .tier != 3) then "checks[\($i)].tier must be 2 or 3, not \(.tier | tojson)"
+      else empty end' "$1"
+}
+
 check() {
   local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp ci_only=false jobs="[]" job
   local waiting="" ci_failed="" st url free pre_push=false changed=false update=false a label vext vcmd preset nbuiltin vc
-  local changed_list="" sel all=false pk="" pkdesc="" pdir pcmd found idx
+  local changed_list="" sel all=false pk="" pkdesc="" pdir pcmd found idx argc=$# tier_only="" tier run2=true run3=false tier_errors
   local -a bases=()
   local -A variant=()
-  for a in "$@"; do
-    case $a in
+  while [ $# -gt 0 ]; do
+    case $1 in
       --pre-push) pre_push=true ;;
       --ci-only) ci_only=true ;;
       --changed) changed=true ;;
       --all) all=true ;;
       --update-baseline) update=true ;;
+      --tier)
+        [ $# -ge 2 ] || usage
+        tier_only=$2
+        shift
+        ;;
       *) usage ;;
     esac
+    shift
   done
+  [[ -z $tier_only || $tier_only =~ ^[23]$ ]] || die "check --tier takes 2 or 3, not $tier_only"
+  [ -z "$tier_only" ] || [ "$all" = false ] || die "check --tier and --all are exclusive: --all runs tiers 2 and 3"
+  # Tier 2 is the push gate and the default; tier 3 is the heavy tier, run by --tier 3 or with --all (spec 474 §2).
+  [ "$tier_only" != 3 ] || run2=false
+  { [ "$tier_only" = 3 ] || [ "$all" = true ]; } && run3=true
   [ "$pre_push" = false ] || [ "$changed" = false ] || die "check --changed is not for the push gate: --pre-push runs the full check"
   if [ "$update" = true ]; then
-    [ $# -eq 1 ] || usage
+    [ "$argc" -eq 1 ] || usage
     architecture_check --update-baseline
     return
   fi
@@ -784,6 +804,8 @@ check() {
   root=$(git rev-parse --show-toplevel)
   count=$(jq '.checks // [] | length' "$file")
   [ "$count" -gt 0 ] || die "no checks in .claude/senior-mode.json; run /senior-mode:setup"
+  tier_errors=$(check_tier_errors "$file")
+  [ -z "$tier_errors" ] || { rm -f "$scope"; die "$tier_errors"; }
   # Without its dependencies a node project fails typecheck and build with errors that do not say so (#110).
   if deps_missing "$root"; then
     echo "FAIL  dependencies not installed: run $(install_command "$root")"
@@ -815,6 +837,10 @@ check() {
     names+=("architecture.md")
     cmds+=("$(printf '%q' "$SELF") architecture --check")
   fi
+  if [ "$run2" = false ]; then
+    names=()
+    cmds=()
+  fi
   nbuiltin=${#names[@]}
   bases=("${names[@]}")
   if [ "$changed" = true ]; then
@@ -835,6 +861,12 @@ check() {
   fi
   for ((i = 0; i < count; i++)); do
     name=$(jq -r ".checks[$i].name" "$file")
+    tier=$(jq -r ".checks[$i].tier // 2" "$file")
+    if [ "$tier" = 3 ] && [ "$run3" = false ]; then
+      echo "heavy: $name runs after the push"
+      continue
+    fi
+    [ "$tier" = 3 ] || [ "$run2" = true ] || continue
     if [ -n "$pk" ] && jq -e --arg n "$name" '[.packages[].commands[$n]] | any(. != null)' "$file" >/dev/null; then
       found=false
       while IFS=$'\t' read -r pdir pcmd; do
@@ -928,10 +960,13 @@ check() {
   done
   rm -rf "$rundir"
   rm -f "$scope"
-  spec_drift_warn
-  suppressions_warn
-  # An added test case with no assertion (#306): a warning locally, an error in a run or serve session.
-  free=$(assertion_free_tests)
+  free=""
+  if [ "$run2" = true ]; then
+    spec_drift_warn
+    suppressions_warn
+    # An added test case with no assertion (#306): a warning locally, an error in a run or serve session.
+    free=$(assertion_free_tests)
+  fi
   if [ -n "$free" ] && [ "${SENIOR_MODE_RUN:-}" = 1 ]; then
     echo "FAIL  assertion-free tests (a test case that asserts nothing proves nothing)"
     sed 's/^/      /' <<<"$free"
@@ -962,7 +997,9 @@ check() {
       esac
     done < <(ci_job_states "$(git rev-parse HEAD)" "$jobs")
   fi
-  if [ -n "$scope" ]; then
+  if [ "$run2" = false ]; then
+    echo "note: tier 3 run, result not recorded for publishing"
+  elif [ -n "$scope" ]; then
     echo "note: narrowed to the pushed paths, result not recorded for publishing"
   elif [ "$changed" = true ]; then
     echo "note: --changed run, result not recorded for publishing"

@@ -172,6 +172,14 @@ takes it. Nothing is filed for a note whose ticket is open, nor while `maintenan
 are open. The session re-reads the note against the code in one pull request: it bumps `verified`, edits the note or deletes it.
 The time of the pass is kept in `.git/senior-mode/serve/gardening-at`.
 
+### Maintenance budget
+
+`maintenance.share` (default 0.2) of the `autonomy.parallel` slots, rounded up, is kept for tickets labelled `gardening`: with
+a share of 0.2 and 4 slots, one. While a Ready `gardening` ticket could start, a feature ticket cannot take the last reserved
+slot (the slots that gardening sessions already use count), so gardening is never starved behind higher priorities; with no
+Ready gardening ticket the slot goes to features, and with a share of 0 nothing is reserved. `serve` says when it keeps a slot.
+`senior-mode status` prints the gardening slots in use and the open `gardening` tickets (at most `maintenance.maxOpen`).
+
 Once an hour `serve` appends one JSON line to `.git/senior-mode/serve/snapshots.jsonl` (the first one at start;
 the time of the last is in `snapshot-at`): `at` (epoch), the sessions `running`, the `free` slots, the Ready tickets
 that `runnable`, the `train` (`id`, `phase`, `entries`, `evicted`), the quota `band`, the `leases` this worker holds,

@@ -240,6 +240,7 @@ STATUS_TEXT_JQ="$HIERARCHY_TEXT_DEF"'def sec($h; $ls): $h, (if ($ls | length) ==
   "Release",
   (if .release.latest then "  Last release \(.release.latest.tag), \(.release.latest.date[:10])." else "  No release yet." end)
     + (if .release.pr then " Release pull request #\(.release.pr.number) is open." else " No release pull request open." end),
+  "Maintenance: \(.maintenance.slotsUsed) of \(.maintenance.reservedSlots) reserved gardening slots used (of \(.maintenance.parallel)), \(.maintenance.open) open gardening tickets (at most \(.maintenance.maxOpen))",
   (if .serve.running then "Daemon: serve is running (pid \(.serve.pid))" else empty end),
   (if .retro.due then "Retro due: the last one was \(.retro.lastDays) days ago" else empty end)'
 
@@ -582,7 +583,7 @@ local_facts() {
 # $4 true to repair the drift (--fix), $5 true to publish the health of the Project (--publish).
 status_once() {
   local json=$1 since=$2 save=$3 fix=${4:-false} publish=${5:-false} root cache now_s now since_iso head data out wip audit results fixed trees locals
-  local lines="" rc=0 health="" drift specs
+  local lines="" rc=0 health="" drift specs parallel
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   cache=$root/.claude/senior-mode/status-seen
   now_s=$(date +%s)
@@ -615,6 +616,13 @@ status_once() {
   specs=$(spec_drift 2>/dev/null) || specs='{"drift": [], "note": "could not be read"}'
   out=$(jq -c --argjson s "$specs" '. + {specDrift: $s.drift, specDriftNote: $s.note}' <<<"$out") || return 1
   out=$(jq -c --argjson h "$(hierarchy_report "$root")" '. + {hierarchy: $h}' <<<"$out") || return 1
+  # The maintenance budget (#351): the gardening slots in use and the open gardening tickets (the ones serve files and the others).
+  parallel=$(config_get autonomy.parallel)
+  out=$(jq -c --argjson m "$(jq -c --arg l "$(workflow_label "" gardening)" --argjson parallel "$parallel" \
+    --argjson reserved "$(maintenance_reserved "$parallel")" --argjson max "$(config_get maintenance.maxOpen)" \
+    '{reservedSlots: $reserved, parallel: $parallel, maxOpen: $max,
+      slotsUsed: ([.items[] | select(.open and .status == "In progress" and (.labels | index($l)))] | length),
+      open: ([.items[] | select(.open and (.labels | index($l)))] | length)}' <<<"$data")" '. + {maintenance: $m}' <<<"$out") || return 1
   out=$(jq -c --argjson l "$(local_facts "$(git rev-parse --path-format=absolute --git-common-dir)" "$now_s")" '. + $l' <<<"$out") || return 1
   # The report is out before --fix touches anything.
   [ "$json" = true ] || jq -r --arg head "$head" "$HYGIENE_DEF$STATUS_TEXT_JQ" <<<"$out"

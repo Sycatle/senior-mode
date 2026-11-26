@@ -68,6 +68,21 @@ not lift:
 
 The sandbox keeps `.git/worktrees` read-only: senior-mode needs no write there from a session.
 
+### Claude Code sandbox
+
+When Claude Code runs Bash in its sandbox and the policy denies reading `~/.config/gh`, a `senior-mode` run from a
+session cannot see the credentials of `gh`, nor a `claude` installed outside the sandbox. `senior-mode doctor` then
+warns "gh cannot read its credentials: running inside a sandbox?" (or "claude is not on the PATH of this sandbox")
+instead of asking you to log in or install. Having `gh *` in `excludedCommands` does not help: `senior-mode` calls
+`gh` itself, so its calls stay sandboxed. Exclude the CLI:
+
+```json
+{"sandbox": {"excludedCommands": ["gh *", "senior-mode *"]}}
+```
+
+An excluded command leaves the sandbox only when it is the whole command line: run `senior-mode doctor` alone,
+not `cd x && senior-mode doctor`, and do not pipe `gh ... | jq`.
+
 ## 4. The GitHub token
 
 `serve` and the sessions use `GH_TOKEN`. A fine-grained personal access token is scoped to **one owner**

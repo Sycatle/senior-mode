@@ -6,6 +6,9 @@ cli=$bin/senior-mode
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 failures=0
+unset SANDBOX_RUNTIME
+export GH_CONFIG_DIR="$work/gh-config"
+mkdir -p "$GH_CONFIG_DIR"
 
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 
@@ -68,6 +71,24 @@ GH_STUB_AUTH=no expect_fail "B1" 'gh is not logged in' 'gh auth login'
 GH_STUB_SCOPES="'repo', 'gist'" expect_fail "B2" 'lacks the scope project' 'gh auth refresh -s repo -s project'
 GH_STUB_SCOPES="'repo', 'read:project'" expect_fail "B3" 'lacks the scope project' 'gh auth refresh'
 CLAUDE_STUB_LOGGED=false expect_fail "B4" 'not logged in' 'claude auth login'
+# B6: inside a sandbox a logged-out gh and a missing claude are not reported as such.
+GH_STUB_AUTH=no SANDBOX_RUNTIME=1 doctor || fail "B6: a sandboxed gh fails: $(cat "$work/out")"
+grep -q 'not logged in' "$work/out" && fail "B6: says gh is not logged in: $(cat "$work/out")"
+grep -q 'warn .*gh auth: gh cannot read its credentials: running inside a sandbox?' "$work/out" || fail "B6: the sandbox is not named: $(cat "$work/out")"
+grep -q 'fix: .*"senior-mode \*".*excludedCommands.*alone' "$work/out" || fail "B6: no settings fix: $(cat "$work/out")"
+grep -q 'gh auth login' "$work/out" && fail "B6: still suggests gh auth login"
+nogh="$work/nogh"
+mkdir -p "$nogh"
+ln -s "$stubs/gh" "$nogh/gh"
+(cd "$repo" && SANDBOX_RUNTIME=1 PATH="$nogh:$(dirname "$(command -v jq)"):$(dirname "$(command -v git)"):/usr/bin:/bin" "$cli" doctor >"$work/out" 2>&1)
+grep -q 'warn .*tool claude: claude is not on the PATH of this sandbox' "$work/out" || fail "B7: the sandbox is not named for claude: $(cat "$work/out")"
+grep -q 'install Claude Code' "$work/out" && fail "B7: still says to install Claude Code: $(cat "$work/out")"
+if [ "$(id -u)" != 0 ]; then
+  chmod 000 "$GH_CONFIG_DIR"
+  GH_STUB_AUTH=no doctor
+  chmod 755 "$GH_CONFIG_DIR"
+  grep -q 'gh cannot read its credentials' "$work/out" || fail "B8: an unreadable gh config is not named: $(cat "$work/out")"
+fi
 doctor --json
 [ "$(jq -r '[.checks[] | select(.level == "fail")] | length' "$work/out")" = 0 ] || fail "B5: the stubs leaked between cases"
 

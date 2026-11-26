@@ -7,6 +7,17 @@ doctor_add() { # level name message [fix]
     '{level: $l, name: $n, message: $m} + (if $f != "" then {fix: $f} else {} end)')")
 }
 
+# The settings fix of a session in the Claude Code sandbox: an excluded command leaves the sandbox only when it is the
+# whole command line (`cd x && senior-mode doctor` and `gh ... | jq` stay sandboxed).
+DOCTOR_SANDBOX_FIX='add "senior-mode *" to sandbox.excludedCommands in the managed settings, and run senior-mode alone on its command line (docs/guide/self-hosting.md, "Claude Code sandbox")'
+
+# This session probably runs in the Claude Code sandbox: it sets SANDBOX_RUNTIME, and its policy may deny the config of gh.
+doctor_sandboxed() {
+  local dir=${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}
+  [ -n "${SANDBOX_RUNTIME:-}" ] && return 0
+  [ -d "$dir" ] && { [ ! -r "$dir" ] || [ ! -x "$dir" ]; }
+}
+
 # git, jq, gh and claude on the PATH, their versions, and the version of the plugin.
 doctor_tools() {
   local t v hint found="" plugin
@@ -15,6 +26,10 @@ doctor_tools() {
       v=$("$t" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1) || v=""
       found="$found${found:+, }$t ${v:-?}"
     else
+      if [ "$t" = claude ] && doctor_sandboxed; then
+        doctor_add warn "tool claude" "claude is not on the PATH of this sandbox (it may be installed outside it)" "$DOCTOR_SANDBOX_FIX"
+        continue
+      fi
       case $t in
         git) hint="install git: https://git-scm.com/downloads" ;;
         jq) hint="install jq: https://jqlang.org/download/" ;;
@@ -33,6 +48,10 @@ doctor_gh() {
   local out scopes line s missing=""
   command -v gh >/dev/null || return 0
   if ! out=$(gh_bound auth status 2>&1); then
+    if [ -z "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ] && doctor_sandboxed; then
+      doctor_add warn "gh auth" "gh cannot read its credentials: running inside a sandbox?" "$DOCTOR_SANDBOX_FIX"
+      return 0
+    fi
     doctor_add fail "gh auth" "gh is not logged in: $(head -n 1 <<<"$out")" "gh auth login --scopes repo,project,workflow"
     return 0
   fi

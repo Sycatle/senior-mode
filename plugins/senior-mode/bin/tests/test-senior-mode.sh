@@ -95,6 +95,18 @@ expect 1 - item set 12 Status Nope
 expect 1 - item set 12 Colour Ready
 [ -s "$GH_LOG" ] && fail "gh called despite an unknown field or option"
 
+# #560: the same without `set -e` in the caller (`(item_set ...) || ...`, as hotfix and status do): the error names the
+# field, the call fails, and nothing is written (no `--field-id null`).
+loose() { (cd "$repo" && bash -c 'lib=$1; shift; . "$lib/common.sh"; . "$lib/config.sh"; . "$lib/board.sh"; item_set "$@" && echo written' _ "$(dirname "$cli")/lib" "$@") 2>"$work/err"; }
+: >"$GH_LOG"
+[ -z "$(loose 12 Colour Ready)" ] || fail "item_set wrote an unknown field without set -e"
+grep -q 'unknown board field: Colour' "$work/err" || fail "unknown field not named: $(cat "$work/err")"
+[ -z "$(loose 12 Status Nope)" ] || fail "item_set wrote an unknown option without set -e"
+grep -q 'unknown option Nope for Status' "$work/err" || fail "unknown option not named: $(cat "$work/err")"
+[ -z "$(loose 12 Status Ready Colour Ready)" ] || fail "item_set wrote a pair next to an unknown field"
+[ -s "$GH_LOG" ] && fail "gh called despite an unknown field or option, without set -e: $(cat "$GH_LOG")"
+[ "$(loose 12 Status Ready | tail -n 1)" = written ] || fail "a known field was refused without set -e: $(cat "$work/err")"
+
 # A field cached without options is a text field (Paths, #174): its value is passed as text, mixed with a
 # single select in one call, and every pair is checked before gh is called.
 config '{"project":{"owner":"acme","number":1,"id":"PVT_1","fields":{"Status":{"id":"F_STATUS","options":{"Ready":"O_READY"}},"Paths":{"id":"F_PATHS"}}}}'

@@ -491,5 +491,25 @@ said '^no candidate: no open Backlog ticket filed by an agent can be considered;
   fail "O: no agent ticket is not said: $(cat "$work/out")"
 logged "item-add" && fail "O: a run with no candidate set a Status"
 
+# P (#611): the criteria are found under `## Criteria` and `## Acceptance` as under `## Acceptance criteria`, by the
+# Ready rule and by the Self-review check; a heading that only starts with the word is not one.
+items="[]"
+item 150 Backlog "P1 next" S - "docs/**" '[]' $'## Context\n\nx\n\n## Criteria\n\n- Given a, when b, then c.\n'
+item 151 Backlog "P1 next" S - "docs/**" '[]' $'## Acceptance\n\n1. Given a, when b, then c.\n'
+item 152 Backlog "P1 next" S - "docs/**" '[]' $'### criteria:\n- Given a, when b, then c.\n'
+item 153 Backlog "P1 next" S - "docs/**" '[]' $'## Criteria for the rollout\n\n- not a list of criteria\n'
+board
+pr 160 MERGED docs/wave-p "Framing: #150 #151 #152 #153"
+ready --pr 160 || fail "P: ready failed: $(cat "$work/err")"
+for n in 150 151 152; do said "^#$n Status = Ready" || fail "P: #$n, whose criteria are under a common heading, is not Ready: $(cat "$work/out")"; done
+labelled 153 || fail "P: #153, without a criteria heading, is not held back"
+said '^#153 needs-human: .*acceptance criteria' || fail "P: #153 report: $(cat "$work/out")"
+size 403 S
+printf '{"body": "## Why\\nx\\n\\n## Criteria\\n- Given a, then b.\\n- Given c, then d.\\n\\n## Out of scope\\n- not this\\n"}' >"$FIX/issue-403.json"
+delivery 420 "Closes #403" "feat: a"
+changes 420 src/a.sh:10
+ready --pr 420 && fail "P: a pull request without a Self-review table is ready"
+said 'no row with evidence for #403.1, #403.2 ' || fail "P: the criteria under ## Criteria are not read: $(cat "$work/out")"
+
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

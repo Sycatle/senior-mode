@@ -427,13 +427,13 @@ ready_in_zone() {
 
 # What stops the ticket $1 (an item of ready_items) from being Ready, as a JSON array of reasons, empty when
 # nothing does. The Definition of Ready for any ticket: acceptance criteria (a list under an "Acceptance
-# criteria" heading), Size, Priority, Paths. A ticket an agent filed, with $2 the protected globs: also size S,
+# criteria", "Acceptance" or "Criteria" heading, #611), Size, Priority, Paths. A ticket an agent filed, with $2 the protected globs: also size S,
 # no high or critical security severity, no Paths in a protected zone. $3 is the hierarchy settings as JSON
 # ({enforce, exempt}): when enforced, an orphan (see ORPHAN_DEF) lacks its link to a goal.
 # shellcheck disable=SC2016 # a jq program, not shell
 ready_missing() {
   local it=$1 zones=$2 hier=${3:-'{"enforce": false}'} reasons hits="" p
-  reasons=$(jq -c --argjson h "$hier" "$ORPHAN_DEF"'[(if (.body | test("(^|\n)#{1,6}[ \t]*acceptance criteria[ \t]*\n+[ \t]*([-*]|[0-9]+[.)])[ \t]+\\S"; "i")) then empty else "acceptance criteria" end),
+  reasons=$(jq -c --argjson h "$hier" "$ORPHAN_DEF"'[(if (.body | test("(^|\n)#{1,6}[ \t]*(acceptance criteria|acceptance|criteria)[ \t]*:?[ \t]*\n+[ \t]*([-*]|[0-9]+[.)])[ \t]+\\S"; "i")) then empty else "acceptance criteria" end),
     (if .size == null then "Size" else empty end), (if .priority == null then "Priority" else empty end),
     (if (.paths | length) == 0 then "Paths" else empty end),
     (if .agent then
@@ -482,7 +482,7 @@ diff_countable() {
 # Other phrases say what could not be read.
 # The acceptance criteria of the tickets $3... that the "Self-review" table of the pull request body $2 lacks
 # or leaves without evidence (#356), as "#<n>.<k>" words. A criterion is a top-level bullet under the
-# "Acceptance criteria" heading of the issue; its row starts with `#<n>.<k>` (or `<k>` when the pull request
+# "Acceptance criteria" heading of the issue (or `Acceptance`, `Criteria`, #611); its row starts with `#<n>.<k>` (or `<k>` when the pull request
 # closes one ticket) and its last cell is the evidence. Exit 1 when an issue cannot be read.
 self_review_gaps() {
   local slug=$1 body=$2 n issue gaps=""
@@ -491,7 +491,7 @@ self_review_gaps() {
     issue=$(gh_retry issue view "$n" --repo "$slug" --json body 2>/dev/null) || return 1
     gaps+=$(jq -r --arg n "$n" --arg pr "$body" --argjson one "$([ $# -eq 1 ] && echo true || echo false)" '
       [(.body // "") | split("\n") | foreach .[] as $l ({in: false};
-          if ($l | test("^#{1,6}\\s")) then .in = ($l | test("^#{1,6}\\s+acceptance criteria"; "i")) else . end;
+          if ($l | test("^#{1,6}\\s")) then .in = ($l | test("^#{1,6}\\s+(acceptance criteria|(acceptance|criteria)\\s*:?\\s*$)"; "i")) else . end;
           select(.in and ($l | test("^[-*]\\s"))) | 1)] | length as $count
       | [$pr | split("\n") | foreach .[] as $l ({in: false};
           if ($l | test("^#{1,6}\\s")) then .in = ($l | test("^#{1,6}\\s+self-review"; "i")) else . end;

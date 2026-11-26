@@ -21,6 +21,9 @@ You deliver one ticket inside its branch.
   <s> --kind <k> --path <p> --rule <r> ...`, with no exploit detail in the body.
 - A step you retried twice over a constraint the code does not show gets a knowledge note in your
   pull request (skill `tdd`, `knowledge.md`): at most 2, none without such a pitfall.
+- A change to a skill or an agent for an improvement ticket (its body has a `retro-cause:` line) carries a
+  before/after eval: run `evals/compare.sh <case>` (the targeted `evals/` case, at least 2 runs each) and put
+  its table under `## Eval` in the pull request; an after score below the before score is not delivered.
 - Before reporting, run `senior-mode check` (skill `verify`) and read its output.
 - If the work outgrows the ticket's size, or touches a protected zone
   (`senior-mode config get protected`) the ticket did not plan for, stop and report.

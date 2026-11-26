@@ -23,6 +23,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `architecture.sh`: `architecture` (the generated map and its block in `docs/architecture.md`).
 - `release.sh`: `release` (release-please).
 - `check.sh`: `check`, spec drift, `security_verdict`, `publish`.
+- `evals.sh`: the skill eval gate of `ready` (an improvement pull request on a skill or agent needs its before/after table).
 - `guard.sh`: `secret_scan`, `audit`, `e2e_lock`, slots, `protected`, `red_tests`.
 - `setup-board.sh`: Project creation, migration, fields, cycles, board workflows.
 - `setup.sh`: `setup github` (CODEOWNERS, ruleset, labels) and `setup repo` (presets, hooks, CLAUDE.md).

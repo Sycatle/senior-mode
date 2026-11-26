@@ -604,7 +604,7 @@ workflow_say() {
 # the detected conventions. $1 the root of the main checkout, $2 the report. The setup runs in a worktree of its
 # own on that branch, so the pull request holds only what setup changed and the checkout is not touched.
 workflow_adopt_pr() { # root report args...
-  local root=$1 report=$2 base branch pr url tree
+  local root=$1 report=$2 base branch pr url tree survey
   shift 2
   [ -n "$WF_SLUG" ] || die "--adopt needs an origin remote on GitHub"
   base=$(jq -r '.integration // empty' <<<"$WF_JSON")
@@ -620,10 +620,13 @@ workflow_adopt_pr() { # root report args...
   ! git -C "$root" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 ||
     git_bound -C "$root" push -q origin --delete "$branch" || die "cannot delete the stale branch $branch"
   tree=$(mktemp -d)
+  survey=$(mktemp)
   git -C "$root" worktree add -q -B "$branch" "$tree" "origin/$base" || die "cannot create the worktree for $branch"
   (
     cd "$tree" || exit 1
     WF_ADOPTING=1 WF_DONE=1 setup_repo "$@" >/dev/null || exit 1
+    # A legacy project is surveyed: the drafts of the architect become files of this same pull request (spec 409 section 4).
+    [ "$WF_ADOPT" != legacy ] || survey_apply "$tree" "$root" true >"$survey" || exit 1
     git add -A
     git diff --cached --quiet && exit 3
     git -c core.hooksPath=/dev/null commit -q -m "docs: adopt senior-mode" \
@@ -632,11 +635,15 @@ workflow_adopt_pr() { # root report args...
   )
   case $? in
     0) ;;
-    3) echo "adoption: setup changes nothing on $base"; git -C "$root" worktree remove --force "$tree"; return 0 ;;
-    *) git -C "$root" worktree remove --force "$tree"; die "could not prepare the adoption branch $branch" ;;
+    3) echo "adoption: setup changes nothing on $base"; git -C "$root" worktree remove --force "$tree"; rm -f "$survey"; return 0 ;;
+    *) git -C "$root" worktree remove --force "$tree"; rm -f "$survey"; die "could not prepare the adoption branch $branch" ;;
   esac
   git -C "$root" worktree remove --force "$tree"
+  [ "$WF_ADOPT" != legacy ] || report+=$'\n\n'$(cat "$survey")
   url=$(gh pr create --repo "$WF_SLUG" --base "$base" --head "$branch" --title "docs: adopt senior-mode" --body "$report") ||
-    die "cannot open the adoption pull request"
+    { rm -f "$survey"; die "cannot open the adoption pull request"; }
+  rm -f "$survey"
+  # The drafts are in the pull request now: the next survey starts from new ones.
+  [ "$WF_ADOPT" != legacy ] || rm -rf "$root/.claude/survey"
   echo "adoption: pull request opened: $url"
 }

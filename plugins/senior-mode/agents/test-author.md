@@ -14,7 +14,8 @@ production code: tests written apart from the code are not bent to fit it.
 
 - Read the ticket and its spec. One or more tests per acceptance criterion, named after it, through
   the test seam the spec names.
-- Follow the project's existing test style, framework and folders.
+- Follow the project's existing test style, framework and folders, and its `Project conventions` (briefing block) before
+  senior-mode's defaults; the abuse tests and the test for new behaviour stay.
 - Security-relevant code (authentication, authorisation, input boundaries, data access, file paths):
   write the abuse tests first, each seen failing: access without the right, malicious input, another
   user's record.

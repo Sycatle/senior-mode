@@ -161,6 +161,30 @@ context_extras() {
   [ "$ok" = 1 ] || [ "$live" != live ] || return 1
 }
 
+# The first lines of the `Project conventions` block (spec 409 §4) as briefing rows: the workflow the project follows,
+# its architecture rules, then its own CLAUDE.md and lint configuration. Nothing for a project that recorded neither
+# a `workflow` nor rules. $1 the repository root.
+# shellcheck disable=SC2016 # a jq program, not shell
+context_conventions() {
+  local root=$1 cfg=$1/.claude/senior-mode.json lint="" f
+  [ -f "$cfg" ] || { echo '[]'; return 0; }
+  for f in .eslintrc .eslintrc.js .eslintrc.cjs .eslintrc.json eslint.config.js eslint.config.mjs eslint.config.ts biome.json biome.jsonc .prettierrc \
+    ruff.toml .ruff.toml .golangci.yml .golangci.yaml rustfmt.toml .rubocop.yml .editorconfig; do
+    [ ! -f "$root/$f" ] || lint+="${lint:+, }$f"
+  done
+  jq -c --arg claude "$([ -f "$root/CLAUDE.md" ] && echo yes)" --arg lint "$lint" '
+    ((.workflow // {}) | [(if .integration then "branches start from \(.integration)" else empty end),
+      (if .branch.pattern then "branch \(.branch.pattern)" else empty end), (if .commit.format then "commits \(.commit.format)" else empty end),
+      (if .merge then "merge \(.merge)" else empty end)] | join(", ")) as $wf
+    | ([.architecture.rules // [] | .[].id] | .[:8] | join(", ")) as $rules
+    | if $wf == "" and $rules == "" then []
+      else [(if $wf != "" then "- workflow: \($wf)" else empty end),
+        (if $rules != "" then "- architecture rules, enforced by check: \($rules)" else empty end),
+        (if $claude != "" then "- CLAUDE.md: the project'"'"'s own instructions" else empty end),
+        (if $lint != "" then "- lint and format configuration: \($lint)" else empty end)]
+        | map({cls: -1, type: "convention", line: .}) end' "$cfg" 2>/dev/null || echo '[]'
+}
+
 # What governs the Paths of a ticket, ranked and cut to a size (spec 325 §3). It reads the `file<TAB>key<TAB>value`
 # rows of context_rows on its input and prints {omit, block} as JSON: `block` the sections (ADRs, then specs, then
 # notes, each from the best ranked), `omit` the line that says how many items the size left out (empty when none).
@@ -195,12 +219,15 @@ CONTEXT_PICK=$PATHS_DEF'
       | select(if $type == "note" then $pl != null and ago($ver) != null
           else ($v.status // "" | unq) == "accepted" and ($pl != null or ($num != null and any($linked[]; . == $num))) end)
       | ($v.kind // "" | unq) as $kind
-      | {file: $f, cls: (if $type == "note" then 1 else 0 end), type: $type, plen: ($pl // 0), pit: ($kind == "pitfall"), verified: $ver,
-         line: (if $type == "note" then
+      | (if $type == "note" and $kind == "convention" then "convention" else $type end) as $type
+      | {file: $f, cls: (if $type == "convention" then -1 elif $type == "note" then 1 else 0 end), type: $type, plen: ($pl // 0), pit: ($kind == "pitfall"), verified: $ver,
+         line: (if $type == "note" or $type == "convention" then
              "- \($f) [\($kind)] verified \($ver) (\(ago($ver) | if . == 1 then "1 day ago" else "\(.) days ago" end))\(if $ver < $cutoff then ", stale" else "" end)\(if ($v.heading // "") != "" then ": \($v.heading)" else "" end)"
            else "- \($f) (accepted)\(if ($v.title // "") != "" then ": \($v.title | unq)" else "" end)" end | clip)}]
-    | (sort_by([.cls, -.plen, (if .pit then 0 else 1 end), (.verified | explode | map(-.)), .file]) + $extra) as $c
-    | def heads: [{t: "adr", h: "ADRs that govern these Paths (accepted):"}, {t: "spec", h: "Specs that govern these Paths (accepted):"},
+    | (($extra | map(select(.cls < 0))) + sort_by([.cls, -.plen, (if .pit then 0 else 1 end), (.verified | explode | map(-.)), .file])
+        + ($extra | map(select(.cls >= 0)))) as $c
+    | def heads: [{t: "convention", h: "Project conventions (they win over senior-mode defaults, never over security, review or tests):"},
+        {t: "adr", h: "ADRs that govern these Paths (accepted):"}, {t: "spec", h: "Specs that govern these Paths (accepted):"},
         {t: "note", h: "Knowledge notes on these Paths (the date says how far to trust one):"},
         {t: "finding", h: "Recurring review findings on these Paths (no knowledge note covers them):"},
         {t: "revert", h: "Reverted in the last 90 days:"}, {t: "repomap", h: $rmhead}, {t: "history", h: "History of these Paths (merged, most recent first):"},
@@ -282,6 +309,8 @@ context() {
       [ -z "$rmrows" ] || [ "$rmrows" = "[]" ] ||
         extras=$(jq -c --argjson r "$rmrows" '[.[] | select(.cls <= 2)] + $r + [.[] | select(.cls > 2)]' <<<"$extras" 2>/dev/null) || extras="[]"
     fi
+    [ "$tpaths" = "[]" ] ||
+      extras=$(jq -c --argjson c "$(context_conventions "$root")" '$c + .' <<<"$extras" 2>/dev/null) || extras="[]"
     budget=$(config_get context.budget 2>/dev/null) || budget=""
     [[ $budget =~ ^[1-9][0-9]*$ ]] || budget=2000
     months=$(config_get knowledge.staleMonths 2>/dev/null) || months=""

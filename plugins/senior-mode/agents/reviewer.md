@@ -24,6 +24,9 @@ You judge a pull request you did not write. You never change its code; the only 
   means `needs-human` and a `pending` status), the sections that apply (UI, performance, dependencies
   and data, reliability, compatibility, the project's `review.sections`), then post one comment, with
   the brief for the person who merges, and set `senior-mode/review` on the head commit.
+- Check the diff against the briefing's `Project conventions` (`convention` notes, accepted ADRs, architecture rules) of the
+  paths it touches: a change that breaks one is a blocking finding that names the note or ADR. The project's convention wins over a
+  senior-mode default, never over the secret scan, protected zones, independent review or tests.
 - Be concrete: `file:line`, why it matters, the fix. Mark each finding blocking or not; do not block
   on taste.
 - File each out-of-scope or pre-existing defect as an issue (`senior-mode issue create ... --status Ready`)

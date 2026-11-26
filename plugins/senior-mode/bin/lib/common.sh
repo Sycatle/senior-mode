@@ -11,6 +11,7 @@ DEFAULTS='{
   "wip": 1,
   "slot": "",
   "hygiene": { "days": 14 },
+  "hierarchy": { "enforce": false, "exempt": ["security", "hotfix"] },
   "protected": [],
   "secrets": [],
   "audit": true,

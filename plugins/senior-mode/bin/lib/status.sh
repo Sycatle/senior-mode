@@ -132,6 +132,10 @@ STATUS_JQ="$BRANCH_DEF"'. as $d | $d.items as $items | {
     | group_by([.kind, .number]) | map(.[0] + {why: (map(.why) | join("; "))})),
   decisions: decisions($d),
   drift: drift($d; $locals),
+  orphans: (([$items[] | .parent.number // empty] | unique) as $epics
+    | [$items[] | select(.open and (.status | IN("Backlog", "Ready", "In progress", "In review")) and .orphan != null and (.number | IN($epics[]) | not))
+      | {number, title, why: .orphan}]),
+  hierarchyEnforced: ($d.hierarchy.enforce == true),
   wip: {limit: $wip, count: ([$items[] | select(.open and .status == "In progress")] | length)},
   audit: $audit,
   process: $process,
@@ -211,6 +215,8 @@ STATUS_TEXT_JQ="$HIERARCHY_TEXT_DEF"'def sec($h; $ls): $h, (if ($ls | length) ==
     [.waiting[] | select(.why | test("failing: ")) | "\(.kind) #\(.number) \(.title): \(.why | sub("^needs a human decision; "; ""))"]) else empty end),
   (if (.drift | length) > 0 then sec("Board drift (\(.drift | length))"; [.drift[] | ticket + ": " + .why]) else empty end),
   (if (.hygiene | hygiene_lines | length) > 0 then sec("Hygiene (\(.hygiene | hygiene_lines | length))"; .hygiene | hygiene_lines) else empty end),
+  (if (.orphans | length) > 0 then sec("Orphans (\(.orphans | length))\(if .hierarchyEnforced then ", refused by hierarchy.enforce" else ", hierarchy.enforce is off" end)";
+    [.orphans[] | ticket + ": " + .why]) else empty end),
   (if ((.specDrift // []) | length) > 0 then sec("Spec drift (\(.specDrift | length))"; [.specDrift[]
     | "\(.spec): \(.commits | length) \(if (.commits | length) == 1 then "commit" else "commits" end) under its paths since it last changed, with no Spec-Unchanged",
       (.commits[:5][] | "  \(.sha) \(.subject)"),

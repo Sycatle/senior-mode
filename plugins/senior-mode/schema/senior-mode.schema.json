@@ -208,6 +208,14 @@
       "additionalProperties": false,
       "properties": { "maxLines": { "type": "integer", "minimum": 1 } }
     },
+    "hierarchy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enforce": { "type": "boolean", "description": "Whether a ticket with no parent epic, or whose epic's milestone has no Goal: line, is refused by the Definition of Ready and left out by pick." },
+        "exempt": { "type": "array", "items": { "type": "string" }, "description": "Labels of the tickets that need no parent epic (default security and hotfix)." }
+      }
+    },
     "knowledge": {
       "type": "object",
       "additionalProperties": false,

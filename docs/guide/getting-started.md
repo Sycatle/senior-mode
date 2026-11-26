@@ -76,8 +76,9 @@ Before changing anything, setup:
   created before Severity gets the field by rerunning `senior-mode setup github`. It also creates the
   text field `Paths` (the globs a ticket touches, comma-separated; `issue create --paths` and
   `item set <n> Paths "<globs>"` fill it), and caches its id like the others.
-- **Labels.** `needs-human`, `needs-info`, `needs-decision`, `blocked`, `security` (on risks filed with `--severity`), `triage` and `qualified` (external issues, see [autonomy](autonomy.md#untrusted-external-input)). On a personal account, also `type:feature`,
-  `type:bug`, `type:task` and `type:chore` (organizations use issue types).
+- **Labels.** `needs-human`, `needs-info`, `needs-decision`, `blocked`, `security` (on risks filed with `--severity`), `triage` and `qualified` (external issues, see [autonomy](autonomy.md#untrusted-external-input)). Also `type:feature`,
+  `type:bug`, `type:task`, `type:chore` and `type:spike`, on an organization as well: `issue create --type` puts them on a ticket,
+  and `doctor` warns when one is missing.
 - **Merges.** Rebase merges only; branches are deleted after merge.
 - **Ruleset.** A ruleset named `senior-mode` on the default branch: pull requests only, rebase,
   linear history, no deletion or force-push, and three required statuses, `senior-mode/ci`,

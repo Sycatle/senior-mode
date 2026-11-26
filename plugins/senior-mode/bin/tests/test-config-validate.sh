@@ -108,6 +108,16 @@ esac
 (cd "$fresh" && "$cli" setup repo >/dev/null 2>&1)
 [ "$(jq '[paths | select(.[0] == "$schema")] | length' "$fresh/.claude/senior-mode.json")" -eq 1 ] || fail "\$schema written twice"
 
+# setup repo records minVersion, the plugin version that writes the file (#666): raised, never lowered.
+installed=$(jq -r .version "$bin/../.claude-plugin/plugin.json")
+[ "$(jq -r '.minVersion // empty' "$fresh/.claude/senior-mode.json")" = "$installed" ] || fail "setup repo did not record minVersion $installed: $(jq -c .minVersion "$fresh/.claude/senior-mode.json")"
+jq '.minVersion = "0.0.1"' "$fresh/.claude/senior-mode.json" >"$work/mv.json" && cp "$work/mv.json" "$fresh/.claude/senior-mode.json"
+(cd "$fresh" && "$cli" setup repo >/dev/null 2>&1)
+[ "$(jq -r .minVersion "$fresh/.claude/senior-mode.json")" = "$installed" ] || fail "setup repo did not raise an older minVersion"
+jq '.minVersion = "99.0.0"' "$fresh/.claude/senior-mode.json" >"$work/mv.json" && cp "$work/mv.json" "$fresh/.claude/senior-mode.json"
+(cd "$fresh" && "$cli" setup repo >/dev/null 2>&1)
+[ "$(jq -r .minVersion "$fresh/.claude/senior-mode.json")" = "99.0.0" ] || fail "setup repo lowered a newer minVersion"
+
 # A config that records a newer minVersion is one version mismatch, not one error per key it does not know (#606).
 installed=$(jq -r .version "$bin/../.claude-plugin/plugin.json")
 config '{"minVersion":"99.0.0","lsp":true,"autonomyy":1,"project":{"protection":"local"},"language":"xx"}'

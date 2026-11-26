@@ -1140,6 +1140,7 @@ serve_backmerge() {
 serve_done() {
   local t=$1 pr=$2 m
   rm -f "$SERVE_DIR/queued-$pr" "$SERVE_DIR/rounds-$t" "$SERVE_DIR/breaker" "$SERVE_DIR/$t.wrong-test" "$SERVE_DIR/$t.retest"
+  serve_close_candidates "$t" "$pr"
   serve_backmerge "$t" "$pr"
   hotfix_release "$t" "$pr"
   # Every ticket of a batch is done with its one pull request (the lead's <n>.batch).
@@ -1418,12 +1419,82 @@ serve_red_retry() {
   if run_launch "$t" sonnet; then running+=("$t"); else return 1; fi
 }
 
+# Best-of-N (#367, spec 325 section 8.3): a ticket whose pull request $2 still has changes requested after its 2 fix rounds
+# is a ticket that already failed once. Instead of a person, up to bestOf.n candidates (3 at most, the pull request being the
+# first) are tried: the others start from the base, one at a time, on branches `<branch>-b2`, `-b3`, in their own worktrees
+# (SENIOR_MODE_CANDIDATE, see `start`), each a session that counts against the slots and the hourly ceilings. The first
+# candidate whose review passes merges as any pull request does, and serve_done closes the others (serve_close_candidates);
+# a candidate whose review fails is closed (serve_candidate_lost). bestof-<n> holds the number of candidates started.
+# Returns 0 when it took care of the pull request (a candidate starts or is awaited), 1 for the old end: needs-human,
+# with bestOf.n at 1 (off) or once every candidate is out.
+serve_bestof() {
+  local t=$1 pr=$2 n k others
+  n=$(serve_int bestOf.n 1)
+  [ "$n" -le 3 ] || n=3
+  [ "$n" -gt 1 ] || return 1
+  k=$(state_num "$SERVE_DIR/bestof-$t")
+  [ "$k" -ge 1 ] || k=1
+  if [ "$k" -lt "$n" ]; then
+    serve_candidate "$t" "$pr" $((k + 1)) "$n" || true
+    return 0
+  fi
+  others=$(serve_ticket_prs "$t" "$pr")
+  [ "$others" -gt 0 ]
+}
+
+# The number of open pull requests of ticket $1, the pull request $2 apart.
+serve_ticket_prs() {
+  jq -r --argjson pr "$2" --arg re "^[a-z]+/$1(-|\$)" '[.[] | select(.number != $pr and (.head.ref | test($re)))] | length' <<<"${SERVE_PRS:-[]}"
+}
+
+# The candidate $3 of $4 of ticket $1, against the pull request $2: its session starts when a slot is free.
+serve_candidate() {
+  local t=$1 pr=$2 k=$3 n=$4
+  serve_can_launch "$t" || return 1
+  RUN_ROLE[$t]=ticket
+  unset 'RUN_CWD[$t]'
+  SENIOR_MODE_CANDIDATE=$k run_open "$t" || return 1
+  state_put "$SERVE_DIR/bestof-$t" "$k"
+  {
+    printf 'This is candidate %s of %s for this ticket. The first attempt, pull request #%s, still had changes requested after 2 fix\nrounds (`gh pr view %s --comments` says why). Start from the base branch, as it is in this worktree, and do not copy that\nattempt: solve the ticket your own way, and avoid what its reviewer found. Other candidates are worked on separately;\nonly the first whose review passes merges.\n\n' "$k" "$n" "$pr" "$pr"
+    serve_prompt "$t" "${RUN_TITLE[$t]:-}" "${RUN_BRANCH[$t]}"
+  } | state_write "$RUN_DIR/$t.prompt"
+  echo "#$t: pull request #$pr still has changes requested after 2 fix rounds; candidate $k of $n starts on ${RUN_BRANCH[$t]}"
+  if run_launch "$t" sonnet; then running+=("$t"); else return 1; fi
+}
+
+# A candidate pull request $2 of ticket $1 whose review failed is closed: a candidate has no fix rounds.
+serve_candidate_lost() {
+  local t=$1 pr=$2
+  gh_bound api "repos/$RUN_SLUG/issues/$pr/comments" -f body="senior-mode serve: this candidate for #$t failed its review; it is closed. The other candidates go on." >/dev/null ||
+    echo "#$t: could not comment on #$pr" >&2
+  gh_retry api "repos/$RUN_SLUG/pulls/$pr" -X PATCH -f state=closed >/dev/null || echo "#$t: could not close pull request #$pr" >&2
+}
+
+# The merge of pull request $2 settles best-of-N for ticket $1 (it has a <bestof> file): the other open pull requests of the
+# ticket, the candidates it beat, are closed with a comment that names the winner.
+serve_close_candidates() {
+  local t=$1 pr=$2 other
+  [ -e "$SERVE_DIR/bestof-$t" ] || return 0
+  rm -f "$SERVE_DIR/bestof-$t"
+  for other in $(jq -r --argjson pr "$pr" --arg re "^[a-z]+/$t(-|\$)" '.[] | select(.number != $pr and (.head.ref | test($re))) | .number' <<<"${SERVE_PRS:-[]}"); do
+    gh_bound api "repos/$RUN_SLUG/issues/$other/comments" -f body="senior-mode serve: closed. Candidate pull request #$pr of #$t passed its review and merged first." >/dev/null ||
+      echo "#$t: could not comment on #$other" >&2
+    gh_retry api "repos/$RUN_SLUG/pulls/$other" -X PATCH -f state=closed >/dev/null || echo "#$t: could not close pull request #$other" >&2
+  done
+}
+
 # Changes requested on the pull request $2 (branch $3) of ticket $1: the ticket session resumes on the same
 # branch with the findings, twice at most; then a person.
 serve_changes() {
   local t=$1 pr=$2 ref=$3 rounds
+  if [[ $ref =~ -b[2-9]$ ]]; then
+    serve_candidate_lost "$t" "$pr"
+    return 0
+  fi
   rounds=$(state_num "$SERVE_DIR/rounds-$t")
   if [ "$rounds" -ge 2 ]; then
+    serve_bestof "$t" "$pr" && return 0
     serve_needs_human "$t" "$pr" "the reviewer still requests changes after $rounds fix rounds"
     return 0
   fi
@@ -1537,7 +1608,7 @@ serve_poll() {
   local -a queue=()
   now=$(serve_now)
   RUN_STOP=""
-  SERVE_HELD="" SERVE_GUARDS="" SERVE_WAIT="" SERVE_FP=""
+  SERVE_HELD="" SERVE_GUARDS="" SERVE_WAIT="" SERVE_FP="" SERVE_PRS="[]"
   rm -f "$GH_DOWN_FILE"
   run_reap
   wd_orphans
@@ -1576,6 +1647,7 @@ serve_poll() {
   fi
   serve_queued
   if prs=$(gh_retry api "repos/$RUN_SLUG/pulls?state=open&per_page=100"); then
+    SERVE_PRS=$prs
     serve_merged_done "$data" "$prs"
     serve_prs "$data" "$prs"
   else

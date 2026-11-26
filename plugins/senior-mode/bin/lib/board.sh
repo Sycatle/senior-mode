@@ -1173,6 +1173,8 @@ start_remote_branch() {
 # `check` says what is missing. Prints `branch <name>` and `worktree <path>`. A branch of the ticket on origin and not here comes
 # back as a local branch that tracks it. `--base <ref>` starts a new branch from origin/<ref> (a stacked pull request) and prints
 # `base origin/<ref>`; a branch of the ticket, local or on origin, wins over it (`base <ref> ignored: ...`).
+# SENIOR_MODE_CANDIDATE=<k> (2 or 3, set by serve for best-of-N, #367) starts the k-th candidate of the ticket instead: the
+# branch `<branch>-b<k>` in the worktree `<issue>-b<k>`, from the base, whatever other branches the ticket has.
 start() {
   local issue="" base_ref="" arg
   while [ $# -gt 0 ]; do
@@ -1185,7 +1187,8 @@ start() {
   done
   [ -n "$issue" ] || usage
   local slug info state title labels type common main name base branch path existing created=false cmd dir
-  local body target kind="ticket" key="" pat wf=false fresh=false remote ignored=""
+  local body target kind="ticket" key="" pat wf=false fresh=false remote ignored="" cand=""
+  [[ ${SENIOR_MODE_CANDIDATE:-} =~ ^[2-9]$ ]] && cand=${SENIOR_MODE_CANDIDATE}
   slug=$(repo_slug)
   info=$(gh_retry issue view "$issue" --repo "$slug" --json title,labels,state,body) || die "cannot read issue #$issue"
   state=$(jq -r '.state' <<<"$info")
@@ -1232,18 +1235,23 @@ start() {
     branch=$(git -C "$main" for-each-ref --format='%(refname:short)' "refs/heads/$type/$issue-*" | head -1)
     branch=${branch:-$type/$issue${name:+-$name}}
   fi
+  [ -z "$cand" ] || branch=${branch%-b[0-9]}-b$cand
   existing=$(branch_worktree "$main" "$branch")
   if [ -n "$existing" ]; then
     path=$existing
     [ -z "$base_ref" ] || ignored="base $base_ref ignored: the branch $branch exists"
   else
     created=true
-    path=$(worktree_path "$main" "$issue")
+    path=$(worktree_path "$main" "$issue${cand:+-b$cand}")
     [ ! -e "$path" ] || die "$path exists and is not the worktree of $branch"
     remote=""
     if ! git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
       git -C "$main" fetch -q origin 2>/dev/null || true
-      remote=$(start_remote_branch "$main" "$issue" "$wf") || remote=""
+      if [ -n "$cand" ]; then
+        git -C "$main" show-ref -q --verify "refs/remotes/origin/$branch" && remote=$branch
+      else
+        remote=$(start_remote_branch "$main" "$issue" "$wf") || remote=""
+      fi
     fi
     if [ -n "$remote" ]; then
       [ -z "$base_ref" ] || ignored="base $base_ref ignored: the branch $remote exists on origin"

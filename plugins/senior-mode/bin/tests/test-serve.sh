@@ -120,7 +120,7 @@ if [[ ${!#} == *"guard probe"* ]]; then
   echo '{"type": "user", "message": {"content": "senior-mode: skipping checks is denied (core.hooksPath); fix what the check reports instead."}}'
   exit 0
 fi
-n=$(sed -nE 's#.*/senior-mode/worktrees/[^/]+/(review-)?([0-9]+)(-r[0-9]+)?$#\2#p' <<<"$PWD")
+n=$(sed -nE 's#.*/senior-mode/worktrees/[^/]+/(review-)?([0-9]+)(-[rb][0-9]+)?$#\2#p' <<<"$PWD")
 [ -n "$n" ] || exit 0
 fx=$FIX/claude-$n-$model-${SENIOR_MODE_ROLE:-}
 # The k-th session of that ticket, model and role plays <fixture>.<k> when it exists; the prompt it got is kept.
@@ -1286,6 +1286,8 @@ sha=$(mkbranch feat/62-x f62.txt)
 pr 162 feat/62-x "$sha" clean
 st "$sha" "senior-mode/ci success" "senior-mode/review failure"
 session 62-sonnet-ticket delivered pr
+jq '.bestOf.n = 1' "$repo/.claude/senior-mode.json" >"$work/cfg.json" && mv "$work/cfg.json" "$repo/.claude/senior-mode.json"
+git -C "$repo" add -A && git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: bestOf" && git -C "$repo" push -q origin main
 fresh
 once || fail "T: serve failed: $(cat "$work/out")"
 grep -q '^app-62 sonnet run=1 role=ticket$' "$CLAUDE_LOG" || fail "T: the ticket session did not resume: $(cat "$CLAUDE_LOG")"
@@ -1299,6 +1301,81 @@ once || fail "T: serve failed: $(cat "$work/out")"
 grep -q 'issues/162/labels' "$GH_LOG" || fail "T: no needs-human after 2 rounds: $(cat "$GH_LOG")"
 grep -q 'issues/62/labels' "$GH_LOG" || fail "T: no needs-human after 2 rounds: $(cat "$GH_LOG")"
 grep -q 'Waiting for a human.*pull request #162.*2 fix rounds' "$work/out" || fail "T: not reported: $(cat "$work/out")"
+
+# BO: best-of-N (#367, spec 325 section 8.3). A ticket whose pull request still has changes requested after 2 fix rounds has
+# failed once: serve starts the next candidate on a branch -b2 in its own worktree (-b3 for a third, bestOf.n at most), the first
+# whose review passes merges and the pull requests it beat are closed with a comment naming it; a candidate whose review fails is
+# closed, and when all failed the ticket is needs-human. A ticket that never failed runs once (A), bestOf.n 1 is off (T).
+config '{}'
+boardx "70:In review:S:P1 next"
+prs_reset
+sha70=$(mkbranch feat/70-x f70.txt)
+pr 170 feat/70-x "$sha70" clean
+st "$sha70" "senior-mode/ci success" "senior-mode/review failure"
+session 70-sonnet-ticket delivered pr
+fresh
+mkdir -p "$state"
+echo 2 >"$state/rounds-70"
+once || fail "BO: serve failed: $(cat "$work/out")"
+grep -q '^app-70-b2 sonnet run=1 role=ticket$' "$CLAUDE_LOG" || fail "BO: no candidate session in its own worktree: $(cat "$CLAUDE_LOG") $(git -C "$repo" worktree list)"
+git -C "$repo" branch --list 'feat/70-*-b2' | grep -q . || fail "BO: no branch -b2: $(git -C "$repo" branch)"
+{ grep -q 'candidate 2 of 2' "$state/70.prompt" && grep -q 'pull request #170' "$state/70.prompt"; } || fail "BO: the candidate is not told about the first attempt: $(head -5 "$state/70.prompt")"
+[ "$(cat "$state/bestof-70")" = 2 ] || fail "BO: the candidate is not counted: $(cat "$state/bestof-70" 2>&1)"
+grep -q 'issues/170/labels\|issues/70/labels' "$GH_LOG" && fail "BO: needs-human before the candidates failed: $(cat "$GH_LOG")"
+# The candidate delivered pull request 171; it is green and its review passed: it merges and the first attempt is closed.
+sha71=$(mkbranch feat/70-ticket-70-b2 f70b.txt)
+pr 171 feat/70-ticket-70-b2 "$sha71" clean
+green "$sha71"
+once || fail "BO: serve failed: $(cat "$work/out")"
+grep -q "^pr merge 171 --rebase --match-head-commit $sha71 " "$GH_LOG" || fail "BO: the candidate that passed its review did not merge: $(grep '^pr ' "$GH_LOG")"
+[ -e "$FIX/closed-170" ] || fail "BO: the first attempt was not closed: $(cat "$GH_LOG")"
+grep -q 'issues/170/comments.*pull request #171 of #70' "$GH_LOG" || fail "BO: the comment does not name the winner: $(grep 'issues/170' "$GH_LOG")"
+[ ! -e "$state/bestof-70" ] && [ ! -e "$state/rounds-70" ] || fail "BO: the best-of state is left: $(ls "$state")"
+grep -q 'issues/170/labels' "$GH_LOG" && fail "BO: the loser was made needs-human"
+# Every candidate fails its review: the candidate is closed, then the ticket needs a person.
+prs_reset
+pr 170 feat/70-x "$sha70" clean
+st "$sha70" "senior-mode/ci success" "senior-mode/review failure"
+pr 171 feat/70-ticket-70-b2 "$sha71" clean
+st "$sha71" "senior-mode/ci success" "senior-mode/review failure"
+fresh
+mkdir -p "$state"
+echo 2 >"$state/rounds-70"
+echo 2 >"$state/bestof-70"
+once || fail "BO: serve failed: $(cat "$work/out")"
+[ ! -s "$CLAUDE_LOG" ] || fail "BO: a session started with every candidate out: $(cat "$CLAUDE_LOG")"
+[ -e "$FIX/closed-171" ] || fail "BO: the candidate that failed its review was not closed: $(cat "$GH_LOG")"
+grep -q 'issues/170/labels' "$GH_LOG" && fail "BO: needs-human while a candidate was still open"
+prs_reset
+pr 170 feat/70-x "$sha70" clean
+st "$sha70" "senior-mode/ci success" "senior-mode/review failure"
+once || fail "BO: serve failed: $(cat "$work/out")"
+{ grep -q 'issues/170/labels' "$GH_LOG" && grep -q 'issues/70/labels' "$GH_LOG"; } || fail "BO: no needs-human once every candidate failed: $(cat "$GH_LOG")"
+# bestOf.n 3: a third candidate starts once the second has delivered, and no fourth.
+prs_reset
+pr 170 feat/70-x "$sha70" clean
+st "$sha70" "senior-mode/ci success" "senior-mode/review failure"
+jq '.bestOf.n = 3' "$repo/.claude/senior-mode.json" >"$work/cfg.json" && mv "$work/cfg.json" "$repo/.claude/senior-mode.json"
+git -C "$repo" add -A && git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: bestOf" && git -C "$repo" push -q origin main
+session 70-sonnet-ticket delivered pr
+fresh
+mkdir -p "$state"
+echo 2 >"$state/rounds-70"
+once || fail "BO: serve failed: $(cat "$work/out")"
+grep -q '^app-70-b2 ' "$CLAUDE_LOG" || fail "BO: n=3: no second candidate: $(cat "$CLAUDE_LOG")"
+pr 171 feat/70-ticket-70-b2 "$sha71" clean
+st "$sha71" "senior-mode/ci pending"
+once || fail "BO: serve failed: $(cat "$work/out")"
+grep -q '^app-70-b3 ' "$CLAUDE_LOG" || fail "BO: n=3: no third candidate: $(cat "$CLAUDE_LOG")"
+[ "$(cat "$state/bestof-70")" = 3 ] || fail "BO: n=3: not counted: $(cat "$state/bestof-70" 2>&1)"
+sha72=$(mkbranch feat/70-ticket-70-b3 f70c.txt)
+pr 172 feat/70-ticket-70-b3 "$sha72" clean
+st "$sha72" "senior-mode/ci pending"
+once || fail "BO: serve failed: $(cat "$work/out")"
+[ ! -s "$CLAUDE_LOG" ] || fail "BO: n=3: a fourth candidate started: $(cat "$CLAUDE_LOG")"
+grep -q 'issues/170/labels' "$GH_LOG" && fail "BO: n=3: needs-human while candidates are open"
+rm -f "$FIX/claude-70-"* "$FIX"/calls-70-* "$FIX"/prompt-70-*
+config '{}'
 
 # U: an M ticket: the test-author session first, then red-tests record, then the ticket session on the same branch.
 boardx "63:Ready:M:P1 next" "64:Ready:M:P1 next"

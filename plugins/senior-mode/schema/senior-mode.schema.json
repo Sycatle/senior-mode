@@ -257,6 +257,11 @@
         "maxOpen": { "type": "integer", "minimum": 1, "description": "Most open gardening tickets: serve files no more while that many are open." }
       }
     },
+    "bestOf": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "n": { "type": "integer", "minimum": 1, "maximum": 3, "description": "Candidates tried for a ticket whose pull request still has changes requested after 2 fix rounds, the pull request being the first: serve starts the others on branches -b2 and -b3, one at a time; the first whose review passes merges and the others are closed. 1 turns it off." } }
+    },
     "retro": {
       "type": "object",
       "additionalProperties": false,

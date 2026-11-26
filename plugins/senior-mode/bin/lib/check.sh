@@ -793,7 +793,7 @@ ci_job_states() {
 # limited to what the diff affects (#418, packages_select) replaces each check named like a command of the packages by
 # the command of every selected package, run in its directory, and says "3 of 12 packages" in the recorded description;
 # --all, a file outside every package or --pre-push run the checks as they are. With --update-baseline only the
-# architecture baseline is rewritten (see architecture_check).
+# baselines are rewritten (see architecture_check, ratchet_update).
 # The configuration errors of the `tier` keys of the checks of the config file $1, one per line: a tier is 2 or 3, and
 # the built-in checks (secret scan, dependency audit) are tier 2 and cannot be moved.
 check_tier_errors() {
@@ -806,7 +806,7 @@ check_tier_errors() {
 check() {
   local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp ci_only=false jobs="[]" job
   local waiting="" ci_failed="" st url free pre_push=false changed=false update=false a label vext vcmd preset nbuiltin vc
-  local changed_list="" sel all=false pk="" pkdesc="" pdir pcmd found idx argc=$# tier_only="" tier run2=true run3=false tier_errors
+  local changed_list="" sel all=false pk="" pkdesc="" pdir pcmd found idx argc=$# tier_only="" tier run2=true run3=false tier_errors urc=0
   local -a bases=()
   local -A variant=()
   while [ $# -gt 0 ]; do
@@ -833,8 +833,15 @@ check() {
   [ "$pre_push" = false ] || [ "$changed" = false ] || die "check --changed is not for the push gate: --pre-push runs the full check"
   if [ "$update" = true ]; then
     [ "$argc" -eq 1 ] || usage
-    architecture_check --update-baseline
-    return
+    root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
+    # Each baseline that exists is rewritten; with neither, the architecture message says it cannot create one.
+    if [ -f "$root/$RATCHET_FILE" ]; then
+      ratchet_update || urc=1
+      [ ! -f "$root/.claude/architecture-baseline.json" ] || architecture_check --update-baseline || urc=1
+    else
+      architecture_check --update-baseline || urc=1
+    fi
+    return "$urc"
   fi
   file=$(config_file)
   unset SENIOR_MODE_CHANGED_FILES
@@ -882,6 +889,11 @@ check() {
   if [ "$(config_get architecture.rules 2>/dev/null || echo '[]')" != "[]" ]; then
     names+=("architecture")
     cmds+=("$(printf '%q' "$SELF") architecture-check")
+  fi
+  # The ratchet of lint and coverage, once the project has a baseline (#420).
+  if [ -f "$root/$RATCHET_FILE" ]; then
+    names+=("ratchet")
+    cmds+=("$(printf '%q' "$SELF") ratchet-check")
   fi
   # docs/architecture.md is compared with the map once it holds the generated block (#347).
   if grep -qE '^<!-- senior-mode:architecture sha=[0-9a-f]+ -->$' "$root/docs/architecture.md" 2>/dev/null; then

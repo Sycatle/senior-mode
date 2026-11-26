@@ -29,6 +29,7 @@ DEFAULTS='{
   "retro": { "repeat": 3 },
   "bestOf": { "n": 2 },
   "architecture": { "rules": [] },
+  "ratchet": { "patchCoverage": 80 },
   "github": { "protection": "", "requiredChecks": true },
   "deploy": { "previews": "platform" }
 }'

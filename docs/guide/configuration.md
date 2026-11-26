@@ -342,14 +342,14 @@ identifiers (`process.env.TOKEN_1`) are left alone. In a URL, the password is sk
 it is, as a whole, one template (`${X}`, `$(X)`, `$X`, `{X}`, `{{X}}`, `%(x)s`, `%s`, `<x>`, `***`, with `X` an
 identifier) or, as a whole, a word such as `password`, `changeme`, `your_password` or `test`; a short password,
 one with digits (`Secret123`) or one that merely contains a template or `test` (`Zq9{x}`) is reported. Known
-trade-off: a real password that is only `$name` or `{name}` is taken for a template and not reported. The scan prints `file:line: kind` and never the value. The patterns
+trade-off: a real password that is only `$name` or `{name}` is taken for a template and not reported. A password made only of digits is a port (`https://host:443@evil.invalid`) and is not reported. The scan prints `file:line: kind` and never the value. The patterns
 are in `plugins/senior-mode/secret-patterns`.
 Without a default branch to compare with, the scan shows as `skip`.
 
 A false positive is lifted by a human: add `<sha256 of the value> <reason>` to
 `.claude/secret-allowlist` and merge that change first (compute the hash with
 `printf %s '<value>' | sha256sum`). The value is the key, token or password itself, without the name or
-quotes; for a URL it is the whole URL, and for a private key the whole block from the `BEGIN` line to the
+quotes; for a URL it is the whole URL, up to the first quote, backtick, comma or closing bracket, and for a private key the whole block from the `BEGIN` line to the
 `END` line, so `printf %s "$(cat key.pem)" | sha256sum` for a file that holds only the key. An entry
 lifts that value and nothing else. The file is read from the base branch, so a pull request cannot
 allowlist its own secret; `setup` adds it to `protected`, and agents in a run cannot write it.

@@ -136,6 +136,35 @@ for pwd in 'Zq9{x}' 'q8{Abc}z' 'Ab$(9z' 'Zq9%(x)s' 'Zq9${x}k' 'Zq9%sQ4' 'Zq9***Q
   kind "credentialed URL" "$pwd" "DATABASE_URL=${p}${pwd}@db.internal:5432/app"
 done
 
+# Review of #641: a password that is only digits is a port (a host used as userinfo in a spoofing fixture), not a
+# secret; and the hashed URL stops at the first character that cannot be part of it, so that quotes, brackets and
+# commas around it do not change the hash an allowlist entry needs.
+p=postgres://app:
+main_sha=$(git_ rev-parse main)
+branch src/app.txt 'url = "https://cdn.example.com:443@evil.invalid/x",'
+run || fail "a port as password is flagged: $(cat "$work/out")"
+branch src/app.txt "u = 'http://localhost:8080@evil.invalid'"
+run || fail "a port as password in quotes is flagged: $(cat "$work/out")"
+branch src/app.txt "DATABASE_URL=${p}${pw}1@db.internal:5432/app"
+run && fail "a password that merely holds digits passes"
+urlp="${p}${pw}@db.internal:5432/app"
+git_ checkout -q main
+printf '%s\n' "# fixtures" "$(sha "$urlp") fixture URL" >"$repo/.claude/secret-allowlist"
+git_ add -A
+git_ commit -q -m "chore: allowlist url"
+for line in "u = \"$urlp\"," "u = ['$urlp']" "u = \`$urlp\`;" "f($urlp)" "<$urlp>" "{url: \"$urlp\"}" "$urlp"; do
+  branch src/app.txt "$line"
+  run || fail "the allowlisted URL is flagged inside: $line: $(cat "$work/out")"
+done
+git_ checkout -q main
+printf '%s\n' "$(sha "$urlp\",") the old hash, quote and comma included" >"$repo/.claude/secret-allowlist"
+git_ add -A
+git_ commit -q -m "chore: allowlist the old hash"
+branch src/app.txt "u = \"$urlp\","
+run && fail "the hash of the URL with its trailing quote and comma still lifts it"
+git_ checkout -q main
+git_ reset -q --hard "$main_sha"
+
 # A hunk in the middle of a file: the line number is the one of the new file, and a deleted line does not shift it.
 git_ checkout -q main
 printf 'a\nb\nc\nd\ne\nf\ng\nh\n' >"$repo/src/long.txt"

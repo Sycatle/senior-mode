@@ -52,9 +52,18 @@ secret_scan() {
           sub(/^[^:]*:\/\/[^:\/@]*:/, "", pw)
           sub(/@.*/, "", pw)
           if (pw ~ /^([$][{][A-Za-z_][A-Za-z0-9_]*[}]|[$][(][A-Za-z_][A-Za-z0-9_]*[)]|[$][A-Za-z_][A-Za-z0-9_]*|[{][A-Za-z_][A-Za-z0-9_]*[}]|[{][{][A-Za-z_][A-Za-z0-9_]*[}][}]|%[(][A-Za-z_][A-Za-z0-9_]*[)]s|(%s)+|<[A-Za-z_][A-Za-z0-9_-]*>|[*][*][*]+)$/) next
+          if (pw ~ /^[0-9]+$/) next
           w = tolower(pw)
           gsub(/[_-]/, "", w)
           if (w ~ /^(pass(word|wd)?|secret|example|changeme|changeit|placeholder|dummy|sample|test(ing)?|user(name)?|(your|my)(pass(word|wd)?|secret)?(here)?)$/ || w ~ /^xxx+$/) next
+          # The hashed value is the URL, not what surrounds it: it ends at the first character that cannot be part
+          # of one (quote, backtick, comma, closing bracket); a "[" right after the "@" opens an IPv6 host.
+          h = index(v, "@")
+          for (i = h + 1; i <= length(v); i++) {
+            c = substr(v, i, 1)
+            if (c == "[" && i == h + 1) { j = index(v, "]"); if (j) i = j; continue }
+            if (index("\"'"'"'`,;)}>]<", c)) { v = substr(v, 1, i - 1); break }
+          }
         }
         { printf "%s%s%s%s%s\n", n, s, kind, s, (mode == "block" ? "" : v) }'
     done <"$patterns" |

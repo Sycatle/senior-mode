@@ -1,9 +1,10 @@
 # shellcheck shell=bash
-# Id of a board option cached in the config; dies naming the known fields or options.
+# Id of a board option cached in the config; dies naming the known fields or options. Called in a command substitution,
+# it only ends that subshell: the caller must stop on its status (`|| return 1`), whether `set -e` is on or not.
 option_id() {
   local file=$1 field=$2 option=$3 id
   jq -e --arg f "$field" '.project.fields[$f].id' "$file" >/dev/null ||
-    die "unknown field $field (known: $(jq -r '.project.fields // {} | keys | join(", ")' "$file")); a config created before this field existed lacks it: rerun senior-mode setup github"
+    die "unknown board field: $field (known: $(jq -r '.project.fields // {} | keys | join(", ")' "$file")); a config created before this field existed lacks it: rerun senior-mode setup github"
   id=$(jq -r --arg f "$field" --arg o "$option" '.project.fields[$f].options[$o] // empty' "$file")
   [ -n "$id" ] ||
     die "unknown option $option for $field (known: $(jq -r --arg f "$field" '.project.fields[$f].options | keys | join(", ")' "$file"))"
@@ -13,8 +14,8 @@ option_id() {
 # Sets fields of an issue's Project item (pairs of field and option), using the ids cached in the
 # config. A field cached without options is a text field (Paths, #174): its "option" is the text. The
 # Iteration field (#180) takes an iteration title or `current`, Start and End a date as YYYY-MM-DD.
-# Every pair is checked before the item is touched. Fails when gh does, even
-# where `set -e` is off (a caller's `||`), so `(item_set ...) || ...` sees it.
+# Every pair is checked before the item is touched: an unknown field or option fails with its message and nothing is
+# written. Fails when gh does, even where `set -e` is off (a caller's `||`), so `(item_set ...) || ...` sees it.
 item_set() {
   [ $# -ge 3 ] && [ $(($# % 2)) -eq 1 ] || usage
   local issue=$1 file project owner number item field option i
@@ -40,7 +41,7 @@ item_set() {
       option=${*:i+1:1}
       flags+=(--text)
     else
-      option=$(option_id "$file" "$field" "${@:i+1:1}")
+      option=$(option_id "$file" "$field" "${@:i+1:1}") || return 1
       flags+=(--single-select-option-id)
     fi
     ids+=("$(jq -r --arg f "$field" '.project.fields[$f].id' "$file")" "$option")

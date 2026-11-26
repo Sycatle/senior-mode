@@ -85,11 +85,22 @@ grep -q 'compatibility.md' "$rev/SKILL.md" || fail "skill review does not load c
 grep -q 'handlers, routes' "$rev/SKILL.md" || fail "skill review does not say a route handler calls for reliability.md"
 grep -qi 'sections applied\|section applied' "$rev/SKILL.md" || fail "skill review does not name the sections applied under the verdict"
 grep -q 'New shared code' "$rev/SKILL.md" || fail "skill review does not check the New shared code section"
-grep -qi 'third copy\|3rd copy' "$rev/SKILL.md" || fail "skill review design axis lacks the rule of three"
+grep -qi 'extract at the third' "$rev/SKILL.md" || fail "skill review design axis lacks the rule of three"
 grep -qi '^## Blocking' "$rev/reliability.md" || fail "reliability.md has no blocking list"
 grep -qi 'personal data.*log' "$rev/reliability.md" || fail "reliability.md does not name personal data in a log"
 grep -qi 'expand' "$rev/compatibility.md" || fail "compatibility.md does not give expand then contract"
 grep -qi 'renamed' "$rev/compatibility.md" || fail "compatibility.md does not block a rename in one step"
+# Performance section (#498, spec 472): read when the diff touches application code, with its blocking cases.
+grep -q 'performance.md' "$rev/SKILL.md" || fail "skill review does not load performance.md"
+grep -q 'performance' "$plugin/agents/reviewer.md" || fail "the reviewer agent does not list the performance section"
+grep -q 'application code' "$rev/SKILL.md" || fail "skill review does not tie performance.md to application code"
+grep -q 'application code' "$rev/performance.md" || fail "performance.md does not say when it is read"
+for want in 'complexity' 'cache' 'life of a process' 'payloads' 'query-count assertion' 'no index' '\.all()' 'expand then' 'declares the table small'; do
+  grep -qi "$want" "$rev/performance.md" || fail "performance.md lacks: $want"
+done
+grep -q 'Blocking: a list endpoint or a journey with no query-count assertion' "$rev/performance.md" || fail "performance.md: a list endpoint with no query-count assertion is not blocking"
+grep -q 'Blocking: a query filtering' "$rev/performance.md" || fail "performance.md: an unindexed filter or sort is not blocking"
+grep -q 'Blocking: a rename or a drop' "$rev/performance.md" || fail "performance.md: a rename or a drop in one step is not blocking"
 grep -q 'compatibility' "$plugin/agents/reviewer.md" || fail "the reviewer agent does not list the new sections"
 grep -q 'finding: <slug>' "$plugin/agents/reviewer.md" || fail "the reviewer agent does not name the finding marker"
 grep -q 'docs(knowledge): <slug>' "$rev/knowledge.md" || fail "review knowledge.md: no title of the pull request"

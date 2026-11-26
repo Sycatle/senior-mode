@@ -7,7 +7,7 @@ Every skill is a step of the delivery lifecycle and a role of the team
 |---|---|
 | Lead | `triage`, `frame`, `spec`, `adr`, `grill`, `ready`, `brief` |
 | Developer | `tdd` (refactoring is a mode of it), `verify`, `commit` |
-| Reviewer | `review`, with explain, security, UI, dependencies-and-data, reliability and compatibility sections |
+| Reviewer | `review`, with explain, security, UI, performance, dependencies-and-data, reliability and compatibility sections |
 | Release and ops | `run`, `next`, `status`, `docs` |
 | Learning | `retro` |
 
@@ -123,6 +123,10 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
   - UI, when the diff touches front-end files: screenshots of the touched pages if the project's
     Playwright is there, accessibility basics, component consistency, empty, loading and error
     states;
+  - performance, when the diff touches application code: the database points no tool sees (a list
+    endpoint or journey with no query-count assertion, a filter or sort on an unindexed column, a
+    rename or drop split in expand then contract, an unbounded `.all()`) and, in code, complexity on
+    growing data, repeated work, memory held for the life of a process and payloads that grow with data;
   - dependencies and data, when dependencies or data handling change: licences from the ecosystem's
     own tool, secrets and personal data in logs and exports, new third-party services. It flags
     facts for a human and does not rule on them;

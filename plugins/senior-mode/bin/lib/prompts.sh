@@ -12,11 +12,37 @@ take the recommended option and say so in the pull request.
 TEXT
 }
 
+# The plan step of a ticket of size M or L (#352), empty for any other: nothing is written before the architect approves it.
+# $1 the ticket. The plan and the architect's answers go to the file $SENIOR_MODE_RUN_PLAN (run_plan_gap reads it).
+prompt_plan() {
+  run_plan_wanted "$1" || return 0
+  cat <<TEXT
+Plan first (size $(run_size "$1")): no code, tests included, is written before the architect approves a plan.
+   a. Start the file \$SENIOR_MODE_RUN_PLAN empty, then write the plan in it: a line \`plan 1:\`, then at most 15 lines (the files
+      to change, the order, the tests, what you leave alone).
+   b. The architect agent (strong model) checks it against the ticket's spec, its ADRs and the architecture rules and answers
+      \`approve\` or \`revise\` with reasons. Append its answer to the file as one line: \`architect 1: approve\` or
+      \`architect 1: revise: <the reasons on one line>\`.
+   c. On \`revise\`, write one revised plan (\`plan 2:\`, at most 15 lines) and ask the architect again (\`architect 2: ...\`).
+   d. A second \`revise\`: write no code and stop with the outcome \`plan-rejected: <the architect's last reasons>\`; the ticket goes
+      to a person with both plans.
+   e. Code only after a line \`architect <k>: approve\` is in the file.
+TEXT
+}
+
+# The outcome line a session of a ticket of size M or L may write (#352), empty for any other. $1 the ticket, $2 its prefix (`#<n> `).
+prompt_plan_outcome() {
+  run_plan_wanted "$1" || return 0
+  echo "- \`$2plan-rejected: <the architect's last reasons>\` when the architect asks for a second revision of the plan, as above;"
+}
+
 # The task of the headless session of one ticket (spec 0001 §10, ADR 0007): number, title, branch.
 run_prompt() {
-  local nl=$'\n' wf dec
+  local nl=$'\n' wf dec plan pout
   wf=$(workflow_prompt_block "$1")
   dec=$(prompt_decision '')
+  plan=$(prompt_plan "$1")
+  pout=$(prompt_plan_outcome "$1" '')
   cat <<EOF
 You are one ticket session of an autonomous senior-mode run on $RUN_SLUG. Nobody will answer
 questions: decide within the ticket, its spec and the project's rules, or give up as described below.
@@ -24,7 +50,7 @@ questions: decide within the ticket, its spec and the project's rules, or give u
 Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode team:
 1. Read the ticket (\`gh issue view $1\`), its spec and its acceptance criteria. A \`type:spike\` ticket is
    research: deliver a note under docs/spikes/, an ADR or framed tickets, no code outside docs/, and stop at
-   its \`Timebox:\` line (the run stops the session when a duration is reached).
+   its \`Timebox:\` line (the run stops the session when a duration is reached).${plan:+$nl$plan}
 2. The test-author agent writes failing tests from the acceptance criteria and records the red run;
    the implementer agent makes them pass (skills tdd, verify, commit): tests land in the same commit
    as the code they cover.
@@ -46,7 +72,7 @@ ${dec}
 
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the pull request is open with senior-mode/ci, senior-mode/review and senior-mode/security set;
-- \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;
+- \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;${pout:+$nl$pout}
 - \`decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
 - \`blocked: #<issue or pull request> <reason>\` when the code it changes is not on the base branch yet (an open pull request or ticket must land first);
 - \`duplicate: #<original> <reason>\` when the work is already merged, or another open issue asks for the same (look for one with the same title before you start);
@@ -106,8 +132,10 @@ EOF
 # The prompt of a ticket session under serve (role ticket, ADR 0017): it delivers up to a pull request with
 # senior-mode/ci and senior-mode/security published; the reviewer and the integrator are other sessions.
 serve_prompt() {
-  local tests prove nl=$'\n' wf wrong="" dec
+  local tests prove nl=$'\n' wf wrong="" dec plan pout
   wf=$(workflow_prompt_block "$1")
+  plan=$(prompt_plan "$1")
+  pout=$(prompt_plan_outcome "$1" '')
   if [ -f "$SERVE_COMMON/senior-mode/runs/$1/red-tests" ]; then
     wrong="
 - \`wrong-test: <finding>\` when a red test is itself wrong, as said above;"
@@ -132,7 +160,7 @@ You are one ticket session (SENIOR_MODE_ROLE=ticket) of senior-mode serve on $RU
 questions: decide within the ticket, its spec and the project's rules, or give up as described below.
 
 Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode team:
-1. Read the ticket (\`gh issue view $1\`), its spec and its acceptance criteria.
+1. Read the ticket (\`gh issue view $1\`), its spec and its acceptance criteria.${plan:+$nl$plan}
 $tests
 ${prove}\`senior-mode check\` passes on a clean tree; push the branch; open a pull request from the
    template with \`Closes #$1\`, the red run and the Self-review table (run the review checklist on your
@@ -148,7 +176,7 @@ ${dec}
 
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the pull request is open with senior-mode/ci and senior-mode/security published;
-- \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;${wrong}
+- \`outgrown: <reason>\` if the ticket is bigger than its size or needs a human decision;${wrong}${pout:+$nl$pout}
 - \`decision: <question> | <recommended option> | <checkpoint>\` when a choice is yours to ask, as above;
 - \`blocked: #<issue or pull request> <reason>\` when the code it changes is not on the base branch yet (an open pull request or ticket must land first);
 - \`duplicate: #<original> <reason>\` when the work is already merged, or another open issue asks for the same (look for one with the same title before you start);

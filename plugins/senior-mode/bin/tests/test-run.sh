@@ -174,6 +174,9 @@ for t in "$(git rev-parse --path-format=absolute --git-common-dir)"/senior-mode/
 done
 outcome=$(sed -n 1p "$fx")
 [ -z "$outcome" ] || echo "$outcome" >"$SENIOR_MODE_RUN_OUTCOME"
+# #352: the plan file of the session ($SENIOR_MODE_RUN_PLAN): $FIX/plan-<n> holds it ("none": no file), else an approved plan.
+if [ ! -f "$FIX/plan-$n" ]; then printf 'plan 1:\nx\narchitect 1: approve\n' >"$SENIOR_MODE_RUN_PLAN"
+elif [ "$(cat "$FIX/plan-$n")" != none ]; then cp "$FIX/plan-$n" "$SENIOR_MODE_RUN_PLAN"; fi
 # A batch session (#263) writes one outcome line per ticket: $FIX/outcome-<lead> holds them.
 [ ! -f "$FIX/outcome-$n" ] || cp "$FIX/outcome-$n" "$SENIOR_MODE_RUN_OUTCOME"
 [ "$(sed -n 2p "$fx")" != pr ] ||
@@ -1303,6 +1306,50 @@ grep -q 'DELETE repos/acme/app/issues/720/labels/needs-human' "$GH_LOG" || fail 
 grep -q 'DELETE repos/acme/app/issues/721/' "$GH_LOG" && fail "Y2: #721 has no reply"
 grep -q 'DELETE repos/acme/app/issues/723/' "$GH_LOG" && fail "Y2: #723 has a reply of a non-collaborator"
 rm -f "$FIX"/decisions.json "$FIX"/comments-72*
+
+# PL: a verified plan before coding on M and L tickets (#352). The prompt of an M ticket asks for the plan and the
+# architect's answer; an S ticket has no plan step. An M ticket delivered with no approved plan, or with two `revise`, fails
+# (no Opus retry here: escalate is off); a plan rejected twice is `plan-rejected`: needs-human with both plans in a comment,
+# back in Backlog, not a failure.
+config '{"maxTickets": 8, "parallel": 3, "escalate": false, "maxConsecutiveFailures": 9}'
+board 901 '[]' 902 '[]' 903 '[]' 904 '[]' 905 '[]' 906 '[]'
+for n in 901 903 904 905 906; do size_of "$n" M; done
+session 901-sonnet delivered pr
+printf 'plan 1:\nedit a.sh\narchitect 1: revise: the spec wants b.sh too\nplan 2:\nedit a.sh and b.sh\narchitect 2: approve\n' >"$FIX/plan-901"
+session 902-sonnet delivered pr
+echo none >"$FIX/plan-902"
+session 903-sonnet delivered pr
+echo none >"$FIX/plan-903"
+session 904-sonnet "plan-rejected: it still ignores ADR 0012"
+printf 'plan 1:\nfirst plan\narchitect 1: revise: breaks ADR 0012\nplan 2:\nsecond plan\narchitect 2: revise: it still ignores ADR 0012\n' >"$FIX/plan-904"
+session 905-sonnet delivered pr
+printf 'plan 1:\nfirst\narchitect 1: revise: no\nplan 2:\nsecond\narchitect 2: revise: no\n' >"$FIX/plan-905"
+session 906-sonnet delivered pr
+printf 'plan 1:\nfirst\narchitect 1: revise: no\n' >"$FIX/plan-906"
+run || fail "PL: run failed: $(cat "$work/out")"
+runs=$(find "$repo/.git/senior-mode/runs" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+for want in 'Plan first (size M)' 'at most 15 lines' 'architect agent' 'architect 1: approve' 'architect 1: revise' 'plan-rejected: <the architect' 'SENIOR_MODE_RUN_PLAN'; do
+  grep -qF "$want" "$runs/901.prompt" || fail "PL: the prompt of an M ticket misses '$want'"
+done
+grep -qF 'No code' "$runs/901.prompt" || grep -qF 'no code' "$runs/901.prompt" || fail "PL: the prompt does not forbid code before approve"
+grep -q 'Plan first\|plan-rejected' "$runs/902.prompt" && fail "PL: an S ticket has a plan step"
+grep -q '^Failed.*#901' "$work/out" && fail "PL: #901, approved after one revise, failed: $(cat "$work/out")"
+outcome_is_delivered 901
+outcome_is_delivered 902
+grep -q 'Failed.*#903.*no plan' "$work/out" || fail "PL: an M ticket delivered without a plan did not fail: $(cat "$work/out")"
+grep -q 'Failed.*#905.*second revision' "$work/out" || fail "PL: two revise then delivered did not fail: $(cat "$work/out")"
+grep -q 'Failed.*#906.*no plan' "$work/out" || fail "PL: a last answer of revise then delivered did not fail: $(cat "$work/out")"
+grep -q 'app-904 opus' "$CLAUDE_LOG" && fail "PL: a rejected plan was retried on Opus"
+grep -q 'issues/904/labels -f labels\[\]=needs-human' "$GH_LOG" || fail "PL: #904 not labelled needs-human"
+c=$(grep -A14 'issues/904/comments -f body=An autonomous senior-mode session stopped on this ticket: the architect' "$GH_LOG" || true)
+for want in 'it still ignores ADR 0012' 'first plan' 'second plan' 'architect 1: revise: breaks ADR 0012'; do
+  grep -qF "$want" <<<"$c" || fail "PL: the comment on #904 misses '$want': $c"
+done
+grep -q 'Waiting for a human: #904.*rejected twice' "$work/out" || fail "PL: report misses #904 waiting: $(cat "$work/out")"
+grep -q 'Failed: #904' "$work/out" && fail "PL: a rejected plan was reported as a failure"
+jq -e '.outcome == "plan-rejected" and .reason == "it still ignores ADR 0012"' "$runs/904.json" >/dev/null ||
+  fail "PL: #904 not recorded as plan-rejected: $(cat "$runs/904.json")"
+rm -f "$FIX"/plan-9*
 
 [ "$failures" -eq 0 ] && echo "run: all cases pass"
 exit "$((failures > 0))"

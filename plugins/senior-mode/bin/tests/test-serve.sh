@@ -151,6 +151,9 @@ case $(sed -n 3p "$fx") in
 esac
 outcome=$(sed -n 1p "$fx")
 [ -z "$outcome" ] || echo "$outcome" >"$SENIOR_MODE_RUN_OUTCOME"
+# #352: the plan file of the session ($SENIOR_MODE_RUN_PLAN): $FIX/plan-<n> holds it ("none": no file), else an approved plan.
+if [ ! -f "$FIX/plan-$n" ]; then printf 'plan 1:\nx\narchitect 1: approve\n' >"$SENIOR_MODE_RUN_PLAN"
+elif [ "$(cat "$FIX/plan-$n")" != none ]; then cp "$FIX/plan-$n" "$SENIOR_MODE_RUN_PLAN"; fi
 # A batch session (#263) writes one outcome line per ticket: $FIX/outcome-<lead> holds them.
 [ ! -f "$FIX/outcome-$n" ] || cp "$FIX/outcome-$n" "$SENIOR_MODE_RUN_OUTCOME"
 case $(sed -n 2p "$fx") in
@@ -1287,6 +1290,9 @@ grep -qx 'tests-63.txt' "$repo/.git/senior-mode/runs/63/red-tests" || fail "U: t
 grep -q 'written and committed already' "$state/63.prompt" || fail "U: the ticket prompt does not tell about the red tests"
 grep -q 'red-tests verify' "$state/63.prompt" && fail "U: the prompt asks to verify tests the test-author recorded (#563)"
 grep -q '^app-64 sonnet run=1 role=ticket$' "$CLAUDE_LOG" && fail "U: a ticket session after a failed test-author"
+# #352: an M ticket session is asked for a plan the architect approves before any code; an S ticket's is not.
+grep -q 'Plan first (size M)' "$state/63.prompt" || fail "U: the prompt of an M ticket has no plan step: $(cat "$state/63.prompt")"
+grep -q 'plan-rejected:' "$state/63.prompt" || fail "U: the prompt of an M ticket has no plan-rejected outcome"
 outcome_of 64 failed M
 grep -c 'item-edit.*--single-select-option-id o0' "$GH_LOG" | grep -qx 1 || fail "U: #64 is not back in Backlog: $(grep item-edit "$GH_LOG")"
 boardx "63:Ready:M:P1 next"
@@ -1295,6 +1301,24 @@ fresh
 once || fail "U: serve failed: $(cat "$work/out")"
 grep -q '^app-63 sonnet run=1 role=test-author$' "$CLAUDE_LOG" && fail "U: the red tests are recorded, no test-author again: $(cat "$CLAUDE_LOG")"
 grep -q '^app-63 sonnet run=1 role=ticket$' "$CLAUDE_LOG" || fail "U: no ticket session"
+config '{}'
+
+# UP: an M ticket delivered without a plan the architect approved is not delivered (#352); an S ticket needs none.
+config '{"parallel": 2, "escalate": false}'
+boardx "66:Ready:M:P1 next" "67:Ready:S:P1 next"
+prs_reset
+session 66-sonnet-test-author delivered "" "" commit
+session 66-sonnet-ticket delivered pr
+echo none >"$FIX/plan-66"
+session 67-sonnet delivered pr
+echo none >"$FIX/plan-67"
+fresh
+once || fail "UP: serve failed: $(cat "$work/out")"
+outcome_of 66 failed UP
+grep -q 'no plan' "$state/66.json" || fail "UP: the reason does not say the plan is missing: $(cat "$state/66.json")"
+outcome_of 67 delivered UP
+grep -q 'Plan first' "$state/67.prompt" && fail "UP: an S ticket has a plan step"
+rm -f "$FIX"/plan-6*
 config '{}'
 
 # UW: the implementer of an M ticket reports a red test as wrong (#589): the test-author is called back once, with the

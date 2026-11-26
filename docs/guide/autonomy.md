@@ -353,6 +353,20 @@ implementer reports it with the outcome `wrong-test: <finding>` ([#589](https://
 changed to the red tests, then starts the implementer again. A second `wrong-test` on the same ticket gives
 the ticket up: back in Backlog with `needs-human`, a person decides.
 
+**Verified plan (M and L tickets, [#352](https://github.com/Sycatle/senior-mode/issues/352)).** The prompt of a ticket
+session of size M or L asks, before any code (tests included), for a plan of at most 15 lines in the file
+`$SENIOR_MODE_RUN_PLAN` (`.git/senior-mode/runs/<stamp>/<n>.plan`, `.git/senior-mode/serve/<n>.plan` under `serve`):
+`plan 1:` and its lines. The architect agent checks it against the ticket's spec, its ADRs and the architecture
+rules and answers `approve` or `revise` with reasons, as a line `architect 1: approve` or `architect 1: revise: <reasons>`.
+After a `revise` the session writes one revised plan (`plan 2:`) and asks again. A second `revise` ends the session with
+`plan-rejected: <the architect's last reasons>`: `run` and `serve` label the ticket `needs-human`, post a comment with both
+plans and the architect's answers, set it back to Backlog and keep its branch and worktree; it is no failure, nothing goes to
+Opus and the circuit breaker does not count it. A session that says `delivered` without a last answer `approve` in
+the file, or after two `revise`, is a failed ticket (`no plan: ...`). An S ticket, and a batch, have no plan step. Under
+`serve` the red tests of an M ticket are written before its plan, by the `test-author` session; the plan comes before the
+implementer's code. Until session checkpoints exist ([#346](https://github.com/Sycatle/senior-mode/issues/346)) the plan file is the plan block;
+the size is the one the serve process read from the board, so a ticket resumed by a restarted `serve` has no plan check.
+
 Limits, as for the other guards: a guardrail for honest mistakes, not a sandbox. `bash -c "..."`,
 `eval`, scripts, a variable that stands for a whole path or endpoint, `python -c` and an editor
 started from Bash are not read, so a determined session can change a red test or post a status; the

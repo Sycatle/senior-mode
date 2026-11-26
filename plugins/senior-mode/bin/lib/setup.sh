@@ -816,6 +816,47 @@ toml_version() {
   [[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && printf '%s\n' "$v" || printf '0.0.0\n'
 }
 
+# The ORM of the project at $1 that has a query-count helper in its preset $2 (spec 472): prisma (node), django or
+# sqlalchemy (python), sqlx (rust); nothing for another ORM or none.
+queries_orm() { # root preset
+  case $2 in
+    node)
+      [ -f "$1/package.json" ] && jq -e '[.dependencies, .devDependencies | objects | keys[]] | any(. == "@prisma/client" or . == "prisma")' \
+        "$1/package.json" >/dev/null 2>&1 && echo prisma
+      ;;
+    python)
+      if py_uses "$1" django; then echo django
+      elif py_uses "$1" sqlalchemy; then echo sqlalchemy
+      fi
+      ;;
+    rust)
+      grep -qiE '(^|[^A-Za-z0-9_-])sqlx([^A-Za-z0-9_-]|$)' "$1/Cargo.toml" 2>/dev/null && echo sqlx
+      ;;
+  esac
+  return 0
+}
+
+# Offers the query-count helper of the project's ORM (spec 472): the preset's file at its default path, never over an
+# existing file, and the path recorded as performance.queries.helper. A helper the config already names is kept as it
+# is; a project with no supported ORM gets nothing and `queries: not measured`.
+queries_propose() { # root config-file preset-dir preset-name
+  local root=$1 file=$2 pdir=$3 orm helper out=0
+  helper=$(jq -r '.performance.queries.helper // empty' "$file")
+  if [ -n "$helper" ]; then
+    echo "queries: helper kept at $helper"
+    return
+  fi
+  orm=$(queries_orm "$root" "$4")
+  if [ -z "$orm" ]; then
+    echo "queries: not measured (no supported ORM: Prisma, SQLAlchemy, Django or sqlx)"
+    return
+  fi
+  helper=$(jq -r --arg o "$orm" '.queries[$o].helper' "$pdir/preset.json")
+  place "$pdir/$(jq -r --arg o "$orm" '.queries[$o].template' "$pdir/preset.json")" "$root/$helper" "queries: $orm helper $helper"
+  json_update "$file" '.performance.queries.helper = $h' --arg h "$helper" || out=$?
+  [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
+}
+
 # The documents and checks of a project (spec 0001 §12, §14, #12), idempotent; whatever the project
 # already has is extended, never replaced. The preset is the stored one (typescript, its former name,
 # becomes node), else node when a package.json exists, else the one of its manifest (go, rust, python),
@@ -941,6 +982,7 @@ setup_repo() {
     - (if $d.typescript then [] else ["typecheck"] end)
     | select(length > 0) | "missing: \(join(", ")) (no script; propose tools, never install without a yes)"' "$file"
   lsp_propose "$pname" "$file"
+  queries_propose "$root" "$file" "$(dirname "$preset")" "$pname"
 
   setup_claude_md "$root" "$tpl/$lang" "$name"
   setup_gitignore "$root"

@@ -2523,6 +2523,7 @@ session 41-sonnet "outgrown: a person must choose between the two documented opt
 fresh
 SENIOR_MODE_NOW=1800000000 once || fail "BR: serve failed: $(cat "$work/out")"
 [ ! -e "$state/paused" ] || fail "BR: two ends that wait for a person paused serve: $(cat "$state/paused")"
+grep -q 'outgrown: needs a person: <what>' "$state/40.prompt" || fail "BR: the prompt does not name the person verdict: $(cat "$state/40.prompt")"
 grep -q 'issues/40/labels.*needs-human' "$GH_LOG" || fail "BR: #40 not needs-human: $(cat "$GH_LOG")"
 grep -q 'issues/41/labels.*needs-human' "$GH_LOG" || fail "BR: #41 not needs-human: $(cat "$GH_LOG")"
 board 43

@@ -404,6 +404,7 @@
         "backoffMax": { "type": "integer", "minimum": 1 },
         "callTimeout": { "type": "integer", "minimum": 1, "description": "Seconds a gh call of serve may take." },
         "unknownBackoffMax": { "type": "integer", "minimum": 1, "description": "Minutes, the longest wait before serve retries a ticket whose session ended on an unknown environment failure (1, 2, 4... minutes)." },
+        "pendingReviewHours": { "type": "integer", "minimum": 1, "description": "Hours after which a pull request behind its base, whose review is pending for a human merge, gets a fresh review." },
         "unknownMaxAttempts": { "type": "integer", "minimum": 1, "description": "Launches of a ticket that ends on an unknown environment failure, with nothing changed, before it is needs-human." }
       }
     },

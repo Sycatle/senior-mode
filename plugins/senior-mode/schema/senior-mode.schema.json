@@ -45,6 +45,7 @@
           "name": { "type": "string", "minLength": 1 },
           "run": { "type": "string", "minLength": 1 },
           "changed": { "type": "string", "minLength": 1, "description": "The command `check --changed` runs on the changed files only; {files} stands for them." },
+          "fix": { "type": "string", "minLength": 1, "description": "The command that fixes what the check reports; a failure prints it as `fix: <command>`." },
           "tier": { "type": "integer", "enum": [2, 3], "description": "When the check runs: 2 (default) at every push, 3 in the heavy run (`check --tier 3`, `check --all`)." }
         }
       }

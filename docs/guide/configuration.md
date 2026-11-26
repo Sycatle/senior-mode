@@ -39,7 +39,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `framework` | none | `next` when Next.js is a dependency; the node preset then adds `middleware.*`, `src/middleware.*`, `proxy.*` and `src/proxy.*` to `protected` |
 | `envGuard.forbidden` | none | Strings, or `/regex/` patterns, that must never appear on an agent machine; turns on the `env guard` check |
 | `performance.queries.helper` | set by `setup repo` | Path of the [query-count helper](#query-count-helper) of the project's ORM; a path you set is kept |
-| `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks); an optional `"tier"` (2, the default, or 3) says [when it runs](#checks) |
+| `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks); an optional `"tier"` (2, the default, or 3) says [when it runs](#checks); an optional `"fix"` is the command that fixes what the check reports, printed as `fix: <command>` under a failure |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, even an empty one; `senior-mode protected` and the reviewer read it, and `setup github` maps it to [CODEOWNERS](autonomy.md#code-owners) |
 | `ci.mode` | `local` | `local`, `actions` or `existing` (the project's own CI is reused, see [CI mode](#ci-mode)) |
 | `workflow.ci.jobs`, `workflow.ci.required` | detected | With `ci.mode` `existing`: the jobs of the project's CI that cover a check (`{ "context", "covers" }`, one per job) and its required status contexts; setup writes both, see [Following the project's workflow](#following-the-projects-workflow) |
@@ -308,7 +308,7 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   `commit-msg` hook is senior-mode's own.
 - Checks you add by hand are kept on re-run. `senior-mode setup repo --command test="npm test"`
   replaces the command of the check with the same name.
-- `senior-mode check` prints `ok`, `skip` or `FAIL` per check with the time it took, with the last 20 lines of a failure (the dependency audit shows every blocking advisory, up to 100).
+- `senior-mode check` prints `ok`, `skip` or `FAIL` per check with the time it took. A failure prints one line per finding, `<file>:<line> <check> <message>`, 10 at most then `… <n> more`, when the output has `file:line[:col]` lines (compilers, ESLint unix, ruff, golangci-lint, clippy short); any other output is shown as its last 20 lines. The `fix: <command>` of the check (`"fix"`) follows when it has one. The output of a passing check is not printed. The dependency audit shows every blocking advisory, up to 100.
   The full output of a failed check is kept in `senior-mode/check-logs/<time>-<pid>-<check>.log` of the git
   directory (the 20 latest are kept) and its path is printed as `full log: <path>` under those lines.
   A check whose first output line is `skipped: <reason>` passes and prints `skip <name>: <reason>`,

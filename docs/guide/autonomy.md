@@ -675,11 +675,16 @@ command, not a model, applies these bounds:
 
 ### Ready by rule
 
-`senior-mode ready [--pr <n>] [--dry-run]` takes the human out of the step between framing and delivery
-(`serve` runs `ready --pr <n>` at each poll for the framing pull requests merged since the last poll, then `ready` for the tickets agents filed; the time of the last poll that went well is kept in `.git/senior-mode/serve/ready-last`). It looks at Backlog tickets that are open, [trusted](#untrusted-external-input) and have
+`senior-mode ready [--pr <n> | --milestone <m>... | --optin | <n>...] [--dry-run]` takes the human out of the step between framing and delivery
+(`serve` runs `ready --pr <n>` at each poll for the framing pull requests merged since the last poll, then `ready` for the tickets agents filed, then `ready --optin` for the tickets a person opted in; the time of the last poll that went well is kept in `.git/senior-mode/serve/ready-last`). It looks at Backlog tickets that are open, [trusted](#untrusted-external-input) and have
 neither `needs-human` nor `needs-info`: with `--pr`, the tickets named (`#n`) in the body of the merged
 framing pull request `n` (its branch must be `docs/...`); without it, the tickets an agent filed, that is
 whose body ends with `filed-by: agent` (`issue create` adds it in an unattended session).
+
+A person's own backlog (a plan filed after the framing pull request merged) is in neither set. `senior-mode ready --milestone "v1.1"`
+or `senior-mode ready 12 15` opts those tickets in once: the choice is kept in the clone's serve dir (`ready-optin`, per machine, no
+label and no config), and from then on `serve` sets each one Ready when it passes the rule below and its blocked-by issues are
+closed. A milestone is open: tickets added to it later are covered. `needs-human` tickets stay out.
 
 - **Definition of Ready**: acceptance criteria (a list under an `Acceptance criteria`, `Acceptance` or `Criteria` heading, any level, case-insensitive), Size,
   Priority and Paths (the text field of the board, globs separated by commas; a board without the field

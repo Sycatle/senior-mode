@@ -667,6 +667,11 @@ grep -q 'issues/82' "$GH_LOG" && fail "L: #82 was touched"
 [ "$(cat "$state/ready-last")" = 1800000000 ] || fail "L: mark not moved to now: $(cat "$state/ready-last")"
 once || fail "L: serve failed: $(cat "$work/out")"
 grep -q '^pr view' "$GH_LOG" && fail "L: a pull request was read twice: $(cat "$GH_LOG")"
+# A ticket a person opted in (#612, `ready --milestone` or `ready <n>`) is set Ready at each poll, with no framing pull request.
+echo '{"milestones": [], "tickets": [82]}' >"$state/ready-optin"
+once || fail "L: serve failed with an opt-in: $(cat "$work/out")"
+grep -q 'issues/82' "$GH_LOG" || fail "L: #82 (opted in) not set Ready: $(cat "$GH_LOG")"
+rm -f "$state/ready-optin"
 # A ready that fails keeps the mark, so the pull request is read again at the next poll.
 echo 1799999900 >"$state/ready-last"
 rm -f "$FIX/pr-300.json"

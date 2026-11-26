@@ -437,7 +437,8 @@ READY_QUERY='query($project: ID!, $after: String) { node(id: $project) { ... on 
   nodes { fieldValues(first: 20) { nodes {
       ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
       ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } }
-    content { ... on Issue { number state body labels(first: 20) { nodes { name } }
+    content { ... on Issue { number state body labels(first: 20) { nodes { name } } milestone { title }
+      blockedBy(first: 20) { nodes { number state } }
       parent { number labels(first: 20) { nodes { name } } milestone { title description } } } } } } } } }'
 # The hierarchy (spec 325 §7, #358): the reason a ticket is an orphan, null when it is not. A ticket needs a parent epic
 # under a milestone whose description has a `Goal:` line, unless it carries a label of $h.exempt (hierarchy.exempt, default security and hotfix)
@@ -466,6 +467,7 @@ READY_ITEMS=$ORPHAN_DEF'def single($f): [.fieldValues.nodes[]? | select(.field.n
   '$STATUS_DEF'
   [.[].data.node.items.nodes[]? | select(.content.number != null) | .content as $c
     | {number: $c.number, open: ($c.state == "OPEN"), body: ($c.body // ""), labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation, parent: ($c.parent | epic_of), bodyParent: ($c.body | part_of),
+       milestone: ($c.milestone.title // null), blockers: [$c.blockedBy.nodes[]? | select(.state == "OPEN") | .number],
        status: status, priority: single("Priority"), size: single("Size"), severity: single("Severity"),
        agent: (($c.body // "") | test("(^|\n)filed-by: agent[ \t]*(\n|$)")),
        paths: ((text("Paths") // "") | gsub("[\\[\\]\"\u0027]"; "") | [split("[,\\s]+"; null)[] | select(length > 0)])}]'
@@ -802,7 +804,33 @@ ready_delivery() {
   esac
 }
 
-# senior-mode ready [--pr <n>] [--dry-run]: tickets become Ready by rule, with no human step (#154).
+# The opt-in of a person (#612): the milestones and tickets whose Backlog tickets `ready --optin` makes Ready by rule.
+# It lives in the clone's serve dir, `ready-optin` (JSON {milestones, tickets}), so it needs no board change and is per machine.
+ready_optin_file() {
+  printf '%s/ready-optin' "${SERVE_DIR:-$(git rev-parse --path-format=absolute --git-common-dir)/senior-mode/serve}"
+}
+
+# The opt-in as {milestones, tickets}, empty when there is no file or it was set aside.
+ready_optin_read() {
+  { state_json "$(ready_optin_file)" 2>/dev/null || echo '{}'; } |
+    jq -c '{milestones: ((.milestones // []) | map(select(type == "string"))), tickets: ((.tickets // []) | map(select(type == "number")))}'
+}
+
+# ready_optin_merge <opt-in> <milestones json> <tickets json>
+ready_optin_merge() {
+  jq -c --argjson m "$2" --argjson t "$3" '{milestones: ((.milestones + $m) | unique), tickets: ((.tickets + $t) | unique)}' <<<"$1"
+}
+
+ready_optin_add() {
+  local file
+  file=$(ready_optin_file)
+  mkdir -p "$(dirname "$file")"
+  ready_optin_merge "$(ready_optin_read)" "$1" "$2" | state_write "$file"
+}
+
+# senior-mode ready [--pr <n> | --milestone <m>... | --optin | <n>...] [--dry-run]: tickets become Ready by rule, with no human step (#154).
+# --milestone and the ticket numbers add to the opt-in (#612) and consider those tickets at once; --optin (what serve calls) considers
+# the opted-in tickets, human-filed or not, and leaves one with an open blocker in Backlog, unlabelled, for a later run.
 # Candidates are the Backlog tickets without `needs-human` or `needs-info`: with --pr, those the merged
 # framing pull request n (branch docs/...) names; without it, those an agent filed. A ticket with nothing
 # missing (see ready_missing) is set Ready; any other gets `needs-human` and a comment that says what is
@@ -811,6 +839,7 @@ ready_delivery() {
 # it skipped, by reason; with no candidate, "no candidate: <reason>" with the counts.
 ready() {
   local pr="" dry=false slug info items zones hier nums="null" it n why considered=0 made=0 held=0 skipped line
+  local optin=false add_m="[]" add_t="[]" cur="" named
   while [ $# -gt 0 ]; do
     case $1 in
       --pr)
@@ -818,12 +847,32 @@ ready() {
         pr=$2
         shift
         ;;
+      --milestone)
+        [ -n "${2:-}" ] || usage
+        add_m=$(jq -c --arg m "$2" '. + [$m]' <<<"$add_m")
+        optin=true
+        shift
+        ;;
+      --optin) optin=true ;;
       --dry-run) dry=true ;;
+      [1-9]*)
+        [[ $1 =~ ^[1-9][0-9]*$ ]] || usage
+        add_t=$(jq -c --argjson n "$1" '. + [$n]' <<<"$add_t")
+        optin=true
+        ;;
       *) usage ;;
     esac
     shift
   done
+  [ -z "$pr" ] || [ "$optin" = false ] || usage
   slug=$(repo_slug)
+  if [ "$optin" = true ]; then
+    cur=$(ready_optin_read)
+    if [ "$add_m$add_t" != "[][]" ]; then
+      cur=$(ready_optin_merge "$cur" "$add_m" "$add_t")
+      [ "$dry" = true ] || state_update ready_optin_add "$add_m" "$add_t" || die "cannot write the opt-in $(ready_optin_file)"
+    fi
+  fi
   if [ -n "$pr" ]; then
     info=$(gh_retry pr view "$pr" --repo "$slug" --json state,headRefName,body) || die "cannot read pull request #$pr"
     # An open pull request that is no framing one is a delivery: whether it is ready to merge (#297, #303).
@@ -836,8 +885,16 @@ ready() {
       die "pull request #$pr is not a framing pull request (its branch is not docs/...)"
     nums=$(jq -c --argjson pr "$pr" '[(.body // "") | scan("#([0-9]+)") | .[0] | tonumber | select(. != $pr)] | unique' <<<"$info")
   fi
-  [ -n "$pr" ] || board_sweep "$dry"
+  [ -n "$pr" ] || [ "$optin" = true ] || board_sweep "$dry"
   items=$(ready_items) || exit 1
+  if [ "$optin" = true ]; then
+    # The open tickets of the opted-in milestones and the tickets named; an empty opt-in has no candidate.
+    nums=$(jq -c --argjson o "$cur" '[.[] | select((.open and (.milestone | IN($o.milestones[]))) or (.number | IN($o.tickets[]))) | .number] | unique' <<<"$items")
+    while IFS= read -r named; do
+      [ "$(jq --arg m "$named" '[.[] | select(.milestone == $m)] | length' <<<"$items")" -gt 0 ] ||
+        echo "ready: no ticket of the board is in the milestone \"$named\" yet; it stays opted in" >&2
+    done < <(jq -r '.[]' <<<"$add_m")
+  fi
   zones=$(ready_zones) || exit 1
   hier=$(config_get hierarchy) || exit 1
   while IFS= read -r it; do
@@ -864,21 +921,25 @@ ready() {
         >/dev/null || echo "#$n: could not comment on the ticket" >&2
       echo "#$n needs-human: $why"
     fi
-  done < <(jq -c --argjson nums "$nums" "$TRUST_DEF"'.[] | select(.open and trusted and .status == "Backlog" and (.labels | index("needs-human") | not)
-    and (.labels | index("needs-info") | not)) | select(if $nums == null then .agent else (.number | IN($nums[])) end)' <<<"$items")
-  skipped=$(jq -r --argjson nums "$nums" "$TRUST_DEF"'[.[] | select(.open) | (if .status != "Backlog" then "not Backlog"
+  done < <(jq -c --argjson nums "$nums" --argjson optin "$optin" "$TRUST_DEF"'.[] | select(.open and trusted and .status == "Backlog" and (.labels | index("needs-human") | not)
+    and (.labels | index("needs-info") | not)) | select(if $nums == null then .agent else (.number | IN($nums[])) end)
+    | select(($optin | not) or (.blockers | length == 0))' <<<"$items")
+  skipped=$(jq -r --argjson nums "$nums" --argjson optin "$optin" "$TRUST_DEF"'[.[] | select(.open) | (if .status != "Backlog" then "not Backlog"
       elif (trusted | not) then "not trusted"
       elif (.labels | index("needs-human")) then "needs-human"
       elif (.labels | index("needs-info")) then "needs-info"
       elif $nums == null and (.agent | not) then "not agent-filed"
-      elif $nums != null and (.number | IN($nums[]) | not) then "not named in the pull request"
+      elif $nums != null and (.number | IN($nums[]) | not) then (if $optin then "not opted in" else "not named in the pull request" end)
+      elif $optin and (.blockers | length) > 0 then "blocked"
       else empty end)] as $r
     | ([.[] | select(.open) | .number] as $open | if $nums == null then [] else [$nums[] | select(IN($open[]) | not)] end | length) as $gone
-    | ($r + [range(0; $gone) | "named in the pull request but not an open ticket of the board"]) as $all
+    | ($r + [range(0; $gone) | if $optin then "opted in but not an open ticket of the board" else "named in the pull request but not an open ticket of the board" end]) as $all
     | ([$all | group_by(.)[] | {r: .[0], n: length}] | sort_by(-.n) | map("\(.n) \(.r)") | join(", ")) as $by
     | "\($all | length)\(if ($all | length) > 0 then ": " + $by else "" end)"' <<<"$items") || skipped="?"
   if [ "$considered" -eq 0 ]; then
-    if [ -n "$pr" ]; then
+    if [ "$optin" = true ]; then
+      if [ "$cur" = '{"milestones":[],"tickets":[]}' ]; then line="nothing is opted in (senior-mode ready --milestone <m>, or ready <n>...)"; else line="no opted-in Backlog ticket can be considered"; fi
+    elif [ -n "$pr" ]; then
       if [ "$nums" = "[]" ]; then line="pull request #$pr names no ticket"; else line="pull request #$pr names $(jq 'length' <<<"$nums") ticket(s), none a Backlog ticket it can make Ready"; fi
     else
       line="no open Backlog ticket filed by an agent can be considered"

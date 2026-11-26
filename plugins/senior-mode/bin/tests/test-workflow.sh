@@ -95,6 +95,20 @@ get() { jq -r "$1" <<<"$cfg"; }
 [ -z "$(git -C "$repo" status --porcelain)" ] || fail "--dry-run changed the checkout: $(git -C "$repo" status --porcelain)"
 grep -q 'merge --admin\|--admin' "$GH_LOG" && fail "detection called a writing gh command: $(cat "$GH_LOG")"
 
+# #609: the pull request conventions are not inferred from fewer than five merged pull requests; enough history keeps them.
+[ "$(get '.workflow.pr.title // "unset"')" = commit ] || [ "$(get '.workflow.pr.title // "unset"')" = ticket ] || [ "$(get '.workflow.pr.title // "unset"')" = free ] ||
+  fail "pr.title not detected from 10 merged pull requests: $cfg"
+[ "$(get '.workflow.pr.link // "unset"')" = Closes ] || fail "pr.link not detected from 10 merged pull requests: $cfg"
+cp "$FIX/prs.json" "$FIX/prs.all.json"
+jq -c '.[:1]' "$FIX/prs.all.json" >"$FIX/prs.json"
+run setup repo --dry-run || fail "setup repo --dry-run failed on one pull request: $(cat "$work/err")"
+cfg=$(sed -n '/^config: would write/,/^dry run/p' "$work/out" | sed '1d;$d')
+[ "$(get '.workflow.pr.title // "unset"')" = unset ] || fail "pr.title inferred from one pull request: $cfg"
+[ "$(get '.workflow.pr.link // "unset"')" = unset ] || fail "pr.link inferred from one pull request: $cfg"
+grep -q 'pr.title.* and .*pr.link.*not enough history (1 of 5 merged pull requests needed), default kept' "$work/out" ||
+  fail "the lack of history is not said: $(cat "$work/out")"
+mv "$FIX/prs.all.json" "$FIX/prs.json"
+
 # A protection the token cannot read (403) is said; the body of the error is never taken for check names.
 PROTECTION_403=1 run setup repo --dry-run || fail "setup repo --dry-run failed on a 403: $(cat "$work/err")"
 grep -q 'config: would write' "$work/out" || fail "no config planned on a 403: $(cat "$work/out")"

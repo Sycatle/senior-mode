@@ -451,6 +451,9 @@ nothing, `--adopt` opens them as one pull request, `docs: adopt senior-mode`. A 
 takes the recommended answer, printed as `ask: ... (assumed)`. A key you already set is kept. Without a
 `workflow` key nothing below applies.
 
+The pull request conventions (`workflow.pr.title`, `pr.link`) are read from the last 50 merged pull requests, but not
+below 5: with fewer, nothing is recorded and setup says `not enough history`, so the default stays.
+
 | Key | Used for |
 |---|---|
 | `workflow.model`, `base`, `integration` | `trunk`, `integration` or `gitflow`; `base` is the production branch, `integration` the branch tickets start from and their pull requests target (`start`, `run`, `serve`, `ready`, `check`, the hooks) |

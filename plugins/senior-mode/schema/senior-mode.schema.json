@@ -304,6 +304,20 @@
             "M": { "type": "integer", "minimum": 1 },
             "L": { "type": "integer", "minimum": 1 }
           }
+        },
+        "diffWeights": {
+          "type": "object",
+          "description": "How much a changed line of a test file or of a documentation file weighs against limits.diffLines (code weighs 1).",
+          "additionalProperties": false,
+          "properties": {
+            "tests": { "type": "number", "minimum": 0, "maximum": 1 },
+            "docs": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "diffExclude": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Globs of the files the size budget does not count at all (generated or fixture data)."
         }
       }
     },

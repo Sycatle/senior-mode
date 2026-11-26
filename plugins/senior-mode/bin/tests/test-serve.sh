@@ -2538,5 +2538,24 @@ SENIOR_MODE_NOW=1800000000 once || fail "BR: serve failed: $(cat "$work/out")"
 [ "$(sed -n 1p "$state/paused" 2>/dev/null)" = 1800000100 ] || fail "BR: two outgrown tickets did not trip the breaker: $(cat "$work/out")"
 rm -f "$state/paused" "$state/breaker"
 
+# BQ: the pull request of a ticket is found by the ticket it closes or supersedes, not only by the branch the session started
+# (#675): a delivered session whose fix went to another branch (`-r2`) is delivered and In review, not failed.
+config '{"parallel": 1, "escalate": false}'
+board 50 51
+session 50-sonnet delivered
+session 51-sonnet delivered
+printf '%s\n' '[{"number": 250, "author_association": "OWNER", "head": {"ref": "fix/50-other-r2", "sha": "sha250"}, "labels": [], "body": "Supersedes #5\n\nCloses #50"},
+  {"number": 2510, "author_association": "OWNER", "head": {"ref": "fix/510-x", "sha": "sha2510"}, "labels": [], "body": "Closes #510"}]' >"$FIX/open-prs.json"
+fresh
+once || fail "BQ: serve failed: $(cat "$work/out")"
+outcome_of 50 delivered BQ
+grep -q 'issues/50/labels.*needs-human' "$GH_LOG" && fail "BQ: #50 labelled needs-human although its pull request is open"
+grep -q 'item-edit.*--single-select-option-id o3' "$GH_LOG" || fail "BQ: #50 not left In review: $(grep item-edit "$GH_LOG")"
+board 51
+fresh
+once || fail "BQ: serve failed: $(cat "$work/out")"
+outcome_of 51 failed BQ
+rm -f "$FIX/open-prs.json"
+
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

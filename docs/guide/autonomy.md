@@ -621,7 +621,8 @@ command, not a model, applies these bounds:
   (`SENIOR_MODE_PROBE_RETRY`, in seconds) `run` refuses to start without starting another probe
   session, then probes again. Under another `agent.command` none of this runs: those hooks do
   not hold there anyway.
-- **Proof:** a session counts as delivered only if a pull request is open for its branch.
+- **Proof:** a session counts as delivered only if a pull request is open for its branch, or for the ticket (a body line
+  `Closes #<n>`, `Fixes`, `Resolves` or `Supersedes #<n>`: the fix may have gone to a `-r2` branch).
 - **Merge** ([ADR 0008](../adr/0008-merge-off-by-default.md)): off by default. With
   `autonomy.merge: true`, a pull request merges (`gh pr merge --rebase`) only when `senior-mode/ci`,
   `senior-mode/review` and `senior-mode/security` are all `success` on its head, it has no `needs-human` label, the

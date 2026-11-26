@@ -187,6 +187,17 @@ push "refs/heads/new $last refs/heads/new 00000000000000000000000000000000000000
 (cd "$sc" && .githooks/pre-push </dev/null) >"$work/out" 2>&1
 [ "$(cat "$work/seen")" = FULL ] || fail "pre-push: no pushed ref did not mean a full run: $(cat "$work/seen")"
 
+# A check with `tier: 3` is skipped by the hook, which says so; a tier that is not 2 or 3 stops it (spec 474 §2).
+jq -n --arg out "$work/tiered" '{checks: [{name: "two", run: ("echo two >>" + $out)}, {name: "slow", tier: 3, run: ("echo slow >>" + $out)}]}' \
+  >"$sc/.claude/senior-mode.json"
+rm -f "$work/tiered"
+(cd "$sc" && .githooks/pre-push </dev/null) >"$work/out" 2>&1 || fail "pre-push fails with a tier 3 check: $(cat "$work/out")"
+[ "$(cat "$work/tiered")" = two ] || fail "pre-push runs a tier 3 check: $(cat "$work/tiered")"
+grep -qx 'heavy: slow runs after the push' "$work/out" || fail "pre-push does not say that the tier 3 check is deferred: $(cat "$work/out")"
+jq '.checks[1].tier = 4' "$sc/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$sc/.claude/senior-mode.json"
+(cd "$sc" && .githooks/pre-push </dev/null) >"$work/out" 2>&1 && fail "pre-push accepts tier 4"
+grep -q 'checks\[1\].tier must be 2 or 3, not 4' "$work/out" || fail "pre-push error does not name the key: $(cat "$work/out")"
+
 # An existing repository: its own CLAUDE.md, settings, PR template, hooks path and checks are extended.
 old="$work/legacy"
 git init -q -b main "$old"

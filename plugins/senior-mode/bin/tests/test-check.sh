@@ -828,5 +828,51 @@ pkcommit "feat: api drops shared"
 pkrun || fail "packages: removed dependency: $(cat "$work/out")"
 grep -qx 'lint api' "$PK_LOG" || fail "packages: a dependency removed by the diff is not followed: $(pklog)"
 
+# Tiers (spec 474 §2): a check with no tier is tier 2, a tier 3 check waits for the heavy run.
+tlog="$work/tiers.log"
+: >"$tlog"
+config "$(jq -n --arg l "$tlog" '{checks: [{name: "plain", run: ("echo plain >>" + $l)}, {name: "two", tier: 2, run: ("echo two >>" + $l)},
+  {name: "slow", tier: 3, run: ("echo slow >>" + $l)}]}')"
+run check || fail "tiers: check fails: $(cat "$work/out")"
+[ "$(paste -sd' ' "$tlog")" = "plain two" ] || fail "tiers: check did not run tier 2 only: $(cat "$tlog")"
+grep -qx 'heavy: slow runs after the push' "$work/out" || fail "tiers: heavy line missing: $(cat "$work/out")"
+grep -q '7/7 checks passed' "$work/out" || fail "tiers: the skipped check counts in the summary: $(cat "$work/out")"
+: >"$tlog"
+run check --tier 3 || fail "tiers: check --tier 3 fails: $(cat "$work/out")"
+[ "$(cat "$tlog")" = slow ] || fail "tiers: check --tier 3 did not run the tier 3 check alone: $(cat "$tlog")"
+grep -q 'secret scan' "$work/out" && fail "tiers: check --tier 3 runs the built-in checks"
+grep -q 'heavy:' "$work/out" && fail "tiers: check --tier 3 prints a heavy line"
+: >"$tlog"
+run check --all || fail "tiers: check --all fails: $(cat "$work/out")"
+[ "$(paste -sd' ' "$tlog")" = "plain two slow" ] || fail "tiers: check --all did not run both tiers: $(cat "$tlog")"
+grep -q 'heavy:' "$work/out" && fail "tiers: check --all prints a heavy line"
+run check --tier 4 && fail "tiers: check --tier 4 is accepted"
+run check --tier 3 --all && fail "tiers: check --tier 3 --all is accepted"
+# A tier 3 run is not recorded for publishing, a tier 2 run is.
+rm -rf "$repo/.git/senior-mode/checks"
+run check --tier 3
+[ ! -e "$(cd "$repo" && git rev-parse --git-path senior-mode/checks)/$(sha)" ] || fail "tiers: a tier 3 run is recorded for publishing"
+run check
+[ -e "$repo/.git/senior-mode/checks/$(sha)" ] || fail "tiers: a tier 2 run is not recorded for publishing"
+# No tier 3 check: --tier 3 has nothing to run and passes; a failing tier 3 check fails it.
+config '{"checks":[{"name":"lint","run":"true"}]}'
+run check --tier 3 || fail "tiers: check --tier 3 without a tier 3 check fails: $(cat "$work/out")"
+grep -q '0/0 checks passed' "$work/out" || fail "tiers: summary of an empty heavy run: $(cat "$work/out")"
+config '{"checks":[{"name":"slow","tier":3,"run":"echo boom; exit 1"}]}'
+run check || fail "tiers: a failing tier 3 check fails the tier 2 run: $(cat "$work/out")"
+run check --tier 3 && fail "tiers: a failing tier 3 check passes check --tier 3"
+grep -q 'FAIL  slow' "$work/out" || fail "tiers: failing tier 3 check not named: $(cat "$work/out")"
+# A tier other than 2 or 3, or a tier on a built-in check, is a configuration error naming the key.
+config '{"checks":[{"name":"lint","run":"true"},{"name":"slow","tier":4,"run":"true"}]}'
+run check && fail "tiers: tier 4 is accepted"
+grep -q 'checks\[1\].tier must be 2 or 3, not 4' "$work/out" || fail "tiers: tier 4 error does not name the key: $(cat "$work/out")"
+run config validate && fail "tiers: config validate accepts tier 4"
+grep -q 'checks\[1\].tier' "$work/out" || fail "tiers: config validate does not name the key: $(cat "$work/out")"
+config '{"checks":[{"name":"secret scan","tier":3,"run":"true"}]}'
+run check && fail "tiers: a tier on the secret scan is accepted"
+grep -q 'checks\[0\].tier: secret scan is a built-in' "$work/out" || fail "tiers: built-in tier error: $(cat "$work/out")"
+config '{"checks":[{"name":"dependency audit","tier":2,"run":"true"}]}'
+run check && fail "tiers: a tier on the dependency audit is accepted"
+
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

@@ -279,15 +279,24 @@ It is back in Backlog. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in th
   notify failed "$n" "$reason"
 }
 
+# The body of the open pull request of the branch of ticket $1 (the checkpoint block is in it, #346); nothing when GitHub
+# does not answer or there is none.
+run_pr_body() {
+  local branch=${RUN_BRANCH[$1]:-}
+  [ -n "$branch" ] || return 0
+  gh_retry api "repos/$RUN_SLUG/pulls?head=${RUN_SLUG%%/*}:$branch&state=open" 2>/dev/null | jq -r '.[0].body // ""' 2>/dev/null || true
+}
+
 # A ticket whose session stopped on a choice it cannot settle (#363): the outcome `decision: <question> | <recommended
 # option> | <checkpoint>`, $2 being what follows `decision: `. The question goes to the inbox as needs-human (the alert and
 # the webhook, as for any question) and as needs-decision, in a comment that carries the recommended option and the
 # checkpoint; the ticket goes back to Ready, so a reply is all it waits for (run_decisions), its branch and worktree kept.
 # Not a failure: no retry on Opus, nothing counted for the circuit breaker, the run goes on with the other tickets.
 run_decision() {
-  local n=$1 q=$2 rec="" chk=""
+  local n=$1 q=$2 rec="" chk="" block
   if [[ $q == *" | "* ]]; then rec=${q#* | }; q=${q%% | *}; fi
   if [[ $rec == *" | "* ]]; then chk=${rec#* | }; rec=${rec%% | *}; fi
+  block=$(checkpoint_inner "$(run_pr_body "$n")" | sed '/^$/d' | head -c 2500)
   run_record "$n" decision "$q" "${3:-$n}"
   notify needs-human "$n" "decision needed: $q"
   gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-decision' >/dev/null ||
@@ -299,7 +308,11 @@ An autonomous senior-mode session needs a decision it cannot settle from the cod
 
 **Recommended option:** ${rec:-none given}
 
-**Checkpoint:** ${chk:-none given}. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the worktree \`${RUN_WT[$n]}\`.
+**Checkpoint:** ${chk:-none given}. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the worktree \`${RUN_WT[$n]}\`.${block:+
+
+**Checkpoint block of the draft pull request:**
+
+$block}
 
 Reply on this ticket: the labels \`needs-decision\` and \`needs-human\` go and the ticket is picked again, with your answer." \
     >/dev/null || echo "#$n: could not comment on the ticket" >&2
@@ -318,14 +331,20 @@ run_plan_wanted() {
   case $(run_size "$1") in M | L) return 0 ;; *) return 1 ;; esac
 }
 
-# What the plan file <n>.plan of a session lacks to let it deliver (#352): prints it and returns 0 when the architect's
-# last answer is not `approve`, or when it asked for a second revision. The file holds `plan <k>:` and its lines, then
-# `architect <k>: approve` or `architect <k>: revise: <reasons>`, one answer per plan.
+# What the plan of a session lacks to let it deliver (#352): prints it and returns 0 when the architect's last answer is not
+# `approve`, or when it asked for a second revision. The plan is the file <n>.plan, or when that is missing or empty the plan
+# in the checkpoint block of the pull request of the branch (#346): `plan <k>:` and its lines, then `architect <k>: approve` or
+# `architect <k>: revise: <reasons>`, one answer per plan.
 run_plan_gap() {
-  local f=$RUN_DIR/$1.plan last revises
-  [ -f "$f" ] || { echo "no plan: the architect has approved none (the plan goes in $f)"; return 0; }
-  last=$(sed -nE 's/^architect [0-9]+: (approve|revise).*/\1/p' "$f" | tail -n 1)
-  revises=$(grep -cE '^architect [0-9]+: revise' "$f" || true)
+  local f=$RUN_DIR/$1.plan text="" last revises
+  if [ -s "$f" ]; then
+    text=$(cat "$f")
+  else
+    text=$(checkpoint_plan "$(run_pr_body "$1")")
+  fi
+  [ -n "$text" ] || { echo "no plan: the architect has approved none (the plan goes in $f)"; return 0; }
+  last=$(sed -nE 's/^architect [0-9]+: (approve|revise).*/\1/p' <<<"$text" | tail -n 1)
+  revises=$(grep -cE '^architect [0-9]+: revise' <<<"$text" || true)
   if [ "$revises" -ge 2 ]; then
     echo "the architect asked for a second revision of the plan"
   elif [ "$last" != approve ]; then

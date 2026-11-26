@@ -281,8 +281,11 @@ context() {
       epic_text=$(jq -r '.parent | if . then "#\(.number) \(.title)" else empty end' <<<"$json")
       [ -z "$epic_text" ] || ticket+=$'\n'"Epic: $epic_text"
       epic=$(jq -r '.parent.number // empty' <<<"$json")
-      criteria=$(jq -r .body <<<"$json" | awk '/^## / { on = /Acceptance criteria/; next } on && /^- /' |
-        head -6 | cut -c1-200)
+      # The headings and list markers that `ready` accepts (ready_missing, #611): any heading level, `Acceptance criteria`, `Acceptance`
+      # or `Criteria`, a bullet or a numbered list.
+      criteria=$(jq -r .body <<<"$json" | awk '/^#+/ { h = tolower($0); sub(/^#+[ \t]*/, "", h); sub(/[ \t:]+$/, "", h)
+          on = (h ~ /^acceptance criteria/ || h == "acceptance" || h == "criteria"); next }
+        on && /^([-*]|[0-9]+[.)])[ \t]+[^ \t]/' | head -6 | cut -c1-200)
       [ -z "$criteria" ] || ticket+=$'\n'"Acceptance criteria:"$'\n'"$criteria"
       tpaths=$(jq -c '.paths // []' <<<"$json")
     fi

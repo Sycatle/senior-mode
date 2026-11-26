@@ -126,8 +126,8 @@ run_launch() {
     printf 'ps -o pgid= -p $$ | tr -d " " >%q.tmp && mv %q.tmp %q\n' "$RUN_DIR/$n.pgid" "$RUN_DIR/$n.pgid" "$RUN_DIR/$n.pgid"
     printf 'cd %q || exit 1\n' "$dir"
     # Through `slot` (#153): a slot of its own, among the ${parallel:-autonomy.parallel} of the run.
-    printf 'SENIOR_MODE_RUN=1 %sSENIOR_MODE_RUN_OUTCOME=%q SENIOR_MODE_SLOTS=%q %q slot -- %q -p --model %q --permission-mode bypassPermissions --output-format json' \
-      "${RUN_ROLE[$n]:+SENIOR_MODE_ROLE=${RUN_ROLE[$n]} }" "$RUN_DIR/$n.outcome" "${parallel:-$(config_get autonomy.parallel)}" "$SELF" "$RUN_CLAUDE" "$model"
+    printf 'SENIOR_MODE_RUN=1 %sSENIOR_MODE_RUN_OUTCOME=%q SENIOR_MODE_RUN_PLAN=%q SENIOR_MODE_SLOTS=%q %q slot -- %q -p --model %q --permission-mode bypassPermissions --output-format json' \
+      "${RUN_ROLE[$n]:+SENIOR_MODE_ROLE=${RUN_ROLE[$n]} }" "$RUN_DIR/$n.outcome" "$RUN_DIR/$n.plan" "${parallel:-$(config_get autonomy.parallel)}" "$SELF" "$RUN_CLAUDE" "$model"
     [ ${#SESSION_FLAGS[@]} -eq 0 ] || printf ' %q' "${SESSION_FLAGS[@]}"
     printf ' "$(cat %q)" >%q 2>%q\n' "$RUN_DIR/$n.prompt" "$RUN_DIR/$n-$model.json" "$RUN_DIR/$n-$model.log"
     echo 'rc=$?'
@@ -305,6 +305,60 @@ Reply on this ticket: the labels \`needs-decision\` and \`needs-human\` go and t
     >/dev/null || echo "#$n: could not comment on the ticket" >&2
   (item_set "$n" Status Ready) >/dev/null || echo "#$n: could not set the Status Ready" >&2
   RUN_WAITING+=("#$n ${RUN_TITLE[$n]}: waiting for a decision: $q (branch ${RUN_BRANCH[$n]} kept)")
+}
+
+# The size of ticket $1 as the queue read it: run keeps it in RUN_SIZE, serve in SERVE_SIZE.
+run_size() {
+  echo "${RUN_SIZE[$1]:-${SERVE_SIZE[$1]:-}}"
+}
+
+# Whether ticket $1 gets a plan step (#352): size M or L, and not in a batch (a batch holds S tickets only).
+run_plan_wanted() {
+  [ -z "${RUN_BATCH[$1]:-}" ] || return 1
+  case $(run_size "$1") in M | L) return 0 ;; *) return 1 ;; esac
+}
+
+# What the plan file <n>.plan of a session lacks to let it deliver (#352): prints it and returns 0 when the architect's
+# last answer is not `approve`, or when it asked for a second revision. The file holds `plan <k>:` and its lines, then
+# `architect <k>: approve` or `architect <k>: revise: <reasons>`, one answer per plan.
+run_plan_gap() {
+  local f=$RUN_DIR/$1.plan last revises
+  [ -f "$f" ] || { echo "no plan: the architect has approved none (the plan goes in $f)"; return 0; }
+  last=$(sed -nE 's/^architect [0-9]+: (approve|revise).*/\1/p' "$f" | tail -n 1)
+  revises=$(grep -cE '^architect [0-9]+: revise' "$f" || true)
+  if [ "$revises" -ge 2 ]; then
+    echo "the architect asked for a second revision of the plan"
+  elif [ "$last" != approve ]; then
+    echo "no plan: the architect has approved none (the plan goes in $f)"
+  else
+    return 1
+  fi
+}
+
+# A ticket whose plan the architect rejected twice (#352): the outcome `plan-rejected: <reasons>`, $2 being what follows
+# `plan-rejected: `. Not a failure and not escalated (a stronger model does not change the spec): needs-human with a comment
+# that holds both plans and the architect's answers, the ticket back to Backlog, its branch and worktree kept; nothing was coded.
+run_plan_rejected() {
+  local n=$1 why=$2 plans=""
+  run_record "$n" plan-rejected "$why" "${3:-$n}"
+  [ ! -f "$RUN_DIR/$n.plan" ] || plans=$(head -c 6000 "$RUN_DIR/$n.plan")
+  gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null ||
+    echo "#$n: could not label the ticket needs-human" >&2
+  gh_bound api "repos/$RUN_SLUG/issues/$n/comments" -f body="An autonomous senior-mode session stopped on this ticket: the architect asked for a second revision of its plan, and no code was written.
+
+**Last reasons:** $why
+
+**Both plans and the architect's answers:**
+
+\`\`\`
+${plans:-none recorded}
+\`\`\`
+
+It is labelled \`needs-human\` and back in Backlog. The branch \`${RUN_BRANCH[$n]}\` is kept as it was, in the worktree \`${RUN_WT[$n]}\`." \
+    >/dev/null || echo "#$n: could not comment on the ticket" >&2
+  (item_set "$n" Status Backlog) >/dev/null || echo "#$n: could not set the Status Backlog" >&2
+  notify needs-human "$n" "the plan was rejected twice: $why"
+  RUN_WAITING+=("#$n ${RUN_TITLE[$n]}: the plan was rejected twice, $why (branch ${RUN_BRANCH[$n]} kept)")
 }
 
 # A ticket whose session found it cannot be done yet (#582): the outcome `blocked: #<issue or pull request> <reason>`, $2
@@ -683,13 +737,17 @@ run_finish_batch() {
 
 # Reads how a finished session went. Returns 1 when the ticket goes on (a retry on Opus).
 run_finish() {
-  local n=$1 outcome pulls='[]' waiting
+  local n=$1 outcome pulls='[]' waiting plan
   if [ -n "${RUN_BATCH[$n]:-}" ]; then
     run_finish_batch "$n"
     return
   fi
   outcome=$(head -n 1 "$RUN_DIR/$n.outcome" 2>/dev/null) || outcome=""
   [ -n "$outcome" ] || outcome="failed: the session ended without saying how it went (exit code $(cat "$RUN_DIR/$n.exit"), log in $RUN_DIR)"
+  # No delivery without the architect's approval of the plan (#352).
+  if [ "$outcome" = delivered ] && run_plan_wanted "$n" && plan=$(run_plan_gap "$n"); then
+    outcome="failed: $plan"
+  fi
   if [ "$outcome" = delivered ]; then
     if ! pulls=$(run_pulls "$n"); then
       [ -z "${RUN_RECONCILE:-}" ] || return 1
@@ -718,6 +776,7 @@ run_finish() {
       run_giveup "$n" "it outgrew its size: ${outcome#outgrown: }"
       ;;
     decision:*) run_decision "$n" "${outcome#decision: }" ;;
+    plan-rejected:*) run_plan_rejected "$n" "${outcome#plan-rejected: }" ;;
     blocked:*) run_blocked "$n" "${outcome#blocked: }" ;;
     duplicate:*) run_duplicate "$n" "${outcome#duplicate: }" ;;
     *)
@@ -1021,7 +1080,7 @@ run_reap() {
 run() {
   local max="" parallel="" n size title t left batch
   local -a queue=() running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_REVIEWED=() RUN_NOT_REVIEW=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
-  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=() RUN_BATCH=()
+  local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=() RUN_BATCH=() RUN_SIZE=()
   local RUN_TOKEN RUN_SLUG RUN_BASE RUN_DIR RUN_ROOT RUN_STAMP RUN_CLAUDE RUN_MERGE RUN_ESCALATE RUN_MAXFAIL RUN_PROTECTION RUN_REQUIRED RUN_GLOBS RUN_ZONES_KNOWN RUN_TIMEOUT
   local RUN_FAILS=0 RUN_STOP=""
   while [ $# -gt 0 ]; do
@@ -1048,6 +1107,7 @@ run() {
   while IFS=$'\t' read -r n size title batch; do
     [ -n "$n" ] || continue
     RUN_TITLE[$n]=$title
+    RUN_SIZE[$n]=$size
     # A batch is one queue entry, under its lead; its other tickets come after it in the pick order.
     if [ -n "$batch" ]; then
       [ "${batch%% *}" = "$n" ] || continue

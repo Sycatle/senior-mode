@@ -21,7 +21,9 @@ case "$*" in
   "api graphql --input -")
     q=$(cat)
     # The Size of a ticket (item_get) or the board.
-    if grep -q projectItems <<<"$q"; then cat "$FIX/item-$(jq -r '.variables.number' <<<"$q").json"; else cat "$FIX/board.json"; fi ;;
+    if grep -q 'issues(states: OPEN' <<<"$q"; then
+      if [ -f "$FIX/orphans.json" ]; then cat "$FIX/orphans.json"; else echo '{"data": {"repository": {"issues": {"pageInfo": {"hasNextPage": false}, "nodes": []}}}}'; fi
+    elif grep -q projectItems <<<"$q"; then cat "$FIX/item-$(jq -r '.variables.number' <<<"$q").json"; else cat "$FIX/board.json"; fi ;;
   "pr view "*) n=$(sed -E 's#^pr view ([0-9]+) .*#\1#' <<<"$*"); respond <"$FIX/pr-$n.json" ;;
   "api -H Accept: application/vnd.github.raw repos/acme/app/contents/"*)
     f=${4#repos/acme/app/contents/}; f=$FIX/content-$(sed 's#[/?].*##; s#^$#x#' <<<"$f")-$(basename "${f%%\?*}")
@@ -534,6 +536,33 @@ changes 430 src/a.sh:100 tests/test-a.sh:201
 ready --pr 430 && fail "Q: limits.diffWeights.tests = 1 not applied"
 said '301 changed lines' || fail "Q: the configured weight is not applied: $(cat "$work/out")"
 config '["auth/**"]'
+
+# R (#687): an open issue that is not on the Project is added to Backlog by `ready`, once; one labelled wontfix, or on
+# the Project already, is not; --dry-run only says it; --pr does not sweep.
+orphan() { # number project-id|- label|-
+  jq -nc --argjson n "$1" --arg p "$2" --arg l "$3" '{number: $n, labels: {nodes: ($l | if . == "-" then [] else [{name: .}] end)},
+    projectItems: {nodes: ($p | if . == "-" then [] else [{project: {id: .}}] end)}}'
+}
+{ orphan 700 - -; orphan 701 PVT_1 -; orphan 702 - wontfix; orphan 703 PVT_9 -; } | jq -sc '{data: {repository: {issues: {pageInfo: {hasNextPage: false}, nodes: .}}}}' >"$FIX/orphans.json"
+items="[]"
+item 710 Backlog "P1 next" S - "docs/**" '[]' "$criteria"
+board
+ready --dry-run || fail "R: dry run failed: $(cat "$work/err")"
+said '^would be added to the board: #700 #703$' || fail "R: the dry run does not name #700 and #703: $(cat "$work/out")"
+logged "item-add" && fail "R: the dry run added an issue"
+ready || fail "R: ready failed: $(cat "$work/err")"
+said '^added to the board: #700 #703$' || fail "R: the orphans are not listed: $(cat "$work/out")"
+logged "project item-add 3 --owner acme --url https://github.com/acme/app/issues/700" || fail "R: #700 not added"
+grep -c 'item-edit.*--single-select-option-id o1' "$GH_LOG" | grep -qx 2 || fail "R: #700 and #703 are not set Backlog: $(cat "$GH_LOG")"
+logged "issues/701" && fail "R: #701 is on the Project already"
+logged "issues/702" && fail "R: #702 is wontfix"
+pr 101 MERGED docs/wave "Framing: #710."
+ready --pr 101 || fail "R: ready --pr failed: $(cat "$work/err")"
+said 'added to the board' && fail "R: ready --pr swept the board"
+logged "issues/700" && fail "R: ready --pr added #700"
+rm -f "$FIX/orphans.json"
+ready || fail "R: ready failed: $(cat "$work/err")"
+said 'added to the board' && fail "R: something is added with no orphan: $(cat "$work/out")"
 
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

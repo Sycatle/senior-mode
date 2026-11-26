@@ -43,6 +43,11 @@ if grep -q createProjectV2StatusUpdate <<<"$body"; then
   echo '{"data": {"createProjectV2StatusUpdate": {"statusUpdate": {"id": "SU_1"}}}}'
   exit 0
 fi
+if grep -q 'milestones(first' <<<"$body"; then
+  [ -z "${HIER_FAIL:-}" ] || { echo "HTTP 403: forbidden" >&2; exit 1; }
+  if [ -f "$FIX/hierarchy.json" ]; then cat "$FIX/hierarchy.json"; else echo '{"data": {"repository": {"milestones": {"nodes": []}}}}'; fi
+  exit 0
+fi
 if grep -q LABELED_EVENT <<<"$body"; then cat "$FIX/labeled.json"; exit 0; fi
 if grep -q 'c0: object(oid:' <<<"$body"; then
   [ -z "${SPEC_FAIL:-}" ] || { echo "HTTP 403: forbidden" >&2; exit 1; }
@@ -264,8 +269,8 @@ git -C "$repo" worktree add -q -b feat/17-thing "$wt17"
 
 # status --json: everything from one call.
 run status --json || fail "status --json failed: $(cat "$work/err")"
-[ "$(calls)" -eq 1 ] || fail "status makes $(calls) gh calls, wanted 1"
-[ "$(jq -r '.variables.repo' "$FIX/bodies")" = true ] || fail "status does not ask for repository facts"
+[ "$(calls)" -eq 2 ] || fail "status makes $(calls) gh calls, wanted 2 (the board, the hierarchy)"
+[ "$(jq -rs '.[0].variables.repo' "$FIX/bodies")" = true ] || fail "status does not ask for repository facts"
 [ "$(json '.done | map(.number)')" = "[5]" ] || fail "done since the default 7 days: $(json .done)"
 [ "$(json '.mergedPullRequests')" = 2 ] || fail "merged count: $(json .mergedPullRequests)"
 [ "$(json '.inProgress | map(.number)')" = "[17,21]" ] || fail "in progress: $(json .inProgress)"
@@ -455,7 +460,7 @@ jq -c --argjson prs "$extra_prs" --argjson br "$extra_branches" --arg old "$old3
     + [($i27 | .content.updatedAt = $old), ($i28 | .content.updatedAt = $recent),
        ($i35 | .content.updatedAt = $old | .updatedAt = $recent)])' "$FIX/page-first.keep" >"$FIX/page-first.json"
 run status --json --since 7d || fail "status --json with hygiene failed: $(cat "$work/err")"
-[ "$(calls)" -eq 1 ] || fail "hygiene makes status take $(calls) gh calls, wanted 1"
+[ "$(calls)" -eq 2 ] || fail "hygiene makes status take $(calls) gh calls, wanted 2"
 [ "$(json '.hygiene.stale | map(.number)')" = "[50,53]" ] || fail "stale: $(json .hygiene.stale)"
 [ "$(json '.hygiene.stale[0].days')" = 20 ] || fail "stale days: $(json .hygiene.stale)"
 want='["staging","chore/60-lost","feat/61-wip","fix/70-a#b","fix/71-100%","feat/80-fresh","feat/81-moved","chore/90-ruleset","feat/27-pushed"]'
@@ -570,7 +575,7 @@ echo '{"data": {"repository": {"branches": {"pageInfo": {"hasNextPage": false, "
   {"name": "chore/70-late", "associatedPullRequests": {"totalCount": 0}}, {"name": "feat/17-late", "associatedPullRequests": {"totalCount": 1}},
   {"name": "feat/29-late", "associatedPullRequests": {"totalCount": 0}}]}}}}' >"$FIX/more-branches.json"
 run status --json --since 7d || fail "status --json with two pages of branches failed: $(cat "$work/err")"
-[ "$(calls)" -eq 2 ] || fail "two pages of branches took $(calls) calls"
+[ "$(calls)" -eq 3 ] || fail "two pages of branches took $(calls) calls"
 [ "$(json '.hygiene.branches | map(.name) | index("chore/70-late") != null and index("feat/17-late") == null')" = true ] ||
   fail "branch past the first page: $(json '.hygiene.branches | map(.name)')"
 [ "$(json '.hygiene.orphans | map(.number)')" = "[21]" ] || fail "a ticket with a branch on page 2 is an orphan: $(json .hygiene.orphans)"
@@ -741,6 +746,71 @@ run_spec status --json || fail "status --json with 120 commits failed: $(cat "$w
 [ "$(grep -c 'c0: object(oid:' "$FIX/bodies")" = 3 ] || fail "120 commits are not read in 3 calls: $(grep -c 'c0: object(oid:' "$FIX/bodies")"
 [ "$(json '.specDrift[0].commits | length')" = 120 ] || fail "the 120 commits are not all listed: $(json '.specDrift[0].commits | length')"
 
+# Hierarchy (#353, spec 325 §7): progress per goal, milestone and epic. Its own repository, with a vision.
+page "" "$items" >"$FIX/page-first.json"
+hier="$work/hier"
+cp -r "$repo" "$hier"
+run_hier() { : >"$GH_LOG"; : >"$FIX/bodies"; (cd "$hier" && "$cli" "$@") >"$work/out" 2>"$work/err"; }
+# hissue <number> <state> <total sub-issues> <completed> <body>
+hissue() { jq -nc --argjson n "$1" --arg s "$2" --argjson t "$3" --argjson c "$4" --arg b "$5" \
+  '{number: $n, title: "Item \($n)", state: $s, body: $b, subIssuesSummary: {total: $t, completed: $c}}'; }
+# hmile <number> <title> <description> <issues...>
+hmile() { local n=$1 t=$2 d=$3; shift 3
+  jq -nc --argjson n "$n" --arg t "$t" --arg d "$d" --argjson i "$(printf '%s\n' "$@" | jq -sc .)" \
+    '{number: $n, title: $t, description: $d, issues: {totalCount: ($i | length), nodes: $i}}'; }
+hier_json() { jq -nc --argjson m "$(printf '%s\n' "$@" | jq -sc .)" '{data: {repository: {milestones: {nodes: $m}}}}'; }
+hier_json \
+  "$(hmile 1 "v1.0 Core" $'Ship the core.\nGoal: G1' \
+    "$(hissue 100 OPEN 3 1 'Spec: docs/specs/a.md')" "$(hissue 101 CLOSED 0 0 '')" "$(hissue 102 OPEN 0 0 '')" "$(hissue 103 OPEN 0 0 '')")" \
+  "$(hmile 2 "v1.1 Speed" $'Goal: G2\nmore' \
+    "$(hissue 110 OPEN 2 2 'Specs: docs/specs/b.md and docs/specs/c.md, again docs/specs/b.md')" "$(hissue 111 CLOSED 0 0 '')" "$(hissue 112 CLOSED 0 0 '')")" \
+  "$(hmile 3 "v1.2 Loose" 'no goal here' \
+    "$(hissue 120 OPEN 1 0 'nothing linked')" "$(hissue 121 OPEN 0 0 '')")" \
+  "$(hmile 4 "v1.3 Stray" $'Goal: G9' "$(hissue 130 OPEN 0 0 '')")" >"$FIX/hierarchy.json"
+# Without docs/vision.md: no goal level, nothing fails, no goal drift; the epics are still checked.
+run_hier status --json || fail "status --json without a vision failed: $(cat "$work/err")"
+[ "$(json '.hierarchy.goals')" = null ] || fail "goal level without a vision: $(json '.hierarchy.goals')"
+[ "$(json '.hierarchy.milestones | map("\(.number):\(.closed)/\(.total)") | join(" ")')" = '"1:1/3 2:2/2 3:0/1 4:0/1"' ] ||
+  fail "tickets per milestone: $(json '.hierarchy.milestones')"
+[ "$(json '.hierarchy.milestones[0].goal')" = '"G1"' ] || fail "milestone goal: $(json '.hierarchy.milestones[0]')"
+[ "$(json '.hierarchy.drift | map(select(.kind == "milestone")) | length')" = 0 ] || fail "goal drift without a vision: $(json .hierarchy.drift)"
+run_hier status || fail "status without a vision failed"
+grep -q '^Progress' "$work/out" || fail "no Progress section: $(cat "$work/out")"
+grep -q 'No goal' "$work/out" && fail "'no goal' shown without a vision"
+# With a vision.
+mkdir -p "$hier/docs"
+printf '# Vision\n\n## Goals\n\n- **G1**: Be solid\n- G2: Be fast\n- G3: Be small\n\n## Non-goals\n\n- nothing\n' >"$hier/docs/vision.md"
+run_hier status --json || fail "status --json with a vision failed: $(cat "$work/err")"
+[ "$(json '.hierarchy.goals | map("\(.id):\(.closed)/\(.total)") | join(" ")')" = '"G1:1/3 G2:2/2 G3:0/0"' ] ||
+  fail "tickets per goal: $(json '.hierarchy.goals')"
+[ "$(json '.hierarchy.goals[0].title')" = '"Be solid"' ] || fail "goal title: $(json '.hierarchy.goals[0]')"
+[ "$(json '.hierarchy.goals[0].milestones')" = '["v1.0 Core"]' ] || fail "milestones of G1: $(json '.hierarchy.goals[0]')"
+[ "$(json '.hierarchy.noGoal | "\(.closed)/\(.total) \(.milestones | join(","))"')" = '"0/2 v1.2 Loose,v1.3 Stray"' ] ||
+  fail "no goal: $(json .hierarchy.noGoal)"
+[ "$(json '.hierarchy.drift | map(select(.kind == "milestone") | .number) | join(",")')" = '"3,4"' ] || fail "goal drift: $(json .hierarchy.drift)"
+[ "$(json '.hierarchy.drift[] | select(.number == 4) | .why')" = '"Goal: G9 is not in docs/vision.md"' ] || fail "unknown goal: $(json .hierarchy.drift)"
+[ "$(json '.hierarchy.milestones[0].epics | map("\(.number):\(.closed)/\(.total):\(.specs | length)") | join(" ")')" = '"100:1/3:1"' ] ||
+  fail "epic progress: $(json '.hierarchy.milestones[0].epics')"
+[ "$(json '.hierarchy.drift | map(select(.kind == "epic") | "\(.number)") | join(",")')" = '"110,120"' ] || fail "epic drift: $(json .hierarchy.drift)"
+[ "$(json '.hierarchy.drift[] | select(.number == 110) | .why')" = '"2 specs in its body"' ] || fail "two specs: $(json .hierarchy.drift)"
+[ "$(json '.hierarchy.drift[] | select(.number == 120) | .why')" = '"no spec in its body"' ] || fail "no spec: $(json .hierarchy.drift)"
+run_hier status || fail "status with a vision failed"
+grep -q '^Progress (4 drift)' "$work/out" || fail "Progress header: $(cat "$work/out")"
+grep -q '^  G1 Be solid: 1/3 tickets' "$work/out" || fail "goal line: $(cat "$work/out")"
+grep -q '^    v1.0 Core: 1/3 tickets' "$work/out" || fail "milestone line: $(cat "$work/out")"
+grep -q '^      #100 Item 100: 1/3 sub-issues$' "$work/out" || fail "epic line: $(cat "$work/out")"
+grep -q '^      #120 Item 120: 0/1 sub-issues, no spec in its body' "$work/out" || fail "epic flag: $(cat "$work/out")"
+grep -q '^  No goal: 0/2 tickets' "$work/out" || fail "no goal line: $(cat "$work/out")"
+grep -q '^    v1.2 Loose: 0/1 tickets, no Goal: line' "$work/out" || fail "milestone drift line: $(cat "$work/out")"
+# No milestone, no section; an unreadable hierarchy is said, and the report stays.
+echo '{"data": {"repository": {"milestones": {"nodes": []}}}}' >"$FIX/hierarchy.json"
+run_hier status || fail "status with no milestone failed"
+grep -q '^Progress' "$work/out" && fail "an empty Progress section is shown: $(cat "$work/out")"
+HIER_FAIL=1 run_hier status --json || fail "status fails when the hierarchy cannot be read: $(cat "$work/err")"
+[ "$(json '.hierarchy.note != null and (.hierarchy.milestones | length) == 0')" = true ] || fail "unreadable hierarchy: $(json .hierarchy)"
+HIER_FAIL=1 run_hier status || fail "text status fails when the hierarchy cannot be read"
+grep -q '^Progress: not read' "$work/out" || fail "note missing: $(cat "$work/out")"
+
 # Errors.
 run status --since soon && fail "accepted --since soon"
 grep -q "duration" "$work/err" || fail "bad duration not explained: $(cat "$work/err")"
@@ -756,8 +826,8 @@ echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}}' >"$repo/.claud
 # --watch redraws until stopped and does not mix with --json.
 page "" "$items" >"$FIX/page-first.json"
 : >"$GH_LOG"
-(cd "$repo" && timeout 3 "$cli" status --watch 1 >"$work/out" 2>"$work/err") || true
-[ "$(calls)" -ge 2 ] || fail "--watch 1 redraws $(calls) times in 3 seconds"
+(cd "$repo" && timeout 5 "$cli" status --watch 1 >"$work/out" 2>"$work/err") || true
+[ "$(calls)" -ge 2 ] || fail "--watch 1 redraws $(calls) times in 5 seconds"
 [ "$(grep -c '^In progress' "$work/out")" -ge 2 ] || fail "--watch output: $(cat "$work/out")"
 run status --watch --json && fail "--watch --json accepted"
 [ "$(git -C "$repo" status --porcelain | wc -l)" -eq 0 ] || fail "watch left changes in the tree"

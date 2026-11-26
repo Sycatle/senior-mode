@@ -133,7 +133,8 @@ The `needs-human` label marks a pull request that waits for a person. It is adde
 [`review`](skills.md#review) skill when a diff matches a [protected zone](#protected-zones) or touches
 another sensitive area: migrations, security, auth, payments, CI, infrastructure, major dependency
 upgrades, an L ticket or an ADR. The verdict is then
-at best "approve, human merge" and `senior-mode/review` stays `pending`. The `ops` agent never merges
+at best "approve, human merge" and `senior-mode/review` stays `pending`. A blocking finding on such a pull request
+is still `failure` (without the label), so the fix round starts; the person is asked when the review passes. The `ops` agent never merges
 a `needs-human` pull request.
 
 ### Alerts
@@ -240,7 +241,7 @@ The `node` and `generic` presets protect:
 | Next.js projects (`framework`) | `middleware.*`, `src/middleware.*`, `proxy.*`, `src/proxy.*` |
 
 The [`review`](skills.md#review) skill and the `reviewer` agent run `senior-mode protected`: a match
-means the `needs-human` label and a `pending` review status. The globs are a floor: the reviewer
+means the `needs-human` label and a `pending` review status once the review has nothing to change. The globs are a floor: the reviewer
 still judges what they cannot see (major dependency upgrades, an L ticket, an ADR).
 
 ## Hooks

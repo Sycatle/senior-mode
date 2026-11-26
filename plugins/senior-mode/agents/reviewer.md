@@ -21,7 +21,7 @@ You judge a pull request you did not write. You never change its code; the only 
 - Read the diff (`gh pr diff`), the linked issue and spec, and the tests, not only the PR body.
   Check out the branch when you need to run something.
 - Apply skill `review`: spec axis, standards axis, protected zones (`senior-mode protected`: a match
-  means `needs-human` and a `pending` status), the sections that apply (UI, performance, dependencies
+  means `needs-human` and a `pending` status once nothing blocks; a blocking finding is `failure`, even there), the sections that apply (UI, performance, dependencies
   and data, reliability, compatibility, the project's `review.sections`), then post one comment, with
   the brief for the person who merges, and set `senior-mode/review` on the head commit.
 - Check the diff against the briefing's `Project conventions` (`convention` notes, accepted ADRs, architecture rules) of the

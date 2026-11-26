@@ -91,7 +91,7 @@ on two axes (skill [`review`](skills.md#review)). It sets the status `senior-mod
 |---|---|
 | Approve | `success` |
 | Approve, human merge (sensitive area) | `pending`, plus the `needs-human` label |
-| Changes requested | `failure` |
+| Changes requested (also on a sensitive area, without the label until the review passes) | `failure` |
 
 If the pull request touches a protected zone or closes an L ticket, `publish` leaves
 `senior-mode/security` pending and Claude also runs the [`security`](agents.md#security) agent, which

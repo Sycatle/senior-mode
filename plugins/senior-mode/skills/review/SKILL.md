@@ -57,5 +57,5 @@ One PR comment (`gh pr comment`), project language:
 Before posting, read `${CLAUDE_SKILL_DIR}/knowledge.md` (slugs, repeats).
 
 Then set `senior-mode/review` on the head commit: `success` if approved, `failure` if changes requested
-(always for high/critical Security), `pending` for human merge (`gh api repos/<owner>/<repo>/statuses/<sha>
+(a blocking finding, even protected), `pending` for human merge (`gh api repos/<owner>/<repo>/statuses/<sha>
 -f state=... -f context=senior-mode/review`).

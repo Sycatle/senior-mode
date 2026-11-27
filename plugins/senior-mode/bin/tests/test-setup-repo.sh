@@ -509,7 +509,63 @@ d="$work/slot-none"
 git init -q -b main "$d"
 echo '{"scripts": {"test": "true"}}' >"$d/package.json"
 setup "$d"
-[ ! -e "$d/.senior-mode" ] || fail "a stub written with no compose file, node server or database: $(ls "$d/.senior-mode")"
+[ ! -e "$d/.senior-mode/slot.env" ] || fail "a slot.env written with no compose file, node server or database: $(cat "$d/.senior-mode/slot.env")"
+# The sandbox (#785): a Dockerfile stub from the preset, and sandbox.mode recorded when a runtime and the serve unit exist.
+version=$(jq -r .version "$(dirname "$cli")/../.claude-plugin/plugin.json")
+sbx() { # dir preset-manifest: a repository of that preset
+  local d=$work/sbx-$1
+  git init -q -b main "$d"
+  case $1 in
+    node) echo '{"name":"x"}' >"$d/package.json" ;;
+    python) printf '[project]\nname = "x"\n' >"$d/pyproject.toml" ;;
+    rust) printf '[package]\nname = "x"\nversion = "0.1.0"\n' >"$d/Cargo.toml" ;;
+    go) printf 'module x\n\ngo 1.22\n' >"$d/go.mod" ;;
+  esac
+  echo "$d"
+}
+export XDG_CONFIG_HOME=$work/xdg
+for p in node python rust go; do
+  d=$(sbx $p)
+  setup "$d"
+  [ "$(head -n 1 "$d/.senior-mode/Dockerfile")" = "FROM senior-mode/base:$version" ] || fail "$p stub: no FROM base: $(cat "$d/.senior-mode/Dockerfile" 2>&1)"
+  [ "$(grep -vcE '^(FROM|#|$)' "$d/.senior-mode/Dockerfile")" = 0 ] || fail "$p stub: a toolchain line is not commented"
+  grep -q 'sandbox Dockerfile: created' "$work/out" || fail "$p stub not reported: $(cat "$work/out")"
+  [ "$(jq -r '.sandbox.mode // "unset"' "$d/.claude/senior-mode.json")" = unset ] || fail "$p: sandbox.mode written without a unit"
+done
+grep -q '^# RUN corepack enable' "$work/sbx-node/.senior-mode/Dockerfile" || fail "node stub lacks corepack"
+grep -q '^# RUN apt-get .*python3-venv' "$work/sbx-python/.senior-mode/Dockerfile" || fail "python stub lacks python3-venv"
+grep -q '^# RUN curl .*rustup' "$work/sbx-rust/.senior-mode/Dockerfile" || fail "rust stub lacks rustup"
+grep -q '^# RUN apt-get .*golang-go' "$work/sbx-go/.senior-mode/Dockerfile" || fail "go stub lacks golang-go"
+# A stub edited by hand is kept, byte for byte, and the run says so.
+d=$work/sbx-node
+echo 'RUN echo mine' >>"$d/.senior-mode/Dockerfile"
+before=$(sha1sum "$d/.senior-mode/Dockerfile")
+setup "$d"
+[ "$(sha1sum "$d/.senior-mode/Dockerfile")" = "$before" ] || fail "an edited stub was rewritten"
+grep -q 'sandbox Dockerfile: kept' "$work/out" || fail "a kept stub is not reported: $(cat "$work/out")"
+grep -q 'sandbox Dockerfile: created' "$work/out" && fail "a kept stub is reported as a change: $(cat "$work/out")"
+# A runtime and the serve unit: required. Without the unit, unset. Already set (off): left alone.
+mkdir -p "$work/rtbin" "$XDG_CONFIG_HOME/systemd/user"
+printf '#!/bin/sh\nexit 0\n' >"$work/rtbin/podman"
+chmod +x "$work/rtbin/podman"
+rt_setup() { (PATH="$work/rtbin:$PATH" SENIOR_MODE_RUNTIME=podman bash -c 'cd "$1" && shift && "$@"' _ "$d" "$cli" setup repo "$@") >"$work/out" 2>"$work/err" || fail "setup exited non-zero: $(cat "$work/err")"; }
+rt_setup
+[ "$(jq -r '.sandbox.mode // "unset"' "$d/.claude/senior-mode.json")" = unset ] || fail "required written with a runtime and no unit"
+touch "$XDG_CONFIG_HOME/systemd/user/senior-mode-serve.service"
+rt_setup
+[ "$(jq -r '.sandbox.mode // "unset"' "$d/.claude/senior-mode.json")" = required ] || fail "required not written with a runtime and the unit: $(cat "$work/out")"
+jq '.sandbox.mode = "off"' "$d/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$d/.claude/senior-mode.json"
+rt_setup
+[ "$(jq -r '.sandbox.mode' "$d/.claude/senior-mode.json")" = off ] || fail "sandbox.mode off was changed"
+# --dry-run reports the stub and the key and writes nothing.
+d=$work/sbx-dry
+git init -q -b main "$d"
+printf 'module x\n\ngo 1.22\n' >"$d/go.mod"
+rt_setup --dry-run
+grep -q 'would create .senior-mode/Dockerfile' "$work/out" || fail "dry run does not report the stub: $(cat "$work/out")"
+grep -q 'would set sandbox.mode required' "$work/out" || fail "dry run does not report the key: $(cat "$work/out")"
+[ ! -e "$d/.senior-mode" ] && [ ! -e "$d/.claude/senior-mode.json" ] || fail "dry run wrote files"
+unset XDG_CONFIG_HOME
 
 [ "$failures" -eq 0 ] && echo "setup-repo: all cases pass"
 exit "$failures"

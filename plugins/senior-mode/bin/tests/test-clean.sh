@@ -334,5 +334,23 @@ clean --dry-run || fail "clean --dry-run failed: $(cat "$work/err")"
 has "would remove branch docs/frame-late " || fail "a docs branch is kept with the protected list readable: $(cat "$work/out")"
 grep -q 'protected branches' "$work/err" && fail "a readable protected list is complained about"
 
+# #792: pr-<n> of the orphan branch senior-mode/shots goes seven days after its pull request closed, not before.
+git init -q "$work/shots-src"
+mkdir -p "$work/shots-src/pr-501" "$work/shots-src/pr-502"
+echo a >"$work/shots-src/pr-501/index-390x844-after.png"
+echo b >"$work/shots-src/pr-502/index-390x844-after.png"
+git -C "$work/shots-src" add -A
+git -C "$work/shots-src" commit -q -m "shots"
+git -C "$work/shots-src" push -q "$work/origin.git" HEAD:refs/heads/senior-mode/shots
+pr 501 CLOSED zz/501 10 "$main_tip"
+pr 502 CLOSED zz/502 3 "$main_tip"
+shots_dirs() { git -C "$work/origin.git" ls-tree --name-only senior-mode/shots | tr '\n' ' '; }
+clean --dry-run || fail "shots: dry run failed: $(cat "$work/err")"
+has "would remove screenshots pr-501 " || fail "shots: pr-501 (closed 10 days ago) would not go: $(cat "$work/out")"
+has "pr-502" && fail "shots: pr-502 (closed 3 days ago) would go: $(cat "$work/out")"
+[ "$(shots_dirs)" = "pr-501 pr-502 " ] || fail "shots: --dry-run changed the branch: $(shots_dirs)"
+clean || fail "shots: clean failed: $(cat "$work/err")"
+[ "$(shots_dirs)" = "pr-502 " ] || fail "shots: the branch holds '$(shots_dirs)' after clean, expected only pr-502"
+
 [ "$failures" -eq 0 ] && echo "test-clean: ok"
 exit "$failures"

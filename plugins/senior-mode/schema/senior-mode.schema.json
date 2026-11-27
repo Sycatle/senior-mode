@@ -182,6 +182,12 @@
       "additionalProperties": false,
       "properties": {
         "url": { "type": "string", "minLength": 1, "description": "Template of the preview URL of a UI pull request, with {{pr}}, {{branch}}, {{sha}} and {{slug}} (the branch as lower case letters, digits and -). Shown only when one curl of it answers 2xx or 3xx." },
+        "routes": { "type": "array", "items": { "type": "string" }, "description": "Routes senior-mode shots renders (default /)." },
+        "viewports": { "type": "array", "items": { "type": "string", "pattern": "^[0-9]+x[0-9]+$" }, "description": "Viewports senior-mode shots renders each route at (default 390x844 and 1280x800)." },
+        "baseUrl": { "type": "string", "minLength": 1, "description": "The before site of the screenshots (production or staging); without it preview.command runs on the merge base." },
+        "command": { "type": "string", "minLength": 1, "description": "Command that serves the app for the screenshots, run in a slot; {{port}} is the PORT of the slot environment." },
+        "maxKB": { "type": "integer", "minimum": 1, "description": "Largest screenshot pushed, in kilobytes (default 400); larger ones are scaled down with magick or convert." },
+        "public": { "type": "boolean", "description": "Push the screenshots of a public repository to senior-mode/shots (default false)." },
         "waitSeconds": { "type": "integer", "minimum": 0, "description": "Seconds publish waits, polling every 15, for a successful GitHub deployment status with an environment_url on the head commit when preview.url is not set (default 300)." }
       }
     },

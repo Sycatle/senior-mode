@@ -25,6 +25,12 @@ It also writes the Project's short description and README in the project languag
 only the block between the `senior-mode:begin` and `senior-mode:end` markers (`board README: ... markers broken`:
 the README is left as it is, ask the user to restore the markers).
 
+A product of several repositories has one Project: `senior-mode setup github --project <number|url>` attaches the
+repository to it instead (a Project of another owner is refused; `--dry-run` first). Missing fields are created; a
+missing option (`board: field Status: the option In review is missing`) is only reported, with where to add it, since
+rewriting it would move the other repositories' items: relay it. `project.home` is `--home owner/name`, else the
+repository named like the Project, else the first linked.
+
 ## Survey of a legacy project
 
 `senior-mode setup repo --adopt` on a project recorded `adopt.kind: legacy` opens one pull request that also holds the survey.

@@ -345,10 +345,57 @@ run_size() {
   echo "${RUN_SIZE[$1]:-${SERVE_SIZE[$1]:-}}"
 }
 
-# Whether ticket $1 gets a plan step (#352): size M or L, and not in a batch (a batch holds S tickets only).
+# The path ticket $1 is delivered on (#826, ADR 0034 decision 2): `light` for a size S or M whose Paths reach no protected zone
+# (one dev session that writes its own red tests, a light reviewer, a question settled by the agent), `full` for the rest: L, a
+# size not known, a Paths glob that may reach a zone (ready_in_zone, on the side of caution). Paths that cannot be read, or none,
+# reach no zone: the diff is checked again at the review and at the merge (run_review_light, run_blocker). The answer is kept in
+# <n>.risk, as the Paths of a ticket do not change under a run.
+run_risk() {
+  local n=$1 f="" paths="" p zones=${RUN_GLOBS:-[]} risk=light
+  [ -z "${RUN_DIR:-}" ] || [ ! -d "$RUN_DIR" ] || f=$RUN_DIR/$n.risk
+  if [ -n "$f" ] && [ -s "$f" ]; then
+    cat "$f"
+    return 0
+  fi
+  case $(run_size "$n") in
+    S | M)
+      paths=$( (item_get "$n" Paths) 2>/dev/null) || paths=""
+      while IFS= read -r p; do
+        p=${p#"${p%%[![:space:]]*}"}
+        p=${p%"${p##*[![:space:]]}"}
+        [ -z "$p" ] || ! ready_in_zone "$zones" "$p" || risk=full
+      done < <(tr ',' '\n' <<<"$paths")
+      ;;
+    *) risk=full ;;
+  esac
+  [ -z "$f" ] || printf '%s\n' "$risk" | state_write "$f"
+  echo "$risk"
+}
+
+# Whether every ticket of the list $@ is on the light path (run_risk).
+run_light() {
+  local m
+  for m in "$@"; do [ "$(run_risk "$m")" = light ] || return 1; done
+}
+
+# Whether the review of pull request $2 of ticket $1 is the light one: its ticket is light and its diff touches no protected
+# zone. A diff that cannot be read gets the full review.
+run_review_light() {
+  local files
+  run_light "$1" || return 1
+  files=$(gh_retry api "repos/$RUN_SLUG/pulls/$2/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)' 2>/dev/null) || return 1
+  [ -z "$(protected_match "${RUN_GLOBS:-[]}" <<<"$files")" ]
+}
+
+# Whether ticket $1 gets a plan step (#352): size L, or size M when it reaches a protected zone (run_risk), and not in a batch
+# (a batch holds S tickets only). An S or M ticket outside the zones is planned by its own session.
 run_plan_wanted() {
   [ -z "${RUN_BATCH[$1]:-}" ] || return 1
-  case $(run_size "$1") in M | L) return 0 ;; *) return 1 ;; esac
+  case $(run_size "$1") in
+    L) return 0 ;;
+    M) [ "$(run_risk "$1")" = full ] ;;
+    *) return 1 ;;
+  esac
 }
 
 # What the plan of a session lacks to let it deliver (#352): prints it and returns 0 when the architect's last answer is not
@@ -600,6 +647,34 @@ run_blocker() {
   fi
 }
 
+# The full `check`, once, on the head $2 of the pull request of ticket $1 that every bound lets merge (#826, ADR 0034 decision
+# 3): the sessions push after a `check --changed`. It runs in the worktree of the ticket when that is at the head with a clean
+# tree (its dependencies are installed there), else in a throwaway worktree of the head. Prints why the pull request may not
+# merge, nothing when the check is green; its output is in <n>.check. SENIOR_MODE_RUN_CHECK (tests): a shell command that stands
+# for the whole step, run in the main checkout with the head in SENIOR_MODE_CHECK_HEAD.
+run_full_check() {
+  local n=$1 sha=$2 wt=${RUN_WT[$1]:-} tmp="" rc=0
+  if [ -n "${SENIOR_MODE_RUN_CHECK:-}" ]; then
+    (cd "$RUN_ROOT" && SENIOR_MODE_CHECK_HEAD=$sha bash -c "$SENIOR_MODE_RUN_CHECK") </dev/null >"$RUN_DIR/$n.check" 2>&1 || rc=$?
+  else
+    if [ -z "$wt" ] || [ "$(git -C "$wt" rev-parse HEAD 2>/dev/null)" != "$sha" ] || [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+      tmp=$(worktree_path "$RUN_ROOT" "check-$n")
+      git -C "$RUN_ROOT" worktree remove --force "$tmp" 2>/dev/null || true
+      if ! git -C "$RUN_ROOT" worktree add -q --detach "$tmp" "$sha" 2>/dev/null; then
+        git_bound -C "$RUN_ROOT" fetch -q origin "$sha" 2>/dev/null || true
+        git -C "$RUN_ROOT" worktree add -q --detach "$tmp" "$sha" 2>/dev/null || {
+          echo "its head ${sha:0:7} could not be checked out for the full check"
+          return 0
+        }
+      fi
+      wt=$tmp
+    fi
+    (cd "$wt" && "$SELF" check) </dev/null >"$RUN_DIR/$n.check" 2>&1 || rc=$?
+    [ -z "$tmp" ] || git -C "$RUN_ROOT" worktree remove --force "$tmp" 2>/dev/null || true
+  fi
+  [ "$rc" -eq 0 ] || echo "the full check is red on its head (output in $RUN_DIR/$n.check)"
+}
+
 # A delivered ticket: merged when merging is on and every bound holds (run_blocker), else listed for a human
 # with the reason. $2 is the open pull request as the REST list gives it; the tickets after it are the others
 # delivered by the same pull request (a batch). --match-head-commit refuses a head pushed after the checks.
@@ -608,6 +683,7 @@ run_merge() {
   pr=$(jq -r '.[0].number' <<<"$2")
   sha=$(jq -r '.[0].head.sha' <<<"$2")
   reason=$(run_blocker "$pr" "$sha" "$(jq -c '.[0]' <<<"$2")")
+  [ -n "$reason" ] || reason=$(run_full_check "$n" "$sha")
   if [ -z "$reason" ]; then
     if gh_bound pr merge "$pr" "$(workflow_merge_flag "$RUN_ROOT")" --match-head-commit "$sha" -R "$RUN_SLUG" >/dev/null 2>"$RUN_DIR/$n.merge"; then
       RUN_PRS+=("#$pr")

@@ -1410,6 +1410,11 @@ check() {
   names=("secret scan" "dependency audit" "new dependencies" "config" "context hygiene")
   cmds=("$(printf '%q' "$SELF") secret-scan" "$(printf '%q' "$SELF") audit" "$(printf '%q' "$SELF") deps" "$(printf '%q' "$SELF") config validate"
     "$(printf '%q' "$SELF") context-hygiene")
+  # The code rules of the project's packs run on the diff (#720), after the dependency audit's steps.
+  if rules_enabled "$root"; then
+    names+=("code rules")
+    cmds+=("$(printf '%q' "$SELF") rules-check")
+  fi
   # docs/vision.md is checked when it exists (#342), the knowledge notes when docs/knowledge does (#333), the
   # architecture rules when the config has some (#337).
   if [ -f "$root/docs/vision.md" ]; then
@@ -1597,8 +1602,8 @@ check() {
       if [ -n "$ckey" ] && mkdir -p "$cdir" 2>/dev/null; then
         printf '%s\n' "$name" >"$cdir/$ckey.$$" && mv -f "$cdir/$ckey.$$" "$cdir/$ckey"
       fi
-      # A warning of a passing check (an advisory with no severity) is shown, not lost.
-      { grep '^warning: ' "$output" || true; } | sed 's/^/      /'
+      # A warning of a passing check (an advisory with no severity, a rule turned off) is shown, not lost.
+      { grep -E '^(warning: |off  )' "$output" || true; } | sed 's/^/      /'
       fl=$(sed -n 's/^warning: flaky: \([^ ]*\) .*/\1/p' "$output" | paste -sd, -)
       [ -z "$fl" ] || flaky+="${flaky:+,}$fl"
     else

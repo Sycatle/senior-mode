@@ -83,6 +83,8 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `ratchet.a11y.report` | `test-results/a11y` | Directory of the axe reports of the journey E2E tests, one JSON file per journey, written by the helper `presets/node/e2e/axe.ts`; the ratchet reads it for `a11y` |
 | `ratchet.patchCoverage` | `80` | Percent of lines a new file must cover under the ratchet (0 to 100) |
 | `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |
+| `rules.packs` | the preset's | Rule packs the `code rules` step of `check` runs on the diff, see [Code rules](#code-rules) (`common` for the node, python, go and rust presets) |
+| `rules.off` | `{}` | Rules turned off, by id: `{ "<id>": { "why", "paths" } }`; `why` is required, `paths` narrows the rule off to those globs |
 | `docs.extra` | none | Extra living documents the `docs` skill keeps current after a merge: a list of `{ "path", "purpose" }`; its changes are flagged for human review. Add it yourself |
 | `context.claudeMdLines` | `80` | Most lines a tracked `CLAUDE.md` may have before `check` fails (context hygiene); a whole number from 1 |
 | `context.budget` | `2000` | Tokens (estimated as bytes / 4) the session briefing of [`senior-mode context`](commands.md#the-senior-mode-script) may take; the router and the ticket with its criteria are never dropped, the lowest ranked items go first: the related work, then the history, then the notes, specs and ADRs (a positive whole number) |
@@ -669,6 +671,27 @@ Existing violations are recorded in `.claude/architecture-baseline.json`, a ratc
 ```
 
 `count` (1 when absent) is how many violations of the rule the file may keep. `check` fails only on the violations beyond it (all those of the rule in the file are listed). An entry that no longer violates, or that allows more than what is left, is a warning; `senior-mode check --update-baseline` removes or lowers it, and never adds one: a new violation is refused (exit 1) and the file keeps what it had.
+
+## Code rules
+
+`check` has a `code rules` step when the project has rule packs (`rules.packs`, else the preset's). A pack is a file of the
+plugin, `plugins/senior-mode/rules/<pack>.json`, with a `rules` list; the step runs each rule on the lines the branch adds or
+changes against the merge base (a match on a line the diff did not touch is never reported) and fails with
+`<file>:<line>: <rule-id>: <message> (fix: <fix>)`.
+
+A rule has an `id`, a `tier` (2; a tier 3 rule is not run by this step), a `kind` and a `fix` line, and may carry `ext` (the
+file extensions it reads), `prodOnly` (test files are left out) and `skip` (globs it leaves out). A pack entry without them, or with
+an unknown `kind`, is a configuration error naming the pack and the entry. `kind` is `pattern` (an extended regular expression on
+each added line) or `tool` (an outside tool, its `run` command and the `format` of its report; a tool that is not installed fails
+with `tool missing: <tool>`, its `install` command and the `rules.off` key, and never passes silently).
+
+A rule is turned off only with a reason, in `.claude/senior-mode.json` (a protected path, so the change reaches a human):
+
+```json
+"rules": { "off": { "debug-print": { "why": "a CLI prints by design", "paths": ["src/cli/**"] } } }
+```
+
+`check` prints `off  debug-print: a CLI prints by design`; without `paths` the rule is off everywhere, with them only under them.
 
 ## Ratchet for legacy code
 

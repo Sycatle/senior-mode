@@ -21,6 +21,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
   Every write under the serve dir goes through it (`.github/scripts/state-writes.sh` checks `run.sh` and `serve.sh`).
 - `board.sh`: Project items and fields, `issue create`, security alerts, `ready`, `pick`, `start`.
 - `architecture.sh`: `architecture` (the generated map and its block in `docs/architecture.md`).
+- `rules.sh`: `rules-check` (the code rules engine: packs in `plugins/senior-mode/rules/`, pattern and tool rules on the diff, `rules.off`).
 - `ratchet.sh`: `ratchet` (the lint and coverage baseline of legacy code, `ratchet-check` step of `check`, `check --update-baseline`).
 - `release.sh`: `release` (release-please).
 - `check.sh`: `check`, spec drift, `security_verdict`, `publish`.

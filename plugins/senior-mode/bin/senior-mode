@@ -40,6 +40,8 @@ usage() {
 . "$LIB/architecture.sh"
 # shellcheck source=lib/ratchet.sh
 . "$LIB/ratchet.sh"
+# shellcheck source=lib/rules.sh
+. "$LIB/rules.sh"
 # shellcheck source=lib/skeleton.sh
 . "$LIB/skeleton.sh"
 # shellcheck source=lib/evals.sh
@@ -287,6 +289,10 @@ case "${1:-}" in
   ratchet-check)
     [ $# -eq 1 ] || usage
     ratchet_check
+    ;;
+  rules-check)
+    [ $# -eq 1 ] || usage
+    rules_check
     ;;
   ratchet)
     shift

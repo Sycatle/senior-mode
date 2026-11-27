@@ -125,3 +125,72 @@ skeleton_blocker() {
   done < <(pr_closed_tickets "$(jq -r '.body // ""' <<<"$pull")")
   [ -z "$open" ] || echo "not ready: a red skeleton is still unimplemented or skipped in $open: write the test, or remove the case if its criterion went"
 }
+
+# The text the spec $2 (from the root $1) tells of the journey $3: under "Users and journeys", the heading that names
+# its id down to the next heading, or the paragraph that does. At most 20 lines.
+skeleton_journey_text() {
+  awk -v id="$3" '
+    function has(l) { return l ~ ("(^|[^[:alnum:]_])" id "([^[:alnum:]_]|$)") }
+    /^##[[:space:]]/ { if (out) exit; sec = ($0 ~ /^##[[:space:]]+Users and journeys/); next }
+    !sec { next }
+    /^#+[[:space:]]/ { if (out) exit; if (has($0)) { out = 1; mode = "h"; print }; next }
+    out && mode == "p" && /^[[:space:]]*$/ { exit }
+    out { print; next }
+    has($0) { out = 1; mode = "p"; print }' "$1/$2" 2>/dev/null | sed -E 's/[[:space:]]+$//' | cat -s | head -n 20
+}
+
+# The journeys (spec 328 section 5.3, #464) of the accepted specs whose `paths` overlap the Paths $2 (a JSON array of
+# globs) of a ticket, as JSON: [{spec, sid, id, name, test, exists, text}]. $1 is the repository root. `exists` says
+# whether the test file is there: in the tree of the ref $3 when there is one, else in the working tree. An empty list
+# when the ticket has no Paths or no spec declares a journey on them.
+skeleton_journeys() {
+  local root=$1 tp=$2 ref=${3:-} spec sid jid test line name exists text out="[]"
+  declare -F journeys_specs >/dev/null || {
+    echo "[]"
+    return 0
+  }
+  while IFS=$'\t' read -r spec sid jid test; do
+    [ -n "$jid" ] || continue
+    name=$jid
+    line=$(grep -E "[{,][[:space:]]*id:[[:space:]]*\"?$jid\"?[[:space:],}]" "$root/$spec" 2>/dev/null | head -n 1) || line=""
+    if [[ $line =~ name:[[:space:]]*\"([^\"]*)\" ]] || [[ $line =~ name:[[:space:]]*([^,\"}]*[^,\"}[:space:]]) ]]; then name=${BASH_REMATCH[1]}; fi
+    if [ -n "$ref" ]; then
+      git -C "$root" cat-file -e "$ref:$test" 2>/dev/null && exists=true || exists=false
+    else
+      [ -f "$root/$test" ] && exists=true || exists=false
+    fi
+    text=$(skeleton_journey_text "$root" "$spec" "$jid")
+    out=$(jq -c --arg spec "$spec" --arg sid "$sid" --arg id "$jid" --arg name "$name" --arg test "$test" --argjson exists "$exists" --arg text "$text" \
+      '. + [{spec: $spec, sid: $sid, id: $id, name: $name, test: $test, exists: $exists, text: $text}]' <<<"$out")
+  done < <(jq -r --argjson tp "$tp" "$PATHS_DEF"'.[] | select(overlap($tp; .globs)) | .spec as $s | .id as $i | .journeys[] | [$s, $i, .id, .test] | @tsv' \
+    <<<"$(journeys_specs "$root")")
+  printf '%s\n' "$out"
+}
+
+# What the test-author is told of the journeys JSON $1: each one with its name, its text and its test file, to be written
+# from the journey and not from the code, red first. Nothing when there is none.
+# shellcheck disable=SC2016 # a jq program, not shell
+skeleton_journeys_brief() {
+  jq -r 'if length == 0 then empty else
+    "Journeys of this ticket (E2E tests, spec 328 section 5.3): write each test first, from the journey as its spec tells it and not from the code, run it and see it fail for the missing behaviour, and commit it with the other tests:",
+    (.[] | "- \(.id) \"\(.name)\" (spec \(.sid)), test file \(.test), "
+      + (if .exists then "exists: edit only if the criteria change the journey" else "missing: write it" end)
+      + (if .text == "" then "" else "\n" + (.text | split("\n") | map("    " + .) | join("\n")) end)) end' <<<"$1"
+}
+
+# The journeys of ticket $1 as a prompt reads them (#464), nothing when the ticket has none or the board does not
+# answer: `brief` is the test-author block, `readonly` the sentence that keeps the implementer off the E2E tests.
+skeleton_journeys_prompt() {
+  local root tp js files
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  tp=$(context_board "$root" "$1" 2>/dev/null | jq -c '.paths // empty' 2>/dev/null) || return 0
+  [ -n "$tp" ] || return 0
+  js=$(skeleton_journeys "$root" "$tp") || return 0
+  case ${2:-} in
+    brief) skeleton_journeys_brief "$js" ;;
+    readonly)
+      files=$(jq -r 'map(.test) | join(", ")' <<<"$js")
+      [ -z "$files" ] || echo "The E2E test of a journey ($files) is read-only for you, like the other red tests: make it pass, never edit it."
+      ;;
+  esac
+}

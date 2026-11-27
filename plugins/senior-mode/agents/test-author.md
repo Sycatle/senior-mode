@@ -22,6 +22,9 @@ production code: tests written apart from the code are not bent to fit it.
 - A journey that lists records asserts the same query count for 1 and for 10 records, through the helper
   at `performance.queries.helper` (`.claude/senior-mode.json`; see the tdd skill's `queries.md`). A list that
   queries once per record must fail naming the expected and the actual count. No helper: say `queries: not measured`.
+- A ticket whose Paths overlap the journeys of an accepted spec (the brief lists them): write each journey's E2E test first,
+  from the journey text in the spec and not from the code, at the file the brief gives, and see it fail. A journey whose test
+  exists is edited only when the ticket's criteria change the journey.
 - Write fixtures by hand with synthetic values; never copy them from a real export, dump or database.
 - Run the tests. Each must fail for the expected reason (missing behaviour), not for a syntax error,
   a missing import you could add, or a broken fixture.

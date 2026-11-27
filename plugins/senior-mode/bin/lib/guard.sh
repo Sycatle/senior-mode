@@ -842,7 +842,7 @@ red_tests() {
 # on the head it must pass. The files are then listed in <git common dir>/senior-mode/runs/<issue>/red-verified, which
 # `run` and `serve` read next to red-tests (red_blocker). Unlike red-tests, that list does not make the files read-only.
 red_tests_verify() {
-  local n=$1 common base root file cmd preset files="" f mb wt
+  local n=$1 common base root file cmd preset files="" f mb wt tp jid jtest jexists jspec
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
   root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
   base=$(default_branch) || die "no default branch to compare with"
@@ -853,6 +853,17 @@ red_tests_verify() {
   while IFS= read -r -d '' f; do
     ! test_file "$preset" "$f" || files+="$f"$'\n'
   done < <(git diff -z --no-renames --name-only --diff-filter=AM "$base...HEAD")
+  # The E2E tests of the journeys of the ticket's Paths (#464): one that the base lacks must be written, and a journey
+  # test the branch adds or changes is a red test whatever its name.
+  tp=$(context_board "$root" "$n" 2>/dev/null | jq -c '.paths // empty' 2>/dev/null) || tp=""
+  if [ -n "$tp" ]; then
+    while IFS=$'\t' read -r jid jtest jexists jspec; do
+      if git diff --quiet --diff-filter=AM "$base...HEAD" -- "$jtest" && [ "$jexists" = false ]; then
+        die "journey $jid of spec $jspec has no test at $jtest: the test-author writes it first, from the journey, and it fails on $base"
+      fi
+      git diff --quiet --diff-filter=AM "$base...HEAD" -- "$jtest" || grep -qxF -- "$jtest" <<<"$files" || files+="$jtest"$'\n'
+    done < <(skeleton_journeys "$root" "$tp" "$base" | jq -r '.[] | [.id, .test, .exists, .sid] | @tsv')
+  fi
   [ -n "$files" ] || die "no test file added or changed on this branch since $base: a feature or a bug needs tests that fail without the change"
   mb=$(git merge-base "$base" HEAD) || die "no common ancestor with $base"
   # A plain export, not a worktree (#563): a session's sandbox keeps .git/worktrees read-only.

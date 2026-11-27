@@ -13,7 +13,7 @@ run() { (cd "$repo" && "$cli" "$@") >"$work/out" 2>&1; }
 out() { cat "$work/out"; }
 # config <json>: the project configuration, committed with the tree it describes.
 config() { printf '%s\n' "$1" >"$repo/.claude/senior-mode.json"; }
-reset() { g checkout -q -- . && g clean -fdq && g checkout -q main && g branch -qD feat 2>/dev/null; g checkout -q -b feat; }
+reset() { g reset -q --hard && g clean -fdq && g checkout -q main && g branch -qD feat 2>/dev/null; g checkout -q -b feat; }
 has() { grep -qF -- "$1" "$work/out" || fail "$2: '$1' not in: $(out)"; }
 lacks() { ! grep -qF -- "$1" "$work/out" || fail "$2: '$1' in: $(out)"; }
 
@@ -113,5 +113,57 @@ g add -A
 run check && fail "check passes with a rule finding"
 has "FAIL  code rules" "check step"
 has "src/a.ts:3 code rules" "check finding line"
+
+# Suppressions (#722, spec 471 §2): the `suppression` entry of the common pack, with a gh stub for the issues.
+mkdir -p "$work/bin"
+cat >"$work/bin/gh" <<'SH'
+#!/usr/bin/env bash
+# gh issue view <n> --json number: #123 exists, #999 does not, anything else cannot be reached.
+[ "$STUB_GH" != down ] || { echo "error connecting to api.github.com" >&2; exit 1; }
+case $3 in
+  123) echo '{"number":123}' ;;
+  999) echo "GraphQL: Could not resolve to an Issue with the number of 999. (repository.issue)" >&2; exit 1 ;;
+  *) echo "error connecting to api.github.com" >&2; exit 1 ;;
+esac
+SH
+chmod +x "$work/bin/gh"
+export PATH=$work/bin:$PATH
+real_rules=$(cd "$(dirname "$0")/.." && pwd)/../rules
+cp "$real_rules/common.json" "$SENIOR_MODE_RULES_DIR/common.json"
+cat >"$SENIOR_MODE_RULES_DIR/dp.json" <<'JSON'
+{ "rules": [ { "id": "debug-print", "tier": 2, "kind": "pattern", "pattern": "console\\.log", "fix": "use the logger" } ] }
+JSON
+sup() { reset; config '{"audit": false, "checks": [{"name": "lint", "run": "true"}], "rules": {"packs": ["common", "dp"]}}'; printf '%s\n' "$@" >>"$repo/src/a.ts"; }
+
+sup '// eslint-disable-next-line no-explicit-any'
+run rules-check && fail "a suppression with no reference passes"
+has "src/a.ts:3: suppression" "no reference"
+
+sup '// eslint-disable-next-line no-explicit-any -- #123: SDK types are wrong'
+run rules-check || fail "a suppression with #123 on its line fails: $(out)"
+sup '// -- #123: the SDK types are wrong' '// eslint-disable-next-line no-explicit-any'
+run rules-check || fail "a suppression with #123 on the line above fails: $(out)"
+
+sup '// eslint-disable-next-line no-explicit-any -- #999: gone'
+run rules-check && fail "a suppression naming a missing issue passes"
+has "suppression: #999 not found" "missing issue"
+
+sup '// eslint-disable-next-line no-explicit-any -- #123: SDK types are wrong'
+STUB_GH=down run rules-check || fail "an unreachable gh fails the format: $(out)"
+has "suppression: #123 not verified" "gh down"
+
+sup 'describe.only("a", () => {});  // -- #123: debugging'
+run rules-check && fail "a .only passes with a comment"
+has "src/a.ts:3: suppression" ".only"
+
+sup '// senior-mode: allow debug-print -- #123: progress bar' 'console.log("50%");'
+run rules-check || fail "an allowed debug-print fails: $(out)"
+has "src/a.ts:4: debug-print lifted by senior-mode: allow (#123: progress bar)" "lifted finding"
+sup '// senior-mode: allow debug-print' 'console.log("50%");'
+run rules-check && fail "an allow with no reference passes"
+has "src/a.ts:3: suppression" "allow without reference"
+sup 'console.log("50%");' '// senior-mode: allow debug-print -- #123: progress bar'
+run rules-check && fail "an allow lifts the line above"
+has "src/a.ts:3: debug-print" "allow lifts the next line only"
 
 [ "$failures" -eq 0 ] && echo "ok: rules" || exit 1

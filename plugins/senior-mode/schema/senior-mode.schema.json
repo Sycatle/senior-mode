@@ -177,6 +177,14 @@
         "paths": { "type": "array", "items": { "type": "string" }, "description": "Globs of the files of the user interface: a pull request whose diff touches one is a UI pull request (so is one whose ticket is labelled ui), and a ticket whose Paths reach one is predicted UI by ready. setup repo writes them from the preset and never overwrites a set value." }
       }
     },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string", "minLength": 1, "description": "Template of the preview URL of a UI pull request, with {{pr}}, {{branch}}, {{sha}} and {{slug}} (the branch as lower case letters, digits and -). Shown only when one curl of it answers 2xx or 3xx." },
+        "waitSeconds": { "type": "integer", "minimum": 0, "description": "Seconds publish waits, polling every 15, for a successful GitHub deployment status with an environment_url on the head commit when preview.url is not set (default 300)." }
+      }
+    },
     "security": {
       "type": "object",
       "additionalProperties": false,

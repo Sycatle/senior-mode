@@ -76,11 +76,14 @@ journeys_exec() {
 }
 
 # One `warning: flaky: <id>` line per journey of the test files $@ (JOURNEYS_OF), what `check` puts in its summary.
+# Each is also appended to .git/senior-mode/journeys-flaky.jsonl, which `retro` counts.
 journeys_flaky() {
-  local f id
+  local f id common log
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && log=$common/senior-mode/journeys-flaky.jsonl || log=""
   for f in "$@"; do
     for id in ${JOURNEYS_OF[$f]//,/}; do
       printf 'warning: flaky: %s (passed on the second run)\n' "$id"
+      [ -z "$log" ] || { mkdir -p "${log%/*}" && jq -nc --arg ts "$(iso_time "$(date +%s)")" --arg j "$id" '{ts: $ts, journey: $j}' >>"$log"; } 2>/dev/null || true
     done
   done
 }
@@ -166,3 +169,78 @@ journeys_check() {
   fi
   (cd "$root" && journeys_run "$e2e" "${files[@]}")
 }
+
+# Whether the test file $3 carries the journey id $4 as it is on the base ref $2 (the working tree when $2 is empty); $1 is the root.
+journey_test_at() {
+  local text
+  if [ -n "$2" ]; then
+    text=$(git -C "$1" show "$2:$3" 2>/dev/null) || return 1
+  else
+    text=$(cat "$1/$3" 2>/dev/null) || return 1
+  fi
+  grep -qE "(^|[^[:alnum:]_])$4([^[:alnum:]_]|\$)" <<<"$text"
+}
+
+# The state of the journeys of the accepted specs, as JSON (spec 328 section 5.2, kept up to date): `declared`, `withTest` (those
+# whose test file is on the base branch with the id in it), `missingTests` [{spec, id, test}], `noPaths` [{spec, id}] (a journey whose
+# spec `paths` match no tracked file) and `orphans` [{id, file}] (a test title of an e2e file with a `J<n>` id that no spec declares;
+# looked for only once a journey is declared). $1 is the repository root. Declared 0 and nothing else: a project with no journeys.
+# shellcheck disable=SC2016 # a jq program, not shell
+journeys_report() {
+  local root=$1 specs base="" s globs files hits pattern q=$'"\'`' sid jid jtest missing="" nopaths="" orphans="" with=0 declared=0 ids
+  local -a tfiles=()
+  specs=$(journeys_specs "$root")
+  [ "$specs" != "[]" ] || {
+    echo '{"declared":0,"withTest":0,"missingTests":[],"noPaths":[],"orphans":[]}'
+    return 0
+  }
+  base=$(cd "$root" && default_branch 2>/dev/null) || base=""
+  files=$(git -C "$root" ls-files)
+  while IFS= read -r s; do
+    globs=$(jq -c '.globs' <<<"$s")
+    sid=$(jq -r '.id' <<<"$s")
+    hits=""
+    [ "$globs" = "[]" ] || [ -z "$files" ] || hits=$(protected_match "$globs" <<<"$files" | head -n 1)
+    while IFS=$'\t' read -r jid jtest; do
+      declared=$((declared + 1))
+      if journey_test_at "$root" "$base" "$jtest" "$jid"; then
+        with=$((with + 1))
+      else
+        missing+=$(printf '%s\t%s\t%s' "$sid" "$jid" "$jtest")$'\n'
+      fi
+      [ -n "$hits" ] || nopaths+=$(printf '%s\t%s' "$sid" "$jid")$'\n'
+    done < <(jq -r '.journeys[] | [.id, .test] | @tsv' <<<"$s")
+  done < <(jq -c '.[]' <<<"$specs")
+  ids=$(jq -c '[.[].journeys[].id]' <<<"$specs")
+  mapfile -t tfiles < <(grep -E '(^|/)(e2e|cypress|playwright)/|\.(spec|test|cy)\.[cm]?[jt]sx?$' <<<"$files" | head -n 300)
+  if [ "${#tfiles[@]}" -gt 0 ]; then
+    pattern="(test|it|describe)(\.[a-z]+)?\([[:space:]]*[$q]([^$q]*[^[:alnum:]_$q])?J[0-9]+"
+    orphans=$(cd "$root" && grep -HoE -- "$pattern" "${tfiles[@]}" 2>/dev/null | sed -E 's/^([^:]+):.*(J[0-9]+)$/\2\t\1/' | sort -u) || orphans=""
+  fi
+  jq -nc --argjson d "$declared" --argjson w "$with" --argjson ids "$ids" --arg m "$missing" --arg n "$nopaths" --arg o "$orphans" '
+    def rows($t): $t | split("\n") | map(select(length > 0) | split("\t"));
+    {declared: $d, withTest: $w,
+     missingTests: [rows($m)[] | {spec: .[0], id: .[1], test: .[2]}],
+     noPaths: [rows($n)[] | {spec: .[0], id: .[1]}],
+     orphans: [rows($o)[] | select(.[0] as $i | $ids | index($i) | not) | {id: .[0], file: .[1]}]}'
+}
+
+# The `journeys` block of the retro data $1 (`senior-mode retro`): the journeys declared, those with a test and the flaky runs
+# of the period, from the git common dir $2 and the period $3 (start) and $4 (end, or empty). Nothing is added to a project with
+# no journeys and no flaky run.
+# shellcheck disable=SC2016 # a jq program, not shell
+retro_journeys() {
+  local top report flaky
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    printf '%s\n' "$1"
+    return 0
+  }
+  report=$(journeys_report "$top")
+  flaky=$([ ! -f "$2/senior-mode/journeys-flaky.jsonl" ] || jq -cR 'fromjson? | select(type == "object")' "$2/senior-mode/journeys-flaky.jsonl" 2>/dev/null |
+    jq -sc --arg since "$3" --arg until "${4:-9999}" '[.[] | select((.ts | type) == "string" and .ts >= $since and .ts < $until)] | length')
+  jq -c --argjson r "$report" --argjson f "${flaky:-0}" 'if $r.declared == 0 and $f == 0 then . else
+    . + {journeys: {declared: $r.declared, withTest: $r.withTest, flaky: $f}} end' <<<"$1"
+}
+
+# shellcheck disable=SC2016 # a jq program, not shell
+RETRO_JOURNEYS_TEXT_JQ='(.journeys // empty) | "Journeys: \(.declared) declared, \(.withTest) with a test, \(.flaky) flaky in the period"'

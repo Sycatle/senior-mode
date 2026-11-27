@@ -204,6 +204,54 @@ stub pass
 run journeys-check || fail "O: fails: $(cat "$work/out")"
 [ ! -s "$work/e2e.log" ] || fail "O: the e2e command ran with no journey selected: $(cat "$work/e2e.log")"
 
+# shellcheck disable=SC2016 # the harness is a script written out, not expanded here
+# Q: what `status` and `retro` say (#798). A harness loads the modules of the CLI and calls a function in the repository.
+{
+  echo 'eval "$(sed -e "s|^SELF=.*|SELF='"$cli"'|" -e "/^case /,\$d" "'"$cli"'")"'
+  echo 'jq_text() { jq -r "$STATUS_TEXT_DEF$STATUS_SECTION_JOURNEYS_TEXT_JQ"; }'
+  echo 'retro_text() { jq -r "$RETRO_JOURNEYS_TEXT_JQ"; }'
+  echo '"$@"'
+} >"$work/harness.sh"
+h() { (cd "$repo" && bash "$work/harness.sh" "$@"); }
+text() { h jq_text <<<"$1"; }
+
+git_ checkout -q main
+mkdir -p "$repo/src"
+[ "$(h status_section_journeys_json "" '{}' "$repo" 0 | jq -c '.journeys | [.declared, .withTest, (.missingTests | length), (.noPaths | length), (.orphans | length)]')" = '[2,2,0,2,0]' ] ||
+  fail "Q: the clean state of the journeys, with paths matching no file: $(h status_section_journeys_json "" '{}' "$repo" 0)"
+text "$(h status_section_journeys_json "" '{}' "$repo" 0)" | grep -qx '  journey J1 of spec 328: the paths of the spec match no file' || fail "Q: no-path journey not listed in the text"
+echo 1 >"$repo/src/app.ts"
+commit "feat: app"
+[ "$(h status_section_journeys_json "" '{}' "$repo" 0 | jq -c '.journeys.noPaths')" = '[]' ] || fail "Q: noPaths with a file under the paths"
+text "$(h status_section_journeys_json "" '{}' "$repo" 0)" | grep -q . && fail "Q: a clean state prints lines"
+
+# A journey whose test file is not on the base branch; a test title with an id no spec declares.
+git_ rm -q e2e/refund.spec.ts
+printf 'test("J9 an undeclared journey", () => {});\ntest("a plain test", () => {});\n' >"$repo/e2e/other.spec.ts"
+commit "test: drop refund, add other"
+out=$(h status_section_journeys_json "" '{}' "$repo" 0)
+[ "$(jq -c '.journeys.missingTests' <<<"$out")" = '[{"spec":"328","id":"J2","test":"e2e/refund.spec.ts"}]' ] || fail "Q: missing test not listed: $out"
+[ "$(jq -c '.journeys.orphans' <<<"$out")" = '[{"id":"J9","file":"e2e/other.spec.ts"}]' ] || fail "Q: orphan not listed: $out"
+text "$out" | grep -qx '  journey J2 of spec 328: no test at e2e/refund.spec.ts' || fail "Q: missing test not in the text: $(text "$out")"
+text "$out" | grep -q 'warning: a test title of e2e/other.spec.ts carries journey J9, which no spec declares' || fail "Q: orphan not in the text: $(text "$out")"
+
+# retro: the counts, with the flaky runs `check` recorded (case L) in the period.
+grep -q '"journey":"J1"' "$repo/.git/senior-mode/journeys-flaky.jsonl" || fail "Q: the flaky run was not recorded"
+r=$(h retro_journeys '{"done":[]}' "$repo/.git" 1970-01-01T00:00:00Z "")
+[ "$(jq -c '.journeys' <<<"$r")" = '{"declared":2,"withTest":1,"flaky":1}' ] || fail "Q: retro counts: $r"
+[ "$(h retro_journeys '{}' "$repo/.git" 2999-01-01T00:00:00Z "" | jq -c '.journeys.flaky')" = 0 ] || fail "Q: a flaky run outside the period counted"
+[ "$(h retro_text <<<"$r")" = 'Journeys: 2 declared, 1 with a test, 1 flaky in the period' ] || fail "Q: retro text"
+
+# A project with no spec and no journey reports nothing.
+plain="$work/plain"
+git init -q -b main "$plain"
+mkdir -p "$plain/e2e" "$plain/.claude"
+echo '{"checks":[]}' >"$plain/.claude/senior-mode.json"
+printf 'test("J9 anything", () => {});\n' >"$plain/e2e/a.spec.ts"
+git -C "$plain" add -A && git -C "$plain" -c user.name=t -c user.email=t@t commit -q -m "chore: base"
+[ "$(cd "$plain" && bash "$work/harness.sh" status_section_journeys_json "" '{}' "$plain" 0)" = '{}' ] || fail "Q: a project with no journey has a journeys section"
+[ "$(cd "$plain" && bash "$work/harness.sh" retro_journeys '{"done":[]}' "$plain/.git" 1970-01-01T00:00:00Z "")" = '{"done":[]}' ] || fail "Q: retro reports journeys for a project with none"
+
 # The spec template shows the front matter.
 grep -q '^journeys:$' "$(dirname "$cli")/../skills/spec/template.md" || fail "I: the spec template has no journeys front matter"
 

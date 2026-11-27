@@ -26,6 +26,12 @@ What this spec deliberately does not cover.
 
 Where tests hook in: functions, endpoints, commands, pages.
 
+## Hot paths (optional)
+
+A path that must stay fast, the benchmark that measures it, and why it is hot. `check` fails when no benchmark of that name exists.
+
+- `<path glob>`: benchmark `<name>`, <why it is hot>.
+
 ## Security (M and L)
 
 Data handled and its sensitivity; who may read or change it; entry points (routes, commands, files,

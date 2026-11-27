@@ -2,6 +2,7 @@
   "commands": ["lint", "format", "typecheck", "test", "build"],
   "coverage": { "report": "coverage.xml" },
   "rules": { "packs": ["python"] },
+  "bench": { "tool": "pytest-benchmark" },
   "protected": [
     "**/migrations/**",
     "alembic/**",

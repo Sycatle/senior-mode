@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for the performance rules of `senior-mode check` (#472): a foreign key added without an index (#744), the linter of the migrations (#747). Offline: each case is a
+# Tests for the performance rules of `senior-mode check` (#472): a foreign key added without an index (#744), the linter of the migrations (#747), the benchmark of a hot path (#758). Offline: each case is a
 # branch off main in a fixture repository.
 set -u
 cli=$(cd "$(dirname "$0")/.." && pwd)/senior-mode
@@ -41,6 +41,7 @@ branch() {
   n=$((n + 1))
   git_ checkout -q main
   git_ checkout -q -b "t$n"
+  mkdir -p "$(dirname "$repo/$1")"
   printf '%s\n' "$2" >>"$repo/$1"
   git_ add -A
   git_ commit -q -m "feat: change $n"
@@ -173,6 +174,86 @@ run || fail "a diff with no migration fails: $(cat "$work/out")"
 grep -q "migrations" "$work/out" && fail "the migrations step runs on a diff with no migration: $(cat "$work/out")"
 [ ! -s "$CALLS" ] || fail "the linter ran on a diff with no migration: $(cat "$CALLS")"
 printf '%s\n' "$base_config" >"$repo/.claude/senior-mode.json"
+
+# Hot paths (#758): a spec with a `## Hot paths` section, on main.
+git_ checkout -q main
+mkdir -p "$repo/docs/specs" "$repo/src/billing" "$repo/src/plain"
+cat >"$repo/docs/specs/900-billing.md" <<'SPEC'
+---
+id: 900
+title: Billing total
+status: accepted
+paths: ["src/billing/**"]
+---
+
+# Billing total
+
+## Hot paths
+
+- `src/billing/total.ts`: benchmark `invoiceTotal`, called for every invoice line.
+
+## Open questions
+
+None.
+SPEC
+cat >"$repo/docs/specs/901-plain.md" <<'SPEC'
+---
+id: 901
+title: Plain
+status: accepted
+paths: ["src/plain/**"]
+---
+
+# Plain
+
+## Open questions
+
+None.
+SPEC
+git_ add -A
+git_ commit -q -m "docs: specs"
+bench_config='{"audit":false,"checks":[{"name":"lint","run":"true"}],"performance":{"bench":{"command":"true"}}}'
+
+# A diff under the spec's paths with no benchmark of that name fails naming spec, path and benchmark.
+branch src/billing/total.ts 'export const total = 1'
+config "$bench_config"
+run && fail "a hot path with no benchmark passes: $(cat "$work/out")"
+grep -q "FAIL  hot paths" "$work/out" || fail "hot paths not reported as failed: $(cat "$work/out")"
+grep -q "docs/specs/900-billing.md:12 hot paths hot path src/billing/total.ts has no benchmark named invoiceTotal" "$work/out" || fail "spec, path and benchmark not named: $(cat "$work/out")"
+
+# The benchmark exists: it passes.
+branch src/billing/total.ts 'export const more = 2'
+mkdir -p "$repo/bench"
+echo "bench('invoiceTotal', () => total)" >"$repo/bench/total.bench.ts"
+git_ add -A
+git_ commit -q -m "feat: bench"
+config "$bench_config"
+run || fail "a hot path with its benchmark fails: $(cat "$work/out")"
+grep -q "ok    hot paths" "$work/out" || fail "the hot paths step did not run: $(cat "$work/out")"
+
+# No performance.bench.command: not measured, no failure.
+branch src/billing/total.ts 'export const third = 3'
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
+run || fail "a hot path with no bench command fails: $(cat "$work/out")"
+grep -q "bench: not measured" "$work/out" || fail "bench: not measured not reported: $(cat "$work/out")"
+
+# A spec without a Hot paths section, and a diff outside the spec's paths: nothing is checked.
+branch src/plain/a.ts 'export const a = 1'
+config "$bench_config"
+run || fail "a spec without hot paths fails: $(cat "$work/out")"
+grep -q "hot paths" "$work/out" && fail "the hot paths step runs for a spec without a Hot paths section: $(cat "$work/out")"
+branch README.md 'four'
+config "$bench_config"
+run || fail "a diff outside the spec paths fails: $(cat "$work/out")"
+grep -q "hot paths" "$work/out" && fail "the hot paths step runs on a diff outside the spec paths: $(cat "$work/out")"
+printf '%s\n' "$base_config" >"$repo/.claude/senior-mode.json"
+
+# The spec template carries the optional section, and the presets name the benchmark tool.
+tpl=$(cd "$(dirname "$0")/../.." && pwd)
+grep -q '^## Hot paths' "$tpl/skills/spec/template.md" || fail "the spec template has no Hot paths section"
+for pair in node:"vitest bench" python:pytest-benchmark rust:criterion go:"go test -bench with benchstat"; do
+  [ "$(jq -r '.bench.tool' "$tpl/presets/${pair%%:*}/preset.json")" = "${pair#*:}" ] || fail "preset ${pair%%:*} does not name ${pair#*:}"
+done
 
 [ "$failures" -eq 0 ] && echo "perf: all cases pass"
 exit "$failures"

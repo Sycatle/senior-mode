@@ -212,4 +212,43 @@ run rules-check || fail "old patterns fail: $(out)"
 printf 'const k = 1;\n' >>"$repo/src/old.ts"
 run rules-check || fail "a change next to old patterns fails: $(out)"
 
+# commented-code, outbound-no-timeout and scattered-env (#490, spec 471 §3).
+bad node src/a.ts $'// const x = 1;\n// return x;\n// }' commented-code
+bad python app/a.py $'# x = compute()\n# return x' commented-code
+bad go a.go $'// if err != nil {\n// return err' commented-code
+bad rust src/lib.rs $'// let x = 1;\n// foo(x);' commented-code
+good node src/a.ts $'/**\n * const x = 1;\n * return x;\n */'
+good rust src/lib.rs $'/// let x = 1;\n/// foo(x);'
+good node src/a.ts '// const x = 1;'
+good node src/a.ts $'// the user is created here\n// then we send the mail'
+
+bad node src/a.ts 'const r = await fetch(url);' outbound-no-timeout
+good node src/a.ts 'const r = await fetch(url, { signal: AbortSignal.timeout(5000) });'
+good node src/a.ts $'const r = await fetch(url, {\n  method: "POST",\n  signal: AbortSignal.timeout(5000),\n});'
+bad node src/a.ts $'const r = await fetch(url, {\n  method: "POST",\n});' outbound-no-timeout
+good node src/a.test.ts 'await fetch(url);'
+bad python app/a.py 'r = requests.get(url)' outbound-no-timeout
+good python app/a.py 'r = requests.get(url, timeout=5)'
+bad go a.go 'resp, err := http.Get(url)' outbound-no-timeout
+bad go a.go 'c := &http.Client{}' outbound-no-timeout
+good go a.go 'c := &http.Client{Timeout: 5 * time.Second}'
+bad rust src/lib.rs 'let r = reqwest::get(url).await?;' outbound-no-timeout
+
+bad node src/billing/charge.ts 'const k = process.env.STRIPE_KEY;' scattered-env
+has "rules.envModule" "scattered-env names the key"
+good node src/config/env.ts 'export const k = process.env.STRIPE_KEY;'
+good node vite.config.ts 'export default { base: process.env.BASE };'
+good node src/billing/charge.test.ts 'const k = process.env.STRIPE_KEY;'
+bad python app/a.py 'k = os.environ["KEY"]' scattered-env
+good python app/settings.py 'k = os.environ["KEY"]'
+bad go a.go 'k := os.Getenv("KEY")' scattered-env
+bad rust src/lib.rs 'let k = std::env::var("KEY");' scattered-env
+# rules.envModule replaces the preset's default globs.
+put node src/config/env.ts 'export const k = process.env.STRIPE_KEY;'
+config '{"audit": false, "preset": "node", "checks": [{"name": "lint", "run": "true"}], "rules": {"packs": ["common", "node"], "envModule": ["src/settings/**"]}}'
+run rules-check && fail "a file outside rules.envModule passes"
+has "src/config/env.ts:1: scattered-env" "envModule replaces the default"
+mkdir -p "$repo/src/settings" && git -C "$repo" mv -f src/config/env.ts src/settings/env.ts 2>/dev/null || mv "$repo/src/config/env.ts" "$repo/src/settings/env.ts"
+run rules-check || fail "a file under rules.envModule fails: $(out)"
+
 [ "$failures" -eq 0 ] && echo "ok: rules" || exit 1

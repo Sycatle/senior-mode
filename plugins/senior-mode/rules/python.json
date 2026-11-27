@@ -22,6 +22,54 @@
       "pattern": "(^|[^[:alnum:]_.])print\\(|(^|[^[:alnum:]_.])breakpoint\\(\\)|import[[:space:]]+pdb|pdb\\.set_trace\\(",
       "message": "debug output left in production code",
       "fix": "remove it, or use the logging module"
+    },
+    {
+      "id": "commented-code",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "comment",
+      "ext": [
+        "py"
+      ],
+      "comment": "^[[:space:]]*#",
+      "code": "[;{})][[:space:]]*$|^[[:space:]]*(if|for|return|const|let|def|import|fn|func)([[:space:]]|\\()",
+      "min": 2,
+      "pattern": "^[[:space:]]*#",
+      "message": "commented-out code",
+      "fix": "delete it, git keeps the history"
+    },
+    {
+      "id": "outbound-no-timeout",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "call",
+      "ext": [
+        "py"
+      ],
+      "prodOnly": true,
+      "pattern": "(^|[^[:alnum:]_.])(requests|httpx)\\.(get|post|put|patch|delete|head|request)\\(",
+      "message": "an outbound call with no timeout",
+      "fix": "pass timeout=<seconds>",
+      "unless": "timeout[[:space:]]*="
+    },
+    {
+      "id": "scattered-env",
+      "tier": 2,
+      "kind": "pattern",
+      "ext": [
+        "py"
+      ],
+      "prodOnly": true,
+      "pattern": "os\\.environ|os\\.getenv",
+      "okPaths": [
+        "**/config.*",
+        "**/config/**",
+        "**/env.*",
+        "**/settings.py"
+      ],
+      "okKey": "envModule",
+      "message": "environment read outside the config module (rules.envModule names it)",
+      "fix": "read it once in the config module (rules.envModule) and import the typed value"
     }
   ]
 }

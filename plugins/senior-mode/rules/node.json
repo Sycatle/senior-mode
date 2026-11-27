@@ -32,6 +32,70 @@
       "pattern": "(^|[^[:alnum:]_.])console\\.(log|debug)\\(|^[[:space:]]*debugger[[:space:]]*;?[[:space:]]*$",
       "message": "debug output left in production code",
       "fix": "remove it, or use the project's logger"
+    },
+    {
+      "id": "commented-code",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "comment",
+      "ext": [
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "mjs",
+        "cjs"
+      ],
+      "comment": "^[[:space:]]*//",
+      "code": "[;{})][[:space:]]*$|^[[:space:]]*(if|for|return|const|let|def|import|fn|func)([[:space:]]|\\()",
+      "min": 2,
+      "pattern": "^[[:space:]]*//",
+      "message": "commented-out code",
+      "fix": "delete it, git keeps the history",
+      "doc": "^[[:space:]]*(///|//!)"
+    },
+    {
+      "id": "outbound-no-timeout",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "call",
+      "ext": [
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "mjs",
+        "cjs"
+      ],
+      "prodOnly": true,
+      "pattern": "(^|[^[:alnum:]_.])fetch\\(|axios\\.(create|get|post|put|patch|delete|request|head)\\(",
+      "message": "an outbound call with no timeout",
+      "fix": "pass signal: AbortSignal.timeout(ms), or timeout for axios",
+      "unless": "signal|timeout"
+    },
+    {
+      "id": "scattered-env",
+      "tier": 2,
+      "kind": "pattern",
+      "ext": [
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "mjs",
+        "cjs"
+      ],
+      "prodOnly": true,
+      "pattern": "process\\.env|import\\.meta\\.env",
+      "okPaths": [
+        "**/config.*",
+        "**/config/**",
+        "**/env.*",
+        "**/*.config.*"
+      ],
+      "okKey": "envModule",
+      "message": "environment read outside the config module (rules.envModule names it)",
+      "fix": "read it once in the config module (rules.envModule) and import the typed value"
     }
   ]
 }

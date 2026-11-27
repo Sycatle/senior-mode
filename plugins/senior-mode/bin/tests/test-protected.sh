@@ -114,6 +114,21 @@ mkdir -p "$other/migrations" && echo x >"$other/migrations/1.sql"
 git -C "$other" add -A && git -C "$other" -c user.name=t -c user.email=t@t commit -q -m "feat: x"
 [ "$(cd "$other" && "$cli" protected)" = migrations/1.sql ] || fail "master not found as the default branch"
 
+# The levers directory of the base branch's list (#739): a branch that edits a file under it changes a protected zone.
+zone="$work/zone"
+git init -q -b main "$zone"
+mkdir -p "$zone/.claude"
+echo '{"protected": [".claude/senior-mode.json", ".claude/senior-mode/**"]}' >"$zone/.claude/senior-mode.json"
+git -C "$zone" add -A && git -C "$zone" -c user.name=t -c user.email=t@t commit -q -m "chore: start"
+git -C "$zone" switch -q -c feat/1-lever
+mkdir -p "$zone/.claude/senior-mode/hooks" "$zone/.claude/senior-mode/roles"
+echo x >"$zone/.claude/senior-mode/hooks/x.sh"
+echo x >"$zone/.claude/senior-mode/roles/y.md"
+echo x >"$zone/src.ts"
+git -C "$zone" add -A && git -C "$zone" -c user.name=t -c user.email=t@t commit -q -m "feat: levers"
+[ "$(cd "$zone" && "$cli" protected)" = $'.claude/senior-mode/hooks/x.sh\n.claude/senior-mode/roles/y.md' ] ||
+  fail "files under .claude/senior-mode/ not reported as a protected zone: $(cd "$zone" && "$cli" protected 2>&1)"
+
 # No key, empty list: nothing is protected.
 config '{}'
 expect 1 ""

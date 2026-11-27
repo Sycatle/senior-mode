@@ -56,6 +56,9 @@ jq -e '.packages["."]["initial-version"] == "0.1.0"' "$new/release-please-config
 jq -e '.protected | index("**/migrations/**") and index(".github/workflows/**") and index("**/secrets/**") and index(".claude/secret-allowlist") and index(".claude/ratchet-baseline.json") and index(".claude/architecture-baseline.json")' \
   "$new/.claude/senior-mode.json" >/dev/null || fail "generic preset without protected zones: $(jq -c .protected "$new/.claude/senior-mode.json")"
 
+jq -e '.protected | index(".claude/senior-mode.json") and index(".claude/senior-mode/**")' "$new/.claude/senior-mode.json" >/dev/null ||
+  fail "a fresh config does not protect the levers directory: $(jq -c .protected "$new/.claude/senior-mode.json")"
+
 # `setup repo` writes `protected`, after `setup github` ran on a first setup: with globs and no
 # managed CODEOWNERS block it says to rerun `setup github`, and it says it again on a rerun.
 grep -q "CODEOWNERS: the protected zones are not owned yet; rerun senior-mode setup github" "$work/out" ||
@@ -90,6 +93,18 @@ grep -q "docs/vision.md" "$work/out" && fail "protection proposed although docs/
 jq '.protected = []' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
 setup "$new" --command test="true" --command lint="true"
 grep -q "docs/vision.md: add it to protected" "$work/out" || fail "an empty protected list is not proposed docs/vision.md: $(cat "$work/out")"
+jq 'del(.protected)' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
+setup "$new" --command test="true" --command lint="true"
+
+# An existing list gets the levers directory (#739): both globs appended, no entry removed or reordered.
+jq '.protected = ["docs/**", "a/b", ".claude/senior-mode.json"]' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
+setup "$new" --command test="true" --command lint="true"
+[ "$(jq -c .protected "$new/.claude/senior-mode.json")" = '["docs/**","a/b",".claude/senior-mode.json",".claude/senior-mode/**"]' ] ||
+  fail "an existing protected list not extended in place: $(jq -c .protected "$new/.claude/senior-mode.json")"
+jq '.protected = ["z/**", "a/**"]' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
+setup "$new" --command test="true" --command lint="true"
+[ "$(jq -c .protected "$new/.claude/senior-mode.json")" = '["z/**","a/**",".claude/senior-mode.json",".claude/senior-mode/**"]' ] ||
+  fail "an existing protected list reordered or not extended: $(jq -c .protected "$new/.claude/senior-mode.json")"
 jq 'del(.protected)' "$new/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$new/.claude/senior-mode.json"
 setup "$new" --command test="true" --command lint="true"
 

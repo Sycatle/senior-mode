@@ -8,7 +8,7 @@
     "**/rbac/**", ".env*", "**/secrets/**", "*.pem", "*.key", "**/payments/**", "**/billing/**",
     "**/stripe/**", ".github/workflows/**", ".github/actions/**", ".github/CODEOWNERS", ".githooks/**",
     ".gitlab-ci.yml", "Dockerfile*", "docker-compose*", "compose.y*ml", "**/infra/**",
-    "**/terraform/**", "**/k8s/**", "*.tf", ".claude/settings*.json", ".claude/senior-mode.json", ".claude/secret-allowlist", ".claude/ratchet-baseline.json", ".claude/architecture-baseline.json"
+    "**/terraform/**", "**/k8s/**", "*.tf", ".claude/settings*.json", ".claude/senior-mode.json", ".claude/senior-mode/**", ".claude/secret-allowlist", ".claude/ratchet-baseline.json", ".claude/architecture-baseline.json"
   ],
   "frameworks": { "next": { "protected": ["middleware.*", "src/middleware.*", "proxy.*", "src/proxy.*"] } },
   "queries": { "prisma": { "template": "queries/prisma.ts", "helper": "test/support/query-count.ts" } },

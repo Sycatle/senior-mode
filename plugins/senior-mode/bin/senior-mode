@@ -30,6 +30,8 @@ usage() {
 . "$LIB/hotfix.sh"
 # shellcheck source=lib/check.sh
 . "$LIB/check.sh"
+# shellcheck source=lib/journeys.sh
+. "$LIB/journeys.sh"
 # shellcheck source=lib/characterize.sh
 . "$LIB/characterize.sh"
 # shellcheck source=lib/architecture.sh
@@ -251,6 +253,10 @@ case "${1:-}" in
   deps)
     [ $# -eq 1 ] || usage
     deps_scan
+    ;;
+  journeys-check)
+    [ $# -le 2 ] || usage
+    journeys_check "${2:-}"
     ;;
   vision-check)
     [ $# -eq 1 ] || usage

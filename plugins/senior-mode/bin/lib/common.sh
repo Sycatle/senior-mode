@@ -10,6 +10,7 @@ DEFAULTS='{
   "commit": { "coAuthor": true },
   "characterize": { "below": 50, "exempt": [] },
   "e2e": { "slots": 2 },
+  "journeys": { "required": true },
   "limits": { "prLines": 400, "diffLines": { "S": 300, "M": 800, "L": 2000 }, "diffWeights": { "tests": 0.5, "docs": 0.25 }, "diffExclude": [] },
   "wip": 1,
   "slot": "",

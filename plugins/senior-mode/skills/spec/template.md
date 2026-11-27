@@ -34,6 +34,14 @@ new entry point).
 
 ## Users and journeys (L only)
 
+Who uses it and what each user does, one journey per line. Declare the journeys in the front matter, next to
+`paths` (`id` unique in the spec, `test` a relative path with no `..`); `check` runs the ones the diff touches:
+
+```yaml
+journeys:
+  - { id: J1, name: "A buyer pays an invoice", test: "e2e/pay-invoice.spec.ts" }
+```
+
 ## Design (L only)
 
 Components, data, interfaces; link ADRs for every hard-to-reverse choice.

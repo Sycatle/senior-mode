@@ -854,10 +854,120 @@ check_cache_key() {
   } | sha256sum | cut -d' ' -f1
 }
 
+# Where the heavy runs (tier 3) of the commits are kept, `<sha>.state` and `<sha>.log`: the common git directory, so that every
+# worktree sees them (#717, spec 474 §4).
+heavy_dir() {
+  local dir
+  dir=$(git rev-parse --path-format=absolute --git-common-dir) || return 1
+  printf '%s/senior-mode/heavy\n' "$dir"
+}
+
+# Sets the status senior-mode/heavy of the commit $1 to the state $2 with the description $3 (140 characters at most) and
+# keeps both in the state file of the commit, which says the commit has a heavy run.
+heavy_set() {
+  local sha=$1 state=$2 description=${3:0:140} dir
+  dir=$(heavy_dir) && mkdir -p "$dir" || return 1
+  gh_retry api "repos/$(repo_slug)/statuses/$sha" -f state="$state" -f context=senior-mode/heavy \
+    -f description="$description" >/dev/null || return 1
+  printf '%s\t%s\n' "$state" "$description" >"$dir/$sha.state.$$" && mv -f "$dir/$sha.state.$$" "$dir/$sha.state"
+}
+
+# Carries the finished heavy result of the commit $1 over to $2 when `git range-diff` shows the same patches (a rebase).
+# Fails, and sets nothing, otherwise.
+heavy_carry() {
+  local old state base ob nb rd dir
+  old=$(git rev-parse --verify "$1^{commit}" 2>/dev/null) || return 1
+  dir=$(heavy_dir) || return 1
+  [ -f "$dir/$old.state" ] || return 1
+  state=$(cut -f1 "$dir/$old.state")
+  [[ $state =~ ^(success|failure)$ ]] || return 1
+  base=$(default_branch) || return 1
+  ob=$(git merge-base "$old" "$2") && nb=$(git merge-base "$base" "$2") &&
+    rd=$(git range-diff --no-color "$ob..$old" "$nb..$2" 2>/dev/null) && [ -n "$rd" ] || return 1
+  printf '%s\n' "$rd" | awk 'NF && $3 != "=" { bad = 1 } END { exit (bad || NR == 0) }' || return 1
+  heavy_set "$2" "$state" "carried over from ${old:0:7}: git range-diff shows the same patches" || return 1
+  echo "senior-mode/heavy = $state on ${2:0:7}: carried over from ${old:0:7}"
+}
+
+# What `publish` does about the heavy tier on the commit $1 (#717): nothing without a tier 3 check or when the commit already
+# has a heavy run; the result of SENIOR_MODE_HEAVY_FROM (the previous head, set by serve after a rebase) when git range-diff
+# shows the same patches; else senior-mode/heavy pending at once and `check --tier 3 --publish <sha>` started detached, under a
+# slot, so that the caller never waits for it.
+heavy_start() {
+  local sha=$1 dir
+  [ "$(jq '[.checks // [] | .[] | select(.tier == 3)] | length' "$(config_file)")" -gt 0 ] || return 0
+  dir=$(heavy_dir) || return 0
+  [ ! -e "$dir/$sha.state" ] || return 0
+  if [ -n "${SENIOR_MODE_HEAVY_FROM:-}" ] && heavy_carry "$SENIOR_MODE_HEAVY_FROM" "$sha"; then
+    return 0
+  fi
+  heavy_set "$sha" pending "tier 3 checks running" || die "could not publish the heavy status of ${sha:0:7}"
+  (cd "$(git rev-parse --show-toplevel)" && nohup "$SELF" slot -- "$SELF" check --tier 3 --publish "$sha" \
+    </dev/null >>"$dir/$sha.log" 2>&1 &)
+  echo "senior-mode/heavy = pending on ${sha:0:7}: tier 3 checks running, log $dir/$sha.log"
+}
+
+# Puts the heavy report of the commit $2 on its pull request $1 as the one comment marked <!-- senior-mode:heavy -->: the
+# existing one is replaced; with $4 = only-existing no comment is created (a pass leaves nothing but a stale report to fix).
+heavy_comment() {
+  local pr=$1 slug id body="<!-- senior-mode:heavy -->
+$3"
+  slug=$(repo_slug) || return 0
+  id=$(gh_retry api "repos/$slug/issues/$pr/comments" --jq '[.[] | select(.body | startswith("<!-- senior-mode:heavy -->"))][0].id // empty' 2>/dev/null) || id=""
+  if [ -n "$id" ]; then
+    gh_retry api -X PATCH "repos/$slug/issues/comments/$id" -f body="$body" >/dev/null || true
+  elif [ "${4:-}" != only-existing ]; then
+    gh_retry api "repos/$slug/issues/$pr/comments" -f body="$body" >/dev/null || true
+  fi
+}
+
+# `check --tier 3 --publish <sha>` (#717): the heavy run of the commit $1, in a worktree of it with its dependencies installed,
+# then senior-mode/heavy set to success, or to failure with the names of the failed checks, and on failure the compact
+# `file:line` lines of the failures and the path of the full log as a comment of the pull request. Always returns 0: the
+# result is the status.
+heavy_run() {
+  local sha=$1 root wt log dir rc=1 description pr dep cmd report
+  root=$(git rev-parse --show-toplevel) || return 1
+  dir=$(heavy_dir) || return 1
+  log=$dir/$sha.log
+  wt=$(worktree_path "$root" "heavy-${sha:0:12}")
+  git worktree remove --force "$wt" 2>/dev/null || true
+  if git worktree add -q --detach "$wt" "$sha" >>"$log" 2>&1; then
+    while IFS=$'\t' read -r dep cmd; do
+      (cd "$wt/$dep" && bash -c "$cmd" </dev/null) >>"$log" 2>&1 || true
+    done < <(install_plan "$wt")
+    (cd "$wt" && "$SELF" check --tier 3) >>"$log" 2>&1 && rc=0
+    git worktree remove --force "$wt" 2>/dev/null || true
+  else
+    echo "failed: no worktree of ${sha:0:7} to run the heavy checks in" >>"$log"
+  fi
+  description=$(tail -n 1 "$log")
+  if [ "$rc" -eq 0 ]; then
+    heavy_set "$sha" success "$description" || true
+  else
+    [[ $description == "failed: "* ]] || description="failed: tier 3 run, see $log"
+    heavy_set "$sha" failure "$description" || true
+  fi
+  pr=$(gh_retry api "repos/$(repo_slug)/commits/$sha/pulls" --jq '[.[] | select(.state == "open")][0].number // empty' 2>/dev/null) || pr=""
+  [ -n "$pr" ] || return 0
+  if [ "$rc" -eq 0 ]; then
+    heavy_comment "$pr" "$sha" "Tier 3 checks passed on \`${sha:0:7}\`: $description" only-existing
+  else
+    report=$(grep -E '^(FAIL  |      )' "$log" || true)
+    heavy_comment "$pr" "$sha" "Tier 3 checks failed on \`${sha:0:7}\`: ${description#failed: }
+
+\`\`\`
+$report
+\`\`\`
+Log: \`$log\`"
+  fi
+  return 0
+}
+
 check() {
   local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp ci_only=false jobs="[]" job
   local waiting="" ci_failed="" st url free pre_push=false changed=false update=false a label vext vcmd preset nbuiltin vc
-  local changed_list="" changed_scope="" sel all=false pk="" pkdesc="" pdir pcmd found idx argc=$# tier_only="" tier run2=true run3=false tier_errors urc=0 no_cache=false ckey inp cdir
+  local changed_list="" changed_scope="" sel all=false pk="" pkdesc="" pdir pcmd found idx argc=$# tier_only="" tier run2=true run3=false tier_errors urc=0 no_cache=false ckey inp cdir publish_sha=""
   local -a bases=()
   local -A variant=()
   while [ $# -gt 0 ]; do
@@ -873,6 +983,11 @@ check() {
         tier_only=$2
         shift
         ;;
+      --publish)
+        [ $# -ge 2 ] || usage
+        publish_sha=$2
+        shift
+        ;;
       *) usage ;;
     esac
     shift
@@ -880,9 +995,15 @@ check() {
   [[ -z $tier_only || $tier_only =~ ^[23]$ ]] || die "check --tier takes 2 or 3, not $tier_only"
   [ -z "$tier_only" ] || [ "$all" = false ] || die "check --tier and --all are exclusive: --all runs tiers 2 and 3"
   # Tier 2 is the push gate and the default; tier 3 is the heavy tier, run by --tier 3 or with --all (spec 474 §2).
+  [ -z "$publish_sha" ] || [ "$tier_only" = 3 ] || die "check --publish goes with --tier 3"
   [ "$tier_only" != 3 ] || run2=false
   { [ "$tier_only" = 3 ] || [ "$all" = true ]; } && run3=true
   [ "$pre_push" = false ] || [ "$changed" = false ] || die "check --changed is not for the push gate: --pre-push runs the full check"
+  if [ -n "$publish_sha" ]; then
+    publish_sha=$(git rev-parse --verify "$publish_sha^{commit}" 2>/dev/null) || die "unknown commit: $publish_sha"
+    heavy_run "$publish_sha"
+    return
+  fi
   if [ "$update" = true ]; then
     [ "$argc" -eq 1 ] || usage
     root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
@@ -1232,6 +1353,7 @@ publish() {
     -f description="$description" >/dev/null ||
     die "could not publish the status of ${sha:0:7}; push the commit first"
   echo "senior-mode/ci = $state on ${sha:0:7}: $description"
+  heavy_start "$sha"
   verdict=$(security_verdict "$sha")
   state=${verdict%% *} description=${verdict#* }
   # Only publish's own words are replaced: a success "not required", a pending "required: ...". Any

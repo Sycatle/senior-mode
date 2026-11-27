@@ -30,6 +30,18 @@ never overwritten. After `senior-mode setup github` adds the third check to an e
 repository, a pull request opened before needs `senior-mode publish` once more on its head. See
 [ADR 0015](../adr/0015-security-posture.md).
 
+### The heavy status
+
+When the configuration has a [tier 3 check](configuration.md#checks), `senior-mode publish` also sets
+`senior-mode/heavy` to `pending` on the head, at once, and starts `senior-mode check --tier 3 --publish <sha>`
+detached, in a worktree of the head under a [slot](#session-slots): `publish` returns in a few seconds and the agent
+moves on. The log is `senior-mode/heavy/<sha>.log` of the git directory. When the run ends the status becomes `success`,
+or `failure` with the names of the failed checks, and a failure is also posted as one pull request comment marked
+`<!-- senior-mode:heavy -->` (the next run replaces it) with the compact `file:line` lines of the failing checks and
+the log path. A head that already has a heavy run gets no second one, and a configuration with no tier 3 check sets no
+heavy status. A rebase whose `git range-diff` shows the same patches carries the result over to the new head
+(`publish` reads the previous head from `SENIOR_MODE_HEAVY_FROM`) instead of running again. The status does not gate the merge yet.
+
 A session with a [role](#session-roles) other than `reviewer` cannot post `senior-mode/review`: the
 Bash guard denies it. `senior-mode/security` is still open to a ticket session until the `security`
 agent gets a role of its own. `run` checks the protected zones itself before it merges, whatever the

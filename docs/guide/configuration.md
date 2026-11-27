@@ -330,7 +330,7 @@ and, in `actions` mode, the workflow all run it, from the repository root.
 - A check may say when it runs with `"tier": 2` or `"tier": 3`. A check with no `tier` is tier 2, so an existing
   configuration behaves as before. `senior-mode check` and the `pre-push` hook run tier 2; a tier 3 check (the
   heavy ones) is skipped there with `heavy: <name> runs after the push`. `senior-mode check --tier 3` runs the
-  tier 3 checks alone, and `senior-mode check --all` runs both tiers. A tier 3 run is not recorded for `publish`.
+  tier 3 checks alone, and `senior-mode check --all` runs both tiers. A tier 3 run is not recorded for `publish`. `senior-mode publish` starts the tier 3 run detached and reports it as the [heavy status](autonomy.md#the-heavy-status).
   Any other tier, or a `tier` on the `secret scan` or the `dependency audit` (built-in, always tier 2), is a
   configuration error that names the key (`checks[1].tier must be 2 or 3, not 4`).
 - `check.edit` lists tier 1 fixers (formatter, `lint --fix`). After each edit of the agent, the `edit-fix` hook runs them on that

@@ -333,22 +333,71 @@ doctor_github() {
   esac
 }
 
+# The payload version of the hook events that is current (spec 330 §3.2). A hook pinned to an older one is deprecated.
+HOOK_PAYLOAD_LATEST=${SENIOR_MODE_HOOK_PAYLOAD_LATEST:-1}
+
+# The levers the layers of the repository add (spec 330 §6): the hooks, roles, rows of `models` and providers of the
+# organization, repository and local layers that the plugin does not have, each with its layer and file. Reads the
+# resolved layers (config_resolve) on stdin. A provider is listed with the names of its variables, never the values.
+# shellcheck disable=SC2016 # a jq program, not shell
+customization_levers() {
+  jq -c --argjson d "$DEFAULTS" '
+    [.layers[] | select(.name | IN("organization", "repository", "local"))] as $ls
+    | def at($l): {layer: $l.name, file: $l.source};
+    {hooks: [$ls[] | . as $l | ($l.config.hooks.on? // [])[]? | select(type == "object")
+        | {name: (.name // ""), events: ((.event // []) | if type == "array" then . else [.] end), target: (.run // .url // ""),
+           version: (.version // 1)} + at($l)],
+     roles: [$ls[] | . as $l | ($l.config.roles? // {}) | select(type == "object") | to_entries[]
+        | {name: .key, kind: (.value.kind? // ""), agent: (.value.agent? // "")} + at($l)],
+     rows: [$ls[] | . as $l | ($l.config.models? // [])[]? | select(type == "object")
+        | select(. as $row | (($d.models? // []) | index([$row])) | not)
+        | {role: (.role // "*"), size: (.size // null), type: (.type // null), model: (.model // ""), provider: (.provider // null)} + at($l)],
+     providers: [$ls[] | . as $l | ($l.config.providers? // {}) | select(type == "object") | to_entries[]
+        | {name: .key, env: ((.value.env? // {}) | if type == "object" then keys else [] end)} + at($l)]}'
+}
+
+# A hook pinned to a payload version older than the current one is deprecated (spec 330 §3.2).
+doctor_hook_versions() {
+  local line
+  [ -n "${DOCTOR_RES:-}" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    doctor_add warn "hook $(jq -r .name <<<"$line")" "pinned to payload version $(jq -r .version <<<"$line") ($(jq -r .layer <<<"$line") layer), which is deprecated: version $HOOK_PAYLOAD_LATEST is current" \
+      "set version: $HOOK_PAYLOAD_LATEST on the hook after reading the payload schema (a hook is read from $(jq -r .file <<<"$line"))"
+  done < <(customization_levers <<<"$DOCTOR_RES" | jq -c --argjson v "$HOOK_PAYLOAD_LATEST" '.hooks[] | select((.version | type) == "number" and .version < $v)')
+}
+
 # What the repository customizes (spec 330 §6, what the layers, the overrides and the profiles provide): the profile, the
-# lifted gates with their ADR, the override files, and the layer values that differ from the defaults (the keys that
-# `setup` writes for every project, preset, checks, ci, github and project, do not count as customization).
+# lifted gates with their ADR, the override files, the hooks, roles, routing rows and providers, and the layer values that
+# differ from the defaults (the keys that `setup` writes for every project, preset, checks, ci, github and project, do
+# not count as customization; the levers are listed apart).
 # shellcheck disable=SC2016 # a jq program, not shell
 doctor_customization() {
-  [ -n "${DOCTOR_RES:-}" ] || { echo '{"profile":"strict","lifts":[],"overrides":[],"values":[],"nothing":true}'; return 0; }
-  jq -c --argjson d "$DEFAULTS" --argjson ov "$(override_files | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t") | {file: .[0], mode: .[1], target: .[2]})')" '
+  [ -n "${DOCTOR_RES:-}" ] || { echo '{"profile":"strict","lifts":[],"overrides":[],"values":[],"hooks":[],"roles":[],"rows":[],"providers":[],"nothing":true}'; return 0; }
+  jq -c --argjson d "$DEFAULTS" --argjson levers "$(customization_levers <<<"$DOCTOR_RES")" \
+    --argjson ov "$(override_files | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t") | {file: .[0], mode: .[1], target: .[2]})')" '
     def flat($p): if type == "object" then (to_entries[] | .key as $k | .value | flat($p + [$k])) else {path: $p, value: .} end;
     ([.layers[] | select(.name != "defaults" and .name != "profile") | .name as $n
-      | (.config | del(.["$schema"], .process, .project, .github, .preset, .checks, .ci)) | flat([])
+      | (.config | del(.["$schema"], .process, .project, .github, .preset, .checks, .ci, .hooks, .roles, .models, .providers)) | flat([])
       | select((try (.path as $q | $d | getpath($q)) catch null) != .value) | {layer: $n, key: (.path | join(".")), value: .value}]
      + [.layers[] | select(.name == "profile") | .config | flat([]) | select((try (.path as $q | $d | getpath($q)) catch null) != .value)
         | {layer: "profile", key: (.path | join(".")), value: .value}]) as $values
     | {profile: .profile.name, origin: .profile.origin, chain: .profile.chain,
-       lifts: [.lifted[] | . + {status: "accepted"}], overrides: $ov, values: $values}
-    | . + {nothing: (.profile == "strict" and (.lifts | length) == 0 and (.overrides | length) == 0 and (.values | length) == 0)}' <<<"$DOCTOR_RES"
+       lifts: [.lifted[] | . + {status: "accepted"}], overrides: $ov, values: $values} + $levers
+    | . + {nothing: (.profile == "strict" and ([.lifts, .overrides, .values, .hooks, .roles, .rows, .providers] | all(length == 0)))}' <<<"$DOCTOR_RES"
+}
+
+# The one line of `status` (spec 330 §6): `customized: 2 hooks, 1 role, 3 rows; lifted: none`, as {hooks, roles, rows, providers,
+# lifted: [rules]}. Empty counts and no lift: nothing to say, `line` is null.
+customization_summary() {
+  local res
+  res=$(config_resolve 2>/dev/null) || { echo '{"line":null}'; return 0; }
+  customization_levers <<<"$res" | jq -c --argjson lifted "$(jq -c '[.lifted[].rule]' <<<"$res")" '
+    {hooks: (.hooks | length), roles: (.roles | length), rows: (.rows | length), providers: (.providers | length), lifted: $lifted}
+    | . + {line: (if (.hooks + .roles + .rows + .providers + (.lifted | length)) == 0 then null
+        else "customized: \(.hooks) hook\(if .hooks == 1 then "" else "s" end), \(.roles) role\(if .roles == 1 then "" else "s" end), \(.rows) row\(if .rows == 1 then "" else "s" end)"
+          + (if .providers > 0 then ", \(.providers) provider\(if .providers == 1 then "" else "s" end)" else "" end)
+          + "; lifted: \(if (.lifted | length) == 0 then "none" else .lifted | join(", ") end)" end)}'
 }
 
 # The project has a test command (commands.test, or a check named test), and the test files that exist run somewhere (#638):
@@ -383,6 +432,7 @@ doctor() {
   doctor_claude
   doctor_hooks
   doctor_config
+  doctor_hook_versions
   doctor_github
   doctor_tests
   cust=$(doctor_customization)
@@ -398,6 +448,10 @@ doctor() {
         "  profile: \(.profile)\(if .origin then " (\(.origin)\(if (.chain | length) > 1 then ", extends \(.chain[1:] | join(", "))" else "" end))" else "" end)",
         (.lifts[] | "  LIFTED \(.rule): \(.adr) (\(.status), profile \(.profile))"),
         (.overrides[] | "  override \(.target) (\(.mode)): .claude/senior-mode/overrides/\(.file)"),
+        (.hooks[] | "  hook \(.name) (\(.events | join(", "))) \(.target) [version \(.version)]: \(.layer) layer, \(.file)"),
+        (.roles[] | "  role \(.name) (\(.kind)) \(.agent): \(.layer) layer, \(.file)"),
+        (.rows[] | "  row \(.role)\(if .size then " size \(.size | if type == "array" then join("/") else . end)" else "" end)\(if .type then " type \(.type | if type == "array" then join("/") else . end)" else "" end): \(.model)\(if .provider then " on \(.provider)" else "" end): \(.layer) layer, \(.file)"),
+        (.providers[] | "  provider \(.name) (\(.env | join(", "))): \(.layer) layer, \(.file)"),
         (.values[] | "  \(.layer): \(.key) = \(.value | tojson)")) end' <<<"$out"
   fi
   jq -e '.ok' <<<"$out" >/dev/null

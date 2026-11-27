@@ -242,6 +242,7 @@ grep -q 'board workflows' "$work/out" && fail "E7: workflows reported with no an
 printf -- '---\nid: 0016\nstatus: proposed\n---\n' >"$repo/docs/adr/0016-lift.md"
 config "$(jq -c '.process = {profile: "fast", lifts: [{rule: "review", adr: "docs/adr/0016-lift.md"}]}' <<<"$good")"
 expect_fail "F1" 'proposed, not accepted' 'make the ADR of the lift'
+grep -q 'review.*docs/adr/0016-lift.md' "$work/out" || fail "F1: the rule and the ADR are not named: $(cat "$work/out")"
 printf -- '---\nid: 0016\nstatus: accepted\n---\n' >"$repo/docs/adr/0016-lift.md"
 mkdir -p "$repo/.claude/senior-mode/overrides/skills/review"
 echo "extra" >"$repo/.claude/senior-mode/overrides/skills/review/SKILL.append.md"
@@ -255,6 +256,35 @@ grep -q 'nothing overridden' "$work/out" && fail "F2: says nothing is overridden
 echo '{"wip": 3}' >"$repo/.claude/senior-mode.local.json"
 doctor
 grep -q 'local: wip = 3' "$work/out" || fail "F3: the local layer is not listed: $(cat "$work/out")"
+
+# G (#446): the hooks, roles, routing rows and providers of the layers, each with its file and layer.
+rm -f "$repo/.claude/senior-mode.local.json"
+rm -rf "$repo/.claude/senior-mode"
+# shellcheck disable=SC2016 # a jq program, not shell
+levers='.hooks = {on: [{name: "slack", event: ["needs-human"], run: ".claude/senior-mode/hooks/slack.sh"}]}
+  | .roles = {designer: {agent: ".claude/senior-mode/roles/designer.md", kind: "reviewer", when: {labels: ["ui"]}}}
+  | .models = [{role: "implementer", size: "S", model: "haiku"}]
+  | .providers = {local: {env: {ANTHROPIC_BASE_URL: "http://localhost:11434", ANTHROPIC_AUTH_TOKEN: "$LOCAL_TOKEN"}}}'
+config "$(jq -c "$levers" <<<"$good")"
+doctor
+grep -q 'hook slack (needs-human) .claude/senior-mode/hooks/slack.sh \[version 1\]: repository layer, .claude/senior-mode.json' "$work/out" || fail "G1: the hook is not listed: $(cat "$work/out")"
+grep -q 'role designer (reviewer) .claude/senior-mode/roles/designer.md: repository layer' "$work/out" || fail "G1: the role is not listed: $(cat "$work/out")"
+grep -q 'row implementer size S: haiku: repository layer' "$work/out" || fail "G1: the row is not listed: $(cat "$work/out")"
+grep -q 'provider local (ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL): repository layer' "$work/out" || fail "G1: the provider is not listed: $(cat "$work/out")"
+grep -q 'localhost:11434\|LOCAL_TOKEN' "$work/out" && fail "G1: a provider value is printed: $(cat "$work/out")"
+grep -q 'nothing overridden' "$work/out" && fail "G1: says nothing is overridden"
+doctor --json
+[ "$(jq -c '.customization | [(.hooks | map(.name)), (.roles | map(.name)), (.rows | map(.model)), (.providers | map(.name)), (.hooks[0].layer)]' "$work/out")" = '[["slack"],["designer"],["haiku"],["local"],"repository"]' ] ||
+  fail "G2: --json lacks the levers: $(jq -c .customization "$work/out")"
+# G3: a hook pinned to payload version 1 once version 3 has shipped is deprecated; a current one is not.
+config "$(jq -c "$levers" <<<"$good")"
+# (The schema does not know `hooks` yet, so doctor still fails on the key: only the warning is asserted.)
+SENIOR_MODE_HOOK_PAYLOAD_LATEST=3 doctor
+grep -q 'warn .*hook slack.*version 1.*deprecated' "$work/out" || fail "G3: no deprecation warning: $(cat "$work/out")"
+config "$(jq -c "$levers | .hooks.on[0].version = 3" <<<"$good")"
+SENIOR_MODE_HOOK_PAYLOAD_LATEST=3 doctor
+grep -q 'deprecated' "$work/out" && fail "G3: a current hook version is flagged: $(cat "$work/out")"
+config "$good"
 
 [ "$failures" -eq 0 ] && echo "doctor: all cases pass"
 exit "$failures"

@@ -325,6 +325,30 @@ run status --json --since 7d || fail "status --json with share 0 failed: $(cat "
 cp "$work/config.hier" "$repo/.claude/senior-mode.json"
 cp "$FIX/page-first.keep" "$FIX/page-first.json"
 
+# #446: the customization line, and the lifted rules (a refused lift is said, an accepted one is warned about).
+levers='.hooks = {on: [{name: "slack", event: ["needs-human"], run: ".claude/senior-mode/hooks/slack.sh"}, {name: "audit", event: "pr.merged", url: "https://h.example.com/sm"}]}
+  | .roles = {designer: {agent: ".claude/senior-mode/roles/designer.md", kind: "reviewer", when: {labels: ["ui"]}}}
+  | .models = [{role: "implementer", size: "S", model: "haiku"}, {role: "reviewer", model: "opus"}, {role: "*", type: "chore", model: "haiku"}]'
+run status --since 7d || fail "status without levers failed: $(cat "$work/err")"
+grep -q '^customized:' "$work/out" && fail "plain status prints a customization line with nothing customized: $(cat "$work/out")"
+jq "$levers" "$work/config.hier" >"$repo/.claude/senior-mode.json"
+run status --since 7d || fail "status with levers failed: $(cat "$work/err")"
+grep -qxF 'customized: 2 hooks, 1 role, 3 rows; lifted: none' "$work/out" || fail "status lacks the customization line: $(cat "$work/out")"
+run status --json --since 7d || fail "status --json with levers failed: $(cat "$work/err")"
+[ "$(json '.customized | [.hooks, .roles, .rows, .lifted]')" = '[2,1,3,[]]' ] || fail "status customized: $(json '.customized')"
+mkdir -p "$repo/docs/adr"
+printf -- '---\nid: 0016\nstatus: proposed\n---\n' >"$repo/docs/adr/0016-lift.md"
+jq '.process = {profile: "fast", lifts: [{rule: "review", adr: "docs/adr/0016-lift.md"}]}' "$work/config.hier" >"$repo/.claude/senior-mode.json"
+run status --since 7d || fail "status with a refused lift failed: $(cat "$work/err")"
+grep -q 'WARNING process refused: .*review.*docs/adr/0016-lift.md.*proposed' "$work/out" || fail "status does not say the lift is refused: $(cat "$work/out")"
+printf -- '---\nid: 0016\nstatus: accepted\n---\n' >"$repo/docs/adr/0016-lift.md"
+run status --since 7d || fail "status with an accepted lift failed: $(cat "$work/err")"
+grep -qF 'WARNING locked gate lifted: review (profile fast, docs/adr/0016-lift.md)' "$work/out" || fail "status does not list the lift: $(cat "$work/out")"
+grep -qxF 'customized: 0 hooks, 0 roles, 0 rows; lifted: review' "$work/out" || fail "status lacks the lifted rule in its line: $(cat "$work/out")"
+grep -q 'WARNING process refused' "$work/out" && fail "an accepted lift is refused: $(cat "$work/out")"
+rm -rf "$repo/docs"
+cp "$work/config.hier" "$repo/.claude/senior-mode.json"
+
 # #17 has a worktree in the data dir, #21 none (#224).
 wt17=$work/xdg/senior-mode/worktrees/app-0/17
 git -C "$repo" worktree add -q -b feat/17-thing "$wt17"

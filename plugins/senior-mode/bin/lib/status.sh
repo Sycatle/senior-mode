@@ -153,6 +153,7 @@ STATUS_JQ="$BRANCH_DEF"'. as $d | $d.items as $items | {
   wip: {limit: $wip, count: ([$items[] | select(.open and .status == "In progress")] | length)},
   audit: $audit,
   process: $process,
+  customized: $customized,
   next: ($d | pick | .[:3] | map({number, title, priority, size, milestone})),
   release: {latest: $d.release, pr: ([$d.prs[] | select(.branch | startswith("release-please")) | {number, title}][0])}
 }'
@@ -243,6 +244,7 @@ STATUS_TEXT_JQ="$HIERARCHY_TEXT_DEF"'def sec($h; $ls): $h, (if ($ls | length) ==
   (.hierarchy // empty | hierarchy_lines),
   (if .audit then empty else "Dependency audit: off (audit: false)" end),
   (if .process.profile != "strict" then "Process profile: \(.process.profile)" else empty end),
+  (.customized.line // empty),
   (.process.lifted[]? | "WARNING locked gate lifted: \(.rule) (profile \(.profile), \(.adr))"),
   (.process.problems[]? | "WARNING process refused: \(.)"),
   sec("Next Ready"; [.next[] | "#\(.number) \(.priority // "no priority") · \(.size // "?") · \(.title)"
@@ -628,7 +630,7 @@ status_once() {
   # The local branches count too: a ticket worked on and not pushed yet has a branch.
   locals=$(local_branches)
   out=$(jq -c --arg now "$now" --arg since "$since_iso" --arg repo "$(repo_slug)" --argjson wip "$wip" \
-    --argjson audit "$audit" --argjson locals "$locals" --argjson process "$(process_summary)" "$PICK_DEF$DRIFT_DEF$DECISIONS_DEF$STATUS_JQ" <<<"$data") ||
+    --argjson audit "$audit" --argjson locals "$locals" --argjson process "$(process_summary)" --argjson customized "$(customization_summary)" "$PICK_DEF$DRIFT_DEF$DECISIONS_DEF$STATUS_JQ" <<<"$data") ||
     die "could not build the status"
   trees=$(ticket_trees "$root")
   out=$(jq -c --argjson t "$trees" '.inProgress |= map(. + {worktree: ($t[.number | tostring])})' <<<"$out")

@@ -989,6 +989,10 @@ model API (`api.anthropic.com`, and the host of `ANTHROPIC_BASE_URL` when set), 
 - A refusal is logged once per host and session in `<serve dir>/<n>.egress`, one `host<TAB>reason` line.
 - `egress_decide <host>` (`lib/egress.sh`) prints `allow` or `refuse: <reason>`; `egress_start <n>` and `egress_stop <n>` run
   the proxy of a ticket. Starting it for a session is not wired yet.
+- The sessions of a repository share one proxy (`egress_proxy_acquire <session>`, `egress_proxy_release <session>`): it starts with
+  the first and stops after the last. [`sandbox.network`](configuration.md#keys-the-plugin-reads-today) decides what a container
+  gets: `allowlist` (default) an internal network and the proxy variables (`sandbox_net_args`), `none` no network, `open` the
+  bridge, no proxy, and `status` warns. The launch that passes these arguments lands with #385c.
 
 ### Credential broker
 

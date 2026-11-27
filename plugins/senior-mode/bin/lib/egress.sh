@@ -158,7 +158,7 @@ egress_start() {
     done
   fi
   SENIOR_MODE_EGRESS_ALLOW=$(egress_allowlist) EGRESS_LOG="$SERVE_DIR/$n.egress" \
-    setsid "$proxy" listen "$port" "${SENIOR_MODE_EGRESS_BIND:-127.0.0.1}" </dev/null >/dev/null 2>&1 &
+    setsid "$proxy" listen "$port" "${SENIOR_MODE_EGRESS_BIND:-127.0.0.1}" </dev/null >/dev/null 2>&1 9>&- &
   pid=$!
   for i in $(seq 1 50); do
     (: </dev/tcp/127.0.0.1/"$port") 2>/dev/null && break
@@ -187,4 +187,37 @@ egress_stop() {
   fi
   rm -f "$SERVE_DIR/$n.egress.pid" "$SERVE_DIR/$n.egress.port"
   return 0
+}
+
+# One proxy per repository, shared by its sessions (#783): `egress_proxy_acquire <session>` records the session in
+# <serve dir>/proxy.sessions and starts the proxy (files proxy.egress.*, refusals in proxy.egress) when none is alive;
+# `egress_proxy_release <session>` drops it and stops the proxy with the last one. Both run under the state lock.
+egress_proxy_acquire() {
+  state_update egress_proxy_acquire_locked "$1"
+}
+egress_proxy_acquire_locked() {
+  local pid
+  grep -qxF "$1" "$SERVE_DIR/proxy.sessions" 2>/dev/null || echo "$1" >>"$SERVE_DIR/proxy.sessions"
+  pid=$(state_num "$SERVE_DIR/proxy.egress.pid")
+  if [ "$pid" -gt 0 ] && kill -0 "$pid" 2>/dev/null; then return 0; fi
+  egress_start proxy
+}
+egress_proxy_release() {
+  state_update egress_proxy_release_locked "$1"
+}
+egress_proxy_release_locked() {
+  local left
+  left=$(grep -vxF "$1" "$SERVE_DIR/proxy.sessions" 2>/dev/null) || left=""
+  if [ -n "$left" ]; then
+    printf '%s\n' "$left" >"$SERVE_DIR/proxy.sessions"
+    return 0
+  fi
+  rm -f "$SERVE_DIR/proxy.sessions"
+  egress_stop proxy
+}
+
+# The URL of the shared proxy as a container sees it: the host name that reaches the machine from a container
+# (SENIOR_MODE_PROXY_HOST, `host.containers.internal` by default) and the recorded port.
+egress_proxy_url() {
+  printf 'http://%s:%s\n' "${SENIOR_MODE_PROXY_HOST:-host.containers.internal}" "$(state_num "$SERVE_DIR/proxy.egress.port")"
 }

@@ -106,6 +106,29 @@ if command -v socat >/dev/null && command -v curl >/dev/null; then
   (: </dev/tcp/127.0.0.1/"$port") 2>/dev/null && fail "the port is still open after egress_stop"
   pgrep -f "TCP-LISTEN:$port" >/dev/null && fail "a process of the proxy stays after egress_stop"
   [ ! -e "$serve/1.egress.pid" ] || fail "the pid file stays"
+
+  # 6. Two sessions of the repository share one proxy; it stops with the last one (#783).
+  (cd "$repo" && egress_proxy_acquire 11 2>"$work/err") || fail "the shared proxy did not start: $(cat "$work/err")"
+  shared_pid=$(cat "$serve/proxy.egress.pid" 2>/dev/null)
+  shared_port=$(cat "$serve/proxy.egress.port" 2>/dev/null)
+  [ -n "$shared_port" ] || fail "no port recorded for the shared proxy"
+  (: </dev/tcp/127.0.0.1/"${shared_port:-0}") 2>/dev/null || fail "the shared proxy does not listen"
+  (cd "$repo" && egress_proxy_acquire 12 2>"$work/err") || fail "the second session failed: $(cat "$work/err")"
+  [ "$(cat "$serve/proxy.egress.pid")" = "$shared_pid" ] || fail "a second proxy was started for the second session"
+  [ "$(egress_proxy_url)" = "http://host.containers.internal:$shared_port" ] || fail "proxy url: $(egress_proxy_url)"
+  egress_proxy_release 11
+  (: </dev/tcp/127.0.0.1/"$shared_port") 2>/dev/null || fail "the proxy stopped while a session still uses it"
+  egress_proxy_release 12
+  (: </dev/tcp/127.0.0.1/"$shared_port") 2>/dev/null && fail "the proxy is still up after the last session"
+  [ ! -e "$serve/proxy.egress.pid" ] && [ ! -e "$serve/proxy.sessions" ] || fail "the shared proxy left files: $(ls "$serve")"
+  # With sandbox.allow, that repository's proxy allows the host and still refuses the others.
+  echo '{"preset":"node","sandbox":{"allow":["api.stripe.com"]}}' >"$repo/.claude/senior-mode.json"
+  (cd "$repo" && egress_proxy_acquire 13 2>"$work/err") || fail "the proxy with sandbox.allow did not start"
+  sp=$(cat "$serve/proxy.egress.port")
+  curl -s --max-time 10 --proxy "http://127.0.0.1:$sp" http://example.org/ 2>&1 | grep -q "not allowlisted" || fail "the shared proxy lets example.org through"
+  curl -s --max-time 10 --proxy "http://127.0.0.1:$sp" http://api.stripe.com/ 2>&1 | grep -q "not allowlisted" && fail "the shared proxy refuses api.stripe.com"
+  egress_proxy_release 13
+  echo '{"preset":"node"}' >"$repo/.claude/senior-mode.json"
 else
   echo "SKIP: socat or curl missing, the proxy cases did not run"
 fi

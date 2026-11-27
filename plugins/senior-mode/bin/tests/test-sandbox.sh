@@ -96,6 +96,8 @@ cat >"$rt/podman" <<'STUB'
 echo "$*" >>"$RT_LOG"
 tag() { printf %s "$1" | tr '/:' '__'; }
 if [ "$1 $2" = "image inspect" ]; then [ -e "$RT_STATE/$(tag "$3")" ]; exit $?; fi
+if [ "$1 $2" = "network inspect" ]; then [ -e "$RT_STATE/net_$3" ]; exit $?; fi
+if [ "$1 $2" = "network create" ]; then touch "$RT_STATE/net_$4"; exit 0; fi
 if [ "$1" = build ]; then
   if [ -e "$RT_STATE/fail" ]; then
     i=1
@@ -172,8 +174,41 @@ touch "$rt/state/fail"
 out=$(img) && fail "sandbox_image succeeds on a failed build"
 [ "$(head -n 1 <<<"$out" | cut -d' ' -f1)" = hold ] || fail "a failed build does not hold: $out"
 [ "$(grep -c '^step ' <<<"$out")" = 20 ] || fail "not 20 lines: $out"
-grep -q '^step 30$' <<<"$out" && ! grep -q '^step 10$' <<<"$out" || fail "not the last lines: $out"
+grep -q '^step 30$' <<<"$out" || fail "the last line is missing: $out"
+grep -q '^step 10$' <<<"$out" && fail "an early line is kept: $out"
 rm -f "$rt/state/fail"
 unset SENIOR_MODE_RUNTIME SENIOR_MODE_CLAUDE SELF
+
+# The network of a container (#783): an internal network created once per repository, the proxy variables only for allowlist.
+: >"$RT_LOG"
+rm -f "$rt"/state/*
+net=$(fn "$rt" sandbox_network_name "$repo")
+[[ $net == senior-mode-repo-???????? ]] || fail "network name: $net"
+[ "$(fn "$rt" sandbox_network_name "$repo")" = "$net" ] || fail "the network name changes between calls"
+[ "$(fn "$rt" sandbox_network_name "$work/other/repo")" != "$net" ] || fail "two repositories share a network name"
+fn "$rt" sandbox_network_ensure podman "$net"
+fn "$rt" sandbox_network_ensure podman "$net"
+[ "$(grep -c "^network create --internal $net\$" "$RT_LOG")" = 1 ] || fail "the internal network is not created exactly once: $(cat "$RT_LOG")"
+purl=http://host.containers.internal:3128
+args=$(fn "$rt" sandbox_net_args allowlist "$net" "$purl")
+[ "$(head -n 2 <<<"$args" | tr '\n' ' ')" = "--network $net " ] || fail "allowlist: not the internal network: $args"
+for v in HTTPS_PROXY HTTP_PROXY https_proxy http_proxy GIT_CONFIG_VALUE_0; do grep -qx -- "$v=$purl" <<<"$args" || fail "allowlist: $v not set: $args"; done
+grep -qx 'GIT_CONFIG_KEY_0=http.proxy' <<<"$args" || fail "allowlist: git's proxy is not set: $args"
+grep -q -- '--dns' <<<"$args" && fail "allowlist: a --dns is passed: $args"
+args=$(fn "$rt" sandbox_net_args none "$net" "$purl")
+[ "$args" = $'--network\nnone' ] || fail "none: $args"
+args=$(fn "$rt" sandbox_net_args open "$net" "$purl")
+[ "$args" = $'--network\nbridge' ] || fail "open: $args"
+config '{}'
+[ "$(fn "$rt" sandbox_network)" = allowlist ] || fail "default network"
+config '{"sandbox":{"network":"open","allow":["api.stripe.com"]}}'
+[ "$(fn "$rt" sandbox_network)" = open ] || fail "network open not read"
+(cd "$repo" && "$cli" config validate) >"$work/out" 2>&1 || fail "sandbox.network/allow rejected: $(cat "$work/out")"
+for bad in '{"sandbox":{"network":"all"}}' '{"sandbox":{"allow":"api.stripe.com"}}' '{"sandbox":{"allow":[1]}}'; do
+  config "$bad"
+  (cd "$repo" && "$cli" config validate) >"$work/out" 2>&1 && fail "a bad value passes: $bad"
+  grep -q 'sandbox\.' "$work/out" || fail "bad value not named: $bad: $(cat "$work/out")"
+done
+config '{}'
 
 [ "$failures" -eq 0 ] && echo "ok: sandbox" || exit 1

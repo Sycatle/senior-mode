@@ -1408,9 +1408,9 @@ grep -qx 'tests-63.txt' "$repo/.git/senior-mode/runs/63/red-tests" || fail "U: t
 grep -q 'written and committed already' "$state/63.prompt" || fail "U: the ticket prompt does not tell about the red tests"
 grep -q 'red-tests verify' "$state/63.prompt" && fail "U: the prompt asks to verify tests the test-author recorded (#563)"
 grep -q '^app-64 sonnet run=1 role=ticket$' "$CLAUDE_LOG" && fail "U: a ticket session after a failed test-author"
-# #352: an M ticket session is asked for a plan the architect approves before any code; an S ticket's is not.
-grep -q 'Plan first (size M)' "$state/63.prompt" || fail "U: the prompt of an M ticket has no plan step: $(cat "$state/63.prompt")"
-grep -q 'plan-rejected:' "$state/63.prompt" || fail "U: the prompt of an M ticket has no plan-rejected outcome"
+# #826: an M ticket outside the protected zones is on the light path: its session is not asked for a plan (test-run PL covers the zone and L).
+grep -q 'Plan first' "$state/63.prompt" && fail "U: the prompt of a light M ticket has a plan step: $(cat "$state/63.prompt")"
+grep -q 'plan-rejected:' "$state/63.prompt" && fail "U: the prompt of a light M ticket has a plan-rejected outcome"
 outcome_of 64 failed M
 grep -c 'item-edit.*--single-select-option-id o0' "$GH_LOG" | grep -qx 1 || fail "U: #64 is not back in Backlog: $(grep item-edit "$GH_LOG")"
 boardx "63:Ready:M:P1 next"
@@ -1421,7 +1421,7 @@ grep -q '^app-63 sonnet run=1 role=test-author$' "$CLAUDE_LOG" && fail "U: the r
 grep -q '^app-63 sonnet run=1 role=ticket$' "$CLAUDE_LOG" || fail "U: no ticket session"
 config '{}'
 
-# UP: an M ticket delivered without a plan the architect approved is not delivered (#352); an S ticket needs none.
+# UP: an M ticket outside the protected zones needs no plan (#826, the zone case is in test-run PL), nor does an S ticket.
 config '{"parallel": 2, "escalate": false}'
 boardx "66:Ready:M:P1 next" "67:Ready:S:P1 next"
 prs_reset
@@ -1432,8 +1432,7 @@ session 67-sonnet delivered pr
 echo none >"$FIX/plan-67"
 fresh
 once || fail "UP: serve failed: $(cat "$work/out")"
-outcome_of 66 failed UP
-grep -q 'no plan' "$state/66.json" || fail "UP: the reason does not say the plan is missing: $(cat "$state/66.json")"
+outcome_of 66 delivered UP
 outcome_of 67 delivered UP
 grep -q 'Plan first' "$state/67.prompt" && fail "UP: an S ticket has a plan step"
 # #346: the ticket session writes a checkpoint at each commit and fills in the draft pull request.

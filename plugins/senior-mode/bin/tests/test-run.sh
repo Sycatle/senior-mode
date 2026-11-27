@@ -57,8 +57,8 @@ case "$*" in
     elif [[ $q == *projectItems* ]]; then
       n=$(jq -r '.variables.number' <<<"$q")
       s=$(cat "$FIX/itemstatus-$n" 2>/dev/null || echo "In progress")
-      jq -nc --arg s "$s" '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"},
-        fieldValues: {nodes: [{name: $s, field: {name: "Status"}}]}}]}}}}}'
+      jq -nc --arg s "$s" --arg p "$(cat "$FIX/paths-$n" 2>/dev/null)" '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"},
+        fieldValues: {nodes: ([{name: $s, field: {name: "Status"}}] + (if $p == "" then [] else [{text: $p, field: {name: "Paths"}}] end))}}]}}}}}'
     else cat "$FIX/board.json"; fi ;;
   "api repos/acme/app/dependabot/alerts"* | "api repos/acme/app/secret-scanning/alerts"*)
     [ -z "${ALERTS_ERR:-}" ] || { echo "$ALERTS_ERR" >&2; exit 1; }
@@ -210,7 +210,8 @@ sed 's/CLAUDE_LOG/SYACODE_LOG/' "$work/stub/claude" >"$work/stub/syacode"
 chmod +x "$work/stub/"* "$work/tmux/tmux"
 export PATH="$work/stub:$PATH" GH_LOG="$work/gh.log" CLAUDE_LOG="$work/claude.log" SYACODE_LOG="$work/syacode.log" TMUX_LOG="$work/tmux.log" \
   FIX="$work/fix" SENIOR_MODE_RETRY_DELAY=0 XDG_DATA_HOME="$work/xdg" SENIOR_MODE_POLL=0.1 CLAUDE_CONFIG_DIR="$work/claude-home" \
-  SENIOR_MODE_PROBE_RETRY=0 SENIOR_MODE_MANAGED_SETTINGS="$work/managed-settings.json" SENIOR_MODE_MANAGED_MCP="$work/managed-mcp.json"
+  SENIOR_MODE_PROBE_RETRY=0 SENIOR_MODE_MANAGED_SETTINGS="$work/managed-settings.json" SENIOR_MODE_MANAGED_MCP="$work/managed-mcp.json" \
+  SENIOR_MODE_RUN_CHECK='echo "$SENIOR_MODE_CHECK_HEAD" >>"$FIX/check-heads"'
 mkdir -p "$CLAUDE_CONFIG_DIR"
 echo '{"enabledPlugins": {"senior-mode@senior-mode": true}}' >"$CLAUDE_CONFIG_DIR/settings.json"
 
@@ -1179,7 +1180,7 @@ grep -q '^app-402 ' "$CLAUDE_LOG" && fail "V: a session for #402 of the batch: $
 grep -q '#402' "$repo/.git/senior-mode/runs/"*/401.prompt || fail "V: the batch prompt does not name its tickets"
 grep -q 'Closes #402' "$repo/.git/senior-mode/runs/"*/401.prompt || fail "V: the batch prompt does not give each ticket its Closes"
 grep -qi 'one commit per' "$repo/.git/senior-mode/runs/"*/401.prompt || fail "V: the batch prompt does not ask one commit per ticket"
-grep -q 'reviewer agent reviews' "$repo/.git/senior-mode/runs/"*/401.prompt || fail "V: run's batch prompt lost its review step (#305)"
+grep -q 'reviewer agent.*reviews the pull request once' "$repo/.git/senior-mode/runs/"*/401.prompt || fail "V: run's batch prompt lost its review step (#305)"
 grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 4 || fail "V: #401, #402, #403 and #405 not all In progress: $(grep -c item-edit "$GH_LOG")"
 grep -qx 'pr merge 501 --rebase --match-head-commit sha401 -R acme/app' "$GH_LOG" || fail "V: the batch pull request not merged: $(grep merge "$GH_LOG")"
 grep -c 'item-edit.*--single-select-option-id o4' "$GH_LOG" | grep -qx 3 || fail "V: #401, #403 and #405 not set Done"
@@ -1355,13 +1356,15 @@ grep -q 'DELETE repos/acme/app/issues/721/' "$GH_LOG" && fail "Y2: #721 has no r
 grep -q 'DELETE repos/acme/app/issues/723/' "$GH_LOG" && fail "Y2: #723 has a reply of a non-collaborator"
 rm -f "$FIX"/decisions.json "$FIX"/comments-72*
 
-# PL: a verified plan before coding on M and L tickets (#352). The prompt of an M ticket asks for the plan and the
-# architect's answer; an S ticket has no plan step. An M ticket delivered with no approved plan, or with two `revise`, fails
+# PL: a verified plan before coding on L tickets and on M tickets in a protected zone (#352, #826; pick leaves L out, so the zone here). The prompt of such a ticket asks for the plan and the
+# architect's answer; an S ticket has no plan step. Such a ticket delivered with no approved plan, or with two `revise`, fails
 # (no Opus retry here: escalate is off); a plan rejected twice is `plan-rejected`: needs-human with both plans in a comment,
 # back in Backlog, not a failure.
 config '{"maxTickets": 8, "parallel": 3, "escalate": false, "maxConsecutiveFailures": 9}'
 board 901 '[]' 902 '[]' 903 '[]' 904 '[]' 905 '[]' 906 '[]' 907 '[]'
-for n in 901 903 904 905 906 907; do size_of "$n" M; done
+for n in 901 903 904 905 906 907; do size_of "$n" M; echo 'auth/**' >"$FIX/paths-$n"; done
+jq '.protected = ["auth/**"]' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+git -C "$repo" -c user.name=t -c user.email=t@t commit -qam "chore: protect auth" && git -C "$repo" push -q origin main
 session 901-sonnet delivered pr
 printf 'plan 1:\nedit a.sh\narchitect 1: revise: the spec wants b.sh too\nplan 2:\nedit a.sh and b.sh\narchitect 2: approve\n' >"$FIX/plan-901"
 session 902-sonnet delivered pr
@@ -1381,7 +1384,7 @@ printf '%s\n' '.[0].body = "Closes #907\n\n<!-- senior-mode:checkpoint -->\n**Pl
 run || fail "PL: run failed: $(cat "$work/out")"
 runs=$(find "$repo/.git/senior-mode/runs" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
 for want in 'Plan first (size M)' 'at most 15 lines' 'architect agent' 'architect 1: approve' 'architect 1: revise' 'plan-rejected: <the architect' 'SENIOR_MODE_RUN_PLAN'; do
-  grep -qF "$want" "$runs/901.prompt" || fail "PL: the prompt of an M ticket misses '$want'"
+  grep -qF "$want" "$runs/901.prompt" || fail "PL: the prompt of an M ticket in a zone misses '$want'"
 done
 grep -qF 'No code' "$runs/901.prompt" || grep -qF 'no code' "$runs/901.prompt" || fail "PL: the prompt does not forbid code before approve"
 grep -q 'Plan first\|plan-rejected' "$runs/902.prompt" && fail "PL: an S ticket has a plan step"
@@ -1396,7 +1399,7 @@ outcome_is_delivered 907
 grep -q '^Failed.*#901' "$work/out" && fail "PL: #901, approved after one revise, failed: $(cat "$work/out")"
 outcome_is_delivered 901
 outcome_is_delivered 902
-grep -q 'Failed.*#903.*no plan' "$work/out" || fail "PL: an M ticket delivered without a plan did not fail: $(cat "$work/out")"
+grep -q 'Failed.*#903.*no plan' "$work/out" || fail "PL: an M ticket in a zone delivered without a plan did not fail: $(cat "$work/out")"
 grep -q 'Failed.*#905.*second revision' "$work/out" || fail "PL: two revise then delivered did not fail: $(cat "$work/out")"
 grep -q 'Failed.*#906.*no plan' "$work/out" || fail "PL: a last answer of revise then delivered did not fail: $(cat "$work/out")"
 grep -q 'app-904 opus' "$CLAUDE_LOG" && fail "PL: a rejected plan was retried on Opus"
@@ -1409,7 +1412,109 @@ grep -q 'Waiting for a human: #904.*rejected twice' "$work/out" || fail "PL: rep
 grep -q 'Failed: #904' "$work/out" && fail "PL: a rejected plan was reported as a failure"
 jq -e '.outcome == "plan-rejected" and .reason == "it still ignores ADR 0012"' "$runs/904.json" >/dev/null ||
   fail "PL: #904 not recorded as plan-rejected: $(cat "$runs/904.json")"
-rm -f "$FIX"/plan-9* "$FIX"/external-907
+rm -f "$FIX"/plan-9* "$FIX"/external-907 "$FIX"/paths-9*
+
+# RK (#826, ADR 0034 decision 2): sessions in proportion to the risk. A ticket of size S or M whose Paths reach no protected zone is
+# on the light path: no plan step, no test-author (it writes its own red tests), the reviewer agent on Sonnet with the light brief,
+# a question with a recommended option settled by the agent. L, or a Paths glob in a protected zone, keeps the plan, the test-author,
+# the full review and the stop on a decision.
+config '{"maxTickets": 8, "parallel": 4, "escalate": false, "maxConsecutiveFailures": 9}'
+jq '.protected = ["auth/**"]' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+git -C "$repo" -c user.name=t -c user.email=t@t commit -qam "chore: protect auth" && git -C "$repo" push -q origin main
+board 931 '[]' 933 '[]' 934 '[]' 935 '[]'
+size_of 931 M
+size_of 933 M
+size_of 934 S
+size_of 935 M
+echo 'docs/**, src/app/**' >"$FIX/paths-931"
+echo 'auth/**' >"$FIX/paths-933"
+echo 'auth/session/**' >"$FIX/paths-934"
+for n in 931 933 934 935; do session "$n-sonnet" delivered pr; done
+echo none >"$FIX/plan-931"
+printf 'plan 1:\nx\narchitect 1: approve\n' >"$FIX/plan-933"
+run || fail "RK: run failed: $(cat "$work/out")"
+runs=$(find "$repo/.git/senior-mode/runs" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+# RK.1: an M ticket outside the zones: no plan, no test-author, its own red tests; delivered with no plan on record.
+grep -q 'Plan first\|plan-rejected' "$runs/931.prompt" && fail "RK.1: a light M ticket has a plan step"
+grep -q 'test-author agent' "$runs/931.prompt" && fail "RK.1: a light M ticket has a test-author"
+grep -qF 'Write the failing tests yourself first' "$runs/931.prompt" || fail "RK.1: the prompt of a light M ticket does not say to write the red tests itself"
+grep -q '^Failed.*#931' "$work/out" && fail "RK.1: a light M ticket failed for want of a plan: $(cat "$work/out")"
+outcome_is_delivered 931
+grep -q 'app-931 opus' "$CLAUDE_LOG" && fail "RK.1: a light ticket was retried on Opus"
+grep -q 'app-935' "$CLAUDE_LOG" && grep -q 'Plan first' "$runs/935.prompt" && fail "RK.1: an M ticket with no Paths has a plan step"
+# RK.2: a Paths glob in a protected zone (M or S; pick leaves L out, RS checks it): the plan, the test-author, the full reviewer and the stop on a decision as before.
+grep -qF 'Plan first (size M)' "$runs/933.prompt" || fail "RK.2: an M ticket in a zone has no plan step"
+for t in 933 934; do
+  grep -qF 'The test-author agent writes failing tests' "$runs/$t.prompt" || fail "RK.2: #$t has no test-author"
+  grep -qF 'is not yours to make' "$runs/$t.prompt" || fail "RK.2: #$t does not stop on a hard choice"
+  grep -qF 'light brief' "$runs/$t.prompt" && fail "RK.2: #$t has the light reviewer"
+  grep -qF 'Decided by the agent' "$runs/$t.prompt" && fail "RK.2: #$t settles its questions itself"
+done
+grep -q 'Plan first' "$runs/934.prompt" && fail "RK.2: an S ticket in a zone has a plan step"
+# RK.3: the reviewer of a light ticket runs on Sonnet with the light brief: it blocks only on a defect.
+for want in 'reviewer agent, on Sonnet with the light brief' 'only for a defect (wrong behaviour, a missing acceptance criterion, a security hole)' 'style and nits are comments that do not block'; do
+  grep -qF "$want" "$runs/931.prompt" || fail "RK.3: the prompt of a light ticket misses '$want'"
+done
+# RK.4: a question with a recommended option on a light ticket is settled by the agent, not sent to needs-decision.
+for want in 'apply the recommended option' 'Decided by the agent' 'Do not stop with `decision:`' 'high or critical severity' 'protected zone'; do
+  grep -qF -- "$want" "$runs/931.prompt" || fail "RK.4: the prompt of a light ticket misses '$want'"
+done
+rm -f "$FIX"/paths-9* "$FIX"/plan-93*
+
+# RC (#826): with merging on, a green pull request outside the protected zones and with no security finding gets the full `check`
+# once on its head before the merge, and merges when it is green; a red check leaves it for a human; a pull request that another
+# bound already stops (a protected zone, a security status not green) starts no check.
+config '{"merge": true}' '{"protection": "ruleset"}'
+jq '.protected = ["auth/**"]' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+git -C "$repo" -c user.name=t -c user.email=t@t commit -qam "chore: protect auth" && git -C "$repo" push -q origin main
+board 941 '[]' 942 '[]' 943 '[]' 944 '[]'
+for n in 941 942 943 944; do session "$n-sonnet" delivered pr; echo "$green" >"$FIX/status-$n"; done
+echo '{"statuses": [{"context": "senior-mode/ci", "state": "success"}, {"context": "senior-mode/review", "state": "success"},
+  {"context": "senior-mode/security", "state": "failure"}]}' >"$FIX/status-944"
+printf 'auth/session.ts\n' >"$FIX/files-1043"
+rm -f "$FIX/check-heads"
+SENIOR_MODE_RUN_CHECK='echo "$SENIOR_MODE_CHECK_HEAD" >>"$FIX/check-heads"; [ "$SENIOR_MODE_CHECK_HEAD" != sha942 ]' run ||
+  fail "RC: run failed: $(cat "$work/out")"
+[ "$(sort "$FIX/check-heads" | paste -sd' ' -)" = "sha941 sha942" ] || fail "RC: the full check ran on '$(cat "$FIX/check-heads" 2>&1 | paste -sd' ' -)', wanted the heads of #941 and #942 once each"
+grep -qx 'pr merge 1041 --rebase --match-head-commit sha941 -R acme/app' "$GH_LOG" || fail "RC: #941, whose check is green, not merged: $(grep merge "$GH_LOG")"
+grep -q 'pr merge 1042' "$GH_LOG" && fail "RC: #942 merged with a red check"
+grep -q 'Waiting for a human.*#942.*the full check is red' "$work/out" || fail "RC: report misses the red check of #942: $(cat "$work/out")"
+grep -q 'pr merge 1043\|pr merge 1044' "$GH_LOG" && fail "RC: merged a pull request in a protected zone or without the security status"
+rm -f "$FIX"/files-1043 "$FIX"/status-94* "$FIX/check-heads"
+
+# RS (#826): the prompt of the reviewer session of serve is the light one for an S or M pull request whose diff touches no protected
+# zone (it blocks only on a defect), the full one for L or a diff in a zone.
+# shellcheck disable=SC2034,SC2329 # the variables and stubs are read by the sourced libraries
+(
+  set -u
+  lib=$(dirname "$cli")/lib
+  for m in common state board guard run prompts; do
+    # shellcheck source=/dev/null
+    . "$lib/$m.sh"
+  done
+  RUN_SLUG=acme/app RUN_BASE=origin/main RUN_GLOBS='["auth/**"]' RUN_DIR="$work/rs"
+  mkdir -p "$RUN_DIR"
+  declare -A RUN_SIZE=([951]=M [952]=L [953]=M)
+  declare -A RUN_BATCH=()
+  item_get() { :; }
+  gh_retry() { local f=${2##*pulls/}; f=${f%%/*}; cat "$FIX/files-$f" 2>/dev/null || echo src/app.ts; }
+  printf 'src/app.ts\n' >"$FIX/files-251"
+  printf 'src/app.ts\n' >"$FIX/files-252"
+  printf 'auth/session.ts\n' >"$FIX/files-253"
+  run_plan_wanted 952 || echo "FAIL: RS: an L ticket has no plan step"
+  run_plan_wanted 951 && echo "FAIL: RS: a light M ticket has a plan step"
+  run_risk 952 | grep -qx full || echo "FAIL: RS: an L ticket is not on the full path"
+  light=$(serve_review_prompt 951 t 251 sha 'sonnet')
+  grep -qF 'This is a light review' <<<"$light" || echo "FAIL: RS: an M pull request outside the zones has no light review"
+  grep -qF 'only for a defect (wrong behaviour, a missing acceptance criterion, a security hole)' <<<"$light" || echo "FAIL: RS: the light brief does not name the defects"
+  grep -qF 'goes in' <<<"$light" || echo "FAIL: RS: nits do not go in the comment"
+  grep -qF 'This is a light review' <<<"$(serve_review_prompt 952 t 252 sha opus)" && echo "FAIL: RS: an L pull request has the light review"
+  grep -qF 'This is a light review' <<<"$(serve_review_prompt 953 t 253 sha opus)" && echo "FAIL: RS: a diff in a protected zone has the light review"
+  exit 0
+) >"$work/rs.out" 2>&1
+grep -q '^FAIL' "$work/rs.out" && { cat "$work/rs.out"; failures=$((failures + 1)); }
+grep -q 'syntax error\|command not found\|unbound' "$work/rs.out" && fail "RS: $(cat "$work/rs.out")"
+rm -f "$FIX"/files-25*
 
 [ "$failures" -eq 0 ] && echo "run: all cases pass"
 exit "$((failures > 0))"

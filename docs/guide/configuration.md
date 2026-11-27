@@ -40,6 +40,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `envGuard.forbidden` | none | Strings, or `/regex/` patterns, that must never appear on an agent machine; turns on the `env guard` check |
 | `performance.queries.helper` | set by `setup repo` | Path of the [query-count helper](#query-count-helper) of the project's ORM; a path you set is kept |
 | `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks); an optional `"tier"` (2, the default, or 3) says [when it runs](#checks); an optional `"fix"` is the command that fixes what the check reports, printed as `fix: <command>` under a failure |
+| `check.edit` | none | Tier 1 fixers, such as `["pnpm prettier --write {file}", "pnpm eslint --fix {file}"]`: after each `Edit`, `Write` or `MultiEdit`, the `edit-fix` hook runs them on the edited file, `{file}` standing for its quoted path, see [Checks](#checks) |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, even an empty one; `senior-mode protected` and the reviewer read it, and `setup github` maps it to [CODEOWNERS](autonomy.md#code-owners) |
 | `ci.mode` | `local` | `local`, `actions` or `existing` (the project's own CI is reused, see [CI mode](#ci-mode)) |
 | `workflow.ci.jobs`, `workflow.ci.required` | detected | With `ci.mode` `existing`: the jobs of the project's CI that cover a check (`{ "context", "covers" }`, one per job) and its required status contexts; setup writes both, see [Following the project's workflow](#following-the-projects-workflow) |
@@ -320,6 +321,11 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   tier 3 checks alone, and `senior-mode check --all` runs both tiers. A tier 3 run is not recorded for `publish`.
   Any other tier, or a `tier` on the `secret scan` or the `dependency audit` (built-in, always tier 2), is a
   configuration error that names the key (`checks[1].tier must be 2 or 3, not 4`).
+- `check.edit` lists tier 1 fixers (formatter, `lint --fix`). After each edit of the agent, the `edit-fix` hook runs them on that
+  file, one after the other, each for at most 10 seconds and the hook for at most 15; a fixer that runs longer is killed and
+  the agent is told `edit-fix: <fixer> timed out`. It never blocks and never fails the edit: what the fixers leave unfixed
+  goes back to the agent as `<file>:<line> <message>` lines (10 at most) from the `file:line` lines of their output. A file
+  that git ignores or that is outside the repository gets no fixer, and without `check.edit` the hook does nothing.
 - On a push the `pre-push` hook runs `senior-mode check --changed` ([changed checks](#changed-checks)), which gives the
   checks the paths the branch changes against the merge base, in a file named by `SENIOR_MODE_CHANGED_FILES`
   (unset in a full run). A check that can narrow itself to them does; the others ignore it. The hook that `setup repo`

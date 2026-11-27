@@ -377,6 +377,7 @@ read it. Without it (a manual session) nothing below applies and the guards beha
 | `test-author` | Write and commit the failing tests of an M ticket | Post `senior-mode/review` (it also edits no production code, by instruction) |
 | `reviewer` | Post `senior-mode/review` | Edit files (the agent has no Edit or Write tool) |
 | `integrator` | Merge pull requests as `serve` does | Post `senior-mode/review` |
+| `framer` | Rewrite the idea it frames, file tickets, set their fields, label and comment ([framing](#framing-raw-ideas)) | Change a file of the repository, open a pull request, merge, post `senior-mode/review` |
 
 Any role but `reviewer` is denied `senior-mode/review`, as a status with that context posted with
 `gh api .../statuses/<sha>` (a write, or any `gh api graphql` that names it), or `curl` with a body to
@@ -692,7 +693,7 @@ closed. A milestone is open: tickets added to it later are covered. `needs-human
   A ticket can declare the tools its tests or its work need with a `Needs: git-filter-repo, jq` line in its body
   (words separated by commas or spaces); one that is not on this machine's PATH keeps the ticket out of Ready, with the
   tool named in the comment, and a session [checks them again](commands.md#the-senior-mode-script) at its start (`senior-mode preflight`).
-- **Agent-filed tickets** also need size S, a Severity that is not high or critical, and Paths outside the
+- **Agent-filed tickets** also need size S (M when a [framing session](#framing-raw-ideas) filed it: its body ends with `framed-by: serve`), a Severity that is not high or critical, and Paths outside the
   `protected` zones of the default branch. The match is cautious: a Paths glob counts as in a zone when it, or a
   file name made from it, matches a protected glob, or when it shares its fixed directory start with one.
 - **Anything else** gets the `needs-human` label and a comment that lists what is missing; it is not looked at
@@ -744,6 +745,31 @@ request that closes no ticket is held to neither.
 
 Under `serve` a pull request that is not ready is not merged: it gets `needs-human` with the numbers, like any
 blocker that no later poll lifts. A ticket whose Size cannot be read is only logged and retried.
+
+### Framing raw ideas
+
+A collaborator can drop an idea, or meeting notes, in one Backlog issue and let `serve` split and frame it: no label, no
+command. An issue is a raw idea when it is open, in Backlog, by a [trusted](#untrusted-external-input) author, has no
+`Acceptance criteria` list (the [Definition of Ready](#ready-by-rule)), and carries none of `filed-by: agent`,
+`framed-by: serve`, `needs-human`, `needs-info`, `needs-decision`, `later` (it parks an idea) or `epic`. A ticket that is well formed
+is never framed.
+
+When no Ready ticket is waiting for a slot and no framing runs, `serve` starts one session of the `framer` role on Opus, at medium
+effort and a budget of 15 turns (the prompt), in a worktree of the base branch that it does not change. It reads the idea, `CLAUDE.md`, the file
+tree and the titles of the open tickets, and finds Paths with targeted searches. It counts in the session slots, one at a
+time, and ends with `framed: <what>`.
+
+- **One S ticket**: the issue is rewritten in place (criteria, Size, Priority, Paths), ends with `framed-by: serve`, and `ready` sets it Ready.
+- **Larger**: S or M tickets with criteria, Size, Priority, Paths and blocked-by links, as sub-issues of the original, which gets
+  the `epic` label and one recap comment (tickets, order, what waits for an answer). The tickets that pass the Definition of Ready become Ready.
+- **An open decision**: the clear parts are filed anyway. The questions go in one numbered comment on the epic that starts with
+  `<!-- senior-mode:frame -->`, each with a recommended answer, and the tickets they concern carry `needs-decision`, which keeps them out of Ready.
+  A reply by a collaborator after that comment starts a short session that writes the answers into those tickets (a question left
+  unanswered takes the recommended option and says so), removes `needs-decision` and posts a new framing comment; `ready` then sets them Ready.
+- **An epic whose sub-issues are all closed** is closed (only an epic with a framing comment; the `maintenance` epic is not).
+
+A session that ends without having framed the issue (no criteria in it, not an epic; a reply with no new framing comment) leaves it
+`needs-human` with a comment, so that it is not framed again at each poll.
 
 ### After a crash
 

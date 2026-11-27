@@ -313,6 +313,8 @@ issue_create() {
     fi
     [ -z "$timebox" ] || printf '\nTimebox: %s\n' "$timebox" >>"$body"
     [ -z "${SENIOR_MODE_RUN:-}" ] || printf '\nfiled-by: agent\n' >>"$body"
+    # A ticket of a framing session (#585) is an agent's, and may be an M (ready_missing).
+    [ "${SENIOR_MODE_ROLE:-}" != framer ] || printf 'framed-by: serve\n' >>"$body"
   fi
 
   # The number of an open issue with this title, then its type labels other than the asked one.
@@ -470,6 +472,7 @@ READY_ITEMS=$ORPHAN_DEF'def single($f): [.fieldValues.nodes[]? | select(.field.n
        milestone: ($c.milestone.title // null), blockers: [$c.blockedBy.nodes[]? | select(.state == "OPEN") | .number],
        status: status, priority: single("Priority"), size: single("Size"), severity: single("Severity"),
        agent: (($c.body // "") | test("(^|\n)filed-by: agent[ \t]*(\n|$)")),
+       framed: (($c.body // "") | test("(^|\n)framed-by: serve[ \t]*(\n|$)")),
        paths: ((text("Paths") // "") | gsub("[\\[\\]\"\u0027]"; "") | [split("[,\\s]+"; null)[] | select(length > 0)])}]'
 ready_items() {
   local file project slug page pages="[]" after="" more=true count=0 err
@@ -584,15 +587,15 @@ ready_in_zone() {
 # shellcheck disable=SC2016 # a jq program, not shell
 ready_missing() {
   local it=$1 zones=$2 hier=${3:-'{"enforce": false}'} reasons hits="" p
-  reasons=$(jq -c --argjson h "$hier" "$ORPHAN_DEF"'[(if (.body | test("(^|\n)#{1,6}[ \t]*(acceptance criteria|acceptance|criteria)[ \t]*:?[ \t]*\n+[ \t]*([-*]|[0-9]+[.)])[ \t]+\\S"; "i")) then empty else "acceptance criteria" end),
+  reasons=$(jq -c --argjson h "$hier" "$ORPHAN_DEF$HAS_CRITERIA_DEF"'[(if (.body | has_criteria) then empty else "acceptance criteria" end),
     (if .size == null then "Size" else empty end), (if .priority == null then "Priority" else empty end),
     (if (.paths | length) == 0 then "Paths" else empty end),
-    (if .agent then
-      (if .size != null and .size != "S" then "size \(.size) (a ticket an agent filed is Ready only when S)" else empty end),
+    (if .agent or .framed then
+      (if .size != null and .size != "S" and (.size != "M" or (.framed | not)) then "size \(.size) (a ticket an agent filed is Ready only when S, M when it comes from a framing)" else empty end),
       (if .severity == "high" or .severity == "critical" then "\(.severity) security severity (a ticket an agent filed is never Ready by rule)" else empty end)
      else empty end),
     (if $h.enforce == true then orphan($h; .bodyParent) | if . then "hierarchy: \(.)" else empty end else empty end)]' <<<"$it")
-  if jq -e .agent <<<"$it" >/dev/null; then
+  if jq -e '.agent or .framed' <<<"$it" >/dev/null; then
     while IFS= read -r p; do
       ! ready_in_zone "$zones" "$p" || hits+=${hits:+, }$p
     done < <(jq -r '.paths[]' <<<"$it")
@@ -922,13 +925,14 @@ ready() {
       echo "#$n needs-human: $why"
     fi
   done < <(jq -c --argjson nums "$nums" --argjson optin "$optin" "$TRUST_DEF"'.[] | select(.open and trusted and .status == "Backlog" and (.labels | index("needs-human") | not)
-    and (.labels | index("needs-info") | not)) | select(if $nums == null then .agent else (.number | IN($nums[])) end)
+    and (.labels | index("needs-info") | not) and (.labels | index("needs-decision") | not)) | select(if $nums == null then (.agent or .framed) else (.number | IN($nums[])) end)
     | select(($optin | not) or (.blockers | length == 0))' <<<"$items")
   skipped=$(jq -r --argjson nums "$nums" --argjson optin "$optin" "$TRUST_DEF"'[.[] | select(.open) | (if .status != "Backlog" then "not Backlog"
       elif (trusted | not) then "not trusted"
       elif (.labels | index("needs-human")) then "needs-human"
       elif (.labels | index("needs-info")) then "needs-info"
-      elif $nums == null and (.agent | not) then "not agent-filed"
+      elif (.labels | index("needs-decision")) then "needs-decision"
+      elif $nums == null and (.agent or .framed | not) then "not agent-filed"
       elif $nums != null and (.number | IN($nums[]) | not) then (if $optin then "not opted in" else "not named in the pull request" end)
       elif $optin and (.blockers | length) > 0 then "blocked"
       else empty end)] as $r
@@ -1119,6 +1123,10 @@ board_data() {
 # shellcheck disable=SC2016 # a jq program, not shell
 TRUST_DEF='def trusted: . as $i | (($i.labels | index("triage")) | not)
     and ((["OWNER", "MEMBER", "COLLABORATOR"] | index($i.assoc // "")) != null or ($i.labels | index("qualified")) != null);'
+
+# Does a body hold an "Acceptance criteria" heading followed by a list (the Definition of Ready, and what a raw idea lacks, #585)?
+# shellcheck disable=SC2016 # a jq program, not shell
+HAS_CRITERIA_DEF='def has_criteria: test("(^|\n)#{1,6}[ \t]*(acceptance criteria|acceptance|criteria)[ \t]*:?[ \t]*\n+[ \t]*([-*]|[0-9]+[.)])[ \t]+\\S"; "i");'
 
 # The tickets `run` and `next` take (spec 0001 §7): Ready, open, trusted, not size L, not blocked (open
 # "blocked by" link, `blocked` label), not waiting for information (`needs-info`) or for a decision (`needs-decision`, #363), not reserved for a person (`needs-human`, #603). Sorted by Priority

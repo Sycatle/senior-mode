@@ -103,12 +103,12 @@ serve_start_back() {
 }
 
 # A session that ended without a verdict on its ticket, for a reason that is not the ticket's (a usage limit, a
-# transient error, the environment): a reviewer or an integrator leaves no status, the pull request is looked at again
+# transient error, the environment): a reviewer, an integrator or a framer leaves no status, the pull request is looked at again
 # at a later poll; the ticket of any other session goes back to Ready, its worktree and branch kept, for a later poll.
 serve_give_back() {
   local n=$1 m
   case ${RUN_ROLE[$n]:-ticket} in
-    reviewer | integrator) [ -z "${RUN_CWD[$n]:-}" ] || git worktree remove --force "${RUN_CWD[$n]}" 2>/dev/null || true ;;
+    reviewer | integrator | framer) [ -z "${RUN_CWD[$n]:-}" ] || git worktree remove --force "${RUN_CWD[$n]}" 2>/dev/null || true ;;
     *)
       for m in $(run_members "$n"); do
         (item_set "$m" Status Ready) >/dev/null || echo "#$m: could not set the Status back to Ready" >&2
@@ -293,7 +293,7 @@ serve_unknown() {
   fi
   out=$(tail -c 600 "$RUN_DIR/$n-${RUN_MODEL[$n]:-sonnet}.log" 2>/dev/null | tr -d '\000') || out=""
   echo "#$n: unknown environment failure $count of $SERVE_UNKNOWN_MAX ($why); not relaunched, needs-human" >&2
-  case ${RUN_ROLE[$n]:-ticket} in reviewer | integrator) serve_give_back "$n" ;; esac
+  case ${RUN_ROLE[$n]:-ticket} in reviewer | integrator | framer) serve_give_back "$n" ;; esac
   notify needs-human "$n" "the session ended on an environment failure serve does not recognise $count times in a row, and it was not relaunched again. Last error: $why${out:+
 Last output of the session:
 $out}
@@ -351,7 +351,7 @@ serve_transient() {
   now=$(serve_now)
   until=$((now + delay))
   state_put "$SERVE_DIR/$n.retry" "$until"
-  case ${RUN_ROLE[$n]:-ticket} in reviewer | integrator) ;; *) state_put "$SERVE_DIR/$n.model" "$model" ;; esac
+  case ${RUN_ROLE[$n]:-ticket} in reviewer | integrator | framer) ;; *) state_put "$SERVE_DIR/$n.model" "$model" ;; esac
   state_update state_keep_later "$SERVE_DIR/transient-until" "$until" || true
   # A session that died at once (a startup error) is not a launch against autonomy.sessionsPerHour.
   life=$((SECONDS - ${RUN_STARTED[$n]:-$SECONDS}))
@@ -551,6 +551,7 @@ serve_finish() {
     test-author) serve_finish_tests "$1" ;;
     reviewer) serve_finish_review "$1" ;;
     integrator) serve_finish_integrator "$1" ;;
+    framer) serve_finish_frame "$1" ;;
     *) serve_finish_ticket "$1" ;;
   esac
 }
@@ -978,7 +979,7 @@ serve_recover() {
   for n in "${adopt[@]}"; do
     role=$(jq -r '.role // "ticket"' "$SERVE_DIR/$n.meta" 2>/dev/null) || role=ticket
     want="In progress"
-    case $role in reviewer | integrator) want="In review" ;; esac
+    case $role in reviewer | integrator) want="In review" ;; framer) want=Backlog ;; esac
     jq -e --argjson n "$n" --arg s "$want" '.items[] | select(.number == $n and .open and .status == $s and (.labels | index("needs-human") | not))' \
       <<<"$data" >/dev/null || continue
     serve_adopt "$n" || continue
@@ -1592,6 +1593,147 @@ serve_review() {
   if run_launch "$t" "$model"; then running+=("$t"); else git worktree remove --force "$wt" 2>/dev/null || true; fi
 }
 
+# Framing of raw ideas (#585). An open Backlog issue by a collaborator with no acceptance criteria (and none of
+# `filed-by: agent`, `framed-by: serve`, needs-human, needs-info, needs-decision, later, epic) is a raw idea: one
+# framing session (role framer, Opus, effort medium) turns it into Ready tickets, in place when it is one S, else as
+# sub-issues of the original, which becomes their epic. The questions of a framing wait in one comment of the epic
+# that starts with SERVE_FRAME_MARK and the tickets they concern carry needs-decision; a collaborator's reply starts a
+# short session that writes the answers into them. A framing session writes no file of the repository, opens no pull
+# request and merges nothing.
+SERVE_FRAME_MARK='<!-- senior-mode:frame -->'
+
+# A framing session is running.
+serve_frame_running() {
+  local n
+  for n in "${running[@]}"; do
+    [ "${RUN_ROLE[$n]:-}" != framer ] || return 0
+  done
+  return 1
+}
+
+# Has a collaborator replied under the last framing comment of epic $1 (not a comment of senior-mode itself)?
+serve_frame_replied() {
+  gh_retry api "repos/$RUN_SLUG/issues/$1/comments?per_page=100" --paginate --jq '.[] | {body, a: .author_association}' 2>/dev/null |
+    jq -se --arg m "$SERVE_FRAME_MARK" 'to_entries | (map(select(.value.body | contains($m))) | last | .key // null) as $i
+      | $i != null and any(.[$i + 1:][].value; (.body | contains("<!-- senior-mode:") | not) and (.a | IN("OWNER", "MEMBER", "COLLABORATOR")))' >/dev/null
+}
+
+# The next framing job from the items of the Project ($1, ready_items): `reply<TAB>epic<TAB>tickets` for an epic whose
+# questions got an answer, else `idea<TAB>number`; nothing (status 1) when there is none to start now. A reply goes first.
+# shellcheck disable=SC2016 # jq programs, not shell
+serve_frame_job() {
+  local items=$1 now e members n
+  now=$(serve_now)
+  while read -r e members; do
+    [ -n "$e" ] || continue
+    [ "$(serve_retry_at "$e")" -le "$now" ] || continue
+    ! serve_env_held "$e" || continue
+    serve_frame_replied "$e" || continue
+    printf 'reply\t%s\t%s\n' "$e" "$members"
+    return 0
+  done < <(jq -r '[.[] | select(.open and .framed and (.labels | index("needs-decision")) and .parent != null
+      and ((.parent.labels | index("needs-human")) | not))] | group_by(.parent.number)[] | "\(.[0].parent.number) \(map(.number) | join(" "))"' <<<"$items")
+  while read -r n; do
+    [ -n "$n" ] || continue
+    [ "$(serve_retry_at "$n")" -le "$now" ] || continue
+    ! serve_env_held "$n" || continue
+    printf 'idea\t%s\n' "$n"
+    return 0
+  done < <(jq -r "$TRUST_DEF$HAS_CRITERIA_DEF"'[.[] | select(.open and trusted and .status == "Backlog" and (.agent | not) and (.framed | not)
+      and ((.labels | map(select(IN("needs-human", "needs-info", "needs-decision", "later", "epic"))) | length) == 0) and (.body | has_criteria | not))]
+    | sort_by([([(.priority // "") | scan("^P([0-9]+)") | .[0] | tonumber] | first // 99), .number])[] | .number' <<<"$items")
+  return 1
+}
+
+# An epic that senior-mode framed whose sub-issues are all closed is closed. $1 the items of the Project.
+serve_frame_epics() {
+  local e
+  while read -r e; do
+    [ -n "$e" ] || continue
+    gh_retry api "repos/$RUN_SLUG/issues/$e/sub_issues?per_page=100" --jq '[.[].state] | length > 0 and all(. == "closed")' 2>/dev/null | grep -qx true || continue
+    gh_retry api "repos/$RUN_SLUG/issues/$e/comments?per_page=100" --paginate --jq '.[].body' 2>/dev/null | grep -qF "$SERVE_FRAME_MARK" || continue
+    if gh_retry api "repos/$RUN_SLUG/issues/$e" -X PATCH -f state=closed -f state_reason=completed >/dev/null; then
+      (item_set "$e" Status Done) >/dev/null || echo "#$e: could not set the Status Done" >&2
+      echo "#$e: all its sub-issues are closed; the epic is closed"
+    else
+      echo "#$e: could not close the epic" >&2
+    fi
+  done < <(jq -r '.[] | select(.open and (.labels | index("epic")) and ((.labels | index("maintenance")) | not)) | .number' <<<"$1")
+}
+
+# The framing of the poll: closes the finished epics, then, when no Ready ticket waits for a slot ($2 their number) and
+# none is being framed, starts one session on the next job. $1 the board data.
+serve_frame() {
+  local data=$1 waiting=$2 items job kind n members title wt
+  items=$(ready_items 2>/dev/null) || return 0
+  serve_frame_epics "$items"
+  [ "$waiting" -eq 0 ] || return 0
+  serve_frame_running && return 0
+  serve_can_launch || return 0
+  job=$(serve_frame_job "$items") || return 0
+  IFS=$'\t' read -r kind n members <<<"$job"
+  title=$(jq -r --argjson n "$n" '.items[] | select(.number == $n) | .title' <<<"$data")
+  git_bound fetch -q origin "$RUN_BASE" 2>/dev/null || true
+  wt=$(worktree_path "$RUN_ROOT" "idea-$n")
+  git worktree remove --force "$wt" 2>/dev/null || true
+  if ! { git worktree add -q --detach "$wt" "origin/$RUN_BASE" 2>/dev/null || git worktree add -q --detach "$wt" "$RUN_BASE" 2>/dev/null; }; then
+    echo "#$n: could not open a worktree to frame it; trying again at the next poll" >&2
+    return 0
+  fi
+  RUN_TITLE[$n]=$title
+  RUN_ROLE[$n]=framer
+  RUN_CWD[$n]=$wt
+  RUN_WT[$n]=$wt
+  RUN_BRANCH[$n]=""
+  unset 'RUN_BATCH[$n]'
+  printf '%s\n' "$kind" | state_write "$RUN_DIR/$n.frame"
+  if [ "$kind" = idea ]; then
+    jq -r --argjson n "$n" '.[] | select(.number == $n) | .body' <<<"$items" | state_write "$RUN_DIR/$n.idea"
+    jq -r --argjson n "$n" '.items[] | select(.open and .number != $n) | "#\(.number) \(.title)"' <<<"$data" | state_write "$RUN_DIR/$n.tickets"
+    serve_frame_prompt "$n" "$title" "$RUN_DIR/$n.idea" "$RUN_DIR/$n.tickets" | state_write "$RUN_DIR/$n.prompt"
+  else
+    serve_frame_reply_prompt "$n" "$title" "$members" | state_write "$RUN_DIR/$n.prompt"
+  fi
+  echo "#$n: framing ($kind) on opus"
+  if run_launch "$n" opus; then running+=("$n"); else git worktree remove --force "$wt" 2>/dev/null || true; fi
+}
+
+# A framing session is over (the outcome `framed: <what>`). Its work is checked: an idea must have its criteria in place
+# or be an epic now; a reply must have been answered by a new framing comment. Else, or without that outcome, the issue is
+# a person's (needs-human, a comment): a framing that did nothing would be started again at every poll.
+serve_frame_finish_ok() {
+  local n=$1 kind=$2 issue
+  if [ "$kind" = reply ]; then
+    ! serve_frame_replied "$n"
+    return
+  fi
+  issue=$(gh_retry api "repos/$RUN_SLUG/issues/$n" --jq '{body: (.body // ""), epic: ([.labels[].name] | index("epic") != null)}') || return 1
+  jq -e "$HAS_CRITERIA_DEF"'.epic or (.body | has_criteria)' <<<"$issue" >/dev/null
+}
+
+serve_finish_frame() {
+  local n=$1 kind outcome reason
+  [ -z "${RUN_CWD[$n]:-}" ] || git worktree remove --force "${RUN_CWD[$n]}" 2>/dev/null || true
+  kind=$(head -n 1 "$RUN_DIR/$n.frame" 2>/dev/null) || kind=idea
+  outcome=$(head -n 1 "$RUN_DIR/$n.outcome" 2>/dev/null) || outcome=""
+  if [[ $outcome == framed:* ]] && serve_frame_finish_ok "$n" "$kind"; then
+    RUN_FAILS=0
+    run_record "$n" framed ""
+    echo "#$n: framed:${outcome#framed:}"
+    return 0
+  fi
+  reason=${outcome:-the framing session ended without saying how it went (log in $RUN_DIR)}
+  [[ $outcome != framed:* ]] || reason="the session said framed but left the issue as it was"
+  gh_retry api "repos/$RUN_SLUG/issues/$n/labels" -f 'labels[]=needs-human' >/dev/null || echo "#$n: could not label the issue needs-human" >&2
+  gh_bound api "repos/$RUN_SLUG/issues/$n/comments" -f body="senior-mode: the framing session could not frame this issue: $reason. A person frames it, or removes needs-human to try again." \
+    >/dev/null || echo "#$n: could not comment on the issue" >&2
+  run_record "$n" failed "$reason"
+  RUN_FAILED+=("#$n ${RUN_TITLE[$n]:-}: framing failed: $reason")
+  RUN_FAILS=$((RUN_FAILS + 1))
+  [ "$RUN_FAILS" -lt "$RUN_MAXFAIL" ] || RUN_STOP="$RUN_FAILS failed session(s) in a row (autonomy.maxConsecutiveFailures)"
+  notify needs-human "$n" "framing failed: $reason"
+}
+
 # The time (epoch) of the last change of the review rules on the base branch: CLAUDE.md and the project config (protected
 # list, review settings). Nothing when the history has none.
 serve_rules_changed() {
@@ -1702,7 +1844,7 @@ serve_gardening_holds() {
 # ceiling, starts the Ready tickets in `pick` order while there is a free slot. A hold (breaker, usage limit)
 # stops every launch, reviewers and integrator sessions included; a merge needs no session and goes on.
 serve_poll() {
-  local now reason data prs n size title batch begins capped ticket_wait="" started_before diag cause why reserved garden="" garden_said=false
+  local now reason data prs n size title batch begins capped ticket_wait="" started_before diag cause why reserved garden="" garden_said=false waiting
   local -a queue=()
   now=$(serve_now)
   RUN_STOP=""
@@ -1815,6 +1957,10 @@ serve_poll() {
       echo "$(serve_now) $n" | state_append "$SERVE_DIR/ticket-starts"
     fi
   done
+  # Framing comes last: only a Ready ticket that waits for nothing but a slot goes before it (#585).
+  waiting=0
+  for n in "${queue[@]}"; do serve_busy "$n" || waiting=$((waiting + 1)); done
+  serve_frame "$data" "$waiting"
   serve_report
   serve_breaker
 }

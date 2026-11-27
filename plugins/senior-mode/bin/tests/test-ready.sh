@@ -673,5 +673,24 @@ ready --optin || fail "T: a damaged opt-in file fails: $(cat "$work/err")"
 said '^no candidate: nothing is opted in' || fail "T: a damaged opt-in file is not set aside: $(cat "$work/out")"
 rm -f "$optin"
 
+# U: the tickets a framing session filed (#585, `framed-by: serve`) are an agent's: Ready by rule like #20-#29, but an M
+# passes (not an agent's M), a protected zone and a high severity still stop one, and one that waits for an answer
+# (needs-decision) is left alone until its label goes.
+framed=$'\nfiled-by: agent\nframed-by: serve\n'
+items="[]"
+item 40 Backlog "P1 next" M - "docs/**" '[]' "$criteria$framed"
+item 41 Backlog "P1 next" M - "docs/**" '[]' "$criteria$agent"
+item 42 Backlog "P1 next" M - "auth/login.ts" '[]' "$criteria$framed"
+item 43 Backlog "P1 next" S - "docs/**" '["needs-decision"]' "$criteria$framed"
+item 44 Backlog "P1 next" L - "docs/**" '[]' "$criteria$framed"
+board
+ready || fail "U: ready failed: $(cat "$work/err")"
+said '^#40 Status = Ready' || fail "U: a framed M ticket not Ready: $(cat "$work/out")"
+said '^#41 needs-human: .*size M' || fail "U: an agent's M ticket that no framing filed is Ready: $(cat "$work/out")"
+said '^#42 needs-human: .*protected zone' || fail "U: a framed ticket in a protected zone: $(cat "$work/out")"
+said '^#44 needs-human: .*size L' || fail "U: a framed L ticket: $(cat "$work/out")"
+grep -qE "issues/43[/ ]" "$GH_LOG" && fail "U: #43 (needs-decision) was touched: $(grep 'issues/43' "$GH_LOG")"
+grep -qE "issues/40/labels" "$GH_LOG" && fail "U: #40 labelled needs-human"
+
 [ "$failures" -eq 0 ] && echo "ready: all cases pass"
 exit "$((failures > 0))"

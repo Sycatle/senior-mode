@@ -361,7 +361,12 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "allow": { "type": "array", "items": { "type": "string" }, "description": "Hosts a sandboxed session may reach besides the model API and the registries of the preset: an exact host, or *.suffix for any subdomain (not the apex)." }
+        "allow": { "type": "array", "items": { "type": "string" }, "description": "Hosts a sandboxed session may reach besides the model API and the registries of the preset: an exact host, or *.suffix for any subdomain (not the apex)." },
+        "verbs": {
+          "type": "array",
+          "description": "Extra read-only gh verbs a sandboxed session may run through the credential broker, as `gh <group> <view|list|status|diff|checks>`. A write verb, `gh auth`, `gh repo`, `gh api` and the secret and key groups are refused.",
+          "items": { "type": "string", "pattern": "^gh (?!(auth|repo|api|secret|variable|ssh-key|gpg-key|config|extension|alias|codespace) )[a-z-]+ (view|list|status|diff|checks)$" }
+        }
       }
     },
     "envGuard": {

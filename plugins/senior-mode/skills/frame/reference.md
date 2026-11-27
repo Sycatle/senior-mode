@@ -21,8 +21,8 @@ existing issue keeps that issue as the anchor.
 
 ## Size S
 
-No spec. Ask the round of questions first (nobody to ask: take the recommended options and write them
-in the issue as assumed), then:
+No spec, no question round, no acceptance step: straight to delivery. A decision the ticket leaves open:
+take the recommended option and write it in the issue as "decided by the agent". Then:
 
 1. An existing issue is used as is; a new idea becomes one: the `ops` agent runs `senior-mode issue
    create` as in "Tickets" with `--size S`, the type of the idea and the expected behaviour as Given /
@@ -54,15 +54,17 @@ the anchor issue exists (step 5; an S ticket: right after `senior-mode start`, i
 senior-mode frame decide <anchor> "<question>" "<answer>"
 ```
 
-Nobody to ask: the recommended option, its answer ending with `(assumed)`. A rerun adds nothing. M and L:
+Nobody to ask: the recommended option, its answer ending with `(assumed)` (a decided-by-the-agent decision). A rerun adds nothing. M and L:
 run it in the framing worktree, so the file ships with the spec in the step 8 pull request; S: it ships with
 the ticket's pull request. Never write it on the default branch. The body of each ticket created gets a final
 `## Framing` section: the answers that shaped it, one line each, and "Logged in docs/decisions.md".
 
 ## Headless
 
-No question is asked. The recommended options are recorded as assumed in the issue or the spec. An L
-spec or an ADR stays `draft` / `proposed` and the anchor gets `needs-human`.
+Also whenever nobody can answer. No question is asked: an open decision takes the recommended option,
+recorded as "decided by the agent" in the issue or the spec, and an M spec with its ADRs is accepted.
+Exceptions, which stay `draft` / `proposed` with `needs-human` on the anchor: an L spec, a high or
+critical security risk, a protected zone.
 
 ## Tickets
 

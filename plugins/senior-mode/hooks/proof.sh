@@ -2,7 +2,8 @@
 # Proof before claims (spec 0001 §4.5, §16), in repositories with .claude/senior-mode.json.
 # PostToolUse: an edit marks the session "edited"; a successful verification command marks it
 # "verified" (failed commands go to PostToolUseFailure, not here). Stop, and SubagentStop of the
-# implementer, block once while the session is "edited". PreCompact prints what the summary keeps.
+# implementer, remind while the session is "edited" and never block (ADR 0034): the Stop event takes no
+# additionalContext, so the reminder is a systemMessage. PreCompact prints what the summary keeps.
 set -o pipefail
 input=$(cat)
 get() { jq -r "$1 // empty" <<<"$input"; }
@@ -23,9 +24,9 @@ is_verification() {
   done < <(jq -r '.checks[]?.run' "$config" 2>/dev/null)
   return 1
 }
-block() {
-  jq -nc --arg r "senior-mode: files changed since the last successful verification. Run \`senior-mode check\`${checks:+ ($checks)} and read its output before finishing; if it cannot run here, say plainly that the change is not verified and why." \
-    '{decision: "block", reason: $r}'
+remind() {
+  jq -nc --arg c "senior-mode: files changed since the last successful verification. Run \`senior-mode check\`${checks:+ ($checks)} and read its output before finishing; if it cannot run here, say plainly that the change is not verified and why." \
+    '{systemMessage: $c}'
 }
 
 event=$(get .hook_event_name)
@@ -38,7 +39,7 @@ case $event in
     ;;
   Stop | SubagentStop)
     [ "$event" = Stop ] || [[ $(get .agent_type) == *implementer ]] || exit 0
-    [ "$(get .stop_hook_active)" = true ] || [ "$(cat "$state" 2>/dev/null)" != edited ] || block
+    [ "$(get .stop_hook_active)" = true ] || [ "$(cat "$state" 2>/dev/null)" != edited ] || remind
     ;;
   PreCompact)
     branch=$(git -C "$root" symbolic-ref --short -q HEAD)

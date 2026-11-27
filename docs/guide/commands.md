@@ -51,10 +51,11 @@ State: **Available.**
 - **Size.** Judged with the `triage` criteria and announced in one line with its reason, before any
   work. A smaller size than the criteria allow is refused with the criterion that forbids it; a
   larger one is accepted.
-- **Asks you.** Always one round of 3 to 4 questions, even for S, recommended option first, then only
-  what stays open and what the repository and GitHub cannot answer. For M and L, then whether you
-  accept the spec and ADRs. With nobody to ask (headless), the recommended options are taken and
-  recorded as assumed; an L spec and any ADR stay `draft` / `proposed`, with `needs-human`.
+- **Asks you.** Nothing for S: it goes straight to delivery. For M and L, one round of 3 to 4
+  questions, recommended option first, then only what stays open and what the repository and GitHub
+  cannot answer, then whether you accept the spec and ADRs. With nobody to ask (headless), the
+  recommended options are taken and recorded as "decided by the agent" (ADR 0034); an L spec, a high or
+  critical security risk and a protected zone stay `draft` / `proposed`, with `needs-human`.
   When `docs/vision.md` exists (the owner's goals `G1`... and `## Non-goals`), an idea that contradicts a
   non-goal is not framed: `frame` quotes the non-goal and asks you; headless, it labels the issue
   `needs-human` and stops. A milestone `frame` creates then has a `Goal: G<n>` line in its description,

@@ -954,5 +954,21 @@ wait "$pid" 2>/dev/null || true
 run status --watch --json && fail "--watch --json accepted"
 [ "$(git -C "$repo" status --porcelain | wc -l)" -eq 0 ] || fail "watch left changes in the tree"
 
+# #824: a section file alone adds its key to --json and its line to the text, at its order (here between Next Ready and Release).
+cp -r "$(dirname "$cli")" "$work/bin"
+cat >"$work/bin/lib/status.d/stub.sh" <<'SECTION'
+# shellcheck shell=bash
+STATUS_SECTION_STUB_ORDER=1550
+STATUS_SECTION_STUB_TEXT_JQ='"Stub: \(.stub.items) items, \(.stub.core) in progress"'
+status_section_stub_json() { jq -c --argjson c "$(jq '.inProgress | length' <<<"$2")" '{stub: {items: (.items | length), core: $c}}' <<<"$1"; }
+SECTION
+cli_real=$cli cli=$work/bin/senior-mode
+run status --json --since 7d || fail "status --json with a stub section failed: $(cat "$work/err")"
+[ "$(json '.stub.items > 0 and .stub.core == (.inProgress | length)')" = true ] || fail "the stub section's key: $(json '.stub')"
+[ "$(json 'keys_unsorted | .[-4:]')" = '["stub","maintenance","serve","retro"]' ] || fail "the sections are not merged by order: $(json 'keys_unsorted')"
+run status --since 7d || fail "status with a stub section failed: $(cat "$work/err")"
+grep -A1 '^Stub: [0-9]* items, [0-9]* in progress$' "$work/out" | grep -qx 'Release' || fail "the stub line is not before Release: $(cat "$work/out")"
+cli=$cli_real
+
 [ "$failures" -eq 0 ] && echo "status: all cases pass"
 exit "$failures"

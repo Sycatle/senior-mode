@@ -38,6 +38,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `workflow.sh`: reading the detected `workflow` (branch pattern, base, merge flag, PR gaps) for start, run, serve, status, clean.
 - `setup-answers.sh`: `setup detect` and `setup answers` (the three questions: detection, profile, config layers).
 - `setup-remove.sh`: `setup remove` (files through a pull request, ruleset, labels, workflows).
+- `org.sh`: the organization layer's file and `setup org` (the organization's template Project, its pull request on `<owner>/.github`, `--print-ruleset`).
 - `status.sh`: `status` (board drift, decisions, dashboard, hierarchy, `--fix`, local facts, the command).
 - `status-hygiene.sh`: the repository hygiene (stale pull requests, branches, superseded, orphans) and its `--fix` repairs.
 - `status-board.sh`: cycle (iteration) fields, board archive, Project status updates, health of the Project.

@@ -130,6 +130,11 @@ run check && fail "check passes with a vision.maxLines that is no number"
 rm -rf "$repo/docs"
 config '{"checks":[{"name":"tests","run":"true"}]}'
 
+# This repository's own docs/vision.md (#837): a draft that passes the check and is marked as a draft.
+root=$(cd "$(dirname "$0")/../../../.." && pwd)
+(cd "$root" && "$cli" vision-check) >"$work/out" 2>&1 || fail "docs/vision.md of this repository fails vision-check: $(cat "$work/out")"
+grep -q "^Status: draft (agent, 2026-11-27), owner validation pending$" "$root/docs/vision.md" || fail "docs/vision.md has no draft Status line"
+
 # Git exports GIT_DIR to hooks, absolute in a linked worktree: a check must not inherit it, or a
 # test that runs git on a fixture writes into this repository.
 config '{"checks":[{"name":"env","run":"env | grep -E \"^GIT_(DIR|WORK_TREE|INDEX_FILE)=\" && exit 1; true"}]}'

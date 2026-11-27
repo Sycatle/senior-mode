@@ -423,18 +423,18 @@ grep -qiE 'every (ticket|slice).*--parent' "$frame_ref" || fail "frame reference
 grep -qiE 'no vision file|without .docs/vision.md' "$frame_ref" || fail "frame reference does not keep framing unchanged without a vision file"
 grep -q 'Goal: G' "$plugin/../../docs/guide/commands.md" || fail "commands guide does not document the Goal: Gn milestone line"
 # Added suppressions (#437): each added line that silences a check or skips a test is a warning line with
-# file and line; the exit code does not change, and Markdown or a lookalike (`exit(`) is not listed.
+# file and line; the exit code does not change (each carries its issue and reason, the suppression rule of the code rules), and Markdown or a lookalike (`exit(`) is not listed.
 config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
 run check || fail "check fails: $(cat "$work/out")"
 grep -q "suppression added" "$work/out" && fail "suppression reported with none added: $(cat "$work/out")"
-printf 'const a = 1;\n// eslint-disable-next-line no-console\nconsole.log(a); // @ts-ignore\nit.skip("x", () => {});\nxit("y");\nprocess.exit(1);\n' >"$repo/src/s.ts"
-printf 'import os  # noqa: F401\nx: int = "a"  # type: ignore\n@pytest.mark.skip\ndef test_a(): pass\n' >"$repo/src/t.py"
-printf 'package a\n//nolint:errcheck\nfunc TestA(t *testing.T) { t.Skip("later") }\n' >"$repo/src/a_test.go"
-printf '#[allow(dead_code)]\nfn f() {}\n' >"$repo/src/lib.rs"
+printf 'const a = 1;\n// eslint-disable-next-line no-console -- #123: fixture\nconsole.error(a); // @ts-ignore -- #123: fixture\nit.skip("x", () => {}); // -- #123: fixture\nxit("y"); // -- #123: fixture\nprocess.exit(1);\n' >"$repo/src/s.ts"
+printf 'import os  # noqa: F401 -- #123: fixture\nx: int = "a"  # type: ignore -- #123: fixture\n@pytest.mark.skip  # -- #123: fixture\ndef test_a(): pass\n' >"$repo/src/t.py"
+printf 'package a\n//nolint:errcheck -- #123: fixture\nfunc TestA(t *testing.T) { t.Skip("later") } // -- #123: fixture\n' >"$repo/src/a_test.go"
+printf '#[allow(dead_code)] // -- #123: fixture\nfn f() {}\n' >"$repo/src/lib.rs"
 printf 'Use it.skip( sparingly.\n' >"$repo/src/notes.md"
 commit -m "feat: suppressions"
 run check || fail "a suppression changes the exit code: $(cat "$work/out")"
-for want in "src/s.ts:2: // eslint-disable-next-line" "src/s.ts:3: console.log(a); // @ts-ignore" 'src/s.ts:4: it.skip(' 'src/s.ts:5: xit(' \
+for want in "src/s.ts:2: // eslint-disable-next-line" "src/s.ts:3: console.error(a); // @ts-ignore" 'src/s.ts:4: it.skip(' 'src/s.ts:5: xit(' \
   "src/t.py:1: import os  # noqa" "src/t.py:2: " "src/t.py:3: @pytest.mark.skip" "src/a_test.go:2: //nolint" \
   'src/a_test.go:3: ' "src/lib.rs:1: #[allow(dead_code)]"; do
   grep -qF "warn  suppression added: $want" "$work/out" || fail "suppression not listed: $want: $(cat "$work/out")"
@@ -557,7 +557,7 @@ printf '// a comment\n{"compilerOptions": {\n  "paths": {"@/*": ["./arch/*"]}}}\
 printf 'module example.com/app\n' >"$repo/go.mod"
 commit -m "feat: arch fixtures"
 rules='{"id":"ui-not-db","forbidImport":{"from":"arch/ui/**","to":"arch/db/**"},"why":"ui goes through services"}'
-cfg() { config "{\"audit\":false,\"checks\":[{\"name\":\"lint\",\"run\":\"true\"}],\"architecture\":{\"rules\":[$1]}}"; }
+cfg() { config "{\"audit\":false,\"checks\":[{\"name\":\"lint\",\"run\":\"true\"}],\"rules\":{\"off\":{\"debug-print\":{\"why\":\"fixture\"}}},\"architecture\":{\"rules\":[$1]}}"; }
 cfg "$rules"
 run check && fail "a forbidden import passes"
 for want in "ui-not-db: arch/ui/a.ts:2: imports ../db/x, which resolves under arch/db/\*\* (ui goes through services)" \

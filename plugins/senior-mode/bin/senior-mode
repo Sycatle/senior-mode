@@ -72,6 +72,11 @@ usage() {
 . "$LIB/status-board.sh"
 # shellcheck source=lib/statusline.sh
 . "$LIB/statusline.sh"
+# The status sections (see lib/status.sh): one file each, no line here; .github/scripts/shellcheck.sh checks them.
+for section in "$LIB"/status.d/*.sh; do
+  # shellcheck source=/dev/null
+  . "$section"
+done
 # shellcheck source=lib/retro.sh
 . "$LIB/retro.sh"
 # shellcheck source=lib/context.sh

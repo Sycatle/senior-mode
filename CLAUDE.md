@@ -40,6 +40,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `setup-remove.sh`: `setup remove` (files through a pull request, ruleset, labels, workflows).
 - `org.sh`: the organization layer's file and `setup org` (the organization's template Project, its pull request on `<owner>/.github`, `--print-ruleset`).
 - `status.sh`: `status` (board drift, decisions, dashboard, hierarchy, `--fix`, local facts, the command).
+- `status.d/<name>.sh`: the status sections (one per feature: a JSON part, its order, its text), sourced by a glob; the recipe is at the top of `status.sh`.
 - `status-hygiene.sh`: the repository hygiene (stale pull requests, branches, superseded, orphans) and its `--fix` repairs.
 - `status-board.sh`: cycle (iteration) fields, board archive, Project status updates, health of the Project.
 - `retro.sh`: `retro` (facts of the period: history, runs, usage, checks, calibration, iteration).
@@ -63,5 +64,6 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 ## Pitfalls
 
 - A module cannot rely on `BASH_SOURCE`: use `$SELF` (the entry's real path) and `$LIB`.
-- A new module needs a `# shellcheck source=lib/<name>.sh` line and its `.` line in the entry point.
+- A new module needs a `# shellcheck source=lib/<name>.sh` line and its `.` line in the entry point (not a status section).
+- A new line or key of `status` is a section file, not an edit of `STATUS_JQ` or `STATUS_TEXT_CORE`.
 - Usage line: exactly one `die "usage: senior-mode ..."`, in the entry; `docs-drift.sh` reads it.

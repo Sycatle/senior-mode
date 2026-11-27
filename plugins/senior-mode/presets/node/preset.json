@@ -10,7 +10,12 @@
     ".gitlab-ci.yml", "Dockerfile*", "docker-compose*", "compose.y*ml", "**/infra/**",
     "**/terraform/**", "**/k8s/**", "*.tf", ".claude/settings*.json", ".claude/senior-mode.json", ".claude/senior-mode/**", ".claude/secret-allowlist", ".claude/ratchet-baseline.json", ".claude/architecture-baseline.json"
   ],
-  "frameworks": { "next": { "protected": ["middleware.*", "src/middleware.*", "proxy.*", "src/proxy.*"] } },
+  "frameworks": {
+    "next": {
+      "protected": ["middleware.*", "src/middleware.*", "proxy.*", "src/proxy.*"],
+      "ui": { "paths": ["app/**/*.tsx", "components/**", "**/*.css", "public/**"] }
+    }
+  },
   "queries": { "prisma": { "template": "queries/prisma.ts", "helper": "test/support/query-count.ts" } },
   "release": {
     "packages": { ".": { "release-type": "node", "component": "{{name}}", "include-component-in-tag": true } }

@@ -842,7 +842,7 @@ ready_optin_add() {
 # it skipped, by reason; with no candidate, "no candidate: <reason>" with the counts.
 ready() {
   local pr="" dry=false slug info items zones hier nums="null" it n why considered=0 made=0 held=0 skipped line
-  local optin=false add_m="[]" add_t="[]" cur="" named
+  local optin=false add_m="[]" add_t="[]" cur="" named uig
   while [ $# -gt 0 ]; do
     case $1 in
       --pr)
@@ -900,10 +900,12 @@ ready() {
   fi
   zones=$(ready_zones) || exit 1
   hier=$(config_get hierarchy) || exit 1
+  uig=$(ui_globs)
   while IFS= read -r it; do
     n=$(jq -r '.number' <<<"$it")
     why=$(ready_missing "$it" "$zones" "$hier" | jq -r 'join(", ")')
     considered=$((considered + 1))
+    ! ui_predicted "$it" "$uig" || echo "#$n UI ticket (predicted)"
     if [ -z "$why" ]; then
       if [ "$dry" = true ]; then
         made=$((made + 1))

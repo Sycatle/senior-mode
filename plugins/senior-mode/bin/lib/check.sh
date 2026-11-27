@@ -1510,6 +1510,7 @@ publish() {
     die "could not publish the status of ${sha:0:7}; push the commit first"
   echo "senior-mode/ci = $state on ${sha:0:7}: $description"
   heavy_start "$sha"
+  ui_report "$sha"
   verdict=$(security_verdict "$sha")
   state=${verdict%% *} description=${verdict#* }
   # Only publish's own words are replaced: a success "not required", a pending "required: ...". Any

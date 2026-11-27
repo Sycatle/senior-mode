@@ -482,10 +482,15 @@ grep -qF "#17 Ticket 17 (worktree $(cd "$wt17" && pwd -P))" "$work/out" ||
   fail "plain status does not show the worktree of #17: $(cat "$work/out")"
 grep -qx "  #21 Ticket 21" "$work/out" || fail "a ticket without worktree gets a path: $(cat "$work/out")"
 
-# Work in progress against the wip limit (#125): default 1, two tickets In progress.
-grep -qF "In progress (2, over the limit of 1)" "$work/out" || fail "wip over the limit not shown: $(cat "$work/out")"
+# Work in progress against the wip limit (#125): the default is 3, two tickets In progress are under it.
+grep -qx "In progress (2)" "$work/out" || fail "wip under the default limit shown as over: $(cat "$work/out")"
 run status --json --since 7d || fail "status --json failed: $(cat "$work/err")"
-[ "$(json .wip)" = '{"limit":1,"count":2}' ] || fail "wip in JSON: $(json .wip)"
+[ "$(json .wip)" = '{"limit":3,"count":2}' ] || fail "wip in JSON: $(json .wip)"
+echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}, "wip": 1}' >"$repo/.claude/senior-mode.json"
+run status --since 7d || fail "status with wip 1 failed: $(cat "$work/err")"
+grep -qF "In progress (2, over the limit of 1)" "$work/out" || fail "wip over the limit not shown: $(cat "$work/out")"
+run status --json --since 7d || fail "status --json with wip 1 failed: $(cat "$work/err")"
+[ "$(json .wip)" = '{"limit":1,"count":2}' ] || fail "wip 1 in JSON: $(json .wip)"
 echo '{"project": {"id": "PVT_1", "owner": "acme", "number": 3}, "wip": 2}' >"$repo/.claude/senior-mode.json"
 run status --json --since 7d || fail "status --json with wip 2 failed: $(cat "$work/err")"
 [ "$(json .wip)" = '{"limit":2,"count":2}' ] || fail "wip 2 in JSON: $(json .wip)"

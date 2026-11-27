@@ -82,7 +82,8 @@ expect_fail() { # case what fix
   grep -q "fix: $3" "$work/out" || fail "$1: the fix '$3' is not printed: $(cat "$work/out")"
 }
 
-# A: everything in place: exit 0, every line ok, nothing overridden.
+# A: everything in place: exit 0, every line ok, nothing overridden (the strict profile: the default fast one lifts the review).
+good=$(jq -c '.process = {profile: "strict"}' <<<"$good")
 config "$good"
 doctor || fail "A: doctor failed: $(cat "$work/out" "$work/err")"
 for c in 'gh auth' 'claude login' 'git hooks' config 'board fields' 'type labels' ruleset; do
@@ -253,9 +254,9 @@ grep -q 'LIFTED review: docs/adr/0016-lift.md (accepted' "$work/out" || fail "F2
 grep -q 'override skills/review/SKILL.md (append)' "$work/out" || fail "F2: override missing: $(cat "$work/out")"
 grep -q 'repository: wip = 2' "$work/out" || fail "F2: layer value missing: $(cat "$work/out")"
 grep -q 'nothing overridden' "$work/out" && fail "F2: says nothing is overridden"
-echo '{"wip": 3}' >"$repo/.claude/senior-mode.local.json"
+echo '{"wip": 5}' >"$repo/.claude/senior-mode.local.json"
 doctor
-grep -q 'local: wip = 3' "$work/out" || fail "F3: the local layer is not listed: $(cat "$work/out")"
+grep -q 'local: wip = 5' "$work/out" || fail "F3: the local layer is not listed: $(cat "$work/out")"
 
 # G (#446): the hooks, roles, routing rows and providers of the layers, each with its file and layer.
 rm -f "$repo/.claude/senior-mode.local.json"

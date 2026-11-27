@@ -90,7 +90,7 @@
     "protected": { "type": "array", "items": { "type": "string" }, "description": "Globs of protected zones. Layers add to it, none removes from it." },
     "secrets": { "type": "array", "items": { "type": "string" }, "description": "Extra globs of the secrets guard. Layers add to it." },
     "audit": { "type": "boolean", "description": "false turns off the dependency audit of `check`." },
-    "wip": { "type": "integer", "minimum": 1, "description": "Open tickets In progress at once." },
+    "wip": { "type": "integer", "minimum": 1, "description": "Open tickets In progress at once (default 3)." },
     "slot": { "type": "string", "description": "A shell command that derives the environment of a session slot." },
     "slotDown": { "type": "string", "description": "A shell command, idempotent, that tears down the environment of a session slot (run before the session, after it, whatever the exit)." },
     "slotUp": { "type": "string", "description": "A shell command that brings up the environment of a session slot, after slotDown and before the session." },
@@ -310,7 +310,7 @@
     "bestOf": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "n": { "type": "integer", "minimum": 1, "maximum": 3, "description": "Candidates tried for a ticket whose pull request still has changes requested after 2 fix rounds, the pull request being the first: serve starts the others on branches -b2 and -b3, one at a time; the first whose review passes merges and the others are closed. 1 turns it off." } }
+      "properties": { "n": { "type": "integer", "minimum": 1, "maximum": 3, "description": "Candidates tried for a ticket whose pull request still has changes requested after 2 fix rounds, the pull request being the first: serve starts the others on branches -b2 and -b3, one at a time; the first whose review passes merges and the others are closed. 1 (the default) turns it off." } }
     },
     "retro": {
       "type": "object",
@@ -452,14 +452,24 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "maxTickets": { "type": "integer", "minimum": 1 },
-        "parallel": { "type": "integer", "minimum": 1 },
-        "maxConsecutiveFailures": { "type": "integer", "minimum": 1 },
-        "merge": { "type": "boolean" },
+        "maxTickets": { "type": "integer", "minimum": 0, "description": "Tickets per run. 0 (the default) means no cap." },
+        "parallel": { "type": "integer", "minimum": 1, "description": "Tickets worked on at once, and the number of session slots (default 3)." },
+        "maxConsecutiveFailures": { "type": "integer", "minimum": 1, "description": "Failed tickets in a row after which the circuit breaker opens (default 3)." },
+        "merge": { "type": "boolean", "description": "Whether a pull request that passes every bound is merged (default true; false stops at the reviewed pull request)." },
         "escalate": { "type": "boolean" },
-        "sessionTimeout": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Minutes." },
+        "sessionTimeout": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Minutes. A value a project sets applies to every Size; unset, autonomy.sessionTimeoutBySize decides (the default shown is the M one)." },
+        "sessionTimeoutBySize": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Minutes a ticket session may run, by Size, when autonomy.sessionTimeout is not set: S 45, M 120, L 240.",
+          "properties": {
+            "S": { "type": "integer", "minimum": 1, "maximum": 1440 },
+            "M": { "type": "integer", "minimum": 1, "maximum": 1440 },
+            "L": { "type": "integer", "minimum": 1, "maximum": 1440 }
+          }
+        },
         "schedule": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "HH:MM." },
-        "ticketsPerHour": { "type": "integer", "minimum": 1 },
+        "ticketsPerHour": { "type": "integer", "minimum": 0, "description": "Tickets serve begins in any 60 minutes. 0 (the default) means no limit." },
         "sessionsPerHour": { "type": "integer", "minimum": 0 },
         "minMemoryMB": { "type": "integer", "minimum": 0 },
         "minDiskMB": { "type": "integer", "minimum": 0 },
@@ -549,7 +559,7 @@
       "additionalProperties": false,
       "description": "The process: the profile (a file, see profile.schema.json) and the lifts of its locked gates. Read from the repository layer; a profile or a lift in another layer is ignored for the lifts.",
       "properties": {
-        "profile": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "`strict` (default) or `fast`, or a profile file of the project under .claude/senior-mode/profiles/." },
+        "profile": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "`fast` (default) or `strict`, or a profile file of the project under .claude/senior-mode/profiles/." },
         "lifts": {
           "type": "array",
           "description": "One entry per locked gate that the profile lifts, with the accepted ADR of this repository that decided it.",

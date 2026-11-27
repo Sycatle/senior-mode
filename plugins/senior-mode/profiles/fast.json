@@ -1,6 +1,6 @@
 {
   "$schema": "../schema/profile.schema.json",
-  "description": "The process of ADR 0016: no independent review, a pull request merges once check is green. Lifting the review needs an accepted ADR of the repository, named in process.lifts.",
+  "description": "The default process (ADR 0034): no independent review, a pull request merges once check is green and no bound stops it. The shipped fast profile lifts the review with no ADR of the project; a project profile that lifts a gate still needs one.",
   "extends": "strict",
   "gates": {
     "review": false

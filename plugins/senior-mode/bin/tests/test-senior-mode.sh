@@ -42,7 +42,7 @@ expect() {
 PROJECT='"project":{"owner":"acme","number":1,"id":"PVT_1","fields":{"Status":{"id":"F_STATUS","options":{"Ready":"O_READY"}}}}'
 
 config '{"language":"fr"}'
-expect 0 3 config get autonomy.maxTickets
+expect 0 0 config get autonomy.maxTickets
 expect 0 fr config get language
 expect 0 local config get ci.mode
 expect 1 - config get unknown.key
@@ -50,11 +50,11 @@ expect 1 - config get unknown.key
 config '{"autonomy":{"maxTickets":5,"merge":true}}'
 expect 0 5 config get autonomy.maxTickets
 expect 0 true config get autonomy.merge
-expect 0 2 config get autonomy.maxConsecutiveFailures
+expect 0 3 config get autonomy.maxConsecutiveFailures
 expect 0 true config get autonomy.escalate
-expect 0 90 config get autonomy.sessionTimeout
+expect 0 120 config get autonomy.sessionTimeout
 config '{}'
-expect 0 false config get autonomy.merge
+expect 0 true config get autonomy.merge
 expect 1 - config get autonomy.autoMerge
 expect 0 true config get audit
 config '{"audit":false}'
@@ -80,8 +80,7 @@ expect 1 - config get language
 grep -q setup "$work/err" || fail "invalid config message does not mention setup"
 
 rm "$repo/.claude/senior-mode.json"
-expect 1 - config get language
-grep -q setup "$work/err" || fail "missing config message does not mention setup"
+expect 0 en config get language
 
 config "{$PROJECT}"
 : >"$GH_LOG"

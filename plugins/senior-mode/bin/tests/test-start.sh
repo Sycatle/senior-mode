@@ -56,7 +56,7 @@ git -C "$repo" remote add origin git@github.com:acme/app.git
 git -C "$repo" config url."$work/origin.git".insteadOf git@github.com:acme/app.git
 mkdir -p "$repo/.claude"
 cat >"$repo/.claude/senior-mode.json" <<'JSON'
-{"project": {"id": "PVT_1", "owner": "acme", "number": 3, "fields": {
+{"wip": 1, "project": {"id": "PVT_1", "owner": "acme", "number": 3, "fields": {
   "Status": {"id": "F_S", "options": {"Backlog": "o1", "Ready": "o2", "In progress": "o3"}}}}}
 JSON
 git -C "$repo" add -A
@@ -248,7 +248,7 @@ mkdir "$wt/96"
 start 96 && fail "started over an existing directory"
 git -C "$repo" show-ref -q --verify refs/heads/feat/96-occupied && fail "branch created despite the taken path"
 
-# The work-in-progress limit (#125): wip 1 by default, #89 In progress elsewhere.
+# The work-in-progress limit (#125): wip 1, #89 In progress elsewhere.
 issue "Second thing" ''
 export GH_IN_PROGRESS='[89]'
 start 102 && fail "started past the wip limit"
@@ -280,7 +280,7 @@ for bad in 0 '"two"'; do
   grep -q 'wip must be a positive whole number' "$work/err" || fail "wip $bad refusal not explained: $(cat "$work/err")"
   [ -e "$wt/104" ] && fail "worktree created with wip $bad"
 done
-jq 'del(.wip)' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
+jq '.wip = 1' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
 unset GH_IN_PROGRESS
 : >"$GH_LOG"
 

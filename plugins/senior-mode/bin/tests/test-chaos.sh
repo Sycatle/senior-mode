@@ -197,7 +197,7 @@ setup() {
   git -C "$repo" remote add origin "$REMOTE"
   mkdir -p "$repo/.claude"
   jq -n --argjson a "${2:-{\}}" --argjson s "${3:-{\}}" '{project: {id: "PVT_1", owner: "acme", number: 3, fields: {Status: {id: "F_S", options:
-      {Ready: "o1", "In progress": "o2", "In review": "o3", Backlog: "o0", Done: "o4"}}}}, autonomy: ({minMemoryMB: 0} + $a), serve: $s,
+      {Ready: "o1", "In progress": "o2", "In review": "o3", Backlog: "o0", Done: "o4"}}}}, autonomy: ({minMemoryMB: 0, parallel: 1, maxConsecutiveFailures: 2, ticketsPerHour: 6} + $a), wip: 1, bestOf: {n: 2}, process: {profile: "strict"}, serve: $s,
     notify: {digest: false}, github: {protection: "ruleset"}, audit: false, checks: [{name: "ok", run: "true"}], protected: []}' \
     >"$repo/.claude/senior-mode.json"
   git -C "$repo" add -A

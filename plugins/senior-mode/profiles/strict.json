@@ -1,6 +1,6 @@
 {
   "$schema": "../schema/profile.schema.json",
-  "description": "The default process: every locked gate stands, the independent review included.",
+  "description": "The opt-in process (process.profile: strict): every locked gate stands, the independent review included. The default is fast.",
   "gates": {
     "secretScan": true,
     "protectedZones": true,

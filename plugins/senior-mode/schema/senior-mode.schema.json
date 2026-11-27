@@ -347,8 +347,22 @@
     },
     "rules": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
-        "packs": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "The rule packs of the project, written by `setup repo` from its preset (node, python, go, rust); each lists its linter, typing and format rules as `covered by your config`, `proposed` or `written`." }
+        "packs": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Rule packs `check` runs on the diff (plugins/senior-mode/rules/<pack>.json); the preset's when absent (`setup repo` writes the preset's quality pack there); `common` is always added." },
+        "off": {
+          "type": "object",
+          "description": "Rules turned off, by rule id, each with its reason; with `paths` the rule is skipped only under them.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["why"],
+            "properties": {
+              "why": { "type": "string", "minLength": 1 },
+              "paths": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
       }
     },
     "ratchet": {

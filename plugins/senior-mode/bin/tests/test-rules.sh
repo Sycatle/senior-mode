@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Tests for the code rules engine (#720, spec 471 §1): `senior-mode rules-check` and the `code rules` step of `check`.
+# Offline: git fixture repositories and fixture pack files (SENIOR_MODE_RULES_DIR).
+set -u
+cli=$(cd "$(dirname "$0")/.." && pwd)/senior-mode
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+failures=0
+
+fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
+g() { git -C "$repo" -c user.name=t -c user.email=t@t "$@"; }
+run() { (cd "$repo" && "$cli" "$@") >"$work/out" 2>&1; }
+out() { cat "$work/out"; }
+# config <json>: the project configuration, committed with the tree it describes.
+config() { printf '%s\n' "$1" >"$repo/.claude/senior-mode.json"; }
+reset() { g checkout -q -- . && g clean -fdq && g checkout -q main && g branch -qD feat 2>/dev/null; g checkout -q -b feat; }
+has() { grep -qF -- "$1" "$work/out" || fail "$2: '$1' not in: $(out)"; }
+lacks() { ! grep -qF -- "$1" "$work/out" || fail "$2: '$1' in: $(out)"; }
+
+export SENIOR_MODE_RULES_DIR=$work/rules
+mkdir -p "$SENIOR_MODE_RULES_DIR"
+cat >"$SENIOR_MODE_RULES_DIR/t.json" <<'JSON'
+{ "rules": [
+  { "id": "no-foo", "tier": 2, "kind": "pattern", "ext": ["ts"], "pattern": "foo\\(", "fix": "call bar" },
+  { "id": "no-print", "tier": 2, "kind": "pattern", "prodOnly": true, "pattern": "console\\.log", "fix": "use the logger" }
+] }
+JSON
+cat >"$SENIOR_MODE_RULES_DIR/tool.json" <<'JSON'
+{ "rules": [
+  { "id": "dup", "tier": 2, "kind": "tool", "run": "nosuchtool-xyz --report", "format": "jscpd", "install": "npm i -g nosuchtool-xyz", "fix": "extract it" }
+] }
+JSON
+
+repo=$work/repo
+git init -q -b main "$repo"
+mkdir -p "$repo/.claude" "$repo/src"
+printf 'const a = foo(1);\nconst b = 2;\n' >"$repo/src/a.ts"
+printf 'console.log(1);\n' >"$repo/src/a.test.ts"
+config '{"audit": false, "checks": [{"name": "lint", "run": "true"}], "rules": {"packs": ["t"]}}'
+g add -A
+g commit -q -m "chore: base"
+g checkout -q -b feat
+
+# A match on a line the diff did not add or change passes.
+run rules-check || fail "an old match fails: $(out)"
+
+# The same match on an added line fails with file:line rule-id: message (fix: ...).
+printf 'const c = foo(2);\n' >>"$repo/src/a.ts"
+run rules-check && fail "a match on an added line passes"
+has "src/a.ts:3: no-foo: no-foo (fix: call bar)" "added line"
+lacks "src/a.ts:1:" "an old line is not reported"
+
+# A rule restricted to `ext` does not read another extension.
+reset
+printf 'foo(1)\n' >"$repo/src/b.js"
+run rules-check || fail "an ext-restricted rule reads a .js file: $(out)"
+
+# prodOnly: a match in a test file is not reported, in production code it is.
+reset
+printf 'console.log(2);\n' >>"$repo/src/a.test.ts"
+run rules-check || fail "a prodOnly rule reports a test file: $(out)"
+printf 'console.log(3);\n' >>"$repo/src/a.ts"
+run rules-check && fail "a prodOnly rule passes in production code"
+has "src/a.ts:3: no-print" "prodOnly in production"
+
+# A pack entry without id, tier or fix, or with an unknown kind, is a configuration error naming the pack and the entry.
+cp "$SENIOR_MODE_RULES_DIR/t.json" "$work/t.json.keep"
+for bad in '{"tier": 2, "kind": "pattern", "pattern": "x", "fix": "f"}' '{"id": "r", "kind": "pattern", "pattern": "x", "fix": "f"}' \
+  '{"id": "r", "tier": 2, "kind": "pattern", "pattern": "x"}' '{"id": "r", "tier": 2, "kind": "magic", "fix": "f"}'; do
+  jq --argjson r "$bad" '.rules += [$r]' "$work/t.json.keep" >"$SENIOR_MODE_RULES_DIR/t.json"
+  run rules-check && fail "a bad entry passes: $bad"
+  has "configuration error" "bad entry $bad"
+  has "pack t, entry 3" "bad entry $bad"
+done
+cp "$work/t.json.keep" "$SENIOR_MODE_RULES_DIR/t.json"
+
+# rules.off without why is a configuration error; with why and paths the rule is skipped only under them, and `off` is printed.
+reset
+printf 'const c = foo(2);\n' >>"$repo/src/a.ts"
+mkdir -p "$repo/src/legacy"
+printf 'foo(1);\n' >"$repo/src/legacy/x.ts"
+config '{"audit": false, "checks": [{"name": "lint", "run": "true"}], "rules": {"packs": ["t"], "off": {"no-foo": {"paths": ["src/legacy/**"]}}}}'
+run rules-check && fail "rules.off without why passes"
+has "rules.off.no-foo: why is missing" "off without why"
+config '{"audit": false, "checks": [{"name": "lint", "run": "true"}], "rules": {"packs": ["t"], "off": {"no-foo": {"why": "legacy code", "paths": ["src/legacy/**"]}}}}'
+run rules-check && fail "an off rule with paths skips the whole tree"
+has "off  no-foo: legacy code" "off line"
+has "src/a.ts:3: no-foo" "off under paths only: outside the paths"
+lacks "src/legacy/x.ts" "off under paths only: inside the paths"
+config '{"audit": false, "checks": [{"name": "lint", "run": "true"}], "rules": {"packs": ["t"], "off": {"no-foo": {"why": "not used here"}}}}'
+run rules-check || fail "an off rule without paths still fails: $(out)"
+has "off  no-foo: not used here" "off line without paths"
+
+# A tool rule whose tool is not installed fails with the tool, the install command and the rules.off key.
+reset
+config '{"audit": false, "checks": [{"name": "lint", "run": "true"}], "rules": {"packs": ["tool"]}}'
+printf 'const d = 1;\n' >>"$repo/src/a.ts"
+run rules-check && fail "a missing tool passes"
+has "tool missing: nosuchtool-xyz" "tool missing"
+has "npm i -g nosuchtool-xyz" "install command"
+has "rules.off.dup" "off key"
+
+# No pack: skipped. The packs of the preset are read when rules.packs is empty.
+config '{"audit": false, "checks": [{"name": "lint", "run": "true"}]}'
+run rules-check || fail "no pack fails: $(out)"
+has "skipped: no rule packs" "no pack"
+
+# `check` runs the step and fails with the finding.
+reset
+config '{"audit": false, "checks": [{"name": "lint", "run": "true"}], "rules": {"packs": ["t"]}}'
+printf 'const c = foo(2);\n' >>"$repo/src/a.ts"
+g add -A
+run check && fail "check passes with a rule finding"
+has "FAIL  code rules" "check step"
+has "src/a.ts:3 code rules" "check finding line"
+
+[ "$failures" -eq 0 ] && echo "ok: rules" || exit 1

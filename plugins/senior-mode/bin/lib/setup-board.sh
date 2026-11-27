@@ -456,7 +456,7 @@ setup_move_items() { # config-file dry-run number owner slug
 }
 
 # `setup github --project <n> --move-items [--dry-run]`: the entry point of setup_move_items. Only the items move: the
-# repository steps of setup github are not run, and --project alone, which would attach the repository (#398), is refused.
+# repository steps of setup github are not run. --project alone attaches the repository (setup_attach, #398).
 setup_github_move() {
   local target="" move=false dry=false root file slug owner
   while [ $# -gt 0 ]; do
@@ -467,10 +467,7 @@ setup_github_move() {
       *) usage ;;
     esac
   done
-  [ -n "$target" ] && [ "$move" = true ] || {
-    [ -n "$target" ] || usage
-    die "setup github --project $target: attaching a repository to a shared Project is not available yet (#398); add --move-items to move this repository's items to it"
-  }
+  [ -n "$target" ] && [ "$move" = true ] || usage
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   [ -f "$file" ] && jq empty "$file" 2>/dev/null || die "no valid .claude/senior-mode.json; run senior-mode setup github first"
@@ -478,14 +475,89 @@ setup_github_move() {
   setup_move_items "$file" "$dry" "$target" "$owner" "$slug"
 }
 
-# Creates missing board fields with their colours, repairs the options of existing ones.
-setup_fields() {
-  local id=$1 fields field want current options
+# The number of the Project $1, given as a number or as its URL, that the repository $3 of $2 can be attached to: GitHub
+# links a repository only to a Project of its own owner, so a URL of another owner is refused.
+attach_number() { # project owner slug
+  local o
+  if [[ $1 =~ ^[0-9]+$ ]]; then
+    echo "$1"
+  elif [[ $1 =~ ^https://github\.com/(orgs|users)/([^/]+)/projects/([0-9]+)(/.*)?$ ]]; then
+    o=${BASH_REMATCH[2]}
+    [ "${o,,}" = "${2,,}" ] ||
+      die "Project #${BASH_REMATCH[3]} belongs to $o and $3 belongs to $2: GitHub links a repository only to a Project of its own owner"
+    echo "${BASH_REMATCH[3]}"
+  else
+    usage
+  fi
+}
+
+# The repositories linked to the Project $1 (its id), one nameWithOwner per line.
+# shellcheck disable=SC2016 # a GraphQL query, not shell
+attach_linked() { # project-id
+  jq -nc --arg id "$1" '{variables: {id: $id}, query: "query($id: ID!) { node(id: $id) { ... on ProjectV2 {
+    repositories(first: 100) { nodes { nameWithOwner } } } } }"}' |
+    gh_retry api graphql --input - --jq '.data.node.repositories.nodes[].nameWithOwner'
+}
+
+# The repository that holds the duties of the Project as a whole (project.home): the one given with --home, else the
+# one named like the Project's title (among the linked ones and this one), else the home this config already names for
+# this Project, else the first linked, else this repository.
+attach_home() { # explicit title linked slug kept
+  local named
+  if [ -n "$1" ]; then echo "$1"; return; fi
+  named=$(printf '%s\n%s\n' "$3" "$4" | grep -ixF "${4%%/*}/$2" | head -1 || true)
+  if [ -n "$named" ]; then echo "$named"; return; fi
+  if [ -n "$5" ]; then echo "$5"; return; fi
+  printf '%s\n%s\n' "$3" "$4" | grep -v '^$' | head -1
+}
+
+# `setup github --project <number|url>` (#398): attaches the repository to the Project of its owner instead of
+# creating or finding one by title. The fields the commands need are created when missing and never rewritten (an
+# option a field lacks is reported, setup_fields), the repository is linked unless it already is, and the config names
+# the Project and its home. With dry set, says all of it and changes nothing. Sets number and id of setup_github.
+setup_attach() { # config-file slug project home dry
+  local file=$1 slug=$2 explicit=$4 dry=$5 owner=${2%%/*} info title linked kept home fields
+  [ -z "$explicit" ] || [[ $explicit =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || die "--home takes owner/name, got $explicit"
+  [ -z "$explicit" ] || [ "${explicit%%/*}" = "$owner" ] ||
+    die "--home $explicit belongs to ${explicit%%/*} and the Project to $owner: a product holds the repositories of one owner"
+  number=$(attach_number "$3" "$owner" "$slug") || exit 1
+  info=$(gh_retry project view "$number" --owner "$owner" --format json --jq '[.id, .title] | join("\t")') ||
+    die "cannot read Project #$number of $owner"
+  id=${info%%$'\t'*} title=${info#*$'\t'}
+  linked=$(attach_linked "$id") || die "cannot read the repositories linked to Project #$number"
+  kept=$(jq -r --arg id "$id" 'select(.project.id == $id) | .project.home // empty' "$file")
+  home=$(attach_home "$explicit" "$title" "$linked" "$slug" "$kept")
+  echo "Project #$number $title of $owner: $slug is attached to it, home $home"
+  echo "fields: Status, Priority, Size, Severity and Paths are checked; a missing field is created, an option a field lacks is reported and never added"
+  if [ "$dry" = true ]; then setup_fields "$id" dry; else setup_fields "$id" attach; fi
+  if grep -qixF "$slug" <<<"$linked"; then
+    echo "link: $slug is already linked to Project #$number"
+  elif [ "$dry" = true ]; then
+    echo "link: would link $slug to Project #$number"
+  else
+    gh_retry project link "$number" --owner "$owner" --repo "$slug" >/dev/null || die "cannot link $slug to Project #$number"
+    echo "link: $slug linked to Project #$number"
+  fi
+  if [ "$dry" = true ]; then
+    echo "config: would write project owner $owner, number $number, id $id, home $home and the ids of its fields in .claude/senior-mode.json"
+    return 0
+  fi
+  fields=$(board_fields "$id") || die "could not read the fields of Project #$number"
+  cache_project "$file" "$owner" "$number" "$id" "$fields" false "$home"
+  echo "config: project owner $owner, number $number, home $home; ids cached in .claude/senior-mode.json"
+}
+
+# Creates missing board fields with their colours, repairs the options of existing ones. $2 is attach for a shared
+# Project (#398): a missing field is still created, but an option a field lacks is only reported, since rewriting the
+# options of a shared field would move the items of the other repositories; dry (with attach) creates nothing.
+setup_fields() { # project-id [attach|dry]
+  local id=$1 mode=${2:-} fields field want current options missing
   fields=$(board_fields "$id")
   for field in Status Priority Size Severity; do
     want=$(jq -c --arg f "$field" '.[$f]' <<<"$BOARD")
     current=$(jq -c --arg f "$field" '.[] | select(.name == $f)' <<<"$fields")
     if [ -z "$current" ]; then
+      [ "$mode" != dry ] || { echo "field $field: would be created"; continue; }
       jq -nc --arg p "$id" --arg n "$field" --argjson w "$want" '{variables: {project: $p, name: $n,
         options: ($w | map({name, color, description: ""}))}, query: "mutation($project: ID!, $name: String!,
         $options: [ProjectV2SingleSelectFieldOptionInput!]!) { createProjectV2Field(input: {projectId: $project,
@@ -495,6 +567,12 @@ setup_fields() {
       continue
     fi
     options=$(jq -c --argjson want "$want" "$MERGE_OPTIONS" <<<"$current")
+    if [ -n "$mode" ]; then
+      missing=$(jq -r 'map(select(has("id") | not) | .name) | join(", ")' <<<"$options")
+      [ -z "$missing" ] ||
+        echo "field $field: the option $missing is missing and is left as it is; add it in the Project, Settings, field $field (senior-mode never rewrites the options of a shared field: it would move the items of the other repositories)"
+      continue
+    fi
     [ "$(jq -c 'map(.name)' <<<"$options")" != "$(jq -c '.options | map(.name)' <<<"$current")" ] || continue
     jq -nc --arg f "$(jq -r .id <<<"$current")" --argjson o "$options" '{variables: {field: $f, options: $o},
       query: "mutation($field: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]!) {
@@ -504,6 +582,7 @@ setup_fields() {
   done
   # The text field Paths (#174): the globs a ticket touches, read by `pick` and `run`.
   if ! jq -e '.[] | select(.name == "Paths")' <<<"$fields" >/dev/null; then
+    [ "$mode" != dry ] || { echo "field Paths: would be created"; return 0; }
     jq -nc --arg p "$id" '{variables: {project: $p, name: "Paths"}, query: "mutation($project: ID!, $name: String!) {
       createProjectV2Field(input: {projectId: $project, dataType: TEXT, name: $name}) { clientMutationId } }"}' |
       gh_retry api graphql --input - >/dev/null
@@ -567,10 +646,11 @@ setup_board_workflows() {
 }
 
 # Caches in the config the Project and the ids of its fields (Status, Priority, Size, Severity, Paths); $5 is the
-# fields of board_fields, $6 true to keep project.migration (an interrupted migration) of the former entry.
+# fields of board_fields, $6 true to keep project.migration (an interrupted migration) of the former entry, $7 the
+# project.home of a shared Project (#398).
 # shellcheck disable=SC2016 # a jq program, not shell
-cache_project() { # config-file owner number id fields keep-migration
-  jq --arg o "$2" --argjson n "$3" --arg id "$4" --argjson f "$5" --argjson keep "$6" \
+cache_project() { # config-file owner number id fields keep-migration [home]
+  jq --arg o "$2" --argjson n "$3" --arg id "$4" --argjson f "$5" --argjson keep "$6" --arg home "${7:-}" \
     '((if $keep then (.project // {} | with_entries(select(.key == "migration"))) else {} end)
       + {owner: $o, number: $n, id: $id, fields: ($f | map(select(.name | IN("Status", "Priority", "Size", "Severity", "Paths")))
       | map({key: .name, value: (if .options then {id, options: (.options | map({key: .name, value: .id}) | from_entries)} else {id} end)}) | from_entries
@@ -578,7 +658,7 @@ cache_project() { # config-file owner number id fields keep-migration
       | if .Status.options and (.Status.options | has("Backlog") | not) then
           .Status.options += ([.Status.options | to_entries[] | select(.key | ascii_downcase == "todo") | {key: "Backlog", value}] | from_entries)
         else . end)}) as $p
-      | .project = $p' \
+      | .project = $p | if $home != "" then .project.home = $home else . end' \
     "$1" >"$1.tmp" || die "could not write .claude/senior-mode.json"
   mv "$1.tmp" "$1"
 }

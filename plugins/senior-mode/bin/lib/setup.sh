@@ -306,12 +306,12 @@ type:chore|ededed|Maintenance with no user-visible change
 type:spike|d4c5f9|Timeboxed research: a note, an ADR or framed tickets, never merged code'
 
 # `setup github --dry-run`: what a run would do, from the config and read-only calls; nothing is written, on GitHub or here.
-setup_plan() { # config-file owner-type checks slug
+setup_plan() { # config-file owner-type checks slug [attached]
   local file=$1 labels=$LABELS$'\n'$TYPE_LABELS merge globs mode
   merge=$(jq -r '.workflow.merge // "rebase"' "$file")
   globs=$(jq -c '.protected // []' "$file")
   mode=$(jq -r '.ci.mode // "local"' "$file")
-  echo "Project: found, or copied from the template, with the fields Status, Priority, Size, Severity, Paths and its cycle"
+  [ -n "${5:-}" ] || echo "Project: found, or copied from the template, with the fields Status, Priority, Size, Severity, Paths and its cycle"
   echo "labels: $(cut -d'|' -f1 <<<"$labels" | paste -sd' ')"
   echo "merges: $merge$([ "$merge" != rebase ] || echo " only"), branches deleted after merge"
   [ "$globs" = "[]" ] || echo "CODEOWNERS: owner for the protected zones $globs"
@@ -323,9 +323,11 @@ setup_plan() { # config-file owner-type checks slug
 
 setup_github() {
   local root file slug owner name owner_type owner_node private template project number id how fields labels label color description err ci="" globs checks review=false codeowner codeowners_owns=false reason
-  local migrate=false dry=false upgrade=false made merge ctx scratch=""
+  local migrate=false dry=false upgrade=false made merge ctx scratch="" attach="" home=""
   while [ $# -gt 0 ]; do
     case $1 in
+      --project) [ -n "${2:-}" ] || usage; attach=$2; shift 2 ;;
+      --home) [ -n "${2:-}" ] || usage; home=$2; shift 2 ;;
       --ci) [ "${2:-}" = local ] || [ "${2:-}" = actions ] || [ "${2:-}" = existing ] || usage; ci=$2; shift 2 ;;
       --migrate) migrate=true; shift ;;
       --upgrade) upgrade=true; shift ;;
@@ -334,6 +336,8 @@ setup_github() {
     esac
   done
   [ "$upgrade" = false ] || { [ "$migrate" = false ] && [ -z "$ci" ]; } || usage
+  [ -n "$attach" ] || [ -z "$home" ] || usage
+  [ -z "$attach" ] || { [ "$migrate" = false ] && [ "$upgrade" = false ]; } || usage
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   if [ "$dry" = true ] && [ "$migrate" = false ] && [ "$upgrade" = false ] && [ ! -f "$file" ]; then
@@ -366,20 +370,25 @@ setup_github() {
     [ "$dry" = false ] || return 0
   fi
   if [ "$dry" = true ]; then
-    setup_plan "$file" "$owner_type" "$checks" "$slug"
+    [ -z "$attach" ] || setup_attach "$file" "$slug" "$attach" "$home" true
+    setup_plan "$file" "$owner_type" "$checks" "$slug" "$attach"
     [ -z "$scratch" ] || rm -f "$scratch"
     return 0
   fi
-  project=$(setup_project "$file" "$owner" "$name" "$slug") || die "could not find or copy the Project"
-  read -r number id how <<<"$project"
-  setup_fields "$id"
-  fields=$(board_fields "$id") || die "could not read the fields of Project #$number"
-  cache_project "$file" "$owner" "$number" "$id" "$fields" false
-  echo "Project #$number $name: linked, fields Status, Priority, Size, Severity, Paths; ids cached in .claude/senior-mode.json"
-  setup_board_template "$id" "$how"
-  setup_board_readme "$id" "$slug" "$(jq -r '.language // "en"' "$file")"
-  setup_cycle "$id" "$file"
-  setup_board_workflows "$id"
+  if [ -n "$attach" ]; then
+    setup_attach "$file" "$slug" "$attach" "$home" false
+  else
+    project=$(setup_project "$file" "$owner" "$name" "$slug") || die "could not find or copy the Project"
+    read -r number id how <<<"$project"
+    setup_fields "$id"
+    fields=$(board_fields "$id") || die "could not read the fields of Project #$number"
+    cache_project "$file" "$owner" "$number" "$id" "$fields" false
+    echo "Project #$number $name: linked, fields Status, Priority, Size, Severity, Paths; ids cached in .claude/senior-mode.json"
+    setup_board_template "$id" "$how"
+    setup_board_readme "$id" "$slug" "$(jq -r '.language // "en"' "$file")"
+    setup_cycle "$id" "$file"
+    setup_board_workflows "$id"
+  fi
 
   labels=$LABELS$'\n'$TYPE_LABELS
   # The project's own labels that stand for ours (workflow.labels) are not created a second time.

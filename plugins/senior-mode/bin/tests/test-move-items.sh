@@ -148,13 +148,8 @@ move --project 7 --move-items || fail "rerun failed: $(cat "$work/err")"
 cmp -s "$work/items-before" "$FIX/items-PVT_NEW.json" || fail "the rerun changed Project 7"
 [ "$(cfg .project.number)" = 7 ] || fail "the rerun did not record Project 7"
 
-# Without --move-items, --project touches nothing; --move-items alone is a usage error.
+# --move-items alone is a usage error (--project alone attaches, test-attach.sh).
 reset
-move --project 7 && fail "--project alone succeeded"
-grep -q "move-items" "$work/err" || fail "--project alone does not name --move-items: $(cat "$work/err")"
-logged "project unlink" && fail "the old Project unlinked without --move-items"
-[ "$(mutations)" = 0 ] || fail "--project alone mutated GitHub"
-[ "$(cfg .project.number)" = 5 ] || fail "--project alone wrote the config"
 move --move-items && fail "--move-items without --project succeeded"
 grep -q "usage:" "$work/err" || fail "no usage for --move-items alone: $(cat "$work/err")"
 move --project 7 --move-items --migrate && fail "--move-items accepted with --migrate"

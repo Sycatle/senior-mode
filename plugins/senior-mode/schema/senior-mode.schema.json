@@ -192,6 +192,7 @@
         "owner": { "type": "string" },
         "number": { "type": "integer", "minimum": 1 },
         "id": { "type": "string" },
+        "home": { "type": "string", "pattern": "^[^/]+/[^/]+$", "description": "owner/name of the repository that holds the duties of a Project shared by several repositories; written by setup github --project." },
         "fields": {
           "type": "object",
           "additionalProperties": {

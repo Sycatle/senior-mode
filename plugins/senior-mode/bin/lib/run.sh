@@ -23,8 +23,8 @@ run_members() {
 run_busy() {
   local n
   for n in "${running[@]}"; do
-    # A reviewer writes no ticket code of its own; an integrator resolves conflicts in its ticket's files (#426).
-    case ${RUN_ROLE[$n]:-ticket} in reviewer) ;; *) run_members "$n" ;; esac
+    # A reviewer or a framer writes no ticket code of its own; an integrator resolves conflicts in its ticket's files (#426).
+    case ${RUN_ROLE[$n]:-ticket} in reviewer | framer) ;; *) run_members "$n" ;; esac
   done | paste -sd' ' -
 }
 
@@ -124,6 +124,8 @@ run_launch() {
   RUN_STARTED[$n]=$SECONDS
   dir=${RUN_CWD[$n]:-${RUN_WT[$n]}}
   run_session_flags "$dir"
+  # A framing session (#585) is an architect's at medium effort.
+  [ "${RUN_ROLE[$n]:-}" != framer ] || [ "$(config_get agent.command)" != claude ] || SESSION_FLAGS+=(--effort medium)
   run_trust "$dir"
   {
     echo '#!/usr/bin/env bash'
@@ -180,7 +182,7 @@ run_meta() {
     --arg cwd "${RUN_CWD[$n]:-}" --arg batch "${RUN_BATCH[$n]:-}" --arg pr "$pr" --arg sha "$sha" --argjson started "$(serve_now)" \
     '{ticket: $n, role: $role, model: $model, branch: $branch, worktree: $wt, cwd: $cwd, batch: $batch, pr: $pr, sha: $sha,
     started: $started}' | state_write "$RUN_DIR/$n.meta"
-  [ "$role" = reviewer ] || run_mark "$n"
+  [ "$role" = reviewer ] || [ "$role" = framer ] || run_mark "$n"
 }
 
 # The marker of a worktree opened for serve's session of ticket $1, in the git directory of the worktree.

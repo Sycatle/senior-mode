@@ -387,6 +387,11 @@ SENIOR_MODE_RUN=1 create --title "Risk by an agent" --body-file "$work/body.md" 
   fail "agent risk: create failed: $(cat "$work/err")"
 filed_body "Risk by an agent" | grep -q '^filed-by: agent$' || fail "agent risk misses its marker"
 filed_body "Risk by an agent" | grep -q '^security-id: ' || fail "agent risk lost its security-id"
+# A framing session of serve (#585, SENIOR_MODE_ROLE=framer) also marks its tickets `framed-by: serve`: ready accepts an M from it.
+SENIOR_MODE_RUN=1 SENIOR_MODE_ROLE=framer create --title "By a framer" --body-file "$work/body.md" --size M --priority "P1 next" --paths "x/**" ||
+  fail "framer: create failed: $(cat "$work/err")"
+[ "$(filed_body "By a framer" | grep -c '^framed-by: serve$')" -eq 1 ] || fail "framer issue misses its marker: $(filed_body "By a framer")"
+filed_body "By an agent" | grep -q 'framed-by' && fail "an agent issue that is not a framer's carries the framing marker"
 
 # #677: an agent's ticket has Paths, or it runs alone and stalls the parallel slots. Without --paths they come from
 # --path (with or without :line), else from the first file:line of the body; with neither the command fails and files nothing.

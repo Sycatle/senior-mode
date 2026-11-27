@@ -21,6 +21,7 @@ fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 mkdir -p "$work/stub" "$work/fix" "$work/home"
 cat >"$work/stub/gh" <<'STUB'
 #!/usr/bin/env bash
+shopt -s extglob
 echo "$*" >>"$GH_LOG"
 [ ! -f "$FIX/gh-dead" ] || exec sleep 30
 jqf="" prev=""
@@ -98,10 +99,15 @@ case "$*" in
   "api repos/acme/app/pulls?head="*)
     n=$(sed -E 's#.*head=acme:[a-z]+/([0-9]+)-.*#\1#' <<<"$*")
     { cat "$FIX/pulls-$n" 2>/dev/null || echo '[]'; } | respond ;;
-  "api repos/acme/app/issues/"*"/sub_issues"*) echo '[]' | respond ;;
+  "api repos/acme/app/issues/"*"/sub_issues"*)
+    { cat "$FIX/subs-$(sed -E 's#^api repos/acme/app/issues/([0-9]+)/.*#\1#' <<<"$*").json" 2>/dev/null || echo '[]'; } | respond ;;
   "api -X POST repos/acme/app/issues/"*"/sub_issues"*) echo "$*" >>"$FIX/sub-issues" ;;
   "api repos/acme/app/issues/"[0-9]*" --jq .id") echo 1 ;;
-  "api repos/acme/app/issues/"*"/comments"*) echo '{}' ;;
+  "api repos/acme/app/issues/"+([0-9])" -X PATCH"*) echo "$*" >>"$FIX/issue-patch" ;;
+  "api repos/acme/app/issues/"+([0-9])" --jq "*) { cat "$FIX/issue-$(sed -E 's#^api repos/acme/app/issues/([0-9]+) .*#\1#' <<<"$*").json" 2>/dev/null || true; } | respond ;;
+  "api repos/acme/app/issues/"*"/comments"*)
+    # The comments of an issue: $FIX/comments-<n>.json holds them (body, author_association); a POST is only logged.
+    { cat "$FIX/comments-$(sed -E 's#^api repos/acme/app/issues/([0-9]+)/.*#\1#' <<<"$*").json" 2>/dev/null || echo '{}'; } | respond ;;
   "api repos/acme/app/issues/"*"/labels"*) echo '[]' ;;
   "pr list"*"--state merged"*) cat "$FIX/merged-prs" 2>/dev/null || echo '[]' ;;
   "pr view "*) n=$(sed -E 's#^pr view ([0-9]+) .*#\1#' <<<"$*"); cat "$FIX/pr-$n.json" ;;
@@ -121,8 +127,9 @@ if [[ ${!#} == *"guard probe"* ]]; then
   echo '{"type": "user", "message": {"content": "senior-mode: skipping checks is denied (core.hooksPath); fix what the check reports instead."}}'
   exit 0
 fi
-n=$(sed -nE 's#.*/senior-mode/worktrees/[^/]+/(review-)?([0-9]+)(-[rb][0-9]+)?$#\2#p' <<<"$PWD")
+n=$(sed -nE 's#.*/senior-mode/worktrees/[^/]+/(review-|idea-)?([0-9]+)(-[rb][0-9]+)?$#\2#p' <<<"$PWD")
 [ -n "$n" ] || exit 0
+printf '%s\n' "${*:1:$#-1}" >"$FIX/args-$n"
 fx=$FIX/claude-$n-$model-${SENIOR_MODE_ROLE:-}
 # The k-th session of that ticket, model and role plays <fixture>.<k> when it exists; the prompt it got is kept.
 k=$(($(cat "$FIX/calls-$n-$model-${SENIOR_MODE_ROLE:-}" 2>/dev/null || echo 0) + 1))
@@ -2712,6 +2719,176 @@ started 99 && fail "BS: a ticket started on the red base head"
 jq -e 'any(.[]; (.title | test("fails its checks")))' "$FIX/issues.json" >/dev/null || fail "BS: no ticket for the red base branch: $(cat "$FIX/issues.json")"
 grep -q 'fmt' "$FIX"/body-* || fail "BS: the ticket does not name the failing check: $(cat "$FIX"/body-* 2>&1)"
 grep -q 'item-edit.*--field-id F_P --single-select-option-id p0' "$GH_LOG" || fail "BS: the ticket is not P0: $(grep item-edit "$GH_LOG")"
+
+# FR: framing of raw ideas (#585). A raw idea (Backlog, by a collaborator, no acceptance criteria) is framed by one
+# framer session on Opus at medium effort once no Ready ticket waits for a slot; the in-place and the split paths end
+# with the issue framed (criteria, or an epic); the reply of a collaborator starts a session on the tickets that wait for an
+# answer; an epic whose sub-issues are all closed is closed.
+# ritem <number> <status> <labels json> <body> [<association>]: a board item with no Size, Priority or Paths.
+ritem() {
+  items=$(jq -c --argjson n "$1" --arg s "$2" --argjson l "$3" --arg b "$4" --arg a "${5:-OWNER}" '. + [{fieldValues: {nodes: [{name: $s, field: {name: "Status"}}]},
+    content: {authorAssociation: $a, number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null, body: $b,
+      labels: {nodes: ($l | map({name: .}))}, milestone: null, blockedBy: {nodes: []}}}]' <<<"$items")
+}
+# rparent <number> <epic>: the ticket is a sub-issue of the epic.
+rparent() {
+  items=$(jq -c --argjson n "$1" --argjson e "$2" 'map(if .content.number == $n then .content.parent = {number: $e, labels: {nodes: [{name: "epic"}]}, milestone: null} else . end)' <<<"$items")
+}
+# rready <number> [<paths>]: a Ready S ticket (with no Paths, it runs alone).
+rready() {
+  items=$(jq -c --argjson n "$1" --arg p "${2:-}" '. + [{fieldValues: {nodes: ([{name: "Ready", field: {name: "Status"}}, {name: "P1 next", field: {name: "Priority"}},
+    {name: "S", field: {name: "Size"}}] + (if $p == "" then [] else [{text: $p, field: {name: "Paths"}}] end))}, content: {authorAssociation: "OWNER", number: $n, title: "Ticket \($n)", url: "u", state: "OPEN", closedAt: null,
+    body: "", labels: {nodes: []}, milestone: null, blockedBy: {nodes: []}}}]' <<<"$items")
+}
+framed_started() { grep -q "^app-idea-$1 opus run=1 role=framer$" "$CLAUDE_LOG"; }
+frame_reset() { rm -f "$FIX"/claude-* "$FIX"/after-* "$FIX"/issue-*.json "$FIX"/comments-*.json "$FIX"/subs-*.json "$FIX"/prompt-* "$FIX"/args-* "$FIX/issue-patch"; }
+frame_reset
+config '{"parallel": 3}'
+idea=$'Help page:\n1. add an FAQ\n2. add a contact form'
+# Selection: none of these is a raw idea to frame.
+items="[]"
+ritem 201 Backlog '[]' "$criteria"
+ritem 202 Backlog '[]' $'No criteria\n\nfiled-by: agent\n'
+ritem 203 Backlog '["needs-human"]' "$idea"
+ritem 204 Backlog '["later"]' "$idea"
+ritem 205 Backlog '["needs-decision"]' "$idea"
+ritem 206 Backlog '["needs-info"]' "$idea"
+ritem 207 Backlog '["epic"]' "$idea"
+ritem 208 "In review" '[]' "$idea"
+ritem 209 Backlog '[]' "$idea" NONE
+ritem 210 Backlog '[]' $'Already framed\n\nframed-by: serve\n'
+fboard
+fresh
+once || fail "FR: serve failed: $(cat "$work/out")"
+grep -q 'role=framer' "$CLAUDE_LOG" && fail "FR: a session framed what is no raw idea: $(cat "$CLAUDE_LOG")"
+# A raw idea starts one framer session on Opus, at medium effort, in a worktree of the base that is gone afterwards; its prompt holds the idea,
+# the titles of the open tickets and the role. A second idea waits: one framing at a time.
+ritem 200 Backlog '[]' "$idea"
+ritem 211 Backlog '[]' "$idea"
+fboard
+session 200-opus-framer "framed: rewritten in place" "" ""
+cat >"$FIX/after-200" <<'AFTER'
+printf '{"body": "Help page\\n\\n## Acceptance criteria\\n\\n- Given a, when b, then c.\\n\\nframed-by: serve\\n", "labels": []}\n' >"$FIX/issue-200.json"
+AFTER
+fresh
+once || fail "FR: serve failed: $(cat "$work/out")"
+framed_started 200 || fail "FR: no framer session on the idea: $(cat "$CLAUDE_LOG")"
+framed_started 211 && fail "FR: two framings at once: $(cat "$CLAUDE_LOG")"
+grep -q -- '--effort medium' "$FIX/args-200" || fail "FR: the framer is not at medium effort: $(cat "$FIX/args-200" 2>&1)"
+grep -q 'add a contact form' "$FIX/prompt-200-framer-1" || fail "FR: the idea is not in the prompt"
+grep -q '^#201 Ticket 201$' "$state/200.tickets" || fail "FR: the titles of the open tickets are not given to the session: $(cat "$state/200.tickets" 2>&1)"
+grep -q 'SENIOR_MODE_ROLE=framer' "$FIX/prompt-200-framer-1" || fail "FR: the prompt does not name the role"
+[ -z "$(find "$XDG_DATA_HOME/senior-mode/worktrees" -name idea-200 2>/dev/null)" ] || fail "FR: the framing worktree is left"
+# The in-place path: criteria are in the issue, so it is framed; nothing is labelled.
+outcome_of 200 framed FR
+grep -q 'issues/200/labels' "$GH_LOG" && fail "FR: a framed idea is labelled: $(grep 'issues/200' "$GH_LOG")"
+grep -q '^#200: framed: rewritten in place' "$work/out" || fail "FR: the framing is not said: $(cat "$work/out")"
+jq -se 'any(.[]; .ticket == 200 and .role == "framer" and .model == "claude-opus")' "$repo/.git/senior-mode/usage.jsonl" >/dev/null ||
+  fail "FR: the framer's tokens are not in the ledger"
+# The split path: the original is an epic now.
+frame_reset
+session 200-opus-framer "framed: 3 tickets under #200" "" ""
+cat >"$FIX/after-200" <<'AFTER'
+printf '{"body": "Help page", "labels": [{"name": "epic"}]}\n' >"$FIX/issue-200.json"
+AFTER
+fresh
+once || fail "FR: serve failed: $(cat "$work/out")"
+outcome_of 200 framed FR
+grep -q 'issues/200/labels' "$GH_LOG" && fail "FR: a split idea is labelled needs-human: $(grep 'issues/200' "$GH_LOG")"
+# A framing that left the issue as it was, or that failed, is a person's: needs-human and a comment, never framed again at each poll.
+frame_reset
+session 200-opus-framer "framed: nothing to do" "" ""
+printf '{"body": "Help page", "labels": []}\n' >"$FIX/issue-200.json"
+fresh
+once || fail "FR: serve failed: $(cat "$work/out")"
+outcome_of 200 failed FR
+grep -q 'issues/200/labels.*needs-human' "$GH_LOG" || fail "FR: an idea left as it was is not labelled: $(cat "$GH_LOG")"
+grep -q 'issues/200/comments' "$GH_LOG" || fail "FR: no comment on the idea that could not be framed"
+frame_reset
+session 200-opus-framer "failed: too vague" "" ""
+fresh
+once || fail "FR: serve failed: $(cat "$work/out")"
+grep -q 'issues/200/labels.*needs-human' "$GH_LOG" || fail "FR: a failed framing is not labelled: $(cat "$GH_LOG")"
+# A Ready ticket that waits (a ticket with no Paths runs alone) goes before the idea: it is not framed. When none waits,
+# the idea is framed in the same poll, next to the running ticket, and counted in the slots (parallel 2: no third session).
+frame_reset
+items="[]"
+rready 212 "a/**"
+rready 213
+ritem 200 Backlog '[]' "$idea"
+fboard
+session 212-sonnet delivered "" ""
+session 213-sonnet delivered "" ""
+fresh
+once || fail "FR: serve failed: $(cat "$work/out")"
+started 212 || fail "FR: the Ready ticket did not start: $(cat "$CLAUDE_LOG")"
+started 213 && fail "FR: a ticket with no Paths ran next to another: $(cat "$CLAUDE_LOG")"
+framed_started 200 && fail "FR: an idea was framed while a Ready ticket waited: $(cat "$CLAUDE_LOG")"
+config '{"parallel": 2}'
+items="[]"
+rready 212 "a/**"
+ritem 200 Backlog '[]' "$idea"
+ritem 214 Backlog '[]' "$idea"
+fboard
+printf '%s\n' "framed: ok" >"$FIX/claude-200-opus-framer"
+fresh
+once || fail "FR: serve failed: $(cat "$work/out")"
+{ started 212 && framed_started 200; } || fail "FR: a Ready ticket and a framing do not share the slots: $(cat "$CLAUDE_LOG")"
+framed_started 214 && fail "FR: a third session started with 2 slots: $(cat "$CLAUDE_LOG")"
+config '{"parallel": 3}'
+
+# The reply path: a collaborator answered the questions of the framing comment of epic 220; the session runs on the tickets
+# that wait for an answer (221), once, and only after a collaborator's reply that is not senior-mode's own.
+frame_reset
+frame_comment=$'<!-- senior-mode:frame -->\n1. Which provider? Recommended: A.'
+items="[]"
+ritem 220 Backlog '["epic"]' "Questions epic"
+ritem 221 Backlog '["needs-decision"]' $'## Acceptance criteria\n\n- Given a, when b, then c.\n\nfiled-by: agent\nframed-by: serve\n'
+ritem 222 Backlog '[]' $'## Acceptance criteria\n\n- Given a, when b, then c.\n\nfiled-by: agent\nframed-by: serve\n'
+rparent 221 220
+rparent 222 220
+fboard
+jq -nc --arg c "$frame_comment" '[{body: $c, author_association: "OWNER"}]' >"$FIX/comments-220.json"
+fresh
+once || fail "FR: serve failed: $(cat "$work/out")"
+framed_started 220 && fail "FR: a reply session without a reply: $(cat "$CLAUDE_LOG")"
+jq -nc --arg c "$frame_comment" '[{body: $c, author_association: "OWNER"}, {body: "stranger", author_association: "NONE"}, {body: "<!-- senior-mode:other -->", author_association: "OWNER"}]' >"$FIX/comments-220.json"
+once || fail "FR: serve failed: $(cat "$work/out")"
+framed_started 220 && fail "FR: a reply session on the reply of a stranger or of senior-mode: $(cat "$CLAUDE_LOG")"
+jq -nc --arg c "$frame_comment" '[{body: $c, author_association: "OWNER"}, {body: "A is fine", author_association: "COLLABORATOR"}]' >"$FIX/comments-220.json"
+session 220-opus-framer "framed: answers written into #221" "" ""
+cat >"$FIX/after-220" <<AFTER
+jq -c '. + [{body: "<!-- senior-mode:frame -->\\nanswers in #221", author_association: "OWNER"}]' "$FIX/comments-220.json" >"$FIX/c" && mv "$FIX/c" "$FIX/comments-220.json"
+AFTER
+once || fail "FR: serve failed: $(cat "$work/out")"
+framed_started 220 || fail "FR: no reply session after the reply of a collaborator: $(cat "$CLAUDE_LOG")"
+grep -q 'wait for an answer are: 221\.' "$FIX/prompt-220-framer-1" || fail "FR: the reply prompt does not name the ticket that waits: $(cat "$FIX/prompt-220-framer-1")"
+grep -q '222' "$FIX/prompt-220-framer-1" && fail "FR: the reply prompt names a ticket that waits for nothing"
+outcome_of 220 framed FR
+grep -q 'issues/220/labels' "$GH_LOG" && fail "FR: an answered epic is labelled: $(grep 'issues/220' "$GH_LOG")"
+# The session that wrote no answer (no new framing comment) leaves the epic to a person instead of running at each poll.
+rm -f "$FIX/after-220"
+jq -nc --arg c "$frame_comment" '[{body: $c, author_association: "OWNER"}, {body: "A is fine", author_association: "COLLABORATOR"}]' >"$FIX/comments-220.json"
+once || fail "FR: serve failed: $(cat "$work/out")"
+grep -q 'issues/220/labels.*needs-human' "$GH_LOG" || fail "FR: a reply session that answered nothing is not labelled: $(cat "$GH_LOG")"
+
+# An epic whose sub-issues are all closed is closed, once framed by senior-mode; one with an open sub-issue, one that senior-mode did not
+# frame and the maintenance epic stay open.
+frame_reset
+items="[]"
+ritem 230 Backlog '["epic"]' "Done epic"
+ritem 231 Backlog '["epic"]' "Open sub-issue"
+ritem 232 Backlog '["epic"]' "Not framed"
+ritem 233 Backlog '["epic", "maintenance"]' "Maintenance"
+fboard
+for e in 230 231 232 233; do printf '[{"number": 1, "state": "closed"}, {"number": 2, "state": "%s"}]\n' "$([ "$e" = 231 ] && echo open || echo closed)" >"$FIX/subs-$e.json"; done
+for e in 230 231 233; do jq -nc --arg c "$frame_comment" '[{body: $c, author_association: "OWNER"}]' >"$FIX/comments-$e.json"; done
+fresh
+once || fail "FR: serve failed: $(cat "$work/out")"
+grep -q 'issues/230 -X PATCH.*state=closed' "$GH_LOG" || fail "FR: the finished epic is not closed: $(cat "$GH_LOG")"
+grep -q 'issues/23[123] -X PATCH' "$GH_LOG" && fail "FR: an epic that is not finished or not framed was closed: $(grep PATCH "$GH_LOG")"
+grep -q '^#230: all its sub-issues are closed' "$work/out" || fail "FR: the closing is not said: $(cat "$work/out")"
+frame_reset
 
 [ "$failures" -eq 0 ] && echo "serve: all cases pass"
 exit "$failures"

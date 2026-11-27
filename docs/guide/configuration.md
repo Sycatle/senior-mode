@@ -320,10 +320,12 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   tier 3 checks alone, and `senior-mode check --all` runs both tiers. A tier 3 run is not recorded for `publish`.
   Any other tier, or a `tier` on the `secret scan` or the `dependency audit` (built-in, always tier 2), is a
   configuration error that names the key (`checks[1].tier must be 2 or 3, not 4`).
-- On a push the `pre-push` hook gives the checks the paths the push changes, in a file named by
-  `SENIOR_MODE_CHANGED_FILES` (unset when they cannot be worked out: a deletion, a new branch with no
-  base). A check that can narrow itself to them does; the others ignore it. A narrowed run is not
-  recorded for `publish`: `senior-mode check` without `--pre-push`, `publish` and CI run every check in full.
+- On a push the `pre-push` hook runs `senior-mode check --changed` ([changed checks](#changed-checks)), which gives the
+  checks the paths the branch changes against the merge base, in a file named by `SENIOR_MODE_CHANGED_FILES`
+  (unset in a full run). A check that can narrow itself to them does; the others ignore it. The hook that `setup repo`
+  installs does this when `senior-mode` is on the `PATH`, and otherwise runs the check list itself with the pushed
+  paths. A narrowed run is not recorded for `publish`: `senior-mode check` without a flag, `publish` and CI run every
+  check in full (ADR 0034).
   This repository's `script tests` check (`.github/scripts/script-tests.sh`) runs its test files in
   parallel, one per CPU, and on a push only those the changed paths touch: a changed test, or a test that
   names the changed file; a path no test names (or `bin/senior-mode`) runs them all.
@@ -397,6 +399,10 @@ resolution. A dependency `pip-audit` skips (a local path, `-e`, a package the in
 Each tool runs under `timeout` (600 seconds, `SENIOR_MODE_AUDIT_TIMEOUT` changes it) when the machine
 has it, and a tool that hangs fails the check saying it timed out; without `timeout`, nothing bounds it.
 
+The verdict is kept 24 hours: a pass on the same lockfiles is not audited again (`skip  dependency audit: audited clean 3 h
+ago`), a changed lockfile or an older verdict is. Only a pass is kept, so a high or critical advisory blocks on every run.
+The cache is `senior-mode/scan-cache` of the git directory.
+
 `"audit": false` turns the step off, and `senior-mode status` prints `Dependency audit: off` while it
 is. Turning it off is a human's call.
 
@@ -417,6 +423,10 @@ A name one or two letters from a popular package of `popular-packages` (in the p
 A registry that does not answer leaves its packages unchecked and says so: the step is a `skip` when
 none answered, and a warning names the unchecked packages otherwise. Both thresholds are whole numbers
 from 1. `SENIOR_MODE_REGISTRY_TIMEOUT` bounds each request (15 seconds).
+
+A lookup that every registry answered and that passed is kept 24 hours for the same lockfiles, dependencies and thresholds
+(`skip  new dependencies: looked up clean 3 h ago`); a failure or an unanswered registry is looked up again. The secret
+scan of the diff has no cache and never skips.
 
 ### Environment guard
 
@@ -643,7 +653,7 @@ always run. The run says `packages: 3 of 12 packages: api, shared, web`, and the
 
 Every package runs, with the checks as configured (the root commands), when the diff has a file outside every package (a root
 config, a lockfile, a workflow, this config), when it is empty or cannot be told (no default branch), and with
-`senior-mode check --all`. `check --pre-push` is the full check too. A repository with no `packages` key is checked as before.
+`senior-mode check --all`. `check --pre-push` is the full check too (the hook runs `check --changed`). A repository with no `packages` key is checked as before.
 
 ## Changed checks
 
@@ -651,8 +661,11 @@ config, a lockfile, a workflow, this config), when it is empty or cannot be told
 branch (committed or not, new files included, deleted ones left out) and runs each check that has a `changed` variant on
 those files only; a check without one runs in full, and every line says which (`[changed: 3 files]` or `[full]`). The secret
 scan, the dependency audit and the other steps of `check` always run in full. A variant with no file to take (a
-documentation-only change for a linter) is skipped. The exit status is that of the checks, as for `check`, but the run is not
-recorded: the push gate stays the full `check`, and `check --pre-push --changed` and `publish --changed` are refused.
+documentation-only change for a linter) is skipped. The checks also get the changed files, deleted ones included, in the
+file named by `SENIOR_MODE_CHANGED_FILES`, so a check that narrows itself (this repository's `script tests`) runs only the
+tests the change touches, or none. The exit status is that of the checks, as for `check`, but the run is not recorded: it is
+what the `pre-push` hook runs, the full `check` is the merge path and `publish`, and `check --pre-push --changed` and
+`publish --changed` are refused.
 
 ```json
 { "name": "lint", "run": "npm run lint", "changed": "npx eslint {files}" }

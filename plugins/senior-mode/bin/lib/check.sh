@@ -809,7 +809,8 @@ ci_job_states() {
 # the result recorded for publish is that of the checks run here, publish reads the jobs again. With --changed (#339)
 # each check that has a `changed` variant (`checks[].changed`, or the preset's) runs on the files the branch changed
 # against the default branch, committed or not; the others run in full, and each line says which; that run is not
-# recorded either, and the push gate (--pre-push, publish) refuses it. With `packages` in the config (#323), a run
+# recorded either, and the push gate (--pre-push, publish) refuses it; it is what the pre-push hook runs (#827), and the checks
+# get the changed paths, deleted files included, in SENIOR_MODE_CHANGED_FILES as with --pre-push. With `packages` in the config (#323), a run
 # limited to what the diff affects (#418, packages_select) replaces each check named like a command of the packages by
 # the command of every selected package, run in its directory, and says "3 of 12 packages" in the recorded description;
 # --all, a file outside every package or --pre-push run the checks as they are. With --update-baseline only the
@@ -826,7 +827,7 @@ check_tier_errors() {
 check() {
   local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp ci_only=false jobs="[]" job
   local waiting="" ci_failed="" st url free pre_push=false changed=false update=false a label vext vcmd preset nbuiltin vc
-  local changed_list="" sel all=false pk="" pkdesc="" pdir pcmd found idx argc=$# tier_only="" tier run2=true run3=false tier_errors urc=0
+  local changed_list="" changed_scope="" sel all=false pk="" pkdesc="" pdir pcmd found idx argc=$# tier_only="" tier run2=true run3=false tier_errors urc=0
   local -a bases=()
   local -A variant=()
   while [ $# -gt 0 ]; do
@@ -929,6 +930,13 @@ check() {
   if [ "$changed" = true ]; then
     if changed_list=$(changed_files "$root"); then
       preset=$(project_preset "$root")
+      # The checks that narrow themselves to the paths of a push read them from here as well (#827), deleted files included.
+      if changed_scope=$(mktemp) && changed_files "$root" deleted >"$changed_scope"; then
+        export SENIOR_MODE_CHANGED_FILES=$changed_scope
+      else
+        rm -f "$changed_scope"
+        changed_scope=""
+      fi
     else
       echo "note: --changed: the changed files cannot be told (no default branch to compare with), every check runs in full"
       changed=false
@@ -972,7 +980,7 @@ check() {
     [ "$changed" = true ] || continue
     vc=$(jq -r ".checks[$i].changed // empty" "$file")
     if [ -n "$vc" ]; then
-      [[ $vc == *'{files}'* ]] || die "checks[$i].changed ($name) must hold the {files} placeholder"
+      [[ $vc == *'{files}'* ]] || { rm -f "$changed_scope"; die "checks[$i].changed ($name) must hold the {files} placeholder"; }
       variant[$idx]=$'.\t'$vc
     elif [[ $name =~ ^(lint|test)$ ]]; then
       vc=$(preset_changed "$root" "$preset" "$name" "$(jq -r ".checks[$i].run" "$file")") || vc=""
@@ -1046,7 +1054,7 @@ check() {
     fi
   done
   rm -rf "$rundir"
-  rm -f "$scope"
+  rm -f "$scope" "$changed_scope"
   free=""
   if [ "$run2" = true ]; then
     spec_drift_warn

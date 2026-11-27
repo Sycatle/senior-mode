@@ -1145,6 +1145,7 @@ setup_repo() {
         survey_apply "$root" "$root" false
       fi
       [ "$debt" = false ] || debt_adopt "$root" --dry-run
+      sandbox_setup "$root" "$pname" true "$file"
       echo "dry run: nothing changed"
       return 0
     fi
@@ -1238,6 +1239,7 @@ setup_repo() {
   lsp_propose "$pname" "$file"
   queries_propose "$root" "$file" "$(dirname "$preset")" "$pname"
   [ -z "$packout" ] || echo "$packout"
+  sandbox_setup "$root" "$pname" false "$file"
 
   setup_claude_md "$root" "$tpl/$lang" "$name"
   setup_gitignore "$root"

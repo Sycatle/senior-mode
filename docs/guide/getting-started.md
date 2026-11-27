@@ -109,6 +109,7 @@ Before changing anything, setup:
 - a pull request template and two issue forms (feature, bug);
 - `docs/architecture.md`, a system overview from a template that the `docs` skill keeps current;
 - permissions in `.claude/settings.json`;
+- `.senior-mode/Dockerfile`, the image of sandboxed sessions: `FROM senior-mode/base` and your preset's toolchain, commented (never overwritten);
 - `release-please-config.json` and `.release-please-manifest.json`;
 - in `actions` mode, `.github/workflows/senior-mode.yml`.
 

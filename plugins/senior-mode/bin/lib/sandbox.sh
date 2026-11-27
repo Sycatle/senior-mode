@@ -145,3 +145,69 @@ sandbox_image() {
   }
   echo "$base"
 }
+
+# The commented toolchain lines of the Dockerfile stub for preset $1 (#785): the base is Node, non-root (user agent), so
+# system packages need root and the toolchains that install per user do not. Nothing for a preset without a toolchain.
+sandbox_toolchain() {
+  case $1 in
+    node)
+      echo "# USER root"
+      echo "# RUN corepack enable"
+      echo "# RUN apt-get update && apt-get install -y --no-install-recommends build-essential python3 && rm -rf /var/lib/apt/lists/*"
+      echo "# USER agent"
+      ;;
+    python)
+      echo "# USER root"
+      echo "# RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-venv && rm -rf /var/lib/apt/lists/*"
+      echo "# USER agent"
+      ;;
+    rust)
+      echo "# USER root"
+      echo "# RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*"
+      echo "# USER agent"
+      echo "# RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"
+      echo "# ENV PATH=/home/agent/.cargo/bin:\$PATH"
+      ;;
+    go)
+      echo "# USER root"
+      echo "# RUN apt-get update && apt-get install -y --no-install-recommends golang-go && rm -rf /var/lib/apt/lists/*"
+      echo "# USER agent"
+      ;;
+  esac
+}
+
+# Succeeds when the serve unit of this machine is installed (the file `serve --install` writes).
+sandbox_unit_installed() {
+  [ -e "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/senior-mode-serve.service" ]
+}
+
+# `setup repo` (#785): the Dockerfile stub of the project and the recorded sandbox mode, $1 the repository root, $2 the
+# preset, $3 `true` for a dry run (reported, nothing written), $4 the project's config file. The stub is never
+# overwritten. `sandbox.mode` is never changed once set: it becomes `required` when a runtime exists on a machine whose
+# serve unit is installed, else stays unset.
+sandbox_setup() {
+  local root=$1 preset=$2 dry=$3 file=$4 stub rt rc=0
+  stub=$root/.senior-mode/Dockerfile
+  if [ -e "$stub" ]; then
+    echo "sandbox Dockerfile: kept"
+  elif [ "$dry" = true ]; then
+    echo "sandbox Dockerfile: would create .senior-mode/Dockerfile"
+  else
+    mkdir -p "$root/.senior-mode"
+    {
+      echo "FROM senior-mode/base:$(plugin_version)"
+      echo "# The toolchain of the $preset preset for sessions in a container: uncomment what the project needs."
+      sandbox_toolchain "$preset"
+    } >"$stub"
+    echo "sandbox Dockerfile: created .senior-mode/Dockerfile"
+  fi
+  jq -e '.sandbox.mode != null' "$file" >/dev/null 2>&1 && return 0
+  rt=$(sandbox_runtime) && sandbox_unit_installed || return 0
+  if [ "$dry" = true ]; then
+    echo "sandbox: would set sandbox.mode required ($rt, serve unit installed)"
+    return 0
+  fi
+  json_update "$file" '.sandbox.mode = "required"' || rc=$?
+  [ "$rc" -ne 1 ] || die "could not write .claude/senior-mode.json"
+  echo "sandbox: mode required ($rt, serve unit installed)"
+}

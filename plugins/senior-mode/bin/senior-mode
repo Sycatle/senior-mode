@@ -133,6 +133,8 @@ done
 . "$LIB/serve-frame.sh"
 # shellcheck source=lib/serve-duties.sh
 . "$LIB/serve-duties.sh"
+# shellcheck source=lib/serve-plugin.sh
+. "$LIB/serve-plugin.sh"
 # shellcheck source=lib/demo.sh
 . "$LIB/demo.sh"
 
@@ -168,6 +170,7 @@ case "${1:-}" in
     ;;
   serve)
     shift
+    [ $# -gt 0 ] || serve_plugin_enter
     serve "$@"
     ;;
   setup)

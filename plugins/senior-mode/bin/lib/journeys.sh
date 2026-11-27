@@ -69,11 +69,62 @@ journey_has_test() {
   [ -f "$1/$2" ] && grep -qE "(^|[^[:alnum:]_])$3([^[:alnum:]_]|\$)" "$1/$2"
 }
 
+# Runs the command $1 under the `e2e` lock, as the check named e2e does: the lock is machine-wide, so it is taken with the TMPDIR
+# `check` had before it gave the step a private one (SENIOR_MODE_OUTER_TMPDIR), and the command gets the private one back.
+journeys_exec() {
+  TMPDIR=${SENIOR_MODE_OUTER_TMPDIR:-${TMPDIR:-/tmp}} "$SELF" e2e-lock -- env TMPDIR="${TMPDIR:-/tmp}" bash -c "$1"
+}
+
+# One `warning: flaky: <id>` line per journey of the test files $@ (JOURNEYS_OF), what `check` puts in its summary.
+journeys_flaky() {
+  local f id
+  for f in "$@"; do
+    for id in ${JOURNEYS_OF[$f]//,/}; do
+      printf 'warning: flaky: %s (passed on the second run)\n' "$id"
+    done
+  done
+}
+
+# Runs the test files $2... of the journeys through the e2e command $1 (spec 328 section 5.2, steps 3 and 4); the array JOURNEYS_OF maps
+# each file to the ids of its journeys. With `{files}` in the command it gets the files, else the whole suite runs
+# once. A run that fails is run once more: one file at a time when the command takes files (a file that fails alone fails the
+# check; when none does, the run was flaky and every file of it is reported), the same command again otherwise. A pass on the
+# second run prints `warning: flaky: J1`, a second failure prints `journey J1 failed: <file>` and returns 1.
+journeys_run() {
+  local cmd=$1 f ids failed=() rc=0 with_files=false
+  shift
+  [[ $cmd == *'{files}'* ]] && with_files=true
+  if [ "$with_files" = true ]; then
+    journeys_exec "$(files_subst "$cmd" "$@")" && return 0
+    for f in "$@"; do
+      journeys_exec "$(files_subst "$cmd" "$f")" || failed+=("$f")
+    done
+    if [ "${#failed[@]}" -eq 0 ]; then
+      journeys_flaky "$@"
+      return 0
+    fi
+  else
+    journeys_exec "$cmd" && return 0
+    if journeys_exec "$cmd"; then
+      journeys_flaky "$@"
+      return 0
+    fi
+    failed=("$@")
+  fi
+  for f in "${failed[@]}"; do
+    ids=${JOURNEYS_OF[$f]}
+    printf 'journey %s failed: %s\n' "$ids" "$f"
+  done
+  return 1
+}
+
 # `senior-mode journeys-check [--all]`: the `journeys` step of `check` (spec 328 section 5.2). The accepted specs' declarations are
 # validated; the journeys the diff selects must each have their test file with the journey id in it. `journeys.required: false`
 # turns a missing test into a warning.
 journeys_check() {
-  local all=false root specs errors required=true sel sid jid jtest msg rc=0
+  local all=false root specs errors required=true sel sid jid jtest msg rc=0 e2e
+  local -a files=()
+  local -A JOURNEYS_OF=()
   case ${1:-} in
     "") ;;
     --all) all=true ;;
@@ -93,7 +144,11 @@ journeys_check() {
     return 0
   fi
   while IFS=$'\t' read -r sid jid jtest; do
-    journey_has_test "$root" "$jtest" "$jid" && continue
+    if journey_has_test "$root" "$jtest" "$jid"; then
+      [ -n "${JOURNEYS_OF[$jtest]:-}" ] || files+=("$jtest")
+      JOURNEYS_OF[$jtest]+="${JOURNEYS_OF[$jtest]:+, }$jid"
+      continue
+    fi
     msg="journey $jid of spec $sid has no test at $jtest"
     if [ "$required" = true ]; then
       echo "$msg"
@@ -102,5 +157,12 @@ journeys_check() {
       echo "warning: $msg"
     fi
   done <<<"$sel"
-  return "$rc"
+  [ "$rc" -eq 0 ] || return 1
+  [ "${#files[@]}" -gt 0 ] || return 0
+  e2e=$(config_get commands.e2e 2>/dev/null) || e2e=""
+  if [ -z "$e2e" ]; then
+    echo "journeys declared and no e2e command: senior-mode setup repo --command e2e=..."
+    return 1
+  fi
+  (cd "$root" && journeys_run "$e2e" "${files[@]}")
 }

@@ -1109,7 +1109,7 @@ Log: \`$log\`"
 
 check() {
   local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp ci_only=false jobs="[]" job
-  local waiting="" ci_failed="" st url free pre_push=false changed=false update=false a label vext vcmd preset nbuiltin vc
+  local flaky="" fl waiting="" ci_failed="" st url free pre_push=false changed=false update=false a label vext vcmd preset nbuiltin vc
   local changed_list="" changed_scope="" sel all=false pk="" pkdesc="" pdir pcmd found idx argc=$# tier_only="" tier run2=true run3=false tier_errors urc=0 no_cache=false ckey inp cdir publish_sha=""
   local -a bases=()
   local -A variant=()
@@ -1201,7 +1201,7 @@ check() {
   # The journeys of the accepted specs, before the e2e check (#795).
   if [ "$(journeys_specs "$root" | jq 'length')" -gt 0 ]; then
     names+=("journeys")
-    cmds+=("$(printf '%q' "$SELF") journeys-check")
+    cmds+=("SENIOR_MODE_OUTER_TMPDIR=$(printf '%q' "${TMPDIR:-/tmp}") $(printf '%q' "$SELF") journeys-check")
     [ "$all" = false ] || cmds[${#cmds[@]}-1]+=" --all"
   fi
   if [ "$(config_get commit.coAuthor 2>/dev/null)" = false ]; then
@@ -1362,6 +1362,8 @@ check() {
       fi
       # A warning of a passing check (an advisory with no severity) is shown, not lost.
       { grep '^warning: ' "$output" || true; } | sed 's/^/      /'
+      fl=$(sed -n 's/^warning: flaky: \([^ ]*\) .*/\1/p' "$output" | paste -sd, -)
+      [ -z "$fl" ] || flaky+="${flaky:+,}$fl"
     else
       took=$(since_ms "$started")
       failed="${failed:+$failed, }$name"
@@ -1393,7 +1395,7 @@ check() {
     sed 's/^/warn  test case with no assertion: /' <<<"$free"
   fi
   if [ -z "$failed" ]; then
-    state=success description="$passed/$count checks passed"
+    state=success description="$passed/$count checks passed${flaky:+; flaky: $flaky}"
   else
     state=failure description="failed: $failed"
   fi

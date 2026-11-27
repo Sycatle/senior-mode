@@ -174,7 +174,10 @@ TEXT
 
 # The task of the headless session of one ticket (spec 0001 §10, ADR 0007): number, title, branch.
 run_prompt() {
-  local nl=$'\n' wf dec plan pout ck pr tests review
+  local nl=$'\n' wf dec plan pout ck pr tests review jb jr
+  jb=$(skeleton_journeys_prompt "$1" brief) jr=$(skeleton_journeys_prompt "$1" readonly)
+  # shellcheck disable=SC2086 # $1 is a ticket number
+  ! run_light $1 || jr=
   wf=$(workflow_prompt_block "$1")
   ck=$(prompt_checkpoint) pr=$(prompt_pr_open)
   tests=$(prompt_tests "$1") review=$(prompt_review "$1")
@@ -192,7 +195,7 @@ Deliver ticket #$1 ("$2") in this worktree, on branch $3, as the senior-mode tea
    research: deliver a note under docs/spikes/, an ADR or framed tickets, no code outside docs/, and stop at
    its \`Timebox:\` line (the run stops the session when a duration is reached).${plan:+$nl$plan}
 $(prompt_characterize)
-2. $tests
+2. $tests${jb:+$nl$jb}${jr:+$nl$jr}
 $ck
 3. A \`type:feature\` or \`type:bug\` ticket needs its tests proven: once they are committed, \`senior-mode red-tests verify $1\`
    (they fail on the base and pass on the head; without that record the pull request is not ready; docs and
@@ -272,7 +275,10 @@ EOF
 # The prompt of a ticket session under serve (role ticket, ADR 0017): it delivers up to a pull request with
 # senior-mode/ci and senior-mode/security published; the reviewer and the integrator are other sessions.
 serve_prompt() {
-  local tests prove nl=$'\n' wf wrong="" dec plan pout ck pr
+  local tests prove nl=$'\n' wf wrong="" dec plan pout ck pr jb jr
+  jb=$(skeleton_journeys_prompt "$1" brief) jr=$(skeleton_journeys_prompt "$1" readonly)
+  # shellcheck disable=SC2086 # $1 is a ticket number
+  ! run_light $1 || jr=
   wf=$(workflow_prompt_block "$1")
   ck=$(prompt_checkpoint) pr=$(prompt_pr_open)
   plan=$(prompt_plan "$1")
@@ -291,8 +297,9 @@ serve_prompt() {
     prove="3. A \`type:feature\` or \`type:bug\` ticket needs its tests proven: once they are committed, \`senior-mode red-tests verify $1\`
    (they fail on the base and pass on the head; without that record the pull request is not ready; docs and
    chore tickets are exempt). Then "
-    tests="2. $(prompt_tests "$1")"
+    tests="2. $(prompt_tests "$1")${jb:+$nl$jb}"
   fi
+  tests+=${jr:+$nl   $jr}
   dec=$(prompt_decision '' "$1")
   cat <<PROMPT
 You are one ticket session (SENIOR_MODE_ROLE=ticket) of senior-mode serve on $RUN_SLUG. Nobody will answer
@@ -386,6 +393,8 @@ PROMPT
 
 # The task of the test-author session of an M ticket (#191): the red tests, committed alone, before any code.
 serve_tests_prompt() {
+  local nl=$'\n' jb
+  jb=$(skeleton_journeys_prompt "$1" brief)
   cat <<PROMPT
 You are the test-author session (SENIOR_MODE_ROLE=test-author) of ticket #$1 ("$2") for senior-mode serve on
 $RUN_SLUG, in this worktree, on branch $3. Nobody will answer questions.
@@ -394,7 +403,7 @@ Use the test-author agent (skill tdd): read the ticket (\`gh issue view $1\`), i
 criteria, write the failing tests, run them (each must fail for the expected reason), and commit the tests
 alone in a \`test:\` commit with the red output in the body. Edit no production code, push nothing, open no
 pull request: a ticket session builds on your commit next, and cannot change your tests.
-
+${jb:+$nl$jb$nl}
 Last, write exactly one line to the file \$SENIOR_MODE_RUN_OUTCOME:
 - \`delivered\` once the tests are committed;
 - \`failed: <reason>\` otherwise (for example a criterion that cannot be tested as written), in one plain sentence.

@@ -59,6 +59,12 @@ implementer commits the tests with the code. For an M ticket, a separate session
 `SENIOR_MODE_ROLE=test-author` does commit them first; they are then read-only for the implementer
 (see [Session roles](autonomy.md#session-roles)).
 
+When the ticket's Paths overlap the `paths` of an accepted spec that declares journeys, its brief lists each journey
+with its name, its text from the spec and its test file, and it writes that E2E test first, from the journey and not
+from the code. A journey whose test exists is edited only when the ticket's criteria change it. The test is a red test
+like the others: `red-tests record` lists it, `red-tests verify` fails while it is absent or passes without the change,
+and the implementer's prompt says it is read-only.
+
 ## `implementer`
 
 Makes the failing tests pass with the simplest code, refactors, and commits atomically. It never

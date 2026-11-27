@@ -1,1 +1,14 @@
-{ "rules": [] }
+{
+  "rules": [
+    {
+      "id": "suppression",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "suppression",
+      "pattern": "eslint-disable|@ts-ignore|@ts-expect-error|@ts-nocheck|#[[:space:]]*noqa|#[[:space:]]*type:[[:space:]]*ignore|#[[:space:]]*pragma:[[:space:]]*no cover|#\\[allow\\(|//[[:space:]]*nolint|istanbul ignore|c8 ignore|(describe|it|test)\\.skip\\(|(^|[^[:alnum:]_.])x(it|describe)\\(|@pytest\\.mark\\.skip|t\\.Skip\\(|#\\[ignore\\]|senior-mode:[[:space:]]*allow[[:space:]]",
+      "never": "\\.only[[:space:]]*\\(|(^|[^[:alnum:]_.])(fit|fdescribe)\\(",
+      "message": "a focused test (.only) runs one test and silences the others, whatever the comment says",
+      "fix": "remove it; any other suppression takes `-- #<issue>: <reason>` on its line or the line above"
+    }
+  ]
+}

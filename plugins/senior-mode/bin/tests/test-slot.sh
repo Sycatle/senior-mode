@@ -81,5 +81,69 @@ sleep 0.2
 wait
 [ "$(cat "$work/other-slot")" = 1 ] || fail "the other repository did not get its own slot 1"
 
+# The template .senior-mode/slot.env (#755): tokens per slot, two sessions get distinct ports, databases and compose projects.
+export XDG_DATA_HOME="$work/data" SENIOR_MODE_WORKER=w1
+mkdir -p "$repo/.senior-mode"
+template() { printf '%s\n' "$@" >"$repo/.senior-mode/slot.env"; }
+config '{"autonomy": {"parallel": 2}}'
+template '# a comment' '' 'PORT={{port:3000}}' 'DATABASE_URL=postgres://localhost:5432/{{repo}}_s{{slot}}' 'COMPOSE_PROJECT_NAME={{repo}}-s{{slot}}'
+: >"$log"
+for _ in 1 2; do slot bash -c 'echo "$PORT $DATABASE_URL $COMPOSE_PROJECT_NAME" >>'"$log"'; sleep 0.3' & done
+wait
+[ "$(sort "$log" | tr '\n' ';')" = "3001 postgres://localhost:5432/repo_s1 repo-s1;3002 postgres://localhost:5432/repo_s2 repo-s2;" ] ||
+  fail "the template did not give two slots their own port, database and compose project: $(cat "$log")"
+
+# A bad template stops the session before it starts, and names the line.
+template 'A=1' 'B={{unknown}}'
+slot touch "$work/ran" 2>"$work/err" && fail "an unknown token accepted"
+{ grep -q 'line 2' "$work/err" && grep -q 'B={{unknown}}' "$work/err"; } || fail "unknown token not named: $(cat "$work/err")"
+template 'SENIOR_MODE_X=1'
+slot touch "$work/ran" 2>"$work/err" && fail "a SENIOR_MODE_ key accepted"
+grep -q 'SENIOR_MODE_X' "$work/err" || fail "reserved key not named: $(cat "$work/err")"
+template 'PORT={{port:65535}}'
+slot touch "$work/ran" 2>"$work/err" && fail "a port past 65535 accepted"
+{ grep -q 'line 1' "$work/err" && grep -q 'PORT={{port:65535}}' "$work/err"; } || fail "bad port not named: $(cat "$work/err")"
+template 'bad name=1'
+slot touch "$work/ran" 2>/dev/null && fail "a non-identifier name accepted"
+[ ! -e "$work/ran" ] || fail "the session ran with a bad template"
+
+# A port a foreign process holds: the session takes the next slot and says why; with every port busy it waits and names the port.
+hold() { python3 -c 'import socket,sys,time
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(); time.sleep(float(sys.argv[2]))' "$@" & }
+base=$(python3 -c 'import socket
+s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1] - 1)')
+template "PORT={{port:$base}}"
+hold $((base + 1)) 2
+sleep 0.5
+[ "$(slot bash -c 'echo $SENIOR_MODE_SLOT $PORT' 2>"$work/err")" = "2 $((base + 2))" ] || fail "a busy port did not move the session to slot 2"
+grep -q "slot 1 skipped: port $((base + 1))" "$work/err" || fail "the skipped slot is not logged: $(cat "$work/err")"
+wait
+hold $((base + 1)) 3
+hold $((base + 2)) 3
+sleep 0.5
+slot bash -c 'echo $SENIOR_MODE_SLOT >'"$work/late" 2>"$work/err" &
+sleep 1
+[ ! -e "$work/late" ] || fail "the session started with every port busy"
+grep -q "port $((base + 1)) is held\|port $((base + 2)) is held" "$work/err" || fail "the wait does not name the port: $(cat "$work/err")"
+wait
+[ -e "$work/late" ] || fail "the session did not start once the ports were free"
+
+# The template is read first, the slot command's lines override; the slot directory stays, the ticket changes.
+template 'PORT=1' 'KEEP=template' 'DIR={{slotdir}}' 'TICKET={{ticket}}' 'WT={{worktree}}' 'WHO={{machine}}'
+config '{"slot": "echo PORT=2"}'
+git -C "$repo" symbolic-ref HEAD refs/heads/feat/12-first
+out1=$(slot bash -c 'echo "$PORT $KEEP $DIR $TICKET $WT $WHO"')
+git -C "$repo" symbolic-ref HEAD refs/heads/feat/13-second
+out2=$(slot bash -c 'echo "$PORT $KEEP $DIR $TICKET $WT $WHO"')
+[ "${out1%% *}" = 2 ] || fail "the slot command did not override the template: $out1"
+read -ra a <<<"$out1"
+read -ra b <<<"$out2"
+[ "${a[1]}" = template ] && [[ ${a[2]} == "$work/data/senior-mode/slots/"* ]] || fail "template line or slot dir wrong: $out1"
+[ "${a[2]}" = "${b[2]}" ] && [ -d "${a[2]}" ] || fail "the slot directory changed between tickets: $out1 / $out2"
+{ [ "${a[3]}" = 12 ] && [ "${b[3]}" = 13 ]; } || fail "{{ticket}} wrong: $out1 / $out2"
+[ "${a[5]}" = w1 ] || fail "{{machine}} is not the worker name: $out1"
+rm "$repo/.senior-mode/slot.env"
+[ "$(slot bash -c 'echo ${KEEP:-none}')" = none ] || fail "the template still read after its removal"
+
 [ "$failures" -eq 0 ] && echo "slot: all cases pass"
 exit "$((failures > 0))"

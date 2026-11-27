@@ -568,26 +568,116 @@ e2e_lock() {
   done
 }
 
+# What the slot template and the lock files need to know about this session, in globals: the worktree
+# (SLOT_TOP), the repository (SLOT_REPO, SLOT_KEY: its name and the checksum of its path, as `worktree_path`),
+# the ticket of the branch (empty when the branch names none) and the worker.
+slot_context() {
+  local common main
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
+  main=$(dirname "$common")
+  SLOT_TOP=$(git rev-parse --show-toplevel)
+  SLOT_REPO=$(basename "$main")
+  SLOT_KEY=$SLOT_REPO-$(printf '%08x' "$(printf '%s' "$main" | cksum | cut -d' ' -f1)")
+  SLOT_TICKET=$(jq -rn --arg b "$(git symbolic-ref --short -q HEAD)" \
+    '[$b | capture($ENV.SENIOR_MODE_BRANCH_RE // "^[a-z]+/(?<n>[0-9]+)(-|$)") | .n] | first // ""')
+  SLOT_MACHINE=$(lease_worker)
+  SLOT_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/senior-mode/slots/$SLOT_KEY
+}
+
+# Renders the template `.senior-mode/slot.env` of the worktree for slot $1 (#755): KEY=VALUE lines, `#` and
+# blank lines skipped, the tokens {{slot}} {{repo}} {{ticket}} {{worktree}} {{machine}} {{slotdir}} and
+# {{port:BASE}} (BASE + slot) replaced. Sets SLOT_ENV (the lines) and SLOT_PORTS (the ports the slot needs).
+# A line that is not KEY=VALUE, a SENIOR_MODE_ name, an unknown token, a newline in a value or a port outside
+# 1..65535 stops the session, naming the line. Without a template, nothing.
+slot_render() {
+  local file n=0 line key value out tok whole val
+  SLOT_ENV=""
+  SLOT_PORTS=()
+  file=$SLOT_TOP/.senior-mode/slot.env
+  [ -f "$file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    case $line in "" | "#"*) continue ;; esac
+    key=${line%%=*}
+    [[ $line == *=* && $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "slot.env line $n must be KEY=VALUE, not: $line"
+    [[ $key != SENIOR_MODE_* ]] || die "slot.env line $n cannot set $key: SENIOR_MODE_ names are reserved"
+    value=${line#*=}
+    out=""
+    while [[ $value =~ \{\{([^{}]*)\}\} ]]; do
+      tok=${BASH_REMATCH[1]}
+      whole=${BASH_REMATCH[0]}
+      case $tok in
+        slot) val=$1 ;;
+        repo) val=$SLOT_REPO ;;
+        ticket) val=$SLOT_TICKET ;;
+        worktree) val=$SLOT_TOP ;;
+        machine) val=$SLOT_MACHINE ;;
+        slotdir) val=$SLOT_DIR/$1 ;;
+        port:*)
+          val=${tok#port:}
+          [[ $val =~ ^[0-9]{1,5}$ ]] || die "slot.env line $n: {{$tok}} needs a port number: $line"
+          val=$((10#$val + $1))
+          { [ "$val" -ge 1 ] && [ "$val" -le 65535 ]; } || die "slot.env line $n: port $val of slot $1 is outside 1..65535: $line"
+          SLOT_PORTS+=("$val")
+          ;;
+        *) die "slot.env line $n: unknown token {{$tok}}: $line" ;;
+      esac
+      [[ $val != *$'\n'* ]] || die "slot.env line $n: {{$tok}} holds a newline: $line"
+      out+=${value%%"$whole"*}$val
+      value=${value#*"$whole"}
+    done
+    SLOT_ENV+=$key=$out$value$'\n'
+  done <"$file"
+}
+
+# Whether a process holds a listener on TCP port $1: `ss` when there is one, else a connection to loopback.
+port_busy() {
+  if command -v ss >/dev/null; then
+    [ -n "$(ss -H -ltn "sport = :$1" 2>/dev/null)" ]
+  else
+    (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+  fi
+}
+
 # Takes the lowest free slot of 1..$1 for this repository, waiting when all are taken (#153): sets SLOT and
 # holds its flock on a descriptor of this shell, so the slot stays taken while this process or anything that
 # inherited the descriptor lives, and is free the moment they are gone, whatever way they end. The lock
-# files are per repository (its name and the checksum of its path, as `worktree_path`), machine-wide.
+# files are per repository (its name and the checksum of its path, as `worktree_path`), machine-wide. A slot
+# whose template ports (#755) a foreign process holds is skipped, and said so; with none free the wait names the port.
 slot_acquire() {
-  local slots=$1 dir key i fd waited=false common main
-  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
-  main=$(dirname "$common")
-  key=$(basename "$main")-$(printf '%08x' "$(printf '%s' "$main" | cksum | cut -d' ' -f1)")
+  local slots=$1 dir i fd waited=false port taken busy="" said=" "
+  slot_context
   dir=$(lock_dir slots) || exit 1
   while :; do
+    busy=""
     for ((i = 1; i <= slots; i++)); do
-      exec {fd}>>"$dir/$key-$i"
+      exec {fd}>>"$dir/$SLOT_KEY-$i"
       if flock -n "$fd"; then
-        SLOT=$i
-        return 0
+        slot_render "$i"
+        taken=""
+        for port in "${SLOT_PORTS[@]}"; do
+          if port_busy "$port"; then
+            taken=$port
+            break
+          fi
+        done
+        if [ -z "$taken" ]; then
+          SLOT=$i
+          return 0
+        fi
+        busy=$taken
+        [[ $said == *" $i "* ]] || echo "senior-mode: slot $i skipped: port $taken is held by another process" >&2
+        said+="$i "
       fi
       exec {fd}>&-
     done
-    [ "$waited" = true ] || echo "senior-mode: waiting for a free slot ($slots in use)" >&2
+    if [ "$waited" != true ]; then
+      if [ -n "$busy" ]; then
+        echo "senior-mode: waiting for a free slot (port $busy is held by another process)" >&2
+      else
+        echo "senior-mode: waiting for a free slot ($slots in use)" >&2
+      fi
+    fi
     waited=true
     sleep "${SENIOR_MODE_LOCK_POLL:-2}"
   done
@@ -612,7 +702,8 @@ slot_env() {
 
 # senior-mode slot -- <command>...: runs the command in a slot of its own, of `autonomy.parallel` per
 # repository (SENIOR_MODE_SLOTS when a run has more): SENIOR_MODE_SLOT=N, plus the KEY=VALUE lines of the
-# project's `slot` command (a port, a database, a cache directory) exported. `run` starts every session
+# project's template `.senior-mode/slot.env` and then its `slot` command (a port, a database, a cache
+# directory; the command's lines override the template's) exported. `run` starts every session
 # through it, so two sessions never share a slot. It takes the process over (exec), the slot stays
 # taken with the descriptor until the command and its children are gone.
 slot() {
@@ -623,8 +714,12 @@ slot() {
   [ -n "$slots" ] || slots=$(config_get autonomy.parallel)
   [[ $slots =~ ^[1-9][0-9]*$ ]] || die "the number of slots (autonomy.parallel) must be a positive number, not $slots"
   command -v flock >/dev/null || die "slot needs flock (util-linux)"
+  slot_context
+  # Every slot's lines are checked first: a template that breaks on slot 2 does not wait for slot 2 to show it.
+  for ((SLOT = 1; SLOT <= slots; SLOT++)); do slot_render "$SLOT"; done
   slot_acquire "$slots"
-  env=$(slot_env "$SLOT") || exit 1
+  [ -z "$SLOT_ENV" ] || mkdir -p "$SLOT_DIR/$SLOT"
+  env=$SLOT_ENV$(slot_env "$SLOT") || exit 1
   while IFS= read -r line; do
     # shellcheck disable=SC2163 # $line is the whole assignment, NAME=VALUE
     [ -z "$line" ] || export "$line"

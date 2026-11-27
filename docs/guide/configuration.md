@@ -696,6 +696,12 @@ line or the line above, the issue must exist (`suppression: #<n> not found`; whe
 not verified` is a warning), a focused test (`.only`) fails whatever the comment says, and `senior-mode: allow <rule-id> --
 #<issue>: <reason>` lifts that rule's finding on the next line (the lifted finding is listed).
 
+The `perf` pack (opt-in: `"rules": { "packs": ["common", "node", "perf"] }`) holds `io-in-loop`: a database, HTTP or file call
+added inside a loop body (`for`, `while`, `forEach`, `map`, a list comprehension, a Go or Rust loop) fails with the fix "batch it or
+use a set-based query", naming file and line. The call outside a loop, a loop that only computes, a migration, a seed, a fixture
+and a test file are left alone, and `-- #<issue>: <reason>` on the call lifts the line. The loop is read from the brackets
+(or the indentation in Python), a heuristic: `senior-mode: allow io-in-loop -- #<issue>: <reason>` on the line above is the way out.
+
 A rule is turned off only with a reason, in `.claude/senior-mode.json` (a protected path, so the change reaches a human):
 
 ```json

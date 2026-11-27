@@ -346,6 +346,12 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   check then runs, every time), and a check with no `inputs` always runs. The results are in `senior-mode/cache` of the
   common git directory, so every worktree of the repository shares them. A run narrowed to the changed paths (`--pre-push`,
   `--changed`) neither reads nor writes it. `senior-mode check --no-cache` runs every check.
+- When the branch adds or changes a Prisma schema (`*.prisma`) or a SQL migration (`*.sql`), `senior-mode check` runs the
+  `foreign keys` step (tier 2): a foreign key the branch adds (a Prisma `@relation` with `fields`, `REFERENCES` or
+  `FOREIGN KEY` in SQL) needs an index that starts with that column, or it fails with `<file>:<line>` and the column. The index is a
+  `@@index`, `@@unique` or `@@id` of the model, `@unique` or `@id` on the field (Prisma), or a `CREATE INDEX`, `PRIMARY KEY` or
+  `UNIQUE` anywhere in the SQL of the tree (an earlier migration counts). A key the base branch already had is not reported, and
+  with no schema or migration change the step does not run.
 - On a push the `pre-push` hook runs `senior-mode check --changed` ([changed checks](#changed-checks)), which gives the
   checks the paths the branch changes against the merge base, in a file named by `SENIOR_MODE_CHANGED_FILES`
   (unset in a full run). A check that can narrow itself to them does; the others ignore it. The hook that `setup repo`

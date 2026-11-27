@@ -922,6 +922,113 @@ hot_paths_check() {
   [ "$miss" -eq 0 ]
 }
 
+# One run of the benchmark command $2 in the directory $1 (`{out}` is a file it may write; else its output is read): the JSON
+# object of benchmark name to median, on stdout.
+bench_run() {
+  local dir=$1 cmd=$2 out
+  out=$(mktemp)
+  (cd "$dir" && bash -c "${cmd//\{out\}/$out}" </dev/null) >"$out.stdout" || {
+    rm -f "$out" "$out.stdout"
+    return 1
+  }
+  if [ -s "$out" ]; then cat "$out"; else cat "$out.stdout"; fi
+  rm -f "$out" "$out.stdout"
+}
+
+# The percent the benchmark values $1 and $2 differ by, over the smaller one.
+bench_spread() {
+  awk -v a="$1" -v b="$2" 'BEGIN { m = (a < b ? a : b); d = (a < b ? b - a : a - b); printf "%.1f", (m > 0 ? d * 100 / m : (d > 0 ? 100000 : 0)) }'
+}
+
+# The step `perf` (#761, tier 3): when the diff falls under a hot path of a spec, the benchmark command runs twice on the merge base
+# and twice on the head in the same slot, and each benchmark the touched hot paths name is compared: the mean of the two medians,
+# slower on the head by more than `performance.bench.threshold` percent (default 10) fails, naming the benchmark, both medians and
+# the change. Two runs of one commit that differ by more than the threshold are `unstable`: the pull request gets `needs-human`,
+# an issue is filed for the benchmark and the step fails, it never passes. Without `performance.bench.command`: `bench: not measured`.
+perf_check() {
+  local rows cmd threshold base mb root wt dep dcmd i r name spec line a1 a2 h1 h2 am hm change sa sh bad=0
+  local -a benches=() runs=()
+  rows=$(hot_touched path)
+  [ -n "$rows" ] || {
+    echo "skipped: no diff under a hot path"
+    return 0
+  }
+  cmd=$(config_get performance.bench.command 2>/dev/null) || cmd=""
+  [ -n "$cmd" ] || {
+    echo "skipped: bench: not measured, set performance.bench.command"
+    return 0
+  }
+  threshold=$(config_get performance.bench.threshold 2>/dev/null) || threshold=10
+  root=$(git rev-parse --show-toplevel) || return 1
+  base=$(default_branch) && mb=$(git merge-base "$base" HEAD) || {
+    echo "skipped: no base branch to compare with"
+    return 0
+  }
+  wt=$(worktree_path "$root" "bench-${mb:0:12}")
+  git worktree remove --force "$wt" 2>/dev/null || true
+  git worktree add -q --detach "$wt" "$mb" || die "no worktree of the merge base ${mb:0:7} to run the benchmarks in"
+  while IFS=$'\t' read -r dep dcmd; do
+    (cd "$wt/$dep" && bash -c "$dcmd" </dev/null) >/dev/null 2>&1 || true
+  done < <(install_plan "$wt")
+  # Interleaved, so a drift of the machine touches both sides alike: base, head, base, head.
+  for i in 1 2; do
+    r=$(bench_run "$wt" "$cmd") || bad=1
+    runs+=("$r")
+    r=$(bench_run "$root" "$cmd") || bad=1
+    runs+=("$r")
+  done
+  git worktree remove --force "$wt" 2>/dev/null || true
+  [ "$bad" -eq 0 ] || {
+    echo "FAIL: the benchmark command failed on the merge base or the head"
+    return 1
+  }
+  bad=0
+  while IFS=$'\t' read -r spec line _ name _; do
+    [[ " ${benches[*]:-} " == *" $spec:$line:$name "* ]] || benches+=("$spec:$line:$name")
+  done <<<"$rows"
+  for i in "${benches[@]}"; do
+    spec=${i%%:*} line=${i#*:} name=${line#*:} line=${line%%:*}
+    a1=$(jq -r --arg n "$name" '.[$n] // empty' <<<"${runs[0]}")
+    h1=$(jq -r --arg n "$name" '.[$n] // empty' <<<"${runs[1]}")
+    a2=$(jq -r --arg n "$name" '.[$n] // empty' <<<"${runs[2]}")
+    h2=$(jq -r --arg n "$name" '.[$n] // empty' <<<"${runs[3]}")
+    if [ -z "$a1" ] || [ -z "$h1" ] || [ -z "$a2" ] || [ -z "$h2" ]; then
+      echo "$spec:$line benchmark $name is not in the output of the benchmark command"
+      bad=1
+      continue
+    fi
+    sa=$(bench_spread "$a1" "$a2")
+    sh=$(bench_spread "$h1" "$h2")
+    if awk -v x="$sa" -v y="$sh" -v t="$threshold" 'BEGIN { exit !(x > t || y > t) }'; then
+      echo "$spec:$line benchmark $name is unstable: two runs of one commit differ by ${sa}% (base) and ${sh}% (head), more than $threshold%"
+      perf_unstable "$name" "$a1 $a2" "$h1 $h2" "$threshold"
+      bad=1
+      continue
+    fi
+    am=$(awk -v a="$a1" -v b="$a2" 'BEGIN { printf "%.4g", (a + b) / 2 }')
+    hm=$(awk -v a="$h1" -v b="$h2" 'BEGIN { printf "%.4g", (a + b) / 2 }')
+    change=$(awk -v a="$am" -v h="$hm" 'BEGIN { printf "%+.1f", (a > 0 ? (h - a) * 100 / a : 0) }')
+    if awk -v c="$change" -v t="$threshold" 'BEGIN { exit !(c > t) }'; then
+      echo "$spec:$line benchmark $name is slower: median $am on the base, $hm on the head ($change%, more than $threshold%)"
+      bad=1
+    else
+      echo "ok $name: median $am on the base, $hm on the head ($change%)"
+    fi
+  done
+  [ "$bad" -eq 0 ]
+}
+
+# An unstable benchmark (#761): `needs-human` on the pull request of the commit, and an issue for the benchmark $1 (base runs $2, head
+# runs $3, threshold $4). Never stops the check: the step fails whatever happens here.
+perf_unstable() {
+  local slug pr
+  slug=$(repo_slug 2>/dev/null) || return 0
+  pr=$(gh_retry api "repos/$slug/commits/$(git rev-parse HEAD)/pulls" --jq '[.[] | select(.state == "open")][0].number // empty' 2>/dev/null) || pr=""
+  [ -z "$pr" ] || gh_retry api "repos/$slug/issues/$pr/labels" -f 'labels[]=needs-human' >/dev/null || true
+  gh_retry api "repos/$slug/issues" -f title="perf: benchmark $1 is unstable" \
+    -f body="Two runs of the benchmark \`$1\` on one commit differ by more than $4%: base $2, head $3${pr:+ (pull request #$pr)}. A benchmark that cannot be trusted gates nothing: make it deterministic, or give it a quiet slot." >/dev/null || true
+}
+
 # The warning of `check` about suppressions the branch adds (#437): a lint or type check silenced, a test
 # skipped. One line per added line, `file:line` and the text. Never fails: review judges each one, and a
 # suppression with its reason written next to it is legitimate. Markdown is prose, not code: left out.
@@ -1153,7 +1260,7 @@ heavy_carry() {
 # slot, so that the caller never waits for it.
 heavy_start() {
   local sha=$1 dir
-  [ "$(jq '[.checks // [] | .[] | select(.tier == 3)] | length' "$(config_file)")" -gt 0 ] || return 0
+  [ "$(jq '[.checks // [] | .[] | select(.tier == 3)] | length' "$(config_file)")" -gt 0 ] || [ -n "$(config_get performance.bench.command 2>/dev/null)" ] || return 0
   dir=$(heavy_dir) || return 0
   [ ! -e "$dir/$sha.state" ] || return 0
   if [ -n "${SENIOR_MODE_HEAVY_FROM:-}" ] && heavy_carry "$SENIOR_MODE_HEAVY_FROM" "$sha"; then
@@ -1355,6 +1462,11 @@ check() {
   if [ "$run2" = false ]; then
     names=()
     cmds=()
+  fi
+  # The benchmarks of the hot paths the diff touches, compared with the base (#761).
+  if [ "$run3" = true ] && [ -n "$(hot_touched path)" ]; then
+    names+=("perf")
+    cmds+=("$(printf '%q' "$SELF") perf-check")
   fi
   nbuiltin=${#names[@]}
   bases=("${names[@]}")

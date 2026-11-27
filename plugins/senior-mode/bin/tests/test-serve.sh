@@ -2563,7 +2563,7 @@ packages_config() { # <root install> <module a install> <module b install>
   echo "module b" >"$repo/svc/b/go.mod"
   jq --arg r "$1" --arg a "$2" --arg b "$3" '.commands.install = $r
     | .packages = {".": {preset: "go", commands: {install: $r}}, "svc/a": {preset: "go", commands: {install: $a}}, "svc/b": {preset: "go", commands: {install: $b}}}' \
-    "$repo/.claude/senior-mode.json" >"$work/cfg" && mv "$work/cfg" "$repo/.claude/senior-mode.json"
+    "$repo/.claude/senior-mode.json" >"$work/cfg.json" && mv "$work/cfg.json" "$repo/.claude/senior-mode.json"
   git -C "$repo" add -A
   git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: packages"
   git -C "$repo" push -q origin main
@@ -2581,7 +2581,7 @@ packages_config "echo root >>$work/installs" "echo a >>$work/installs; exit 1" "
 SENIOR_MODE_NOW=1800000000 once || fail "PK: serve failed: $(cat "$work/out")"
 [ -s "$state/held" ] || fail "PK: a module that fails to install did not turn the probe red: $(cat "$work/out")"
 config '{}'
-jq --arg r "echo root >>$work/installs" '.commands.install = $r' "$repo/.claude/senior-mode.json" >"$work/cfg" && mv "$work/cfg" "$repo/.claude/senior-mode.json"
+jq --arg r "echo root >>$work/installs" '.commands.install = $r' "$repo/.claude/senior-mode.json" >"$work/cfg.json" && mv "$work/cfg.json" "$repo/.claude/senior-mode.json"
 git -C "$repo" -c user.name=t -c user.email=t@t commit -qam "chore: install command"
 git -C "$repo" push -q origin main
 fresh
@@ -2699,7 +2699,7 @@ grep -q "^pr merge 196 " "$GH_LOG" || fail "BS: the pull request did not merge: 
 [ ! -e "$state/held" ] || fail "BS: a green base head held the launches: $(cat "$work/out")"
 started 97 || fail "BS: #97 not started on a green base head: $(cat "$work/out")"
 [ ! -e "$state/main-verify" ] || fail "BS: the check after the merge was not marked done"
-jq '.checks = [{name: "fmt", run: "false"}]' "$repo/.claude/senior-mode.json" >"$work/cfg" && mv "$work/cfg" "$repo/.claude/senior-mode.json"
+jq '.checks = [{name: "fmt", run: "false"}]' "$repo/.claude/senior-mode.json" >"$work/cfg.json" && mv "$work/cfg.json" "$repo/.claude/senior-mode.json"
 git -C "$repo" -c user.name=t -c user.email=t@t commit -qam "chore: failing check"
 git -C "$repo" push -q origin main
 boardx "98:In review:S:P1 next" "99:Ready:S:P1 next"

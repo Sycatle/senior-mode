@@ -30,6 +30,9 @@ The plugin adds commands (`/senior-mode:setup`, `/senior-mode:frame`), disciplin
 team, hooks, and a `senior-mode` script that Claude can call from its Bash tool. You can call the
 script yourself from the Claude Code prompt with a leading `!`, for example `! senior-mode check`.
 
+To see the whole flow first, run `senior-mode demo`: it delivers three toy tickets on a throwaway repository in about
+five minutes (see [`demo`](commands.md)).
+
 ## Adopt a repository
 
 Open Claude Code in the repository and run:

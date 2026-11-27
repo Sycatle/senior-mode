@@ -58,6 +58,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `egress.sh`: the egress allowlist of sandboxed sessions (`egress_decide`, `egress_start`/`egress_stop`); the proxy itself is `plugins/senior-mode/sandbox/egress-proxy.sh` (socat, one handler per connection).
 - `serve.sh`: `serve` (poll loop, requalify, rebase, merge, digest).
 - `demo.sh`: `demo` (a throwaway repository with three toy tickets, delivered by serve; progress in `demo.json`).
+- `broker.sh`: `broker_allow` (the credential broker's decision: which gh, git push and senior-mode verbs a sandboxed session may run).
 - `watchdog.sh`: serve's watchdog (hung sessions, orphan processes, stale `index.lock`).
 
 ## Pitfalls

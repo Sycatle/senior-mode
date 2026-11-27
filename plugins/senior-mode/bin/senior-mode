@@ -105,6 +105,9 @@ usage() {
 # shellcheck source=lib/demo.sh
 . "$LIB/demo.sh"
 
+# shellcheck source=lib/broker.sh
+. "$LIB/broker.sh"
+
 # Never inherited: only `run` may hold one (see run_token_ok).
 unset RUN_TOKEN
 

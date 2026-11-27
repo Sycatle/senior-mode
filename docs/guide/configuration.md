@@ -125,6 +125,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `characterize.below` | `50` | The coverage percent (ratchet baseline `coverage.files`) under which an existing file counts as untested: a branch that changes it needs a `test(<scope>): characterize <unit>` commit first (`senior-mode untested`) |
 | `characterize.exempt` | `[]` | Globs of files that need no characterization commit, on top of docs, tests, generated files, types and constants |
 | `e2e.slots` | `2` | End-to-end suites that may run at once on the machine (the check named `e2e`) |
+| `sandbox.verbs` | `[]` | Extra read-only `gh` verbs a sandboxed session may run through the [credential broker](autonomy.md#credential-broker), each as `gh <group> <view\|list\|status\|diff\|checks>` (`gh release view`). `gh pr merge`, `gh auth`, `gh repo`, `gh api` (so any method but `GET`), the secret and key groups and any write verb fail `config validate` naming `sandbox.verbs[<i>]`, and the broker denies them anyway |
 | `slot` | `""` | A shell command that derives the environment of a [session slot](autonomy.md#session-slots) from `SENIOR_MODE_SLOT`: it prints `KEY=VALUE` lines (a `PORT`, a `DATABASE_URL`, a cache directory) that are exported into the session. Empty: the session only gets `SENIOR_MODE_SLOT`. Names starting with `SENIOR_MODE_` are refused |
 
 `senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`). The optional keys

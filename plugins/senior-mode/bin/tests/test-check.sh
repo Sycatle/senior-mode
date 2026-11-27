@@ -768,7 +768,7 @@ hook5 || fail "hook: a covered change fails: $(cat "$work/out")"
 rm -f "$work/marker5"
 (cd "$r5" && "$cli" check) >"$work/out" 2>&1 || fail "full check fails: $(cat "$work/out")"
 for step in "secret scan" "dependency audit" "new dependencies" "config" "context hygiene" "script tests" "seen"; do
-  grep -Eq "^(ok    |skip  )$step[ :(]" "$work/out" || fail "full check: step '$step' did not run: $(cat "$work/out")"
+  grep -Eq "^(ok    |skip  )${step}[ :(]" "$work/out" || fail "full check: step '$step' did not run: $(cat "$work/out")"
 done
 grep -q "7/7 checks passed" "$work/out" || fail "full check: not every step counted: $(tail -n 3 "$work/out")"
 [ -e "$work/marker5" ] || fail "full check: the test suite was narrowed"

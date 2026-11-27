@@ -959,6 +959,28 @@ model API (`api.anthropic.com`, and the host of `ANTHROPIC_BASE_URL` when set), 
 - `egress_decide <host>` (`lib/egress.sh`) prints `allow` or `refuse: <reason>`; `egress_start <n>` and `egress_stop <n>` run
   the proxy of a ticket. Starting it for a session is not wired yet.
 
+### Credential broker
+
+`broker_allow <session> <argv...>` ([#775](https://github.com/Sycatle/senior-mode/issues/775), [spec 328](../specs/328-safety-and-steering.md))
+is the decision of the broker that will stand between a sandboxed session and GitHub: it decides, it runs nothing (the socket
+is [#452](https://github.com/Sycatle/senior-mode/issues/452)). The session is a ticket; its context (ticket, branch, pull request,
+role, base) is `<serve dir>/broker/<ticket>.ctx`. A verb runs only when it is listed and its target is the session's own:
+
+- `gh issue view|list`; `gh issue comment` on its ticket; `gh pr create` with `--head` its branch and `--base` the base branch;
+  `gh pr view|diff|checks|comment|edit` on its pull request (a `reviewer` may `view|diff` any); `gh api` with `GET` on
+  `repos/<slug>/{issues,pulls,commits,statuses,check-runs,contents}`.
+- `git push [-u] origin <branch>` of its branch: no force, no delete, no other ref, no tag.
+- `senior-mode publish <sha>` where the sha is the tip of its branch, `item set <ticket> Status ...`, `issue create` with
+  `--severity` and `--kind`, `red-tests record <ticket>`.
+- A `reviewer` session posts the status `senior-mode/review` and `senior-mode/security`, a `security` session
+  `senior-mode/security`, each on a commit, with exactly one `context`; a `ticket` session posts neither (the rule of the
+  [session roles](#session-roles)).
+- [`sandbox.verbs`](configuration.md#keys-the-plugin-reads-today) adds read-only `gh` verbs.
+
+Anything else, a `--repo` or `--hostname` option, a `GH_HOST` prefix, `--body-file` (a file of the daemon's machine) included, is
+denied: exit 126, `denied: <verb> is not on the sandbox allowlist` on stderr, and one `deny` line in `<serve dir>/broker.log`
+(`epoch session verb allow|deny exit`, the words of the verb joined by `:`). An allowed argv is returned with `GH_REPO=<slug>` first.
+
 ## Other mechanisms
 
 - **Git hooks.** `commit-msg` refuses a subject that is not a Conventional Commit. `pre-push` runs the

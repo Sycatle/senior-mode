@@ -325,6 +325,48 @@ run status --json --since 7d || fail "status --json with share 0 failed: $(cat "
 cp "$work/config.hier" "$repo/.claude/senior-mode.json"
 cp "$FIX/page-first.keep" "$FIX/page-first.json"
 
+# The sandbox (#786): the line, the runtime's rootless answer, the denials of the last 24 hours, tolerant of absent files.
+mkdir -p "$work/rt"
+# shellcheck disable=SC2016 # the stub's own shell expands $1 and $RT_ROOTLESS
+printf '#!/bin/sh\nif [ "$1" = info ]; then echo "$RT_ROOTLESS"; fi\nexit 0\n' >"$work/rt/podman"
+chmod +x "$work/rt/podman"
+sbx_config() { jq --argjson s "$1" '.sandbox = $s' "$work/config.hier" >"$repo/.claude/senior-mode.json"; }
+serve_dir=$repo/.git/senior-mode/serve
+rm -rf "$serve_dir"
+sbx_config '{}'
+sbx_run() { PATH="$work/rt:$PATH" SENIOR_MODE_RUNTIME=podman RT_ROOTLESS=$1 run status "${@:2}"; }
+sbx_run true --json --since 7d || fail "status --json with a runtime failed: $(cat "$work/err")"
+[ "$(json '.sandbox | [.mode, .runtime, .rootless, .network, .egressDenied, .brokerDenied] | join(",")')" = '"auto,podman,rootless,allowlist,0,0"' ] || fail "status sandbox: $(json '.sandbox')"
+[ "$(json '.sandbox.image')" = "\"senior-mode/base:$(jq -r .version "$(dirname "$cli")/../.claude-plugin/plugin.json")\"" ] || fail "status sandbox image: $(json '.sandbox.image')"
+sbx_run true --since 7d || fail "status with a runtime failed: $(cat "$work/err")"
+grep -qE '^Sandbox: podman \(rootless\), image senior-mode/base:[0-9.]+, network allowlist$' "$work/out" || fail "plain status lacks the sandbox line: $(cat "$work/out")"
+grep -q 'warning' "$work/out" && fail "a rootless runtime is flagged: $(cat "$work/out")"
+sbx_run false --since 7d
+grep -qE '^Sandbox: podman \(rootful\)' "$work/out" && grep -q '  warning: rootful runtime: allowed' "$work/out" || fail "a rootful runtime is not flagged: $(cat "$work/out")"
+# Refusals and denials: only the last 24 hours count (an egress file by its mtime, a broker line by its epoch).
+mkdir -p "$serve_dir"
+now=$(date +%s)
+printf 'evil.example\trefuse: not allowlisted\n1.2.3.4\trefuse: ip literal\n' >"$serve_dir/7.egress"
+printf 'old.example\trefuse: not allowlisted\n' >"$serve_dir/8.egress"
+touch -d '3 days ago' "$serve_dir/8.egress"
+printf '%s s1 gh:pr:merge deny 3\n%s s1 gh:pr:view allow 0\n%s s1 gh:repo:delete deny 3\n%s s2 git:push deny 3\n' \
+  "$((now - 60))" "$((now - 30))" "$((now - 2 * 86400))" "$((now - 3600))" >"$serve_dir/broker.log"
+sbx_run true --json --since 7d || fail "status --json with denials failed: $(cat "$work/err")"
+[ "$(json '.sandbox | [.egressDenied, .brokerDenied] | join(",")')" = '"2,2"' ] || fail "last 24 hours only: $(json '.sandbox')"
+sbx_run true --since 7d
+grep -qF '  last 24h: 2 egress refusals, 2 broker denials' "$work/out" || fail "plain status lacks the denials: $(cat "$work/out")"
+rm -rf "$serve_dir"
+sbx_run true --json --since 7d || fail "status fails without the sandbox files"
+[ "$(json '.sandbox | [.egressDenied, .brokerDenied] | join(",")')" = '"0,0"' ] || fail "absent files are not 0: $(json '.sandbox')"
+# off and no runtime.
+sbx_config '{"mode":"off"}'
+sbx_run true --since 7d
+grep -qx 'Sandbox: off (configured)' "$work/out" || fail "mode off: $(cat "$work/out")"
+sbx_config '{"runtime":"no-such-runtime"}'
+sbx_run true --since 7d
+grep -qx 'Sandbox: off (no runtime)' "$work/out" || fail "auto without a runtime: $(cat "$work/out")"
+cp "$work/config.hier" "$repo/.claude/senior-mode.json"
+
 # #446: the customization line, and the lifted rules (a refused lift is said, an accepted one is warned about).
 levers='.hooks = {on: [{name: "slack", event: ["needs-human"], run: ".claude/senior-mode/hooks/slack.sh"}, {name: "audit", event: "pr.merged", url: "https://h.example.com/sm"}]}
   | .roles = {designer: {agent: ".claude/senior-mode/roles/designer.md", kind: "reviewer", when: {labels: ["ui"]}}}
@@ -965,7 +1007,7 @@ SECTION
 cli_real=$cli cli=$work/bin/senior-mode
 run status --json --since 7d || fail "status --json with a stub section failed: $(cat "$work/err")"
 [ "$(json '.stub.items > 0 and .stub.core == (.inProgress | length)')" = true ] || fail "the stub section's key: $(json '.stub')"
-[ "$(json 'keys_unsorted | .[-4:]')" = '["stub","maintenance","serve","retro"]' ] || fail "the sections are not merged by order: $(json 'keys_unsorted')"
+[ "$(json 'keys_unsorted | .[-5:]')" = '["stub","maintenance","sandbox","serve","retro"]' ] || fail "the sections are not merged by order: $(json 'keys_unsorted')"
 run status --since 7d || fail "status with a stub section failed: $(cat "$work/err")"
 grep -A1 '^Stub: [0-9]* items, [0-9]* in progress$' "$work/out" | grep -qx 'Release' || fail "the stub line is not before Release: $(cat "$work/out")"
 cli=$cli_real

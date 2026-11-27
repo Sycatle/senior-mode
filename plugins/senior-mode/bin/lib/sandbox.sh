@@ -101,19 +101,33 @@ sandbox_build_base() {
   sandbox_build "$1" "$2" "$(plugin_root)/sandbox/Dockerfile" "$(plugin_root)/sandbox" ${3:+--build-arg "CLAUDE_VERSION=$3"}
 }
 
-# The image of a session, built on demand, printed (run in the repository):
-#   sandbox.image                                      that name, nothing is built
-#   .senior-mode/Dockerfile                            senior-mode/<repo>:<first 12 hex of its sha256>
-#   neither                                            senior-mode/base:<plugin version>, from the plugin's sandbox/Dockerfile
-# A project Dockerfile that starts FROM senior-mode/base has the base built first. A failed build prints
-# `hold <detail>` (the last 20 lines of the output), like sandbox_decide: the caller holds the launch with cause `sandbox`.
-sandbox_image() {
-  local img rt top repo file base ver cv out
+# The name of the image of a session, without building it (run in the repository): sandbox.image as is, else
+# senior-mode/<repo>:<first 12 hex of the sha256 of .senior-mode/Dockerfile>, else senior-mode/base:<plugin version>.
+sandbox_image_name() {
+  local img top file
   img=$(config_get sandbox.image 2>/dev/null) || img=""
-  if [ -n "$img" ]; then
+  if [ -z "$img" ]; then
+    top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$PWD
+    file=$top/.senior-mode/Dockerfile
+    if [ -f "$file" ]; then
+      img=senior-mode/$(basename "$top" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._\n-' '-'):$(sha256sum "$file" | cut -c1-12)
+    else
+      img=senior-mode/base:$(plugin_version)
+    fi
+  fi
+  echo "$img"
+}
+
+# The image of a session, built on demand, printed (run in the repository), named by sandbox_image_name. A project
+# Dockerfile that starts FROM senior-mode/base has the base built first. A failed build prints `hold <detail>` (the last
+# 20 lines of the output), like sandbox_decide: the caller holds the launch with cause `sandbox`.
+sandbox_image() {
+  local img rt top file base cv out
+  img=$(sandbox_image_name)
+  [ -z "$(config_get sandbox.image 2>/dev/null)" ] || {
     echo "$img"
     return 0
-  fi
+  }
   rt=$(sandbox_runtime) || {
     echo "hold sandbox: no container runtime to build the image (install podman)"
     return 1
@@ -122,28 +136,37 @@ sandbox_image() {
   file=$top/.senior-mode/Dockerfile
   base=senior-mode/base:$(plugin_version)
   cv=$("${SENIOR_MODE_CLAUDE:-claude}" --version 2>/dev/null | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ {print $1; exit}') || cv=""
-  if [ -f "$file" ] && grep -qiE '^FROM[[:space:]]+senior-mode/base' "$file"; then
+  if [ ! -f "$file" ] || grep -qiE '^FROM[[:space:]]+senior-mode/base' "$file"; then
     out=$(sandbox_build_base "$rt" "$base" "$cv") || {
       printf 'hold image build of %s failed:\n%s\n' "$base" "$out"
       return 1
     }
   fi
   if [ -f "$file" ]; then
-    repo=$(basename "$top" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._\n-' '-')
-    ver=$(sha256sum "$file" | cut -c1-12)
-    img=senior-mode/$repo:$ver
     out=$(sandbox_build "$rt" "$img" "$file" "$top/.senior-mode") || {
       printf 'hold image build of %s failed:\n%s\n' "$img" "$out"
       return 1
     }
-    echo "$img"
-    return 0
   fi
-  out=$(sandbox_build_base "$rt" "$base" "$cv") || {
-    printf 'hold image build of %s failed:\n%s\n' "$base" "$out"
-    return 1
-  }
-  echo "$base"
+  echo "$img"
+}
+
+# The network mode of containers: allowlist (default), open or none.
+sandbox_network() {
+  local n
+  n=$(config_get sandbox.network 2>/dev/null) || n=""
+  echo "${n:-allowlist}"
+}
+
+# `rootless` or `rootful`: what the runtime $1 says of itself (podman: Host.Security.Rootless; docker: the rootless entry of
+# its security options). A runtime that does not answer is rootful.
+sandbox_rootless() {
+  local out
+  case $(basename "$1") in
+    podman) out=$("$1" info --format '{{.Host.Security.Rootless}}' 2>/dev/null) || out="" ;;
+    *) out=$("$1" info --format '{{.SecurityOptions}}' 2>/dev/null) || out="" ;;
+  esac
+  case $out in true | *rootless*) echo rootless ;; *) echo rootful ;; esac
 }
 
 # The commented toolchain lines of the Dockerfile stub for preset $1 (#785): the base is Node, non-root (user agent), so

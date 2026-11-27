@@ -1011,6 +1011,8 @@ key) exist, else on the host as today; `required` holds every launch (hold cause
 containers: run claude setup-token" or no runtime) while an approved pull request still merges; `off` never looks for a runtime.
 The CLI has the pure decision (`sandbox_decide`) and the detection; starting the container and the hold in `serve` come
 in later slices of the epic (#385).
+`senior-mode status` shows the sandbox: the runtime and whether it is rootless, the image, the network, and the egress refusals and
+broker denials of the last 24 hours.
 
 ## Other mechanisms
 

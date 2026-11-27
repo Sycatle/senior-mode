@@ -79,3 +79,69 @@ sandbox_decide() {
       ;;
   esac
 }
+
+# Builds image $1 from Dockerfile $2 with context $3 unless the runtime already has the tag (#763). $4... go to `build`.
+# On a failure it prints the last 20 lines of the build output and fails.
+sandbox_build() {
+  local rt=$1 tag=$2 file=$3 ctx=$4 log
+  shift 4
+  "$rt" image inspect "$tag" >/dev/null 2>&1 && return 0
+  log=$(mktemp) || return 1
+  if "$rt" build -t "$tag" -f "$file" "$@" "$ctx" >"$log" 2>&1; then
+    rm -f "$log"
+    return 0
+  fi
+  tail -n 20 "$log"
+  rm -f "$log"
+  return 1
+}
+
+# The plugin's base image $2, built with the host's version $3 of the claude CLI when there is one.
+sandbox_build_base() {
+  sandbox_build "$1" "$2" "$(plugin_root)/sandbox/Dockerfile" "$(plugin_root)/sandbox" ${3:+--build-arg "CLAUDE_VERSION=$3"}
+}
+
+# The image of a session, built on demand, printed (run in the repository):
+#   sandbox.image                                      that name, nothing is built
+#   .senior-mode/Dockerfile                            senior-mode/<repo>:<first 12 hex of its sha256>
+#   neither                                            senior-mode/base:<plugin version>, from the plugin's sandbox/Dockerfile
+# A project Dockerfile that starts FROM senior-mode/base has the base built first. A failed build prints
+# `hold <detail>` (the last 20 lines of the output), like sandbox_decide: the caller holds the launch with cause `sandbox`.
+sandbox_image() {
+  local img rt top repo file base ver cv out
+  img=$(config_get sandbox.image 2>/dev/null) || img=""
+  if [ -n "$img" ]; then
+    echo "$img"
+    return 0
+  fi
+  rt=$(sandbox_runtime) || {
+    echo "hold sandbox: no container runtime to build the image (install podman)"
+    return 1
+  }
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$PWD
+  file=$top/.senior-mode/Dockerfile
+  base=senior-mode/base:$(plugin_version)
+  cv=$("${SENIOR_MODE_CLAUDE:-claude}" --version 2>/dev/null | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ {print $1; exit}') || cv=""
+  if [ -f "$file" ] && grep -qiE '^FROM[[:space:]]+senior-mode/base' "$file"; then
+    out=$(sandbox_build_base "$rt" "$base" "$cv") || {
+      printf 'hold image build of %s failed:\n%s\n' "$base" "$out"
+      return 1
+    }
+  fi
+  if [ -f "$file" ]; then
+    repo=$(basename "$top" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._\n-' '-')
+    ver=$(sha256sum "$file" | cut -c1-12)
+    img=senior-mode/$repo:$ver
+    out=$(sandbox_build "$rt" "$img" "$file" "$top/.senior-mode") || {
+      printf 'hold image build of %s failed:\n%s\n' "$img" "$out"
+      return 1
+    }
+    echo "$img"
+    return 0
+  fi
+  out=$(sandbox_build_base "$rt" "$base" "$cv") || {
+    printf 'hold image build of %s failed:\n%s\n' "$base" "$out"
+    return 1
+  }
+  echo "$base"
+}

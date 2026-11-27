@@ -903,6 +903,76 @@ CALIBRATION_JQ='def med: sort | if length == 0 then null else ((.[(length - 1) /
        recalibrate: (if $limit[$s] and length >= 3 and ([.[] | select(.lines != null and .lines > $limit[$s] * 1.5)] | length) * 2 > length
          then "most \($s) tickets exceed about \($limit[$s]) lines: size such work up, or split it" else null end)}]'
 
+# What the iteration rules cost (spec 474 §12), from the check times (.git/senior-mode/check-times.jsonl: ts, branch,
+# check, seconds, status) and the briefs log (briefs.jsonl: time, session, agent_type, goal) of the period. A run of
+# `check` is the stretch of a branch's lines in which no check name comes back; a round trip is a failing run before
+# the first passing one. A cached check counts zero seconds. The costliest checks (three, by time) each get one
+# recommendation: end its period when it only warned, cache it when it never hit the cache, narrow its inputs when
+# it rarely did, else move it to tier 3. A rework is a call of an agent type that repeats the session and the Goal
+# of an earlier call. Input: the retro data; $times and $briefs are arrays of lines, $since and $until the period.
+# shellcheck disable=SC2016 # a jq program, not shell
+RETRO_ITERATION_JQ='def branch_ticket: [capture($ENV.SENIOR_MODE_BRANCH_RE // "^[a-z]+/(?<n>[0-9]+)(-|$)") | .n | tonumber] | first;
+  def round1: . * 10 | round / 10;
+  def runs: reduce .[] as $e ({done: [], cur: [], seen: []};
+      if .seen | index($e.check) then .done += [.cur] | .cur = [$e] | .seen = [$e.check]
+      else .cur += [$e] | .seen += [$e.check] end) | .done + [.cur] | map(select(length > 0));
+  def failed($c): any(.[]; .check == $c and .status == "fail");
+  def advice: if .warns > 0 and .failures == 0 and .ok == 0 then "end its period"
+    elif .cacheRate == 0 then "cache it"
+    elif .cacheRate < 0.5 then "narrow its inputs"
+    else "move it to tier 3" end;
+  (.usage.tickets | map(select(.ticket != null) | {key: (.ticket | tostring),
+    value: (.input + .output + .cacheRead + .cacheWrite5m + .cacheWrite1h)}) | from_entries) as $tok
+  | [$times[] | select((.ts | type) == "string" and .ts >= $since and .ts < $until and (.tier // 2) == 2)] as $t
+  | [$t | group_by(.branch // "")[] | sort_by(.ts) | . as $es | runs as $r
+      | ([$r | to_entries[] | select(all(.value[]; .status != "fail")) | .key] | first) as $pass
+      | ($r | if $pass == null then . else .[:$pass] end | map(select(any(.[]; .status == "fail")))) as $bad
+      | {branch: $es[0].branch, ticket: (($es[0].branch // "") | branch_ticket), runs: ($r | length), roundTrips: ($bad | length),
+         seconds: ([$es[] | select(.status != "cached") | .seconds] | add // 0 | round1),
+         failures: ([$bad[][] | select(.status == "fail") | .check] | group_by(.) | map({check: .[0], count: length})),
+         badRuns: $bad}] as $b
+  | ([$b[].badRuns[]]) as $trips
+  | ([$t | group_by(.check)[] | . as $c | $c[0].check as $n
+      | {check: $n, runs: length, seconds: ([$c[] | select(.status != "cached") | .seconds] | add // 0 | round1),
+         ok: ([$c[] | select(.status == "ok")] | length), failures: ([$c[] | select(.status == "fail")] | length),
+         warns: ([$c[] | select(.status == "warn")] | length),
+         cacheRate: (([$c[] | select(.status == "cached")] | length) / length * 100 | round / 100),
+         tripShare: (if ($trips | length) == 0 then 0 else ([$trips[] | select(failed($n))] | length) / ($trips | length) * 100 | round / 100 end)}]
+    | sort_by(-.seconds, .check)) as $checks
+  | [$briefs[] | select((.time | type) == "string" and .time >= $since and .time < $until)] as $bs
+  | . + {iterationCost: {history: (($t | length) > 0),
+      tickets: [$b[] | del(.badRuns) | . + {tokens: $tok[(.ticket | tostring)]}] | sort_by(.ticket // 0, .branch),
+      checks: $checks,
+      costliest: [$checks[:3][] | select(.seconds > 0) | . + {recommendation: advice}],
+      agents: [$bs | group_by(.agent_type)[] | {agentType: .[0].agent_type, delegations: length,
+        rework: ([group_by([.session, .goal])[] | length - 1] | add)}]}}'
+
+# shellcheck disable=SC2016 # a jq program, not shell
+RETRO_ITERATION_TEXT_JQ='.iterationCost as $i | def pct: "\(. * 100 | round)%";
+  "", "Iteration",
+  (if $i.history then
+     ($i.tickets[] | "  \(if .ticket then "#\(.ticket)" else .branch end): \(.roundTrips) round trip\(if .roundTrips == 1 then "" else "s" end)"
+       + (if .roundTrips > 0 then " (" + ([.failures[] | "\(.check) x\(.count)"] | join(", ")) + ")" else "" end)
+       + ", \(.seconds)s in check"),
+     "  Costliest checks",
+     ($i.costliest[] | "    \(.check): \(.seconds)s over \(.runs) run\(if .runs == 1 then "" else "s" end), \(.failures) failure\(if .failures == 1 then "" else "s" end), \(.tripShare | pct) of the round trips, \(.warns) warn\(if .warns == 1 then "" else "s" end), cache \(.cacheRate | pct): \(.recommendation)")
+   else "  no check history yet" end),
+  (if ($i.agents | length) == 0 then "  no delegations logged"
+   else "  Delegations", ($i.agents[] | "    \(.agentType): \(.delegations) call\(if .delegations == 1 then "" else "s" end), rework \(.rework) of \(.delegations)") end)'
+
+# The objects of a JSON lines file ($1), or nothing; a damaged line is skipped.
+jsonl_objects() {
+  [ ! -f "$1" ] || jq -cR 'fromjson? | select(type == "object")' "$1" 2>/dev/null || true
+}
+
+# $1 the retro data, $2 the git common dir, $3 the start and $4 the end (or empty) of the period; prints the data with `iteration`.
+retro_iteration() {
+  local times briefs
+  times=$(jsonl_objects "$2/senior-mode/check-times.jsonl" | jq -sc .)
+  briefs=$(jsonl_objects "$2/senior-mode/briefs.jsonl" | jq -sc .)
+  jq -c --argjson times "$times" --argjson briefs "$briefs" --arg since "$3" --arg until "${4:-9999}" "$RETRO_ITERATION_JQ" <<<"$1"
+}
+
 # senior-mode retro [--since <dur> | --iteration [<name>]] [--json]
 # The facts of the weekly review (default period: 7 days; --iteration: the current iteration, or the one named, of the
 # Project, #180). Reads only, apart from the Project status update with the health of the Project that each pass
@@ -964,6 +1034,8 @@ retro() {
   usage=$(retro_usage "$root" "$since_iso" "$until_iso") || die "could not read the token ledger"
   data=$(jq -c --argjson h "$hygiene" --argjson u "$usage" '. + {hygiene: $h, usage: $u}' <<<"$data")
   data=$(jq -c ". + {calibration: ($CALIBRATION_JQ)}" <<<"$data") || die "could not compare the sizes"
+  # The cost of the iteration rules: round trips, time in check, costliest checks, rework (#486).
+  data=$(retro_iteration "$data" "$root" "$since_iso" "$until_iso") || die "could not read the check times"
   # The cause label of each failed ticket and the improvement tickets of the causes that repeat (#364).
   data=$(retro_learn "$data" "$history" "$board" "$slug") || exit 1
   # The notes to merge or delete and the agents' drafts (#340): facts for the pull request the skill opens.
@@ -974,6 +1046,7 @@ retro() {
     printf '%s\n' "$data"
   else
     jq -r --arg head "$head" "$HYGIENE_DEF$RETRO_TEXT_JQ" <<<"$data"
+    jq -r "$RETRO_ITERATION_TEXT_JQ" <<<"$data"
     jq -r "$RETRO_LEARN_TEXT_JQ" <<<"$data"
     jq -r "$RETRO_NOTES_TEXT_JQ" <<<"$data"
     jq -r "$RETRO_PROOF_TEXT_JQ" <<<"$data"

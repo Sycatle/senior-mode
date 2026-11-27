@@ -598,6 +598,48 @@ git -C "$repo" reset -q --hard HEAD~1
 run retro --json || fail "retro without notes failed: $(cat "$work/err")"
 [ "$(json '.knowledge | [.notes, (.merges | length), (.deletes | length), (.drafts | length)]')" = "[0,0,0,0]" ] || fail "knowledge with no notes: $(json .knowledge)"
 
+# #486: the Iteration section. Without a times file it says so; the delegations log stands on its own.
+run retro --json || fail "retro without check times failed: $(cat "$work/err")"
+[ "$(json '.iterationCost | [.history, (.tickets | length), (.agents | length)]')" = "[false,0,0]" ] || fail "iteration without files: $(json .iterationCost)"
+run retro || fail "plain retro without check times failed: $(cat "$work/err")"
+grep -qF "no check history yet" "$work/out" || fail "no history line: $(cat "$work/out")"
+# Ticket 9: its tier 2 run failed on lint, then on test, then passed. Ticket 10 passed at once, with lint cached.
+# A run of another tier and a line out of the period are left out.
+{
+  ct() { jq -nc --arg ts "$(ago "$1")" --arg b "$2" --arg c "$3" --argjson s "$4" --arg st "$5" '{ts: $ts, branch: $b, check: $c, seconds: $s, status: $st}'; }
+  ct $((3 * HOUR)) feat/9-slice lint 10 fail
+  ct $((3 * HOUR)) feat/9-slice test 20 ok
+  ct $((2 * HOUR)) feat/9-slice lint 12 ok
+  ct $((2 * HOUR)) feat/9-slice test 50 fail
+  ct $((1 * HOUR)) feat/9-slice lint 11 ok
+  ct $((1 * HOUR)) feat/9-slice test 40 ok
+  ct $((1 * HOUR)) feat/10-slice lint 0 cached
+  ct $((1 * HOUR)) feat/10-slice test 30 ok
+  echo 'not json {'
+  ct $((20 * DAY)) feat/11-slice test 99 fail
+  jq -nc --arg ts "$(ago HOUR)" '{ts: $ts, branch: "feat/12-slice", check: "e2e", seconds: 500, status: "fail", tier: 3}'
+} >"$repo/.git/senior-mode/check-times.jsonl"
+{
+  br() { jq -nc --arg t "$(ago "$1")" --arg s "$2" --arg a "$3" --arg g "$4" '{time: $t, session: $s, agent_type: $a, model: "sonnet", goal: $g}'; }
+  br 7200 s1 implementer "Add the retro section"
+  br 3600 s1 implementer "Add the retro section"
+  br 3000 s1 reviewer "Review the section"
+  br 100 s2 implementer "Add the retro section"
+} >"$repo/.git/senior-mode/briefs.jsonl"
+run retro --json || fail "retro with check times failed: $(cat "$work/err")"
+[ "$(json '.iterationCost.history')" = true ] || fail "iteration history: $(json .iterationCost)"
+[ "$(json '.iterationCost.tickets | map([.ticket, .roundTrips, .seconds])')" = '[[9,2,143],[10,0,30]]' ] || fail "iteration tickets: $(json .iterationCost.tickets)"
+[ "$(json '.iterationCost.tickets[0].failures | map([.check, .count])')" = '[["lint",1],["test",1]]' ] || fail "both failing checks counted: $(json .iterationCost.tickets)"
+[ "$(json '.iterationCost.agents | map([.agentType, .delegations, .rework])')" = '[["implementer",3,1],["reviewer",1,0]]' ] || fail "iteration agents: $(json .iterationCost.agents)"
+[ "$(json '.iterationCost.costliest | map([.check, .seconds, .failures, .tripShare, .cacheRate, .recommendation])')" = \
+  '[["test",140,1,0.5,0,"cache it"],["lint",33,1,0.5,0.25,"narrow its inputs"]]' ] || fail "iteration checks: $(json .iterationCost.costliest)"
+run retro || fail "plain retro with check times failed: $(cat "$work/err")"
+for want in "#9: 2 round trips (lint x1, test x1), 143s in check" "#10: 0 round trips, 30s in check" \
+  "test: 140s over 4 runs, 1 failure, 50% of the round trips, 0 warns, cache 0%: cache it" "implementer: 3 calls, rework 1 of 3"; do
+  grep -qF -- "$want" "$work/out" || fail "plain retro lacks '$want': $(cat "$work/out")"
+done
+rm -f "$repo/.git/senior-mode/check-times.jsonl" "$repo/.git/senior-mode/briefs.jsonl"
+
 # Errors.
 run retro --since soon && fail "accepted --since soon"
 grep -q "duration" "$work/err" || fail "bad duration not explained: $(cat "$work/err")"

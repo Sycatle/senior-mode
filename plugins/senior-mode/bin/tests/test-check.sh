@@ -1000,5 +1000,80 @@ git -C "$repo" update-ref refs/remotes/origin/main HEAD
 config '{"audit":false,"checks":[{"name":"lint","run":"true"}],"commit":{"coAuthor":false}}'
 run check || fail "N: a trailer already on the default branch fails the branch: $(cat "$work/out")"
 
+# The cache of checks by input files (#479): a check that declares `inputs` is skipped, as `ok    <name> (cached)`, when an
+# earlier success had the same key. The fixture check counts its runs in $clog.
+clog="$work/cache.log"
+: >"$clog"
+runs() { wc -l <"$clog" | tr -d ' '; }
+cconfig() {
+  config "$(jq -n --arg l "$clog" --arg f "$work/cache-fail" --argjson extra "${1:-{\}}" '{audit: false,
+    checks: [{name: "lint", inputs: ["cache-src/**", "cache-eslint.config.js"], run: ("echo run >>" + $l + "; [ ! -e " + $f + " ]")}]} + $extra')"
+}
+mkdir -p "$repo/cache-src" "$repo/cache-docs"
+echo a >"$repo/cache-src/a.ts"
+echo a >"$repo/cache-docs/a.md"
+echo a >"$repo/cache-eslint.config.js"
+cconfig
+run check || fail "O: first run fails: $(cat "$work/out")"
+[ "$(runs)" = 1 ] || fail "O: the first run did not run the check: $(runs)"
+grep -q 'lint (cached)' "$work/out" && fail "O: the first run is cached: $(cat "$work/out")"
+run check || fail "O: second run fails: $(cat "$work/out")"
+grep -q '^ok    lint (cached)$' "$work/out" || fail "O: an unchanged tree is not served from the cache: $(cat "$work/out")"
+[ "$(runs)" = 1 ] || fail "O: a cached check ran: $(runs)"
+grep -q '[0-9]/[0-9]* checks passed' "$work/out" || fail "O: summary missing on a cached run: $(cat "$work/out")"
+# Only docs/a.md changes: still cached. src/a.ts changes: it runs.
+echo b >>"$repo/cache-docs/a.md"
+commit -q -m "docs: a"
+run check || fail "O: $(cat "$work/out")"
+grep -q '^ok    lint (cached)$' "$work/out" || fail "O: a change outside the inputs misses the cache: $(cat "$work/out")"
+[ "$(runs)" = 1 ] || fail "O: a change outside the inputs ran the check: $(runs)"
+echo b >>"$repo/cache-src/a.ts"
+commit -q -m "feat: a"
+run check || fail "O: $(cat "$work/out")"
+[ "$(runs)" = 2 ] || fail "O: a change to an input did not run the check: $(runs)"
+# An uncommitted edit of an input: the check runs, again on the next run (nothing was cached), then once committed.
+echo c >>"$repo/cache-src/a.ts"
+run check || fail "O: $(cat "$work/out")"
+run check || fail "O: $(cat "$work/out")"
+[ "$(runs)" = 4 ] || fail "O: the result of a dirty input was cached: $(runs)"
+grep -q 'lint (cached)' "$work/out" && fail "O: a dirty input is served from the cache: $(cat "$work/out")"
+commit -q -m "feat: c"
+run check
+run check || fail "O: $(cat "$work/out")"
+[ "$(runs)" = 5 ] || fail "O: the committed edit was not cached after its run: $(runs)"
+# A failed run is not cached: it runs again on the same tree, whatever changed.
+echo d >>"$repo/cache-src/a.ts"
+commit -q -m "feat: d"
+: >"$work/cache-fail"
+run check && fail "O: the failing check passes"
+rm "$work/cache-fail"
+run check || fail "O: $(cat "$work/out")"
+[ "$(runs)" = 7 ] || fail "O: a failure was cached: $(runs)"
+grep -q 'lint (cached)' "$work/out" && fail "O: a failed check is served from the cache: $(cat "$work/out")"
+# A change to a listed config file, to a lockfile or to the configuration misses the cache.
+run check
+[ "$(runs)" = 7 ] || fail "O: the success was not cached: $(runs)"
+echo b >>"$repo/cache-eslint.config.js"
+commit -q -m "chore: eslint config"
+run check
+[ "$(runs)" = 8 ] || fail "O: a change to a listed config file hit the cache: $(runs)"
+echo b >"$repo/uv.lock"
+commit -q -m "chore: lockfile"
+run check
+[ "$(runs)" = 9 ] || fail "O: a change to the lockfile hit the cache: $(runs)"
+cconfig '{"hygiene":{"days":15}}'
+run check
+[ "$(runs)" = 10 ] || fail "O: a change to the configuration hit the cache: $(runs)"
+# --no-cache runs every check.
+run check --no-cache || fail "O: $(cat "$work/out")"
+[ "$(runs)" = 11 ] || fail "O: --no-cache did not run the check: $(runs)"
+grep -q 'lint (cached)' "$work/out" && fail "O: --no-cache prints cached: $(cat "$work/out")"
+# Two worktrees of the repository on the same tree share the cache.
+git -C "$repo" worktree add -q "$work/wt-cache" -b wt-cache
+(cd "$work/wt-cache" && "$cli" check) >"$work/out" 2>&1 || fail "O: check in the second worktree fails: $(cat "$work/out")"
+grep -q '^ok    lint (cached)$' "$work/out" || fail "O: the second worktree does not hit the cache of the first: $(cat "$work/out")"
+[ "$(runs)" = 11 ] || fail "O: the second worktree ran the check: $(runs)"
+git -C "$repo" worktree remove --force "$work/wt-cache"
+
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

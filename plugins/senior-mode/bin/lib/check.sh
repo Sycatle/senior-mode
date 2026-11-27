@@ -824,10 +824,40 @@ check_tier_errors() {
       else empty end' "$1"
 }
 
+# The lockfiles that take part in the key of the check cache (#479): a change to one of them misses it.
+CHECK_LOCKFILES=(package-lock.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb Cargo.lock go.sum poetry.lock uv.lock
+  requirements.txt Gemfile.lock composer.lock)
+
+# Where the successes of checks are kept: the common git directory, so that every worktree shares them (#479).
+check_cache_dir() {
+  local dir
+  dir=$(git rev-parse --path-format=absolute --git-common-dir) || return 1
+  printf '%s/senior-mode/cache\n' "$dir"
+}
+
+# The cache key of the check $1 run as the command $2 from the repository $5, for the globs $3 (a JSON array, its `inputs`)
+# and the configuration file $4: the hash of the name, the command, the blob ids of the tracked files the globs match,
+# the configuration and the lockfiles. Prints nothing and fails when a file the globs match has uncommitted changes
+# (or is untracked): the result of such a run is neither looked up nor kept.
+check_cache_key() {
+  local name=$1 cmd=$2 inputs=$3 file=$4 root=$5 g l
+  local -a spec=() locks=()
+  while IFS= read -r g; do spec+=(":(glob)$g"); done < <(jq -r '.[]' <<<"$inputs")
+  [ "${#spec[@]}" -gt 0 ] || return 1
+  [ -z "$(git -C "$root" status --porcelain --untracked-files=all -- "${spec[@]}")" ] || return 1
+  for l in "${CHECK_LOCKFILES[@]}"; do locks+=(":(glob)**/$l"); done
+  {
+    printf '%s\0%s\0' "$name" "$cmd"
+    git -C "$root" ls-files -s -- "${spec[@]}"
+    git -C "$root" hash-object "$file"
+    git -C "$root" ls-files -s -- "${locks[@]}"
+  } | sha256sum | cut -d' ' -f1
+}
+
 check() {
   local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp ci_only=false jobs="[]" job
   local waiting="" ci_failed="" st url free pre_push=false changed=false update=false a label vext vcmd preset nbuiltin vc
-  local changed_list="" changed_scope="" sel all=false pk="" pkdesc="" pdir pcmd found idx argc=$# tier_only="" tier run2=true run3=false tier_errors urc=0
+  local changed_list="" changed_scope="" sel all=false pk="" pkdesc="" pdir pcmd found idx argc=$# tier_only="" tier run2=true run3=false tier_errors urc=0 no_cache=false ckey inp cdir
   local -a bases=()
   local -A variant=()
   while [ $# -gt 0 ]; do
@@ -836,6 +866,7 @@ check() {
       --ci-only) ci_only=true ;;
       --changed) changed=true ;;
       --all) all=true ;;
+      --no-cache) no_cache=true ;;
       --update-baseline) update=true ;;
       --tier)
         [ $# -ge 2 ] || usage
@@ -1017,6 +1048,19 @@ check() {
     elif [ "$changed" = true ]; then
       label="$name [full]"
     fi
+    # A check that declares `inputs` is skipped when an earlier success had the same key (#479). A run narrowed to the
+    # changed paths, or a `changed` variant, proves less than a full one: it neither reads nor writes the cache.
+    ckey=""
+    if [ "$no_cache" = false ] && [ "$i" -ge "$nbuiltin" ] && [ -z "${SENIOR_MODE_CHANGED_FILES:-}" ] && [ -z "${variant[$i]:-}" ]; then
+      inp=$(jq -c --arg n "${bases[i]}" '[.checks[]? | select(.name == $n) | .inputs // empty][0] // empty' "$file")
+      [ -z "$inp" ] || ckey=$(check_cache_key "${bases[i]}" "$cmd" "$inp" "$file" "$root") || ckey=""
+      cdir=$(check_cache_dir) || ckey=""
+    fi
+    if [ -n "$ckey" ] && [ -f "$cdir/$ckey" ]; then
+      passed=$((passed + 1))
+      echo "ok    $label (cached)"
+      continue
+    fi
     started=$(now_ms)
     runtmp=$rundir/tmp
     # End-to-end suites are heavy: parallel tickets share e2e.slots of them per machine. Their lock is
@@ -1036,6 +1080,10 @@ check() {
         echo "skip  $label: $(head -n 1 "$output" | cut -c10-) ($took)"
       else
         echo "ok    $label ($took)"
+      fi
+      # Only a success is kept.
+      if [ -n "$ckey" ] && mkdir -p "$cdir" 2>/dev/null; then
+        printf '%s\n' "$name" >"$cdir/$ckey.$$" && mv -f "$cdir/$ckey.$$" "$cdir/$ckey"
       fi
       # A warning of a passing check (an advisory with no severity) is shown, not lost.
       { grep '^warning: ' "$output" || true; } | sed 's/^/      /'

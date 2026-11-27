@@ -85,6 +85,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |
 | `rules.packs` | the preset's | Rule packs the `code rules` step of `check` runs on the diff, see [Code rules](#code-rules) (`common` for the node, python, go and rust presets) |
 | `rules.off` | `{}` | Rules turned off, by id: `{ "<id>": { "why", "paths" } }`; `why` is required, `paths` narrows the rule off to those globs |
+| `rules.shared` | `[]` | Globs of the folders that hold the shared code: the `duplication` rule names the first one as the place to extract a block that the diff copies a third time |
 | `rules.envModule` | the preset's | Globs of the files allowed to read the environment (`process.env`, `os.environ`, `os.Getenv`, `std::env::var`): the `scattered-env` rule fails on a read anywhere else; the preset's default is `**/config.*`, `**/config/**`, `**/env.*` (and `**/settings.py` for python) plus the build configs `**/*.config.*` |
 | `docs.extra` | none | Extra living documents the `docs` skill keeps current after a merge: a list of `{ "path", "purpose" }`; its changes are flagged for human review. Add it yourself |
 | `context.claudeMdLines` | `80` | Most lines a tracked `CLAUDE.md` may have before `check` fails (context hygiene); a whole number from 1 |
@@ -701,6 +702,12 @@ added inside a loop body (`for`, `while`, `forEach`, `map`, a list comprehension
 use a set-based query", naming file and line. The call outside a loop, a loop that only computes, a migration, a seed, a fixture
 and a test file are left alone, and `-- #<issue>: <reason>` on the call lifts the line. The loop is read from the brackets
 (or the indentation in Python), a heuristic: `senior-mode: allow io-in-loop -- #<issue>: <reason>` on the line above is the way out.
+
+The `duplication` pack (opt-in, `"rules": { "packs": ["common", "node", "duplication"] }`, because it needs jscpd on the machine) runs `duplication` (the tool [jscpd](https://github.com/kucherenko/jscpd), 10 lines or 50 tokens, the
+rule of three): a block the diff adds with one existing copy is a warning, `duplication: 2nd copy of <file>:<line>`; with two or more
+copies it fails, naming both places and the `rules.shared` folder to extract into. A duplicate that existed before the diff is never
+reported. Without jscpd on the machine the step fails with `tool missing: jscpd`, `npm install -g jscpd` and the `rules.off.duplication`
+key that turns it off.
 
 A rule is turned off only with a reason, in `.claude/senior-mode.json` (a protected path, so the change reaches a human):
 

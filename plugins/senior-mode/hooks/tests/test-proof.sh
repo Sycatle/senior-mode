@@ -20,33 +20,35 @@ send() { # event session [jq assignments] -> hook stdout
 }
 edit() { send PostToolUse "$1" '+ {tool_name: "Edit", tool_input: {file_path: "a.js"}}' >/dev/null; }
 bash_ok() { send PostToolUse "$1" "+ {tool_name: \"Bash\", tool_input: {command: \"$2\"}}" >/dev/null; }
-stop() { # expected session [extra]
+stop() { # expected (allow = silent, remind = reminder, never a block) session [extra] label
   out=$(send Stop "$2" "${3:-}")
   got=allow
-  [ "$(jq -r '.decision // empty' <<<"$out" 2>/dev/null)" = block ] && got=block
+  [ -n "$(jq -r '.systemMessage // empty' <<<"$out" 2>/dev/null)" ] && got=remind
+  [ -z "$(jq -r '.decision // empty' <<<"$out" 2>/dev/null)" ] || fail "$4: the Stop is blocked: $out"
   [ "$got" = "$1" ] || fail "$4: expected $1, got $got"
 }
 
 stop allow s1 "" "stop without edits"
 edit s1
-stop block s1 "" "stop after an edit"
-grep -q "senior-mode check" <<<"$out" || fail "block reason does not name the command: $out"
+stop remind s1 "" "stop after an edit"
+grep -q "senior-mode check" <<<"$out" || fail "reminder does not name the command: $out"
 stop allow s1 "+ {stop_hook_active: true}" "second stop after the reminder"
 bash_ok s1 "ls -la"
-stop block s1 "" "stop after an unrelated command"
+stop remind s1 "" "stop after an unrelated command"
 bash_ok s1 "senior-mode check"
 stop allow s1 "" "stop after senior-mode check succeeded"
 edit s1
-stop block s1 "" "edit after the verification"
+stop remind s1 "" "edit after the verification"
 bash_ok s1 "cd web && npm test"
 stop allow s1 "" "stop after a configured check"
 stop allow s2 "" "another session is not affected"
 
 edit s3
 out=$(send SubagentStop s3 '+ {agent_type: "senior-mode:implementer", stop_hook_active: false}')
-[ "$(jq -r '.decision // empty' <<<"$out" 2>/dev/null)" = block ] || fail "implementer stops with unverified edits"
+[ -n "$(jq -r '.systemMessage // empty' <<<"$out" 2>/dev/null)" ] || fail "implementer stops with unverified edits are not reminded"
+[ -z "$(jq -r '.decision // empty' <<<"$out" 2>/dev/null)" ] || fail "implementer stop is blocked: $out"
 out=$(send SubagentStop s3 '+ {agent_type: "senior-mode:scout", stop_hook_active: false}')
-[ -z "$out" ] || fail "a non-implementer subagent is blocked: $out"
+[ -z "$out" ] || fail "a non-implementer subagent is reminded: $out"
 
 dir=$bare edit s4
 dir=$bare stop allow s4 "" "repository without senior-mode config"

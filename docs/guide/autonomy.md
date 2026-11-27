@@ -543,8 +543,9 @@ In repositories with `.claude/senior-mode.json`:
 
 - after an edit, the session is marked "edited"; after a successful `senior-mode check` or one of
   the configured check commands, it is marked "verified";
-- when Claude, or the `implementer` agent, tries to finish while "edited", it is blocked once and
-  told to run `senior-mode check` and read the output, or to say plainly the change is not verified;
+- when Claude, or the `implementer` agent, tries to finish while "edited", it is not blocked: it gets
+  a reminder to run `senior-mode check` and read the output, or to say plainly the change is not
+  verified (ADR 0034);
 - before a conversation is compacted, the summary is told to keep the ticket, its spec, the
   decisions, the changed files and the verification state.
 

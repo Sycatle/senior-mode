@@ -6,8 +6,8 @@ description: Delegate with a checked brief of seven sections, so the subagent st
 # The brief
 
 Every Agent call carries a prompt with these seven sections, in this order, none empty. The hook
-`brief-guard.sh` refuses the call otherwise (`brief: missing ## Verify (skill brief)`), and logs the accepted
-ones to `.git/senior-mode/briefs.jsonl`.
+`brief-guard.sh` refuses a call with no `## Goal` or no `## Verify` (`brief: missing ## Verify (skill brief)`);
+a missing other section is only reminded. It logs the accepted calls to `.git/senior-mode/briefs.jsonl`.
 
 | Section | Holds |
 |---|---|

@@ -72,10 +72,11 @@ it is doing, and agents start with some of them preloaded (see [Agents](agents.m
 
 ## `brief`
 
-- **Rule.** Every call to the Agent tool carries seven non-empty sections: `## Goal`, `## Context`,
+- **Rule.** Every call to the Agent tool carries seven sections: `## Goal`, `## Context`,
   `## Constraints`, `## Acceptance`, `## Verify`, `## Return`, `## Model`. The hook `brief-guard.sh`
-  refuses a call that lacks one (`brief: missing ## Verify (skill brief)`) and logs the others to
-  `.git/senior-mode/briefs.jsonl`.
+  requires `## Goal` and `## Verify` non-empty and refuses a call that lacks one (`brief: missing
+  ## Verify (skill brief)`); a missing other section is only reminded as context (ADR 0034). Accepted
+  calls are logged to `.git/senior-mode/briefs.jsonl`.
 - **When.** Before delegating to a subagent.
 
 ## `spec`

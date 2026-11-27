@@ -362,7 +362,8 @@
               "paths": { "type": "array", "items": { "type": "string" } }
             }
           }
-        }
+        },
+        "envModule": { "type": "array", "items": { "type": "string" }, "description": "Globs of the files allowed to read the environment (the scattered-env rule); the preset's when absent." }
       }
     },
     "ratchet": {

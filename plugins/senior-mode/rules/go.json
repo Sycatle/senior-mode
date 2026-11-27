@@ -22,6 +22,66 @@
       "pattern": "fmt\\.Print(f|ln)?\\(|(^|[^[:alnum:]_.])println\\(",
       "message": "debug output left in production code",
       "fix": "remove it, or use the project's logger"
+    },
+    {
+      "id": "commented-code",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "comment",
+      "ext": [
+        "go"
+      ],
+      "comment": "^[[:space:]]*//",
+      "code": "[;{})][[:space:]]*$|^[[:space:]]*(if|for|return|const|let|def|import|fn|func)([[:space:]]|\\()",
+      "min": 2,
+      "pattern": "^[[:space:]]*//",
+      "message": "commented-out code",
+      "fix": "delete it, git keeps the history"
+    },
+    {
+      "id": "outbound-no-timeout",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "call",
+      "ext": [
+        "go"
+      ],
+      "prodOnly": true,
+      "pattern": "(^|[^[:alnum:]_.])http\\.(Get|Post|Head|PostForm)\\(",
+      "message": "http.Get and friends use a client with no timeout",
+      "fix": "use a http.Client with Timeout set"
+    },
+    {
+      "id": "outbound-no-timeout",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "call",
+      "ext": [
+        "go"
+      ],
+      "prodOnly": true,
+      "pattern": "http\\.Client\\{",
+      "message": "a http.Client with no Timeout",
+      "fix": "set Timeout on the client",
+      "unless": "Timeout"
+    },
+    {
+      "id": "scattered-env",
+      "tier": 2,
+      "kind": "pattern",
+      "ext": [
+        "go"
+      ],
+      "prodOnly": true,
+      "pattern": "os\\.(Getenv|LookupEnv)\\(",
+      "okPaths": [
+        "**/config.*",
+        "**/config/**",
+        "**/env.*"
+      ],
+      "okKey": "envModule",
+      "message": "environment read outside the config module (rules.envModule names it)",
+      "fix": "read it once in the config module (rules.envModule) and import the typed value"
     }
   ]
 }

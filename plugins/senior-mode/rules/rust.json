@@ -34,6 +34,53 @@
       "pattern": "(^|[^[:alnum:]_])(dbg|println|eprintln|print|eprint)!",
       "message": "debug output left in production code",
       "fix": "remove it, or use the project's logging crate"
+    },
+    {
+      "id": "commented-code",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "comment",
+      "ext": [
+        "rs"
+      ],
+      "comment": "^[[:space:]]*//",
+      "code": "[;{})][[:space:]]*$|^[[:space:]]*(if|for|return|const|let|def|import|fn|func)([[:space:]]|\\()",
+      "min": 2,
+      "pattern": "^[[:space:]]*//",
+      "message": "commented-out code",
+      "fix": "delete it, git keeps the history",
+      "doc": "^[[:space:]]*(///|//!)"
+    },
+    {
+      "id": "outbound-no-timeout",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "call",
+      "ext": [
+        "rs"
+      ],
+      "prodOnly": true,
+      "pattern": "reqwest::(blocking::)?(get\\(|Client::new\\()",
+      "message": "a reqwest call with no timeout",
+      "fix": "build the client with Client::builder().timeout(..)"
+    },
+    {
+      "id": "scattered-env",
+      "tier": 2,
+      "kind": "pattern",
+      "ext": [
+        "rs"
+      ],
+      "prodOnly": true,
+      "pattern": "(^|[^[:alnum:]_])env::var(_os)?\\(",
+      "okPaths": [
+        "**/config.*",
+        "**/config/**",
+        "**/env.*"
+      ],
+      "okKey": "envModule",
+      "message": "environment read outside the config module (rules.envModule names it)",
+      "fix": "read it once in the config module (rules.envModule) and import the typed value"
     }
   ]
 }

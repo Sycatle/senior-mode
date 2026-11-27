@@ -192,10 +192,10 @@ rules_under() {
 # A tier 3 rule is not run here.
 rules_check() {
   local root cfg packs pack pfile errs="" b mb f line r id why kind tier match rext prod skip fix msg pat unless comment code doc min stmt loop style never
-  local ext out findings="" warns="" lifted="" tool_hit=0 preset n i sev tf tl tm
+  local okpaths okkey ext out findings="" warns="" lifted="" tool_hit=0 preset n i sev tf tl tm
   local needs install tmp report format shared addedjson
   local -a rules=() recs=() files=() content=()
-  local -A added=() off=() offpaths=() verified=() allow=() allowwhy=()
+  local -A added=() off=() offpaths=() verified=() allow=() allowwhy=() okcfg=()
   local US=$'\x1f'
   root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
   cfg=$(config_effective | jq -c '.rules // {}') || return 1
@@ -219,7 +219,13 @@ rules_check() {
   # One record per rule, read once: id, kind, tier, match, ext, prodOnly, skip, fix, message and the matcher's fields.
   for r in ${rules[@]+"${rules[@]}"}; do
     recs+=("$(jq -r '[.id, .kind, .tier, (.match // "line"), ((.ext // []) | join(",")), (.prodOnly // false), ((.skip // []) | join("\t")), .fix, (.message // .id),
-      (.pattern // ""), (.unless // ""), (.comment // ""), (.code // ""), (.doc // ""), (.min // 2), (.stmt // ""), (.loop // ""), (.style // "brace"), (.never // "")] | map(tostring) | join("\u001f")' <<<"$r")")
+      (.pattern // ""), (.unless // ""), (.comment // ""), (.code // ""), (.doc // ""), (.min // 2), (.stmt // ""), (.loop // ""), (.style // "brace"), (.never // ""),
+      ((.okPaths // []) | join("\t")), (.okKey // "")] | map(tostring) | join("\u001f")' <<<"$r")")
+  done
+  # A rule may leave the files of `okPaths` alone, which the project replaces with the globs of the config key `okKey`.
+  for r in ${recs[@]+"${recs[@]}"}; do
+    IFS="$US" read -r _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ okkey <<<"$r"
+    [ -z "$okkey" ] || [ -n "${okcfg[$okkey]+x}" ] || okcfg[$okkey]=$(jq -r --arg k "$okkey" '(.[$k] // []) | join("\t")' <<<"$cfg")
   done
   while IFS="$US" read -r id why; do
     off[$id]=$why
@@ -246,7 +252,7 @@ rules_check() {
       fi
     done
     for r in ${recs[@]+"${recs[@]}"}; do
-      IFS="$US" read -r id kind tier match rext prod skip fix msg pat unless comment code doc min stmt loop style never <<<"$r"
+      IFS="$US" read -r id kind tier match rext prod skip fix msg pat unless comment code doc min stmt loop style never okpaths okkey <<<"$r"
       [ "$kind" = pattern ] && [ "$tier" = 2 ] || continue
       # An off rule is skipped everywhere, or only under its paths.
       if [ -n "${off[$id]:-}" ] && { [ -z "${offpaths[$id]}" ] || rules_under "$f" "${offpaths[$id]}"; }; then continue; fi
@@ -257,6 +263,10 @@ rules_check() {
       fi
       if [ "$prod" = true ] && { test_file "$preset" "$f" || test_file x "$f"; }; then continue; fi
       [ -z "$skip" ] || ! rules_under "$f" "$skip" || continue
+      if [ -n "$okpaths" ] || [ -n "$okkey" ]; then
+        [ -z "$okkey" ] || [ -z "${okcfg[$okkey]}" ] || okpaths=${okcfg[$okkey]}
+        ! rules_under "$f" "$okpaths" || continue
+      fi
       out=$(R_MATCH=$match R_ADDED=${added[$f]} R_PATTERN=$pat R_UNLESS=$unless R_COMMENT=$comment R_CODE=$code R_DOC=$doc R_MIN=$min \
         R_STMT=$stmt R_LOOP=$loop R_STYLE=$style R_NEVER=$never awk "$RULES_AWK" "$root/$f")
       [ -n "$out" ] || continue

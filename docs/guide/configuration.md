@@ -85,6 +85,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |
 | `rules.packs` | the preset's | Rule packs the `code rules` step of `check` runs on the diff, see [Code rules](#code-rules) (`common` for the node, python, go and rust presets) |
 | `rules.off` | `{}` | Rules turned off, by id: `{ "<id>": { "why", "paths" } }`; `why` is required, `paths` narrows the rule off to those globs |
+| `rules.envModule` | the preset's | Globs of the files allowed to read the environment (`process.env`, `os.environ`, `os.Getenv`, `std::env::var`): the `scattered-env` rule fails on a read anywhere else; the preset's default is `**/config.*`, `**/config/**`, `**/env.*` (and `**/settings.py` for python) plus the build configs `**/*.config.*` |
 | `docs.extra` | none | Extra living documents the `docs` skill keeps current after a merge: a list of `{ "path", "purpose" }`; its changes are flagged for human review. Add it yourself |
 | `context.claudeMdLines` | `80` | Most lines a tracked `CLAUDE.md` may have before `check` fails (context hygiene); a whole number from 1 |
 | `context.budget` | `2000` | Tokens (estimated as bytes / 4) the session briefing of [`senior-mode context`](commands.md#the-senior-mode-script) may take; the router and the ticket with its criteria are never dropped, the lowest ranked items go first: the related work, then the history, then the notes, specs and ADRs (a positive whole number) |
@@ -684,6 +685,16 @@ file extensions it reads), `prodOnly` (test files are left out) and `skip` (glob
 an unknown `kind`, is a configuration error naming the pack and the entry. `kind` is `pattern` (an extended regular expression on
 each added line) or `tool` (an outside tool, its `run` command and the `format` of its report; a tool that is not installed fails
 with `tool missing: <tool>`, its `install` command and the `rules.off` key, and never passes silently).
+
+The packs of the node, python, go and rust presets hold these rules on added lines (the `debug-print`, `outbound-no-timeout` and
+`scattered-env` rules skip test files): `swallowed-error` (an empty `catch`, `except: pass`, Go `_ = err`, Rust `let _ = <call>;`),
+`debug-print`, `todo-without-issue` (a TODO, FIXME, XXX or HACK with no `#<issue>`), `commented-code` (two or more added comment
+lines that read as code; doc comments are left out), `outbound-no-timeout` (`fetch`, `axios`, `requests`, `http.Get`, `reqwest`
+with no timeout, the arguments read across lines) and `scattered-env`. The `common` pack also holds `suppression`: an added
+`eslint-disable`, `@ts-ignore`, `# noqa`, `#[allow(`, `//nolint`, `.skip` and the like needs `-- #<issue>: <reason>` on its
+line or the line above, the issue must exist (`suppression: #<n> not found`; when `gh` cannot be reached, `suppression: #<n>
+not verified` is a warning), a focused test (`.only`) fails whatever the comment says, and `senior-mode: allow <rule-id> --
+#<issue>: <reason>` lifts that rule's finding on the next line (the lifted finding is listed).
 
 A rule is turned off only with a reason, in `.claude/senior-mode.json` (a protected path, so the change reaches a human):
 

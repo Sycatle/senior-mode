@@ -664,6 +664,149 @@ commit_trailers() {
   }
 }
 
+# The foreign keys of a Prisma schema read on stdin, one line each: model, column (the first of `fields`), line, 1 when the model has
+# an index that starts with that column (`@@index`, `@@unique`, `@@id` or `@unique` / `@id` on the field), else 0 (#744).
+fk_prisma_scan() {
+  awk '
+    function trim(x) { sub(/^[ \t]+/, "", x); sub(/[ \t]+$/, "", x); return x }
+    function firstof(list,   c) { c = list; sub(/,.*/, "", c); sub(/\(.*/, "", c); return trim(c) }
+    function close_model(   k) { for (k = 1; k <= n; k++) printf "%s\t%s\t%d\t%d\n", model, fkcol[k], fkline[k], (fkcol[k] in idx) ? 1 : 0; inmodel = 0 }
+    { line = $0; sub(/\/\/.*$/, "", line) }
+    line ~ /^[ \t]*model[ \t]+[A-Za-z0-9_]+[ \t]*\{/ { model = line; sub(/^[ \t]*model[ \t]+/, "", model); sub(/[ \t]*\{.*/, "", model); n = 0; inmodel = 1; split("", idx); next }
+    inmodel && line ~ /^[ \t]*\}/ { close_model(); next }
+    !inmodel { next }
+    line ~ /@@(index|unique|id)\(/ { if (match(line, /\[[^]]*\]/)) idx[firstof(substr(line, RSTART + 1, RLENGTH - 2))] = 1; next }
+    line ~ /[^@]@(unique|id)([^A-Za-z]|$)/ { f = line; sub(/^[ \t]+/, "", f); sub(/[ \t].*/, "", f); idx[f] = 1 }
+    line ~ /@relation\(/ && match(line, /fields:[ \t]*\[[^]]*\]/) {
+      list = substr(line, RSTART, RLENGTH); sub(/^[^\[]*\[/, "", list); sub(/\]$/, "", list)
+      n++; fkcol[n] = firstof(list); fkline[n] = NR
+    }'
+}
+
+# The foreign keys and the indexes of SQL read on stdin (#744), one line each: `F`, table, column, line for a foreign key
+# (`REFERENCES` on a column, `FOREIGN KEY (...)`, in CREATE TABLE or ALTER TABLE ... ADD), `I`, table, column for what starts
+# an index (CREATE INDEX, PRIMARY KEY, UNIQUE). Table names are lower case, without quotes or schema.
+fk_sql_scan() {
+  awk '
+    function clean(x) { gsub(/["`]/, "", x); sub(/^[ \t\n]+/, "", x); sub(/[ \t\n]+$/, "", x); return x }
+    function tname(x) { x = clean(x); sub(/.*\./, "", x); return tolower(x) }
+    function firstcol(list,   c) { c = list; sub(/[,)].*/, "", c); c = clean(c); sub(/[ \t\n(].*/, "", c); return c }
+    function lastword(x,   a, k) { k = split(x, a, /[ \t\n]+/); return a[k] }
+    function lineof(p,   k) { for (k = nl; k >= 1; k--) if (pos[k] <= p) return ln[k]; return ln[1] }
+    function element(table, e, startp,   l, c, col) {
+      if (match(e, /[^ \t\n]/)) { startp += RSTART - 1; e = substr(e, RSTART) } else return
+      l = tolower(e)
+      if (l ~ /^constraint[ \t\n]/) { sub(/^[^ \t\n]+[ \t\n]+[^ \t\n]+[ \t\n]+/, "", e); l = tolower(e) }
+      if (l ~ /^foreign[ \t\n]+key/) { i = index(e, "("); printf "F\t%s\t%s\t%d\n", table, firstcol(substr(e, i + 1)), lineof(startp); return }
+      if (l ~ /^(primary[ \t\n]+key|unique)[ \t\n]*\(/) { i = index(e, "("); printf "I\t%s\t%s\n", table, tolower(firstcol(substr(e, i + 1))); return }
+      if (l ~ /^(check|exclude|like|period|primary|unique|foreign)/) return
+      if (match(e, /^"[^"]*"|^`[^`]*`/)) c = substr(e, 1, RLENGTH); else { match(e, /^[^ \t\n]+/); c = substr(e, 1, RLENGTH) }
+      col = clean(c)
+      if (l ~ /[ \t\n]references[ \t\n]/) printf "F\t%s\t%s\t%d\n", table, col, lineof(startp)
+      if (l ~ /primary[ \t\n]+key|[ \t\n]unique([ \t\n,]|$)/) printf "I\t%s\t%s\n", table, tolower(col)
+    }
+    # One element of a CREATE TABLE body, or one action of an ALTER TABLE (only ADD counts).
+    function item(table, e, startp, alter) {
+      if (alter) {
+        if (tolower(e) !~ /^[ \t\n]*add[ \t\n]/) return
+        sub(/^[ \t\n]*[Aa][Dd][Dd][ \t\n]+/, "", e)
+        sub(/^[Cc][Oo][Ll][Uu][Mm][Nn][ \t\n]+/, "", e)
+        sub(/^[Ii][Ff][ \t\n]+[Nn][Oo][Tt][ \t\n]+[Ee][Xx][Ii][Ss][Tt][Ss][ \t\n]+/, "", e)
+      }
+      element(table, e, startp)
+    }
+    # The elements of s from offset p, split at the commas of depth 0, up to the closing parenthesis of a body (or the end).
+    function elements(table, s, p, top, alter,   depth, start, ch, last) {
+      depth = 0; start = p
+      for (;; p++) {
+        ch = (p <= length(s)) ? substr(s, p, 1) : ""
+        if (ch == "(") depth++
+        else if (ch == ")") depth--
+        last = (ch == "") || (!top && depth < 0)
+        if (last || (ch == "," && depth == 0)) { item(table, substr(s, start, p - start), start, alter); start = p + 1 }
+        if (last) break
+      }
+    }
+    function process(s,   l, t, rest, p, i) {
+      l = tolower(s)
+      if (match(l, /^[ \t\n]*create[ \t\n]+(unique[ \t\n]+)?index/)) {
+        if (match(l, /[ \t\n]on[ \t\n]+(only[ \t\n]+)?[^ \t\n(]+/)) {
+          t = tname(lastword(substr(s, RSTART, RLENGTH))); rest = substr(s, RSTART + RLENGTH); i = index(rest, "(")
+          if (i) printf "I\t%s\t%s\n", t, tolower(firstcol(substr(rest, i + 1)))
+        }
+      } else if (match(l, /^[ \t\n]*create[ \t\n]+((unlogged|temporary|temp)[ \t\n]+)?table[ \t\n]+(if[ \t\n]+not[ \t\n]+exists[ \t\n]+)?[^ \t\n(]+/)) {
+        t = tname(lastword(substr(s, 1, RSTART + RLENGTH - 1))); rest = RSTART + RLENGTH; i = index(substr(s, rest), "(")
+        if (i) elements(t, s, rest + i, 0, 0)
+      } else if (match(l, /^[ \t\n]*alter[ \t\n]+table[ \t\n]+(if[ \t\n]+exists[ \t\n]+)?(only[ \t\n]+)?[^ \t\n(]+/)) {
+        t = tname(lastword(substr(s, 1, RSTART + RLENGTH - 1)))
+        elements(t, s, RSTART + RLENGTH, 1, 1)
+      }
+    }
+    { line = $0; sub(/--.*$/, "", line); nl++; ln[nl] = NR; pos[nl] = length(buf) + 1; buf = buf line "\n"
+      if (line ~ /;/) { process(buf); buf = ""; nl = 0 } }
+    END { if (buf != "") process(buf) }'
+}
+
+# The rule of #744 (tier 2): a foreign key the branch adds to a Prisma schema (`@relation` with `fields`) or to a SQL migration
+# (`REFERENCES`, `FOREIGN KEY`) needs an index that starts with its column: `@@index`, `@@unique`, `@@id` (Prisma, in the model),
+# CREATE INDEX, PRIMARY KEY or UNIQUE (SQL, in any migration of the tree). A key the base already had is not reported. Prints
+# `<file>:<line> <message>` and fails when there is one. Runs as its own process (`senior-mode fk-check`).
+fk_check() {
+  local base f model table col line indexed found=0 i
+  local -a files=()
+  local -A had=() idx=()
+  base=$(default_branch) || {
+    echo "skipped: no base branch"
+    return 0
+  }
+  mapfile -t files < <(git -c core.quotePath=false diff --name-only --no-renames --diff-filter=d "$base...HEAD" | grep -E '\.(prisma|sql)$' || true)
+  [ "${#files[@]}" -gt 0 ] || {
+    echo "skipped: no schema or migration change"
+    return 0
+  }
+  for f in "${files[@]}"; do
+    if [[ $f == *.prisma ]]; then
+      had=()
+      while IFS=$'\t' read -r model col _; do had["$model.$col"]=1; done < <(git show "$base:$f" 2>/dev/null | fk_prisma_scan)
+      while IFS=$'\t' read -r model col line indexed; do
+        [ "$indexed" = 0 ] && [ -z "${had["$model.$col"]:-}" ] || continue
+        echo "$f:$line $model.$col is a foreign key with no index (add @@index([$col]) to the model)"
+        found=1
+      done < <(git show "HEAD:$f" | fk_prisma_scan)
+    fi
+  done
+  if printf '%s\n' "${files[@]}" | grep -q '\.sql$'; then
+    # The indexes of the whole tree: an earlier migration may already hold the one a new key needs.
+    while IFS=$'\t' read -r i table col; do
+      [ "$i" != I ] || idx["$table.${col,,}"]=1
+    done < <(
+      while IFS= read -r f; do
+        git show "HEAD:$f"
+        echo ";"
+      done < <(git ls-tree -r --name-only HEAD | grep '\.sql$' || true) | fk_sql_scan
+    )
+    for f in "${files[@]}"; do
+      [[ $f == *.sql ]] || continue
+      had=()
+      while IFS=$'\t' read -r i table col _; do [ "$i" = F ] && had["$table.${col,,}"]=1; done < <(git show "$base:$f" 2>/dev/null | fk_sql_scan)
+      while IFS=$'\t' read -r i table col line; do
+        [ "$i" = F ] || continue
+        [ -z "${had["$table.${col,,}"]:-}" ] && [ -z "${idx["$table.${col,,}"]:-}" ] || continue
+        echo "$f:$line $table.$col is a foreign key with no index (CREATE INDEX ON $table ($col))"
+        found=1
+      done < <(git show "HEAD:$f" | fk_sql_scan)
+    done
+  fi
+  [ "$found" -eq 0 ]
+}
+
+# Whether the branch changes a Prisma schema or a SQL migration, which is when the foreign key rule runs.
+fk_applies() {
+  local base
+  base=$(default_branch) || return 1
+  git -c core.quotePath=false diff --name-only --no-renames --diff-filter=d "$base...HEAD" 2>/dev/null | grep -qE '\.(prisma|sql)$'
+}
+
 # The warning of `check` about suppressions the branch adds (#437): a lint or type check silenced, a test
 # skipped. One line per added line, `file:line` and the text. Never fails: review judges each one, and a
 # suppression with its reason written next to it is legitimate. Markdown is prose, not code: left out.
@@ -1072,6 +1215,11 @@ check() {
   if grep -qE '^<!-- senior-mode:architecture sha=[0-9a-f]+ -->$' "$root/docs/architecture.md" 2>/dev/null; then
     names+=("architecture.md")
     cmds+=("$(printf '%q' "$SELF") architecture --check")
+  fi
+  # A foreign key with no index, when the branch changes a Prisma schema or a SQL migration (#744).
+  if fk_applies; then
+    names+=("foreign keys")
+    cmds+=("$(printf '%q' "$SELF") fk-check")
   fi
   if [ "$run2" = false ]; then
     names=()

@@ -236,6 +236,10 @@ case "${1:-}" in
     [ $# -eq 1 ] || usage
     commit_trailers
     ;;
+  fk-check)
+    [ $# -eq 1 ] || usage
+    fk_check
+    ;;
   untested)
     shift
     untested "$@"

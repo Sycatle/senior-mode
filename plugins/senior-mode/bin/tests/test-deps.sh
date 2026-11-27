@@ -47,7 +47,9 @@ pypi() {
 crate() { reg "https://crates.io/api/v1/crates/$1" 200 "{\"crate\": {\"created_at\": \"$(ago "$2" | sed 's/Z$/+00:00/')\", \"recent_downloads\": $3}}"; }
 
 git_() { git -C "$repo" -c user.name=t -c user.email=t@t "$@"; }
-run() { : >"$CURL_LOG"; (cd "$repo" && "$cli" "$@") >"$work/out" 2>&1; }
+# A run starts with no verdict kept (#827); crun keeps what an earlier one left.
+run() { rm -rf "$repo/.git/senior-mode/scan-cache"; crun "$@"; }
+crun() { : >"$CURL_LOG"; (cd "$repo" && "$cli" "$@") >"$work/out" 2>&1; }
 has() { grep -qF -- "$1" "$work/out" || fail "$2: no '$1' in: $(cat "$work/out")"; }
 
 repo="$work/repo"
@@ -182,6 +184,49 @@ for u in $want; do grep -q "$u" "$CURL_LOG" || fail "not looked up: $u: $(cat "$
 grep -qE "other|example.com|mylib|python|/local|shared|golang.org/x/text" "$CURL_LOG" &&
   fail "a local, indirect or non-registry dependency was looked up: $(cat "$CURL_LOG")"
 [ "$(grep -c . "$work/out")" -eq 3 ] || fail "other registries: more findings than expected: $(cat "$work/out")"
+
+# The lookup is kept 24 h (#827): the same dependencies on the same lockfiles are not looked up again, a changed
+# lockfile, other dependencies or an older verdict are, and a failure, or a registry that did not answer, is never kept.
+git_ checkout -q main
+git_ checkout -q -b feat/3-cache
+echo '{"name": "app", "dependencies": {"lodash": "^4", "left-pad": "1"}}' >"$repo/package.json"
+echo '{"lockfileVersion": 3}' >"$repo/package-lock.json"
+git_ add -A
+git_ commit -qm "feat: left-pad"
+rm -f "$FIX"/*
+run deps
+crun deps
+grep -q "left-pad" "$CURL_LOG" || fail "cache: an unanswered lookup was kept: $(cat "$CURL_LOG")"
+npm left-pad 3000 100000
+run deps || fail "cache: first lookup fails: $(cat "$work/out")"
+grep -q "left-pad" "$CURL_LOG" || fail "cache: the first lookup did not ask the registry"
+rm -f "$FIX"/*
+crun deps || fail "cache: the same lookup fails: $(cat "$work/out")"
+[ ! -s "$CURL_LOG" ] || fail "cache: a registry was asked for a lookup of an hour ago: $(cat "$CURL_LOG")"
+has "skipped: looked up clean 0 h ago, same lockfiles and dependencies" "cache: said"
+crun check || fail "cache: check fails: $(cat "$work/out")"
+grep -q "^skip  new dependencies: looked up clean" "$work/out" || fail "cache: check shows no skip: $(cat "$work/out")"
+[ ! -s "$CURL_LOG" ] || fail "cache: check asked a registry: $(cat "$CURL_LOG")"
+echo '{"lockfileVersion": 2}' >"$repo/package-lock.json"
+crun deps
+grep -q "left-pad" "$CURL_LOG" || fail "cache: a changed lockfile reuses the lookup"
+npm left-pad 3000 100000
+run deps || fail "cache: lookup fails: $(cat "$work/out")"
+cache=$(ls "$repo"/.git/senior-mode/scan-cache/deps-*)
+sed -i "1s/.*/$(($(date +%s) - 86500))/" "$cache"
+crun deps || fail "cache: an old verdict fails the run: $(cat "$work/out")"
+grep -q "left-pad" "$CURL_LOG" || fail "cache: a lookup of more than 24 h was reused"
+sed -i "1s/.*/$(($(date +%s) - 82800))/" "$cache"
+crun deps || fail "cache: a verdict of 23 h fails the run: $(cat "$work/out")"
+[ ! -s "$CURL_LOG" ] || fail "cache: a verdict of 23 h was not reused: $(cat "$CURL_LOG")"
+# A failure is not kept: a package that is missing is looked up, and fails, each time.
+echo '{"name": "app", "dependencies": {"lodash": "^4", "left-pad": "1", "ghost-pkg": "1"}}' >"$repo/package.json"
+git_ commit -qam "feat: ghost"
+reg https://registry.npmjs.org/ghost-pkg 404 '{"error": "Not found"}'
+run deps && fail "cache: a missing package passes"
+crun deps && fail "cache: a missing package passes on the second run"
+grep -q "ghost-pkg" "$CURL_LOG" || fail "cache: a failure was kept: $(cat "$CURL_LOG")"
+has "npm ghost-pkg: not on the registry" "cache: failure said again"
 
 [ "$failures" -eq 0 ] && echo "deps: all cases pass"
 exit "$failures"

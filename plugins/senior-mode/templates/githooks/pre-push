@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # senior-mode: runs the checks of .claude/senior-mode.json before every push (ADR 0006).
-# Standalone, so it works without Claude Code. Inside a session, `senior-mode check` runs the same
-# list and also records the result for `senior-mode publish`.
+# With senior-mode on the PATH it runs `check --changed` (ADR 0034): the checks and the tests the files changed against
+# the merge base affect, the secret scan of the diff always, the audit and the registry lookup cached for 24 h.
+# Without it the hook is standalone and runs the list below, narrowed to the pushed paths. The full `senior-mode check`
+# runs before the merge and records the result for `senior-mode publish`.
 set -u
 root=$(git rev-parse --show-toplevel)
+if command -v senior-mode >/dev/null 2>&1; then
+  exec senior-mode check --changed
+fi
 config=$root/.claude/senior-mode.json
 command -v jq >/dev/null || { echo "pre-push: jq is needed to read $config" >&2; exit 1; }
 count=$(jq '.checks // [] | length' "$config" 2>/dev/null) || { echo "pre-push: cannot read $config" >&2; exit 1; }

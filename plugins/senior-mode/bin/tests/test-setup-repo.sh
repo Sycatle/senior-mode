@@ -172,6 +172,13 @@ jq '.checks[0].run = "echo boom; false"' "$new/.claude/senior-mode.json" >"$work
 grep -q boom "$work/out" || fail "pre-push hides the failing output"
 grep -Eq '^FAIL  [^ ]+.* \([0-9]+\.[0-9]s\)$' "$work/out" || fail "pre-push does not show the time of a check: $(cat "$work/out")"
 
+# With senior-mode on the PATH the hook runs `check --changed` (#827); without it, the list above.
+mkdir -p "$work/sm-stub"
+printf '#!/usr/bin/env bash\necho "senior-mode $*" >"%s"\n' "$work/sm-called" >"$work/sm-stub/senior-mode"
+chmod +x "$work/sm-stub/senior-mode"
+(cd "$new" && PATH="$work/sm-stub:$nopath" .githooks/pre-push </dev/null) >"$work/out" 2>&1 || fail "pre-push with senior-mode on the PATH fails: $(cat "$work/out")"
+[ "$(cat "$work/sm-called" 2>/dev/null)" = "senior-mode check --changed" ] || fail "pre-push does not run check --changed: $(cat "$work/sm-called" 2>/dev/null)"
+
 # The hook tells the checks which paths the push changes (SENIOR_MODE_CHANGED_FILES) from the lines git gives
 # it; when it cannot work them out, no list, so a check runs in full.
 sc="$work/scoped"

@@ -727,6 +727,57 @@ git -C "$work/r3" add -A && git -C "$work/r3" -c user.name=t -c user.email=t@t c
 (cd "$work/r3" && "$cli" check --changed) >"$work/out" 2>&1 || fail "check --changed with no default branch: $(cat "$work/out")"
 grep -q "cannot be told" "$work/out" || fail "missing default branch not said: $(cat "$work/out")"
 
+# The pre-push hook of this repository runs check --changed (#827, ADR 0034): the steps and the tests the files changed
+# against the merge base affect; the secret scan always; a plain check (the merge path) runs every tier 2 step in full.
+root5=$(cd "$(dirname "$0")/../../../.." && pwd)
+grep -v '^#' "$root5/.githooks/pre-push" | grep -q 'check --changed$' || fail "the hook of this repository does not run check --changed"
+grep -v '^#' "$root5/.githooks/pre-push" | grep -q -- '--pre-push' && fail "the hook of this repository still runs --pre-push"
+r5=$work/r5
+git init -q -b main "$r5"
+mkdir -p "$r5/.claude" "$r5/.githooks" "$r5/.github/scripts" "$r5/tools" "$r5/docs" "$r5/plugins"
+cp "$root5/.githooks/pre-push" "$r5/.githooks/pre-push"
+cp "$root5/.github/scripts/script-tests.sh" "$r5/.github/scripts/script-tests.sh"
+ln -s "$(dirname "$cli")/.." "$r5/plugins/senior-mode"
+printf '#!/usr/bin/env bash\n# covers tools/a.sh\ntouch "%s"\n' "$work/marker5" >"$r5/tools/test-a.sh"
+chmod +x "$r5/tools/test-a.sh"
+echo a >"$r5/tools/a.sh"; echo d >"$r5/docs/d.md"
+jq -nc --arg o "$work/seen5" '{audit: false, checks: [
+  {name: "script tests", run: ".github/scripts/script-tests.sh"},
+  {name: "seen", run: ("if [ -n \"${SENIOR_MODE_CHANGED_FILES:-}\" ]; then cat \"$SENIOR_MODE_CHANGED_FILES\"; else echo FULL; fi >" + $o)}]}' >"$r5/.claude/senior-mode.json"
+git -C "$r5" add -A && git -C "$r5" -c user.name=t -c user.email=t@t commit -q -m "chore: base"
+git -C "$r5" checkout -q -b feat/5-hook
+hook5() { (cd "$r5" && printf 'refs/heads/feat/5-hook %s refs/heads/feat/5-hook %s\n' "$(git rev-parse HEAD)" "$(git rev-parse main)" | .githooks/pre-push) >"$work/out" 2>&1; }
+g5() { git -C "$r5" -c user.name=t -c user.email=t@t "$@"; }
+# A change that touches no file a test covers: the hook finishes without running the test suite.
+echo d2 >>"$r5/docs/d.md" && g5 commit -qam "docs: d"
+hook5 || fail "hook: a docs change fails: $(cat "$work/out")"
+grep -q "^skip  script tests \[full\]: no test file is affected by this push" "$work/out" || fail "hook: the suite was not skipped: $(cat "$work/out")"
+[ ! -e "$work/marker5" ] || fail "hook: a test ran for a docs change"
+grep -q "^ok    seen \[full\]" "$work/out" || fail "hook: it does not run check --changed: $(cat "$work/out")"
+[ "$(cat "$work/seen5")" = docs/d.md ] || fail "hook: the checks do not get the changed paths: $(cat "$work/seen5")"
+# A change a test covers: that test runs.
+echo a2 >>"$r5/tools/a.sh" && g5 commit -qam "feat: a"
+hook5 || fail "hook: a covered change fails: $(cat "$work/out")"
+[ -e "$work/marker5" ] || fail "hook: the test covering the change did not run: $(cat "$work/out")"
+# The merge path, a plain check, runs every tier 2 step in full: no narrowing, the whole suite.
+rm -f "$work/marker5"
+(cd "$r5" && "$cli" check) >"$work/out" 2>&1 || fail "full check fails: $(cat "$work/out")"
+for step in "secret scan" "dependency audit" "new dependencies" "config" "context hygiene" "script tests" "seen"; do
+  grep -Eq "^(ok    |skip  )$step[ :(]" "$work/out" || fail "full check: step '$step' did not run: $(cat "$work/out")"
+done
+grep -q "7/7 checks passed" "$work/out" || fail "full check: not every step counted: $(tail -n 3 "$work/out")"
+[ -e "$work/marker5" ] || fail "full check: the test suite was narrowed"
+[ "$(cat "$work/seen5")" = FULL ] || fail "full check: the checks were given a list of changed paths: $(cat "$work/seen5")"
+# The secret scan is never cached nor skipped: it runs on every push, however little changed, and still finds it.
+mkdir -p "$r5/src"
+printf 'key = %s\n' "$(printf 'AKIA%s' Q7ZK2M9XQ7ZK2M9X)" >"$r5/src/k.txt"
+g5 add -A && g5 commit -qm "feat: key"
+for n in 1 2; do
+  hook5 && fail "hook: a secret passes (push $n)"
+  grep -q "^FAIL  secret scan \[full\]" "$work/out" || fail "hook: the secret scan did not run (push $n): $(cat "$work/out")"
+done
+ls "$r5"/.git/senior-mode/scan-cache/secret* >/dev/null 2>&1 && fail "the secret scan has a cache"
+
 # The presets give a changed variant for lint and tests: node (the linter and test runner of its dependencies),
 # python (ruff or flake8, pytest), go (packages), rust (crates). A tool that is not named runs in full.
 mkdir -p "$work/tools"

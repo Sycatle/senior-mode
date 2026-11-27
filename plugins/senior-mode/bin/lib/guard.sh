@@ -93,6 +93,51 @@ secret_scan() {
   return 1
 }
 
+# The verdict cache of the two network steps of `check`, the dependency audit and the registry lookup of the new
+# dependencies (#827, ADR 0034): a step that passed is not run again for SCAN_CACHE_TTL seconds while its key (the
+# hash of the lockfiles, of what the step reads besides) is the same. Only a pass is kept, so a blocking advisory or
+# a missing package is looked up again every time. The secret scan has no cache. A file of the git directory
+# (senior-mode/scan-cache/<step>-<key>) holds the epoch of the run, then the warnings the step printed.
+SCAN_CACHE_TTL=86400
+
+# The hash of the lockfiles at the root $1 (name and content), empty when there is none or no way to hash.
+scan_lock_hash() {
+  local root=$1 f files=()
+  for f in pnpm-lock.yaml package-lock.json requirements.txt go.sum Cargo.lock; do
+    [ ! -f "$root/$f" ] || files+=("$f")
+  done
+  [ ${#files[@]} -gt 0 ] || return 0
+  (cd "$root" && sha256sum -- "${files[@]}" | sha256sum | cut -d' ' -f1) 2>/dev/null || true
+}
+
+# The cache file of the step $1 for the key $2 (the hash of what the step read).
+scan_cache_file() {
+  local key
+  key=$(printf '%s' "$2" | sha256sum | cut -d' ' -f1)
+  printf '%s/%s-%s\n' "$(git rev-parse --path-format=absolute --git-path senior-mode/scan-cache)" "$1" "$key"
+}
+
+# Prints the age in hours and the warnings kept for the step $1 and the key $2, when a run less than a day old passed.
+scan_cache_get() {
+  local file epoch age
+  file=$(scan_cache_file "$1" "$2")
+  [ -f "$file" ] || return 1
+  epoch=$(head -n 1 "$file")
+  [[ $epoch =~ ^[0-9]+$ ]] || return 1
+  age=$(($(date +%s) - epoch))
+  [ "$age" -ge 0 ] && [ "$age" -lt "$SCAN_CACHE_TTL" ] || return 1
+  echo $((age / 3600))
+  tail -n +2 "$file"
+}
+
+# Keeps a pass of the step $1 for the key $2, with the warnings $3. A cache that cannot be written is not an error.
+scan_cache_put() {
+  local file
+  file=$(scan_cache_file "$1" "$2")
+  mkdir -p "$(dirname "$file")" 2>/dev/null || return 0
+  { date +%s; printf '%s' "$3"; } | state_write "$file" 2>/dev/null || true
+}
+
 # The dependency audit of `check` (#142, spec 130): the audit tool of each lockfile at the repository root
 # (pnpm-lock.yaml or package-lock.json, requirements.txt, go.sum, Cargo.lock), its JSON read into advisories.
 # A high or critical advisory fails, naming package, advisory and fixed version; any other is a warning, an
@@ -100,7 +145,8 @@ secret_scan() {
 # A missing tool, or one that gives no usable answer, fails: nothing was audited. Runs as its own process
 # (`senior-mode audit`).
 audit_scan() {
-  local root rc=0 found=false eco err
+  local root rc=0 eco err out="" part key hit
+  local -a ecos=()
   audit_enabled || {
     echo "skipped: off (audit: false)"
     return 0
@@ -115,10 +161,25 @@ audit_scan() {
     [ -f "$root/${eco#*:}" ] || continue
     # pnpm's lockfile wins over a leftover package-lock.json.
     [ "${eco%%:*}" != npm ] || [ ! -f "$root/pnpm-lock.yaml" ] || continue
-    found=true
-    audit_one "$root" "${eco%%:*}" "$err" || rc=1
+    ecos+=("${eco%%:*}")
   done
-  [ "$found" = true ] || echo "skipped: no lockfile (package-lock.json, pnpm-lock.yaml, requirements.txt, go.sum, Cargo.lock)"
+  [ ${#ecos[@]} -gt 0 ] || {
+    echo "skipped: no lockfile (package-lock.json, pnpm-lock.yaml, requirements.txt, go.sum, Cargo.lock)"
+    return 0
+  }
+  # A pass of less than a day on the same lockfiles is not asked again (#827).
+  key=$(scan_lock_hash "$root")
+  if [ -n "$key" ] && hit=$(scan_cache_get audit "$key"); then
+    echo "skipped: audited clean ${hit%%$'\n'*} h ago on the same lockfiles (cache of 24 h)"
+    [[ $hit != *$'\n'* ]] || printf '%s\n' "${hit#*$'\n'}"
+    return 0
+  fi
+  for eco in "${ecos[@]}"; do
+    part=$(audit_one "$root" "$eco" "$err") || rc=1
+    [ -z "$part" ] || out+=$part$'\n'
+  done
+  printf '%s' "$out"
+  [ "$rc" -ne 0 ] || [ -z "$key" ] || scan_cache_put audit "$key" "$out"
   return "$rc"
 }
 
@@ -392,7 +453,7 @@ deps_near() {
 # package is a warning. A registry that cannot be reached leaves its packages unchecked, said as such, never passed.
 # Runs as its own process (`senior-mode deps`).
 deps_scan() {
-  local base from added eco name tmp verdict created weekly days floor now near fails="" warns="" unchecked="" checked=0
+  local base from added eco name tmp verdict created weekly days floor now near fails="" warns="" unchecked="" checked=0 key hit
   base=$(default_branch) || {
     echo "skipped: no base branch"
     return 0
@@ -407,6 +468,14 @@ deps_scan() {
   floor=$(config_get security.minWeeklyDownloads)
   [[ $days =~ ^[1-9][0-9]*$ ]] || die "security.minPackageAgeDays must be a whole number of days from 1, not $days"
   [[ $floor =~ ^[1-9][0-9]*$ ]] || die "security.minWeeklyDownloads must be a whole number from 1, not $floor"
+  # A lookup of less than a day on the same lockfiles and the same added dependencies is not asked again (#827).
+  key=$(scan_lock_hash "$(git rev-parse --show-toplevel)")
+  key="$key $days $floor $added"
+  if hit=$(scan_cache_get deps "$key"); then
+    echo "skipped: looked up clean ${hit%%$'\n'*} h ago, same lockfiles and dependencies (cache of 24 h)"
+    [[ $hit != *$'\n'* ]] || printf '%s\n' "${hit#*$'\n'}"
+    return 0
+  fi
   command -v curl >/dev/null || {
     echo "skipped: curl not installed, so the new dependencies were not checked: $(paste -sd, - <<<"$added" | sed 's/,/, /g')"
     return 0
@@ -444,7 +513,11 @@ deps_scan() {
   fi
   [ -z "$unchecked" ] || warns+="warning: not checked, the registry did not answer: $unchecked"$'\n'
   printf '%s' "$warns"
-  [ -n "$fails" ] || return 0
+  if [ -z "$fails" ]; then
+    # Only a lookup that every registry answered is kept.
+    [ -n "$unchecked" ] || scan_cache_put deps "$key" "$warns"
+    return 0
+  fi
   printf '%s' "$fails"
   echo "a dependency that is right after all: wait until it is old enough, or pick a better known package"
   return 1

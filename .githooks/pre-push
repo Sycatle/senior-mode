@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
-# Runs the project's checks before every push (ADR 0006). After pushing, `senior-mode publish`
-# sends the recorded result to the pull request as the status senior-mode/ci.
-exec "$(git rev-parse --show-toplevel)/plugins/senior-mode/bin/senior-mode" check --pre-push
+# Runs the checks the push affects before every push (ADR 0006, 0034): `check --changed`, narrowed to the files changed
+# against the merge base. The full `check` runs before the merge; after it `senior-mode publish` sends the recorded
+# result to the pull request as the status senior-mode/ci.
+exec "$(git rev-parse --show-toplevel)/plugins/senior-mode/bin/senior-mode" check --changed

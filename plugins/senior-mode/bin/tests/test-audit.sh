@@ -298,7 +298,10 @@ git init -q -b main "$repo"
 mkdir -p "$repo/.claude"
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: base"
 config() { printf '%s\n' "$1" >"$repo/.claude/senior-mode.json"; }
-run() { (cd "$repo" && "$cli" check) >"$work/out" 2>&1; }
+# A run starts with no verdict kept (#827): the cases below change what the tool says with the lockfile unchanged.
+run() { rm -rf "$repo/.git/senior-mode/scan-cache"; (cd "$repo" && "$cli" check) >"$work/out" 2>&1; }
+# crun: a run that keeps what an earlier one left.
+crun() { (cd "$repo" && "$cli" check) >"$work/out" 2>&1; }
 # lock <lockfile>: the only lockfile of the repository, and no tool has run.
 lock() {
   rm -f "$repo/package-lock.json" "$repo/pnpm-lock.yaml" "$repo/requirements.txt" "$repo/go.sum" "$repo/Cargo.lock" \
@@ -467,6 +470,7 @@ grep -q "^ok    dependency audit ([0-9.]*s)$" "$work/out" || fail "cargo: clean:
 # A missing tool fails the check and says how to install it.
 missing() { # <lockfile> <binary> <text of the install hint>
   lock "$1"
+  rm -rf "$repo/.git/senior-mode/scan-cache"
   (cd "$repo" && PATH=$(without "$2") "$cli" check) >"$work/out" 2>&1 && fail "$2 missing: the check passes"
   grep -q "^FAIL  dependency audit ([0-9.]*s)$" "$work/out" || fail "$2 missing: not reported: $(cat "$work/out")"
   grep -q "$2 not installed" "$work/out" || fail "$2 missing: not named: $(cat "$work/out")"
@@ -489,6 +493,40 @@ grep -q "^skip  dependency audit: off (audit: false)" "$work/out" || fail "audit
 config '{"audit": "no", "checks": [{"name": "lint", "run": "true"}]}'
 run && fail "audit: a value that is no boolean passes"
 grep -q "audit must be true or false" "$work/out" || fail "audit: bad value not explained: $(cat "$work/out")"
+
+# The verdict is kept 24 h (#827): a pass on the same lockfile is not audited again, a changed lockfile or an older
+# verdict is, and a blocking advisory is never kept.
+config '{"checks": [{"name": "lint", "run": "true"}]}'
+lock package-lock.json
+use npm npm-moderate
+run || fail "cache: the first run fails: $(cat "$work/out")"
+[ "$(wc -l <"$AUDIT_LOG")" -eq 1 ] || fail "cache: the first run did not audit: $(cat "$AUDIT_LOG")"
+: >"$AUDIT_LOG"
+use npm npm-critical
+crun || fail "cache: the same lockfile is audited again: $(cat "$work/out")"
+[ ! -s "$AUDIT_LOG" ] || fail "cache: a tool ran on a lockfile audited an hour ago: $(cat "$AUDIT_LOG")"
+grep -q "^skip  dependency audit: audited clean 0 h ago on the same lockfiles" "$work/out" || fail "cache: not said: $(cat "$work/out")"
+grep -qE "warning: moderate: semver GHSA-c2qf-rxjj-qqgw" "$work/out" || fail "cache: the warnings of the verdict are lost: $(cat "$work/out")"
+echo y >"$repo/package-lock.json"
+crun && fail "cache: a changed lockfile reuses the verdict"
+[ "$(wc -l <"$AUDIT_LOG")" -eq 1 ] || fail "cache: a changed lockfile is not audited: $(cat "$AUDIT_LOG")"
+grep -q "critical: minimist" "$work/out" || fail "cache: the critical advisory is not shown: $(cat "$work/out")"
+# A blocking advisory is not kept: the same lockfile blocks again, and the tool runs again.
+: >"$AUDIT_LOG"
+crun && fail "cache: a critical advisory passes on the second run"
+[ "$(wc -l <"$AUDIT_LOG")" -eq 1 ] || fail "cache: a blocked run was not audited again: $(cat "$AUDIT_LOG")"
+# A verdict older than a day is not used; a fresh one is.
+use npm npm-clean
+run || fail "cache: clean run fails: $(cat "$work/out")"
+cache=$(ls "$repo"/.git/senior-mode/scan-cache/audit-*)
+sed -i "1s/.*/$(($(date +%s) - 86500))/" "$cache"
+: >"$AUDIT_LOG"
+crun || fail "cache: an old verdict fails the run: $(cat "$work/out")"
+[ "$(wc -l <"$AUDIT_LOG")" -eq 1 ] || fail "cache: a verdict of more than 24 h was reused: $(cat "$AUDIT_LOG")"
+sed -i "1s/.*/$(($(date +%s) - 82800))/" "$cache"
+: >"$AUDIT_LOG"
+crun || fail "cache: a verdict of 23 h fails the run: $(cat "$work/out")"
+[ ! -s "$AUDIT_LOG" ] || fail "cache: a verdict of 23 h was not reused: $(cat "$AUDIT_LOG")"
 
 [ "$failures" -eq 0 ] && echo "audit: all cases pass"
 exit "$failures"

@@ -1,0 +1,37 @@
+{
+  "rules": [
+    {
+      "id": "swallowed-error",
+      "tier": 2,
+      "kind": "pattern",
+      "ext": [
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "mjs",
+        "cjs"
+      ],
+      "pattern": "catch[[:space:]]*(\\([^)]*\\))?[[:space:]]*\\{[[:space:]]*\\}|\\.catch\\([[:space:]]*(\\([^)]*\\)|[A-Za-z_]+)[[:space:]]*=>[[:space:]]*\\{[[:space:]]*\\}[[:space:]]*\\)",
+      "message": "an error is caught and dropped",
+      "fix": "handle it, rethrow with context, or log and say why"
+    },
+    {
+      "id": "debug-print",
+      "tier": 2,
+      "kind": "pattern",
+      "ext": [
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "mjs",
+        "cjs"
+      ],
+      "prodOnly": true,
+      "pattern": "(^|[^[:alnum:]_.])console\\.(log|debug)\\(|^[[:space:]]*debugger[[:space:]]*;?[[:space:]]*$",
+      "message": "debug output left in production code",
+      "fix": "remove it, or use the project's logger"
+    }
+  ]
+}

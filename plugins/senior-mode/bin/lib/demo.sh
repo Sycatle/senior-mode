@@ -31,13 +31,14 @@ demo_say() {
   DEMO_T0=$SECONDS
 }
 
+# demo_confirm <yes> [<what was left alone>]: --yes, or a [y/N] at the terminal; anything else stops the command.
 demo_confirm() {
-  local answer
+  local answer left=${2:-nothing was created}
   if [ "$1" = true ]; then return 0; fi
-  [ -t 0 ] || die "demo: no terminal to confirm and no --yes: nothing was created"
+  [ -t 0 ] || die "demo: no terminal to confirm and no --yes: $left"
   printf 'Continue? [y/N] '
   read -r answer || answer=""
-  [[ $answer == [yY] || $answer == [yY][eE][sS] ]] || die "demo: cancelled, nothing was created"
+  [[ $answer == [yY] || $answer == [yY][eE][sS] ]] || die "demo: cancelled, $left"
 }
 
 # The tiny shell project the tickets are about: its test runner is test.sh.
@@ -94,17 +95,61 @@ demo_stop_serve() {
   wait "$1" 2>/dev/null || true
 }
 
-# senior-mode demo [--yes] [--budget <usd>]
+# senior-mode demo --clean [--yes] (#808): deletes the repositories recorded in demo.json, and only those, whose description
+# still has the marker. An entry stays when the marker is missing, when the repository cannot be read or when the deletion
+# fails (a missing delete_repo scope is named); a deleted one leaves demo.json. Exit 1 when a read or a deletion failed.
+demo_clean() {
+  local yes=$1 file repo desc err rc=0 todo=() n
+  file=$(demo_file)
+  n=$(jq '.repositories | length' "$file" 2>/dev/null) || n=0
+  if [ "$n" = 0 ]; then
+    echo "demo --clean: nothing to clean, no repository is recorded in $file"
+    return 0
+  fi
+  while IFS= read -r repo; do
+    if ! desc=$(gh_retry api "repos/$repo" --jq .description 2>/dev/null); then
+      echo "$repo: cannot read it through the API; kept in demo.json, not deleted" >&2
+      rc=1
+    elif [ "$desc" != "$DEMO_MARKER" ]; then
+      echo "$repo: the marker '$DEMO_MARKER' is missing from its description; not deleted"
+    else
+      todo+=("$repo")
+    fi
+  done < <(jq -r '.repositories[].repo' "$file")
+  [ "${#todo[@]}" -gt 0 ] || return "$rc"
+  echo "demo --clean will delete:"
+  printf '  - %s\n' "${todo[@]}"
+  demo_confirm "$yes" "nothing was deleted"
+  for repo in "${todo[@]}"; do
+    if err=$(gh repo delete "$repo" --yes 2>&1 >/dev/null); then
+      jq --arg r "$repo" '.repositories |= map(select(.repo != $r))' "$file" | state_write "$file"
+      echo "$repo: deleted"
+    else
+      echo "$repo: not deleted: $err" >&2
+      [[ $err != *delete_repo* ]] || echo "add the scope with: gh auth refresh -s delete_repo" >&2
+      rc=1
+    fi
+  done
+  return "$rc"
+}
+
+# senior-mode demo [--yes] [--budget <usd>] | demo --clean [--yes]
 demo() {
-  local yes=false budget=3 login cur repo cli data dir log step title paths body type k out num
+  local yes=false budget=3 login cur repo cli data dir log step title paths body type k out num clean=false budget_set=false
   local now pid merged delivered total poll limit started
   while [ $# -gt 0 ]; do
     case $1 in
       --yes) yes=true; shift ;;
-      --budget) [ $# -ge 2 ] || usage; budget=$2; shift 2 ;;
+      --clean) clean=true; shift ;;
+      --budget) [ $# -ge 2 ] || usage; budget=$2; budget_set=true; shift 2 ;;
       *) usage ;;
     esac
   done
+  if [ "$clean" = true ]; then
+    [ "$budget_set" = false ] || usage
+    demo_clean "$yes"
+    return
+  fi
   [[ $budget =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v b="$budget" 'BEGIN { exit !(b > 0) }' ||
     die "demo: --budget is a number of USD above 0, not '$budget'"
   cli=${SENIOR_MODE_DEMO_CLI:-$SELF}
@@ -126,7 +171,7 @@ senior-mode demo will create, on your GitHub account:
   - a tiny shell project with its test script, and three toy tickets (two features, one bug)
   - the senior-mode setup of that repository (project board, labels, ruleset)
   then run serve on it (3 sessions at a time, merge on, day cap $budget USD) until the three pull requests are merged.
-It takes about five minutes and spends subscription time of this machine. \`senior-mode demo --clean\` is not available yet.
+It takes about five minutes and spends subscription time of this machine. \`senior-mode demo --clean\` deletes the repository afterwards.
 PLAN
   fi
   demo_confirm "$yes"

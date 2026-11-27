@@ -860,6 +860,68 @@ migrations_check() {
   esac
 }
 
+# The hot paths the specs name (#758): for each `docs/specs/*.md` with a `## Hot paths` section, one line per list item that holds two
+# backticked spans, the path (a glob) and the benchmark, `<spec>\t<line>\t<path>\t<benchmark>\t<the spec's paths, a JSON list>`.
+hot_entries() {
+  local root spec fm globs
+  root=$(git rev-parse --show-toplevel) || return 0
+  while IFS= read -r spec; do
+    grep -qE '^## Hot paths[[:space:]]*$' "$root/$spec" 2>/dev/null || continue
+    fm=$(awk 'NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { exit } NR > 1 { print }' "$root/$spec")
+    globs=$(sed -n 's/^paths:[[:space:]]*\[\(.*\)\][[:space:]]*$/\1/p' <<<"$fm" | tr ',' '\n' | tr -d "\"'\r[:space:]" | jq -Rnc '[inputs | select(length > 0)]')
+    awk -v spec="$spec" -v globs="$globs" '
+      /^## / { on = ($0 ~ /^## Hot paths[ \t]*$/); next }
+      on && /^[-*][ \t]+`[^`]+`.*`[^`]+`/ { split($0, a, "`"); printf "%s\t%d\t%s\t%s\t%s\n", spec, NR, a[2], a[4], globs }' "$root/$spec"
+  done < <(git -C "$root" ls-files -- 'docs/specs/*.md')
+}
+
+# The files the branch adds or changes, one per line.
+branch_changed() {
+  local base
+  base=$(default_branch) || return 0
+  git -c core.quotePath=false diff --name-only --no-renames --diff-filter=d "$base...HEAD" 2>/dev/null || true
+}
+
+# The hot paths the branch's changed files fall under, as the lines of hot_entries: under the `paths` of the spec when $1 is `spec`,
+# under the glob of the hot path itself otherwise.
+hot_touched() {
+  local changed spec line path bench globs row
+  changed=$(branch_changed)
+  [ -n "$changed" ] || return 0
+  while IFS=$'\t' read -r spec line path bench globs; do
+    row=$spec$'\t'$line$'\t'$path$'\t'$bench$'\t'$globs
+    if [ "$1" = spec ]; then
+      [ "$globs" != "[]" ] || continue
+      [ -z "$(protected_match "$globs" <<<"$changed")" ] || printf '%s\n' "$row"
+    else
+      [ -z "$(protected_match "$(jq -nc --arg p "$path" '[$p]')" <<<"$changed")" ] || printf '%s\n' "$row"
+    fi
+  done < <(hot_entries)
+}
+
+# The step `hot paths` (#758, tier 2): each hot path of a spec whose `paths` the branch's diff falls under names a benchmark that
+# exists, that is its name appears in a tracked file that is not Markdown. Without `performance.bench.command` it says
+# `bench: not measured` and passes. Prints `<spec>:<line> <message>` per hot path with no benchmark.
+hot_paths_check() {
+  local rows spec line path bench globs miss=0 cmd
+  rows=$(hot_touched spec)
+  [ -n "$rows" ] || {
+    echo "skipped: no hot path to check"
+    return 0
+  }
+  cmd=$(config_get performance.bench.command 2>/dev/null) || cmd=""
+  [ -n "$cmd" ] || {
+    echo "skipped: bench: not measured, set performance.bench.command"
+    return 0
+  }
+  while IFS=$'\t' read -r spec line path bench globs; do
+    git grep -qF -e "$bench" -- . ':(exclude)*.md' && continue
+    echo "$spec:$line hot path $path has no benchmark named $bench"
+    miss=1
+  done <<<"$rows"
+  [ "$miss" -eq 0 ]
+}
+
 # The warning of `check` about suppressions the branch adds (#437): a lint or type check silenced, a test
 # skipped. One line per added line, `file:line` and the text. Never fails: review judges each one, and a
 # suppression with its reason written next to it is legitimate. Markdown is prose, not code: left out.
@@ -1284,6 +1346,11 @@ check() {
   if [ -n "$(migrations_changed)" ]; then
     names+=("migrations")
     cmds+=("$(printf '%q' "$SELF") migrations-check")
+  fi
+  # Each hot path of a spec the diff falls under has a benchmark (#758).
+  if [ -n "$(hot_touched spec)" ]; then
+    names+=("hot paths")
+    cmds+=("$(printf '%q' "$SELF") hot-paths-check")
   fi
   if [ "$run2" = false ]; then
     names=()

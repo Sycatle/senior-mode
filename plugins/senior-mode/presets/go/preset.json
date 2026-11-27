@@ -2,6 +2,7 @@
   "commands": ["lint", "test", "build"],
   "coverage": { "report": "coverage.xml" },
   "rules": { "packs": ["go"] },
+  "bench": { "tool": "go test -bench with benchstat" },
   "protected": [
     "**/migrations/**",
     "**/auth/**",

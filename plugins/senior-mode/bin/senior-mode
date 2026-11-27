@@ -248,6 +248,10 @@ case "${1:-}" in
     [ $# -eq 1 ] || usage
     migrations_check
     ;;
+  hot-paths-check)
+    [ $# -eq 1 ] || usage
+    hot_paths_check
+    ;;
   untested)
     shift
     untested "$@"

@@ -269,7 +269,8 @@ put node src/config/env.ts 'export const k = process.env.STRIPE_KEY;'
 config '{"audit": false, "preset": "node", "checks": [{"name": "lint", "run": "true"}], "rules": {"packs": ["common", "node"], "envModule": ["src/settings/**"]}}'
 run rules-check && fail "a file outside rules.envModule passes"
 has "src/config/env.ts:1: scattered-env" "envModule replaces the default"
-mkdir -p "$repo/src/settings" && git -C "$repo" mv -f src/config/env.ts src/settings/env.ts 2>/dev/null || mv "$repo/src/config/env.ts" "$repo/src/settings/env.ts"
+mkdir -p "$repo/src/settings"
+mv "$repo/src/config/env.ts" "$repo/src/settings/env.ts"
 run rules-check || fail "a file under rules.envModule fails: $(out)"
 
 # Duplication and the rule of three (#736, spec 471 §4): the stub of jscpd is set up above.

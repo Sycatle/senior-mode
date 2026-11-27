@@ -186,6 +186,15 @@ State: **Available.**
   as `run` does. Then, from GitHub (two calls) and from this machine: the results of `senior-mode check` and, when
   `run` has written them, its outcomes in `.git/senior-mode/runs/`. Without them, the runs section says
   so. `senior-mode retro --since 14d` widens the period.
+- **Iteration.** The section `Iteration` (`iterationCost` in `--json`) says what the iteration rules cost, from
+  `.git/senior-mode/check-times.jsonl` (`ts`, `branch`, `check`, `seconds`, `status`; tier 2 lines) and the briefs
+  log `.git/senior-mode/briefs.jsonl`. Per ticket: the round trips (the failing runs of `check` on its branch before
+  the first passing one, a run being the stretch of lines in which no check name comes back), the checks that failed
+  in them and the time in `check` (a cached check counts zero). The three costliest checks by time each give their
+  runs, failures, share of the round trips, warns, cache hit rate and one recommendation: end its period (it only
+  warned), cache it (no cache hit), narrow its inputs (under half), else move it to tier 3. Per agent type:
+  delegations and rework, a rework being a call that repeats the session and the Goal of an earlier call of that
+  type. Without check times it says `no check history yet`.
 - **Failure causes.** Each ticket of the period that needed a second review round (a merged pull request
   with a review after a changes-requested one), an escalation, a stuck stop (a run that failed) or a revert (a
   reopened ticket, a merged pull request titled `Revert`) gets one label `cause:<x>`, `x` being

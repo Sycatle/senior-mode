@@ -77,13 +77,12 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `retro.repeat` | `3` | Tickets with the same `cause:<x>` label on the same paths or skill, in the period, that make [`retro`](commands.md#retro) open one improvement ticket aimed at that cause (a positive whole number) |
 | `bestOf.n` | `2` | Candidates [`serve`](autonomy.md#best-of-n) tries for a ticket whose pull request still has changes requested after its 2 fix rounds, that pull request being the first (1 to 3; `1` turns it off) |
 | `commands.coverage` | the preset's | Command that runs the tests and writes the report of `ratchet.coverage.report`: lcov from the runner (vitest, jest, c8) for node, `coverage xml` for python, `go test -coverprofile` converted to Cobertura with `gocover-cobertura` for go, `cargo llvm-cov --lcov` for rust. It is not a check, and a coverage command the project already has is kept |
-| `rules.packs` | set by `setup repo` | The [rule packs](#rule-packs) of the project, from its preset |
 | `ratchet.lint.command` | the preset's | Lint command whose output the [ratchet](#ratchet-for-legacy-code) reads, in a machine format: ESLint (`--format json`), ruff (`--output-format json`), golangci-lint (`--out-format json`), clippy (`--message-format json`), or a list of `{ "file", "rule", "line" }`; the presets of node, python, go and rust have one, the generic preset none |
 | `ratchet.coverage.report` | the preset's | Path of the lcov or Cobertura report the ratchet reads (produced by the tests; the ratchet does not run them). `setup repo` sets it with `commands.coverage` (node `coverage/lcov.info`, python and go `coverage.xml`, rust `lcov.info`) unless the project already has a coverage command |
 | `ratchet.a11y.report` | `test-results/a11y` | Directory of the axe reports of the journey E2E tests, one JSON file per journey, written by the helper `presets/node/e2e/axe.ts`; the ratchet reads it for `a11y` |
 | `ratchet.patchCoverage` | `80` | Percent of lines a new file must cover under the ratchet (0 to 100) |
 | `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |
-| `rules.packs` | the preset's | Rule packs the `code rules` step of `check` runs on the diff, see [Code rules](#code-rules) (`common` for the node, python, go and rust presets) |
+| `rules.packs` | the preset's | Rule packs the `code rules` step of `check` runs on the diff, see [Code rules](#code-rules); `common` (the rules of every language) is always added |
 | `rules.off` | `{}` | Rules turned off, by id: `{ "<id>": { "why", "paths" } }`; `why` is required, `paths` narrows the rule off to those globs |
 | `rules.shared` | `[]` | Globs of the folders that hold the shared code: the `duplication` rule names the first one as the place to extract a block that the diff copies a third time |
 | `rules.envModule` | the preset's | Globs of the files allowed to read the environment (`process.env`, `os.environ`, `os.Getenv`, `std::env::var`): the `scattered-env` rule fails on a read anywhere else; the preset's default is `**/config.*`, `**/config/**`, `**/env.*` (and `**/settings.py` for python) plus the build configs `**/*.config.*` |
@@ -697,13 +696,13 @@ line or the line above, the issue must exist (`suppression: #<n> not found`; whe
 not verified` is a warning), a focused test (`.only`) fails whatever the comment says, and `senior-mode: allow <rule-id> --
 #<issue>: <reason>` lifts that rule's finding on the next line (the lifted finding is listed).
 
-The `perf` pack (opt-in: `"rules": { "packs": ["common", "node", "perf"] }`) holds `io-in-loop`: a database, HTTP or file call
+The `perf` pack (opt-in: `"rules": { "packs": ["node", "perf"] }`) holds `io-in-loop`: a database, HTTP or file call
 added inside a loop body (`for`, `while`, `forEach`, `map`, a list comprehension, a Go or Rust loop) fails with the fix "batch it or
 use a set-based query", naming file and line. The call outside a loop, a loop that only computes, a migration, a seed, a fixture
 and a test file are left alone, and `-- #<issue>: <reason>` on the call lifts the line. The loop is read from the brackets
 (or the indentation in Python), a heuristic: `senior-mode: allow io-in-loop -- #<issue>: <reason>` on the line above is the way out.
 
-The `duplication` pack (opt-in, `"rules": { "packs": ["common", "node", "duplication"] }`, because it needs jscpd on the machine) runs `duplication` (the tool [jscpd](https://github.com/kucherenko/jscpd), 10 lines or 50 tokens, the
+The `duplication` pack (opt-in, `"rules": { "packs": ["node", "duplication"] }`, because it needs jscpd on the machine) runs `duplication` (the tool [jscpd](https://github.com/kucherenko/jscpd), 10 lines or 50 tokens, the
 rule of three): a block the diff adds with one existing copy is a warning, `duplication: 2nd copy of <file>:<line>`; with two or more
 copies it fails, naming both places and the `rules.shared` folder to extract into. A duplicate that existed before the diff is never
 reported. Without jscpd on the machine the step fails with `tool missing: jscpd`, `npm install -g jscpd` and the `rules.off.duplication`

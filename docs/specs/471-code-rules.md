@@ -83,7 +83,7 @@ A rule is declared once in the plugin, in `plugins/senior-mode/rules/<pack>.json
   `bin/lib/rules.sh` turns into `file:line rule-id: message` lines). Linter rules (types, complexity,
   a11y lint) are not tool rules: they are findings of the project's lint command, counted by the #420
   ratchet; the pack only proposes their configuration (§4).
-- A preset names its packs (`"rules": { "packs": ["common", "node"] }`). `common` holds the
+- A preset names its packs (`"rules": { "packs": ["node"] }`, `common` always added). `common` holds the
   language-independent rules (TODO without issue, suppression format).
 - The project config may only narrow or turn off, with a reason, in `.claude/senior-mode.json` (a
   protected path, so the change goes to a human):

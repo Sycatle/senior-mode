@@ -144,6 +144,28 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 (`protected`, `secrets`, `envGuard.forbidden`, `review.sections`, `docs.extra`, `github.protection`, `slot`, `slotDown`, `slotUp`)
 print `[]` (an empty line for `github.protection`, `slot`, `slotDown` and `slotUp`) when absent (`github.requiredChecks` prints `true`); a key the plugin does not know is an error.
 
+### Multi-repo keys
+
+The keys of [products of several repositories and organizations](multi-repo.md), all optional. A repository that sets none
+behaves as before. Only `project.home` is read today (its row is in the table above); the others are **planned**, with the
+ticket that adds each, and the plugin does not know them yet: `config get` and `config validate` refuse them until then.
+
+| Key | Default | Meaning | Where | Ticket |
+|---|---|---|---|---|
+| `serve.scope` | `repo` | `project`: one `serve` serves every repository of the Project's served set | repository, local | planned, #402 |
+| `serve.include` | `["*"]` | Globs of `owner/name` that bound the served set | repository, local | planned, #451 |
+| `serve.exclude` | `[]` | Globs of `owner/name` left out of the served set, silently | repository, local | planned, #451 |
+| `serve.repos` | `{}` | Map of `owner/name` to the path of a clone on this machine; a missing clone is made with `gh repo clone` | local only | planned, #451 |
+| `serve.repoOrder` | `[]` | Repositories that win a tie in the queue, first to last; the unlisted come last | repository, organization | planned, #455 |
+| `autonomy.repoParallel` | `0` | Cap on the sessions of one repository at once, `0` for none beyond `autonomy.parallel` | repository | planned, #455 |
+| `epics.available` | `merged` | Default `Available:` of a cross-repo ticket: `merged` (closed) or `released` (closed and contained in a published release) | repository, organization | planned, #399 |
+| `org.inherit` | `true` | `false` turns off the read of the organization layer | repository, local | planned, #400 |
+| `org.repo` | `.github` | Repository of the owner that holds the organization layer | repository, local | planned, #400 |
+| `org.path` | `senior-mode` | Directory of that repository that holds it; selects one of several product directories | repository, local | planned, #400 |
+| `org.ref` | default branch | Branch, tag or commit of the organization layer to read, to pin it | repository, local | planned, #400 |
+| `org.allowExec` | `[]` | Keys that run a command (`commands`, `checks`, `agent.command`, `slot`, `slotUp`, `slotDown`, `notify.webhook`) accepted from the organization layer | repository, local | planned, #400 |
+| `project.home` | written by `setup github --project` | The repository that holds the Project's duties (digest, Ready-by-rule pass); every member names the same one | repository | available |
+
 ## Validation and the JSON schema
 
 The file has a JSON schema, `plugins/senior-mode/schema/senior-mode.schema.json`. `setup repo` writes

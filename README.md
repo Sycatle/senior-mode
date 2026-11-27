@@ -132,6 +132,7 @@ both repositories (superpowers v7.0.2, mattpocock/skills v1.3.2).
 
 - [User guide](docs/guide/README.md): install, a typical day, commands, skills, agents,
   guardrails, configuration, FAQ.
+- [Products of several repositories and organizations](docs/guide/multi-repo.md).
 - [Design spec](docs/specs/0001-senior-mode.md) and [decisions](docs/adr/).
 - [Changelog](plugins/senior-mode/CHANGELOG.md) and the [roadmap by milestone](https://github.com/Sycatle/senior-mode/milestones).
 

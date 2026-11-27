@@ -40,7 +40,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `envGuard.forbidden` | none | Strings, or `/regex/` patterns, that must never appear on an agent machine; turns on the `env guard` check |
 | `performance.queries.helper` | set by `setup repo` | Path of the [query-count helper](#query-count-helper) of the project's ORM; a path you set is kept |
 | `performance.migrations.linter`, `performance.migrations.paths` | none, `django-migration-linter` for Django; SQL or Django migrations | The linter `check` runs on [the migrations a branch adds or changes](#checks), `squawk` or `django-migration-linter`, and the globs that say which files are migrations |
-| `performance.bench.command` | none | The benchmark command: a [hot path](#checks) of a spec must name a benchmark, and the lookup of `check` reports `bench: not measured` without it; it writes a JSON object of benchmark name to median to the file `{out}` stands for, or prints it |
+| `performance.bench.command`, `performance.bench.threshold` | none, `10` | The benchmark command: a [hot path](#checks) of a spec must name a benchmark, and the lookup of `check` reports `bench: not measured` without it; it writes a JSON object of benchmark name to median to the file `{out}` stands for, or prints it, and the percent a benchmark may be slower than on the base before [tier 3](#checks) fails it |
 | `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks); an optional `"tier"` (2, the default, or 3) says [when it runs](#checks); an optional `"fix"` is the command that fixes what the check reports, printed as `fix: <command>` under a failure; an optional `"inputs"` (globs) turns on the [cache](#checks) of its successes |
 | `check.edit` | none | Tier 1 fixers, such as `["pnpm prettier --write {file}", "pnpm eslint --fix {file}"]`: after each `Edit`, `Write` or `MultiEdit`, the `edit-fix` hook runs them on the edited file, `{file}` standing for its quoted path, see [Checks](#checks) |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, adding `.claude/senior-mode.json` and `.claude/senior-mode/**` (the levers: hooks, roles, overrides) at the end when it lacks them (an empty list stays empty), so what controls customization is code the owner reviewed; `senior-mode protected` and the reviewer read it, and `setup github` maps it to [CODEOWNERS](autonomy.md#code-owners) |
@@ -404,6 +404,14 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   benchmark, when the benchmark's name appears in no tracked file that is not Markdown. With no `performance.bench.command` the
   step says `bench: not measured` and passes; a spec with no such section is never checked. The presets name the tool of the
   command: `vitest bench` (node), `pytest-benchmark` (python), `criterion` (rust), `go test -bench` with `benchstat` (go).
+- In the heavy run (tier 3: `senior-mode check --tier 3`, `--all`, and the run `publish` starts after the push), when the diff falls
+  under the path of a hot path, the `perf` step runs `performance.bench.command` twice on the merge base and twice on the head, in
+  the same slot and interleaved, and compares each benchmark the touched hot paths name. The command writes a JSON object of
+  benchmark name to median to the file `{out}` stands for, or prints it. A benchmark whose mean median is slower on the head by
+  more than `performance.bench.threshold` percent (default 10) fails the heavy status, naming the benchmark, both medians and the
+  change. Two runs of one commit that differ by more than the threshold make the result `unstable`: the step fails, the pull
+  request gets `needs-human` and an issue is filed for the benchmark, it is never reported as a pass. Without
+  `performance.bench.command` it says `bench: not measured`.
 - On a push the `pre-push` hook runs `senior-mode check --changed` ([changed checks](#changed-checks)), which gives the
   checks the paths the branch changes against the merge base, in a file named by `SENIOR_MODE_CHANGED_FILES`
   (unset in a full run). A check that can narrow itself to them does; the others ignore it. The hook that `setup repo`

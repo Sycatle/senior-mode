@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for the performance rules of `senior-mode check` (#472): a foreign key added without an index (#744), the linter of the migrations (#747), the benchmark of a hot path (#758). Offline: each case is a
+# Tests for the performance rules of `senior-mode check` (#472): a foreign key added without an index (#744), the linter of the migrations (#747), the benchmark of a hot path (#758), the benchmarks of tier 3 (#761). Offline: each case is a
 # branch off main in a fixture repository.
 set -u
 cli=$(cd "$(dirname "$0")/.." && pwd)/senior-mode
@@ -10,6 +10,8 @@ failures=0
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 git_() { git -C "$repo" -c user.name=t -c user.email=t@t "$@"; }
 run() { (cd "$repo" && "$cli" check) >"$work/out" 2>&1; }
+run3() { (cd "$repo" && "$cli" check --tier 3) >"$work/out" 2>&1; }
+export XDG_DATA_HOME="$work/xdg"
 
 repo="$work/repo"
 git init -q -b main "$repo"
@@ -39,6 +41,7 @@ n=0
 # branch <file> <content>: a branch off main whose only commit appends the content to the file.
 branch() {
   n=$((n + 1))
+  git_ checkout -q -- .claude/senior-mode.json
   git_ checkout -q main
   git_ checkout -q -b "t$n"
   mkdir -p "$(dirname "$repo/$1")"
@@ -254,6 +257,80 @@ grep -q '^## Hot paths' "$tpl/skills/spec/template.md" || fail "the spec templat
 for pair in node:"vitest bench" python:pytest-benchmark rust:criterion go:"go test -bench with benchstat"; do
   [ "$(jq -r '.bench.tool' "$tpl/presets/${pair%%:*}/preset.json")" = "${pair#*:}" ] || fail "preset ${pair%%:*} does not name ${pair#*:}"
 done
+
+# Benchmarks of tier 3 (#761): the command prints the medians kept in bench.json of each commit.
+git_ checkout -q main
+echo '{"invoiceTotal": 100}' >"$repo/bench.json"
+git_ add -A
+git_ commit -q -m "chore: bench"
+cat >"$work/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >>"$CALLS"
+case $* in *"/pulls"*) echo 17 ;; esac
+exit 0
+STUB
+chmod +x "$work/bin/gh"
+cat >"$work/flaky.sh" <<'STUB'
+#!/usr/bin/env bash
+n=$(($(cat "$CALLS.n" 2>/dev/null || echo 0) + 1))
+echo "$n" >"$CALLS.n"
+case $n in 1 | 2) echo '{"invoiceTotal": 100}' ;; *) echo '{"invoiceTotal": 140}' ;; esac
+STUB
+cat_config='{"audit":false,"checks":[{"name":"lint","run":"true"}],"performance":{"bench":{"command":"cat bench.json"}}}'
+# bench <median>: a branch that touches the hot path and puts the median in bench.json.
+bench() {
+  branch src/billing/total.ts "export const v$n = $1"
+  echo "{\"invoiceTotal\": $1}" >"$repo/bench.json"
+  git_ add -A
+  git_ commit -q --allow-empty -m "perf: change $n"
+  config "$cat_config"
+}
+
+# A benchmark more than the threshold slower than on the merge base fails naming benchmark, both medians and the change.
+bench 130
+run3 && fail "a 30% regression passes: $(cat "$work/out")"
+grep -q "FAIL  perf" "$work/out" || fail "perf not reported as failed: $(cat "$work/out")"
+grep -q "benchmark invoiceTotal is slower: median 100 on the base, 130 on the head (+30.0%, more than 10%)" "$work/out" || fail "benchmark, medians and change not named: $(cat "$work/out")"
+
+# Within the threshold it passes; so does a speed-up.
+bench 105
+run3 || fail "a 5% change fails: $(cat "$work/out")"
+grep -q "ok    perf" "$work/out" || fail "the perf step did not run in tier 3: $(cat "$work/out")"
+bench 60
+run3 || fail "a speed-up fails: $(cat "$work/out")"
+
+# The threshold is performance.bench.threshold.
+bench 105
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}],"performance":{"bench":{"command":"cat bench.json","threshold":2}}}'
+run3 && fail "a 5% change passes a 2% threshold: $(cat "$work/out")"
+
+# Tier 2 does not run it.
+run || fail "check fails on a benchmark branch: $(cat "$work/out")"
+grep -q "perf" "$work/out" && fail "the perf step runs in tier 2: $(cat "$work/out")"
+
+# Two runs of one commit that differ by more than the threshold are unstable: needs-human, an issue, never a pass.
+git_ remote add origin https://github.com/acme/fixture.git
+bench 100
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}],"performance":{"bench":{"command":"bash '"$work"'/flaky.sh"}}}'
+rm -f "$CALLS.n"
+run3 && fail "an unstable benchmark passes: $(cat "$work/out")"
+grep -q "benchmark invoiceTotal is unstable" "$work/out" || fail "unstable not reported: $(cat "$work/out")"
+grep -q "repos/acme/fixture/issues/17/labels -f labels\[\]=needs-human" "$CALLS" || fail "the pull request did not get needs-human: $(cat "$CALLS")"
+grep -q "repos/acme/fixture/issues -f title=perf: benchmark invoiceTotal is unstable" "$CALLS" || fail "no issue filed for the benchmark: $(cat "$CALLS")"
+git_ remote remove origin
+
+# No performance.bench.command: bench: not measured.
+bench 130
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
+run3 || fail "tier 3 with no bench command fails: $(cat "$work/out")"
+grep -q "bench: not measured" "$work/out" || fail "bench: not measured not reported in tier 3: $(cat "$work/out")"
+
+# A diff outside the hot paths runs no benchmark.
+branch README.md 'five'
+config "$cat_config"
+run3 || fail "tier 3 on a diff outside the hot paths fails: $(cat "$work/out")"
+grep -q "perf" "$work/out" && fail "the perf step runs outside the hot paths: $(cat "$work/out")"
+printf '%s\n' "$base_config" >"$repo/.claude/senior-mode.json"
 
 [ "$failures" -eq 0 ] && echo "perf: all cases pass"
 exit "$failures"

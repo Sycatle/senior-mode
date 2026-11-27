@@ -471,7 +471,8 @@ case_daemon() {
 
 # --- the runner ---
 
-fault_names=$(grep -rhoE 'fault_point [a-z-]+' "$libs" | sed 's/fault_point //' | sort -u)
+# demo.sh is not on the serve path: test-demo.sh covers its fault point.
+fault_names=$(grep -rhoE --exclude=demo.sh 'fault_point [a-z-]+' "$libs" | sed 's/fault_point //' | sort -u)
 for p in $fault_names; do
   [[ " $sweep " == *" $p "* ]] || echo "FAIL: the fault point $p of the code is not in the sweep"
 done >"$work/res/names"

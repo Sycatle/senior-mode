@@ -363,6 +363,7 @@
             }
           }
         },
+        "shared": { "type": "array", "items": { "type": "string" }, "description": "Globs of the folders that hold the shared code; the first one is where `check` says to extract a third copy of a block." },
         "envModule": { "type": "array", "items": { "type": "string" }, "description": "Globs of the files allowed to read the environment (the scattered-env rule); the preset's when absent." }
       }
     },

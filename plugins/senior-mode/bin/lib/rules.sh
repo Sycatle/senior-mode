@@ -170,8 +170,8 @@ rules_jscpd() {
     | map(select(.a | isadd) | select((.b | isadd | not) or ((.b | loc) < (.a | loc))))
     | group_by(.a | loc) | .[]
     | {a: .[0].a, o: ([.[].b | loc] | unique)}
-    | if (.o | length) == 1 then "warn\t\(.a.f)\t\(.a.s)\tduplication: 2nd copy of \(.o[0])"
-      else "fail\t\(.a.f)\t\(.a.s)\tduplication: copy of a block already at \(.o | join(" and ")); extract it into \(if $shared == "" then "a shared folder (set rules.shared)" else $shared end)" end'
+    | if (.o | length) == 1 then "warn\t\(.a.f)\t\(.a.s)\t2nd copy of \(.o[0])"
+      else "fail\t\(.a.f)\t\(.a.s)\tcopy of a block already at \(.o | join(" and ")); extract it into \(if $shared == "" then "a shared folder (set rules.shared)" else $shared end)" end'
 }
 
 # The directory of the rule packs ($SENIOR_MODE_RULES_DIR for the tests).
@@ -295,8 +295,10 @@ rules_check() {
       done <<<"$out"
     done
   done
-  # The tool rules run once, on the tree, when the diff gives them a file to read.
-  if [ "${#files[@]}" -gt 0 ]; then
+  # The tool rules run once, on the tree, when the diff gives them a file to read (not prose or data).
+  local -a codefiles=()
+  for f in ${files[@]+"${files[@]}"}; do [[ $RULES_SKIP_EXT == *" $(rules_ext "$f") "* ]] || codefiles+=("$f"); done
+  if [ "${#codefiles[@]}" -gt 0 ]; then
     i=0
     for r in ${rules[@]+"${rules[@]}"}; do
       IFS="$US" read -r id kind tier _ _ _ _ fix _ <<<"${recs[i]}"
@@ -323,13 +325,13 @@ rules_check() {
       shared=$(jq -r '(.shared // [])[0] // ""' <<<"$cfg")
       shared=${shared%/\*\*}
       shared=${shared%/\*}
-      addedjson=$(for f in "${files[@]}"; do printf '%s\t%s\n' "$f" "${added[$f]}"; done |
+      addedjson=$(for f in "${codefiles[@]}"; do printf '%s\t%s\n' "$f" "${added[$f]}"; done |
         jq -Rn '[inputs | split("\t") | {key: .[0], value: (.[1] | split(" ") | map(select(. != "") | tonumber))}] | from_entries')
       while IFS=$'\t' read -r sev tf tl tm; do
         [ -n "$sev" ] || continue
         if [ -n "${off[$id]:-}" ] && rules_under "$tf" "${offpaths[$id]}"; then continue; fi
         if [ "$sev" = warn ]; then
-          warns+="warning: $tf:$tl: $tm (fix: $fix)"$'\n'
+          warns+="warning: $tf:$tl: $id: $tm (fix: $fix)"$'\n'
         else
           findings+="$tf:$tl: $id: $tm (fix: $fix)"$'\n'
         fi

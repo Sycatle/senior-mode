@@ -114,6 +114,27 @@ run check && fail "check passes with a rule finding"
 has "FAIL  code rules" "check step"
 has "src/a.ts:3 code rules" "check finding line"
 
+# jscpd stubbed (the common pack runs it) by a script that prints its JSON report.
+mkdir -p "$work/jbin"
+cat >"$work/jbin/jscpd" <<'SH'
+#!/usr/bin/env bash
+cat "$JSCPD_REPORT"
+SH
+chmod +x "$work/jbin/jscpd"
+export JSCPD_REPORT=$work/jscpd.json
+# clone <file> <start> <end> <file> <start> <end>...: a report of the pairs given three numbers by two.
+clone() {
+  local items=()
+  while [ $# -ge 6 ]; do
+    items+=("$(jq -nc --arg a "$1" --argjson as "$2" --argjson ae "$3" --arg b "$4" --argjson bs "$5" --argjson be "$6" \
+      '{format: "typescript", lines: 12, firstFile: {name: $a, start: $as, end: $ae}, secondFile: {name: $b, start: $bs, end: $be}}')")
+    shift 6
+  done
+  printf '%s\n' "${items[@]}" | jq -sc '{duplicates: .}' >"$JSCPD_REPORT"
+}
+echo '{"duplicates": []}' >"$JSCPD_REPORT"
+export PATH=$work/jbin:$PATH
+
 # Suppressions (#722, spec 471 §2): the `suppression` entry of the common pack, with a gh stub for the issues.
 mkdir -p "$work/bin"
 cat >"$work/bin/gh" <<'SH'
@@ -250,5 +271,40 @@ run rules-check && fail "a file outside rules.envModule passes"
 has "src/config/env.ts:1: scattered-env" "envModule replaces the default"
 mkdir -p "$repo/src/settings" && git -C "$repo" mv -f src/config/env.ts src/settings/env.ts 2>/dev/null || mv "$repo/src/config/env.ts" "$repo/src/settings/env.ts"
 run rules-check || fail "a file under rules.envModule fails: $(out)"
+
+# Duplication and the rule of three (#736, spec 471 §4): the stub of jscpd is set up above.
+dup() { # <config extras>: a 12-line new file src/b.ts, the duplication pack on
+  put node src/b.ts "$(seq 1 12 | sed 's/^/const v/; s/$/ = 1;/')"
+  config '{"audit": false, "preset": "node", "checks": [{"name": "lint", "run": "true"}], "rules": {"packs": ["common", "node", "duplication"]'"${1:+, $1}"'}}'
+}
+mkdir -p "$repo/src/lib" && git -C "$repo" checkout -q main
+seq 1 12 | sed 's/^/const w/; s/$/ = 1;/' >"$repo/src/a.ts"
+seq 1 12 | sed 's/^/const w/; s/$/ = 1;/' >"$repo/src/c.ts"
+g add -A && g commit -q -m "chore: two old files"
+dup ""
+clone src/a.ts 1 12 src/b.ts 1 12
+run rules-check || fail "a second copy fails: $(out)"
+has "warning: src/b.ts:1: duplication: 2nd copy of src/a.ts:1" "second copy warns"
+
+dup '"shared": ["src/lib/**"]'
+clone src/a.ts 1 12 src/b.ts 1 12 src/c.ts 1 12 src/b.ts 1 12 src/a.ts 1 12 src/c.ts 1 12
+run rules-check && fail "a third copy passes"
+has "src/b.ts:1: duplication: copy of a block already at src/a.ts:1 and src/c.ts:1; extract it into src/lib" "third copy fails naming both places and the shared folder"
+
+dup ""
+clone src/a.ts 1 12 src/c.ts 1 12
+run rules-check || fail "a duplicate that existed before the diff fails: $(out)"
+lacks "duplication" "an old duplicate is not reported"
+
+dup ""
+clone src/b.ts 1 6 src/b.ts 7 12
+run rules-check || fail "a clone inside the new file alone fails: $(out)"
+
+# Not installed: tool missing with the install command and the rules.off key.
+dup ""
+PATH=/usr/bin:/bin run rules-check && fail "a missing jscpd passes"
+has "tool missing: jscpd" "missing tool"
+has "npm install -g jscpd" "install command"
+has "rules.off.duplication" "off key"
 
 [ "$failures" -eq 0 ] && echo "ok: rules" || exit 1

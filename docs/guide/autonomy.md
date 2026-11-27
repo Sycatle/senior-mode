@@ -54,6 +54,15 @@ protection, `needs-human`, external-pull-request and protected-zone bounds stay.
 A status published from your machine is only as trustworthy as that machine: it names the commit
 it verified ([ADR 0006](../adr/0006-local-ci.md)). Teams that need independent CI use `actions` mode.
 
+### The preview comment of a UI pull request
+
+`publish` also looks at what the pull request changes. When it is a UI pull request (its diff touches a glob of
+`ui.paths`, or its ticket is labelled `ui`), it keeps one comment on it, found by `<!-- senior-mode:preview -->` and
+edited in place after each push: `Preview: <url>` or `No preview: <reason>`. The URL comes from `preview.url`, else
+from the `environment_url` of a successful GitHub deployment status on the head commit (polled for
+`preview.waitSeconds`), and is shown only after one `curl` of it answers 2xx or 3xx. A pull request that is not UI
+gets no comment. It is information, never a gate.
+
 ## The ruleset
 
 `setup` creates a repository ruleset named `senior-mode` on the default branch. It:

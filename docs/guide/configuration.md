@@ -74,8 +74,10 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `maintenance.debt` | `false` | Set by `setup repo --adopt --debt`: `serve` files the next ranked [debt ticket](#debt-tickets) of a legacy project (`adopt.kind`) when a gardening ticket closes, within `maintenance.maxOpen` |
 | `retro.repeat` | `3` | Tickets with the same `cause:<x>` label on the same paths or skill, in the period, that make [`retro`](commands.md#retro) open one improvement ticket aimed at that cause (a positive whole number) |
 | `bestOf.n` | `2` | Candidates [`serve`](autonomy.md#best-of-n) tries for a ticket whose pull request still has changes requested after its 2 fix rounds, that pull request being the first (1 to 3; `1` turns it off) |
+| `commands.coverage` | the preset's | Command that runs the tests and writes the report of `ratchet.coverage.report`: lcov from the runner (vitest, jest, c8) for node, `coverage xml` for python, `go test -coverprofile` converted to Cobertura with `gocover-cobertura` for go, `cargo llvm-cov --lcov` for rust. It is not a check, and a coverage command the project already has is kept |
+| `rules.packs` | set by `setup repo` | The [rule packs](#rule-packs) of the project, from its preset |
 | `ratchet.lint.command` | the preset's | Lint command whose output the [ratchet](#ratchet-for-legacy-code) reads, in a machine format: ESLint (`--format json`), ruff (`--output-format json`), golangci-lint (`--out-format json`), clippy (`--message-format json`), or a list of `{ "file", "rule", "line" }`; the presets of node, python, go and rust have one, the generic preset none |
-| `ratchet.coverage.report` | none | Path of the lcov or Cobertura report the ratchet reads (produced by the tests; the ratchet does not run them) |
+| `ratchet.coverage.report` | the preset's | Path of the lcov or Cobertura report the ratchet reads (produced by the tests; the ratchet does not run them). `setup repo` sets it with `commands.coverage` (node `coverage/lcov.info`, python and go `coverage.xml`, rust `lcov.info`) unless the project already has a coverage command |
 | `ratchet.a11y.report` | `test-results/a11y` | Directory of the axe reports of the journey E2E tests, one JSON file per journey, written by the helper `presets/node/e2e/axe.ts`; the ratchet reads it for `a11y` |
 | `ratchet.patchCoverage` | `80` | Percent of lines a new file must cover under the ratchet (0 to 100) |
 | `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |
@@ -788,3 +790,18 @@ out:
 
 The job also needs GitHub Actions to be allowed to open pull requests (Settings > Actions > General)
 unless the token secret is stored. `setup github --ci actions` warns when neither is the case.
+
+## Rule packs
+
+Each preset proposes a quality pack: linter, typing and format rules, and `setup repo` names it under `rules.packs`.
+It lists each rule as `covered by your config` or `proposed`, and `setup repo --adopt` carries the same list under
+"Quality pack" in the adoption pull request. A config the project has is never changed.
+
+| Preset | Rules of the pack |
+|---|---|
+| python | `mypy strict` (or pyright `strict`); `ruff` with `BLE`, `T20`, `C90`, `PLR`; `ruff format` |
+| go | `go vet`; `staticcheck`; `errcheck`, `gocognit` and `funlen` of golangci-lint; `gofmt` |
+| rust | `clippy -D warnings` with `cognitive_complexity` and `too_many_lines`; `rustfmt` |
+
+setup writes no config file of these tools: a config file would make the detection declare a tool the project has not
+installed.

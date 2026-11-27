@@ -1,6 +1,7 @@
 {
   "commands": ["lint", "format", "test", "build"],
   "coverage": { "report": "lcov.info" },
+  "rules": { "packs": ["rust"] },
   "protected": [
     "**/migrations/**",
     "**/auth/**",

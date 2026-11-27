@@ -1,6 +1,7 @@
 {
   "commands": ["lint", "test", "build"],
   "coverage": { "report": "coverage.xml" },
+  "rules": { "packs": ["go"] },
   "protected": [
     "**/migrations/**",
     "**/auth/**",

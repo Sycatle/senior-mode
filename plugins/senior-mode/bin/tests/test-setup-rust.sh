@@ -107,5 +107,52 @@ mkdir -p "$d/.claude" && echo '{"commands": {"coverage": "make cov"}}' >"$d/.cla
 setup "$d"
 [ "$(cfg "$d" .commands.coverage)" = "make cov" ] || fail "an existing coverage command was replaced: $(cfg "$d" .commands.coverage)"
 
+# `setup repo --adopt` on an existing project, against a local bare origin and a stubbed gh: the body of the pull
+# request goes to $work/body, the files the pull request changes to $work/changed (#733).
+adopt_report() { # dir
+  local d=$1 o g
+  o="$work/$(basename "$1")/github.com/acme/app.git"
+  g=(git -C "$1" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@t)
+  mkdir -p "$work/stub"
+  cat >"$work/stub/gh" <<'STUB'
+#!/usr/bin/env bash
+jqf="" prev="" body=""
+for a in "$@"; do [ "$prev" = --jq ] && jqf=$a; [ "$prev" = --body ] && printf '%s\n' "$a" >"$BODY"; prev=$a; done
+respond() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
+case "$*" in
+  "pr list"*) echo '[]' | respond ;;
+  "pr create"*) echo "https://github.com/acme/app/pull/12" ;;
+  "api repos/acme/app --jq"*) echo '{"allow_rebase_merge": true, "allow_squash_merge": true, "allow_merge_commit": false, "default_branch": "main"}' | respond ;;
+  "label list"*) echo '[]' | respond ;;
+  *) exit 1 ;;
+esac
+STUB
+  chmod +x "$work/stub/gh"
+  git init -q --bare -b main "$o"
+  git -C "$d" remote add origin "$o"
+  "${g[@]}" add -A && "${g[@]}" commit -q -m "chore: start" && "${g[@]}" push -q origin main
+  (cd "$d" && PATH="$work/stub:$PATH" BODY="$work/body" SENIOR_MODE_RETRY_DELAY=0 XDG_DATA_HOME="$work/xdg" "$cli" setup repo --adopt) >"$work/out" 2>"$work/err" ||
+    fail "adopt failed: $(cat "$work/err")"
+  git -C "$o" diff --name-only main docs/adopt-senior-mode >"$work/changed" 2>/dev/null || : >"$work/changed"
+}
+
+# The rust pack (#733): listed, never written; the packs are named in the config.
+d=$(project packnew Cargo.toml)
+setup "$d"
+for want in "rules: clippy -D warnings: covered by your config" "rules: cognitive_complexity: proposed" "rules: too_many_lines: proposed" "rules: rustfmt: covered by your config"; do
+  grep -qF "$want" "$work/out" || fail "pack line '$want' missing: $(cat "$work/out")"
+done
+[ "$(cfg "$d" '.rules.packs | join(",")')" = rust ] || fail "packs not named: $(cfg "$d" .rules)"
+d=$(project packold Cargo.toml main.rs)
+printf '[package]\nname = "app"\n\n[lints.clippy]\ncognitive_complexity = "warn"\n' >"$d/Cargo.toml"
+cp "$d/Cargo.toml" "$work/cargo.before"
+adopt_report "$d"
+# shellcheck disable=SC2016 # the backticks of the markdown report
+for want in '`cognitive_complexity`: covered by your config' '`too_many_lines`: proposed' '`clippy -D warnings`: covered by your config' '`rustfmt`: covered by your config'; do
+  grep -qF -- "$want" "$work/body" || fail "adoption report without '$want': $(cat "$work/body")"
+done
+cmp -s "$work/cargo.before" "$d/Cargo.toml" || fail "adopt changed Cargo.toml"
+grep -qx "Cargo.toml\|clippy.toml" "$work/changed" && fail "the adoption pull request changes a project file: $(cat "$work/changed")"
+
 [ "$failures" -eq 0 ] && echo "setup-rust: all cases pass"
 exit "$failures"

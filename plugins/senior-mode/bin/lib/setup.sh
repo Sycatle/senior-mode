@@ -928,6 +928,69 @@ coverage_command() { # root preset
   return 0
 }
 
+# The quality pack of a preset (spec 471 §4, #733): linter, typing and format rules, each listed `covered by your config`
+# or `proposed`. Setup writes no config file of the tools for python, go and rust (a config file would make the detection
+# declare a tool the project has not installed); it lists, and a config the project has is never changed.
+# The text of the tool config the project has: the files given that exist, and the manifest $2 ("" for none) when
+# it has a table matching $3.
+pack_cfg() { # root manifest table-ere file...
+  local root=$1 man=$2 tbl=$3 f out=""
+  shift 3
+  for f; do [ ! -f "$root/$f" ] || out+=$(cat "$root/$f")$'\n'; done
+  [ -z "$man" ] || ! grep -qE "^\[($tbl)" "$root/$man" 2>/dev/null || out+=$(cat "$root/$man")$'\n'
+  printf '%s' "$out"
+}
+
+# One row `id<TAB>status` per rule of the pack of the preset $2 of the project $1; $3 the commands of the project as JSON.
+pack_rows() { # root preset commands
+  local root=$1 cmds=$3 text id
+  pack_row() { # id ere: covered when the text of the config matches
+    if grep -qE -- "$2" <<<"$text"; then printf '%s\tcovered by your config\n' "$1"; else printf '%s\tproposed\n' "$1"; fi
+  }
+  pack_cmd_row() { # id command ere: covered when the command of the project matches
+    if grep -qE -- "$3" < <(jq -r --arg k "$2" '.[$k] // ""' <<<"$cmds"); then printf '%s\tcovered by your config\n' "$1"; else printf '%s\tproposed\n' "$1"; fi
+  }
+  case $2 in
+    python)
+      text=$(pack_cfg "$root" pyproject.toml 'tool\.mypy|tool\.pyright' mypy.ini .mypy.ini pyrightconfig.json)
+      pack_row "mypy strict" 'strict[[:space:]]*(=|":)[[:space:]]*(true|True)|typeCheckingMode"?[[:space:]]*[:=][[:space:]]*"strict"'
+      text=$(pack_cfg "$root" pyproject.toml 'tool\.ruff' ruff.toml .ruff.toml)
+      for id in BLE T20 C90 PLR; do pack_row "ruff $id" "\"$id[0-9]*\"|\"ALL\""; done
+      pack_cmd_row "ruff format" format 'ruff format|black'
+      ;;
+    go)
+      pack_cmd_row "go vet" lint 'go vet'
+      text=$(pack_cfg "$root" "" "" .golangci.yml .golangci.yaml .golangci.toml .golangci.json)
+      for id in staticcheck errcheck gocognit funlen; do pack_row "$id" "$id"; done
+      pack_row gofmt 'gofmt|gofumpt|goimports'
+      ;;
+    rust)
+      pack_cmd_row "clippy -D warnings" lint '-D warnings'
+      text=$(pack_cfg "$root" Cargo.toml '(workspace\.)?lints' clippy.toml .clippy.toml)
+      for id in cognitive_complexity too_many_lines; do pack_row "$id" "$id"; done
+      pack_cmd_row rustfmt format 'fmt'
+      ;;
+  esac
+  return 0
+}
+
+# What `setup repo` does with the pack of the preset $3 (its file $4): names the packs in `rules.packs` of the config
+# $2 and prints one `rules: <id>: <status>` line per rule. $1 the project, $5 its commands.
+pack_apply() { # root config-file preset-name preset-json commands
+  local id st out=0
+  jq -e '(.rules.packs // []) | length > 0' "$4" >/dev/null || return 0
+  json_update "$2" '.rules.packs = ((.rules.packs // []) + (($p[0].rules.packs // []) - (.rules.packs // [])))' --slurpfile p "$4" || out=$?
+  [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
+  while IFS=$'\t' read -r id st; do echo "rules: $id: $st"; done < <(pack_rows "$1" "$3" "$5")
+}
+
+# The pack as a list of the adoption report: the rules of the preset $2 of the project $1.
+pack_report() { # root preset commands
+  local rows id st
+  rows=$(pack_rows "$1" "$2" "$3")
+  [ -z "$rows" ] || { echo; echo "## Quality pack"; echo; while IFS=$'\t' read -r id st; do echo "- \`$id\`: $st"; done <<<"$rows"; }
+}
+
 # The documents and checks of a project (spec 0001 §12, §14, #12), idempotent; whatever the project
 # already has is extended, never replaced. The preset is the stored one (typescript, its former name,
 # becomes node), else node when a package.json exists, else the one of its manifest (go, rust, python),
@@ -989,6 +1052,7 @@ setup_repo() {
       echo "config: would write"
       workflow_merged "$cur" | jq '{workflow, adopt, ci}' | jq 'with_entries(select(.value != null))'
       [ "$cur" = "$file" ] || rm -f "$cur"
+      pack_report "$root" "$pname" "$cmdmap"
       if [ "$WF_ADOPT" = legacy ]; then
         echo
         survey_apply "$root" "$root" false
@@ -998,7 +1062,7 @@ setup_repo() {
       return 0
     fi
     [ "$cur" = "$file" ] || rm -f "$cur"
-    workflow_adopt_pr "$root" "$(workflow_report)" ${fwd[@]+"${fwd[@]}"}
+    workflow_adopt_pr "$root" "$(workflow_report)$(pack_report "$root" "$pname" "$cmdmap")" ${fwd[@]+"${fwd[@]}"}
     [ "$debt" = false ] || debt_adopt "$root"
     return 0
   fi
@@ -1080,6 +1144,7 @@ setup_repo() {
     | select(length > 0) | "missing: \(join(", ")) (no script; propose tools, never install without a yes)"' "$file"
   lsp_propose "$pname" "$file"
   queries_propose "$root" "$file" "$(dirname "$preset")" "$pname"
+  pack_apply "$root" "$file" "$pname" "$preset" "$cmdmap"
 
   setup_claude_md "$root" "$tpl/$lang" "$name"
   setup_gitignore "$root"

@@ -901,6 +901,21 @@ you are on, with its own Claude login: no API key, no budget flag
 - **Undo it.** `senior-mode schedule remove` disables and deletes the units, or the tagged line.
   Install and remove can be repeated: they never duplicate or fail when nothing is there.
 
+## Egress proxy
+
+A sandboxed session reaches the network only through the egress proxy (`plugins/senior-mode/sandbox/egress-proxy.sh`, needs
+`socat`; [ADR 0025](../adr/0025-sandboxed-sessions-and-steering.md)). It carries a `CONNECT` or an `http://` request to the
+model API (`api.anthropic.com`, and the host of `ANTHROPIC_BASE_URL` when set), the registries of the project's preset
+(`registry.npmjs.org`; `pypi.org`, `files.pythonhosted.org`; `crates.io`, `static.crates.io`; `proxy.golang.org`,
+`sum.golang.org`) and the hosts of [`sandbox.allow`](configuration.md#keys-the-plugin-reads-today), and refuses the rest with a
+403 that says why.
+
+- The proxy resolves the name itself and connects to the address it checked. A name that resolves to a loopback, private,
+  link-local (`169.254.0.0/16`) or runtime-bridge address is refused, allowlisted or not; so is an IP literal.
+- A refusal is logged once per host and session in `<serve dir>/<n>.egress`, one `host<TAB>reason` line.
+- `egress_decide <host>` (`lib/egress.sh`) prints `allow` or `refuse: <reason>`; `egress_start <n>` and `egress_stop <n>` run
+  the proxy of a ticket. Starting it for a session is not wired yet.
+
 ## Other mechanisms
 
 - **Git hooks.** `commit-msg` refuses a subject that is not a Conventional Commit. `pre-push` runs the

@@ -357,6 +357,13 @@
         }
       }
     },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow": { "type": "array", "items": { "type": "string" }, "description": "Hosts a sandboxed session may reach besides the model API and the registries of the preset: an exact host, or *.suffix for any subdomain (not the apex)." }
+      }
+    },
     "envGuard": {
       "type": "object",
       "additionalProperties": false,

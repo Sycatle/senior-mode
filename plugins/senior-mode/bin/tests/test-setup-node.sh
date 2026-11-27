@@ -243,5 +243,90 @@ setup "$d"
 setup "$d" --command coverage="make other"
 [ "$(cfg "$d" .commands.coverage)" = "make other" ] || fail "--command coverage not stored: $(cfg "$d" .commands.coverage)"
 
+# `setup repo --adopt` on an existing project, against a local bare origin and a stubbed gh: the body of the pull
+# request goes to $work/body, the files the pull request changes to $work/changed (#733).
+adopt_report() { # dir
+  local d=$1 o g
+  o="$work/$(basename "$1")/github.com/acme/app.git"
+  g=(git -C "$1" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@t)
+  mkdir -p "$work/stub"
+  cat >"$work/stub/gh" <<'STUB'
+#!/usr/bin/env bash
+jqf="" prev="" body=""
+for a in "$@"; do [ "$prev" = --jq ] && jqf=$a; [ "$prev" = --body ] && printf '%s\n' "$a" >"$BODY"; prev=$a; done
+respond() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
+case "$*" in
+  "pr list"*) echo '[]' | respond ;;
+  "pr create"*) echo "https://github.com/acme/app/pull/12" ;;
+  "api repos/acme/app --jq"*) echo '{"allow_rebase_merge": true, "allow_squash_merge": true, "allow_merge_commit": false, "default_branch": "main"}' | respond ;;
+  "label list"*) echo '[]' | respond ;;
+  *) exit 1 ;;
+esac
+STUB
+  chmod +x "$work/stub/gh"
+  git init -q --bare -b main "$o"
+  git -C "$d" remote add origin "$o"
+  "${g[@]}" add -A && "${g[@]}" commit -q -m "chore: start" && "${g[@]}" push -q origin main
+  (cd "$d" && PATH="$work/stub:$PATH" BODY="$work/body" SENIOR_MODE_RETRY_DELAY=0 XDG_DATA_HOME="$work/xdg" "$cli" setup repo --adopt) >"$work/out" 2>"$work/err" ||
+    fail "adopt failed: $(cat "$work/err")"
+  git -C "$o" diff --name-only main docs/adopt-senior-mode >"$work/changed" 2>/dev/null || : >"$work/changed"
+}
+
+# The node pack (#728): a new project gets tsconfig strict and the ESLint rules written, the packs are named.
+d=$(project packnew '{"name": "app", "devDependencies": {"typescript": "5"}}')
+setup "$d"
+[ "$(jq -r '.compilerOptions.strict' "$d/tsconfig.json")" = true ] || fail "tsconfig.json not strict: $(cat "$d/tsconfig.json" 2>&1)"
+for want in '"@typescript-eslint/no-explicit-any": "error"' 'complexity: ["error", 15]' '"max-lines-per-function": ["error", 60]'; do
+  grep -qF -- "$want" "$d/eslint.config.mjs" || fail "eslint.config.mjs without '$want': $(cat "$d/eslint.config.mjs" 2>&1)"
+done
+grep -qF "rules: complexity: written to eslint.config.mjs" "$work/out" || fail "pack not reported: $(cat "$work/out")"
+[ "$(cfg "$d" '.rules.packs | join(",")')" = node ] || fail "packs not named: $(cfg "$d" .rules)"
+[ "$(cfg "$d" .commands.typecheck)" = "npx --no -- tsc --noEmit" ] || fail "the written tsconfig is not detected: $(cfg "$d" .commands)"
+cp "$d/.claude/senior-mode.json" "$work/before"
+cp "$d/eslint.config.mjs" "$work/eslint.before"
+setup "$d"
+cmp -s "$work/before" "$d/.claude/senior-mode.json" || fail "second run changed the config"
+cmp -s "$work/eslint.before" "$d/eslint.config.mjs" || fail "second run changed the ESLint config"
+grep -qF "rules: complexity: covered by your config" "$work/out" || fail "written rules not covered on the second run: $(cat "$work/out")"
+# A project with its own tsconfig and ESLint config: nothing is written over them.
+d=$(project packown '{"name": "app", "devDependencies": {"typescript": "5", "eslint": "9"}}' tsconfig.json)
+echo '{"compilerOptions": {"target": "es2022"}}' >"$d/tsconfig.json"
+echo 'export default [{ rules: { semi: "error" } }];' >"$d/eslint.config.js"
+cp "$d/tsconfig.json" "$work/tsconfig.before"
+setup "$d"
+cmp -s "$work/tsconfig.before" "$d/tsconfig.json" || fail "setup changed tsconfig.json"
+[ ! -e "$d/eslint.config.mjs" ] || fail "setup wrote a second ESLint config"
+grep -qF "rules: tsconfig strict: proposed" "$work/out" || fail "tsconfig not proposed: $(cat "$work/out")"
+# Adoption: an ESLint config without complexity is listed proposed and left alone; with it, covered.
+d=$(project adoptno '{"name": "app", "devDependencies": {"typescript": "5", "eslint": "9"}}')
+echo '{"compilerOptions": {"strict": true}}' >"$d/tsconfig.json"
+echo 'export default [{ rules: { "max-lines-per-function": ["error", 60] } }];' >"$d/eslint.config.js"
+cp "$d/eslint.config.js" "$work/eslint.before"
+adopt_report "$d"
+# shellcheck disable=SC2016 # the backticks of the markdown report
+for want in '`complexity`: proposed' '`max-lines-per-function`: covered by your config' '`tsconfig strict`: covered by your config' '`@typescript-eslint/no-explicit-any`: proposed'; do
+  grep -qF -- "$want" "$work/body" || fail "adoption report without '$want': $(cat "$work/body")"
+done
+cmp -s "$work/eslint.before" "$d/eslint.config.js" || fail "adopt changed the ESLint config"
+grep -qx "eslint.config.js\|eslint.config.mjs\|tsconfig.json" "$work/changed" && fail "the adoption pull request changes a project file: $(cat "$work/changed")"
+d=$(project adoptyes '{"name": "app", "devDependencies": {"eslint": "9"}}')
+echo 'export default [{ rules: { complexity: ["error", 10] } }];' >"$d/eslint.config.js"
+adopt_report "$d"
+# shellcheck disable=SC2016 # the backticks of the markdown report
+grep -qF -- '`complexity`: covered by your config' "$work/body" || fail "complexity not covered: $(cat "$work/body")"
+# The a11y lint plugin is proposed to a UI project, not to another.
+d=$(project uireact '{"name": "app", "dependencies": {"react": "19"}, "devDependencies": {"eslint": "9"}}')
+echo 'export default [];' >"$d/eslint.config.js"
+setup "$d"
+grep -qF "rules: a11y lint (eslint-plugin-jsx-a11y): proposed" "$work/out" || fail "a11y plugin not proposed to a react project: $(cat "$work/out")"
+d=$(project uivue '{"name": "app", "dependencies": {"vue": "3"}, "devDependencies": {"eslint": "9"}}')
+echo 'import vue from "eslint-plugin-vuejs-accessibility"; export default [];' >"$d/eslint.config.js"
+setup "$d"
+grep -qF "rules: a11y lint (eslint-plugin-vuejs-accessibility): covered by your config" "$work/out" || fail "a11y plugin of a vue project: $(cat "$work/out")"
+d=$(project nonui '{"name": "app", "dependencies": {"express": "5"}, "devDependencies": {"eslint": "9"}}')
+echo 'export default [];' >"$d/eslint.config.js"
+setup "$d"
+grep -q "a11y" "$work/out" && fail "a11y plugin proposed to a project that has no UI: $(cat "$work/out")"
+
 [ "$failures" -eq 0 ] && echo "setup-node: all cases pass"
 exit "$failures"

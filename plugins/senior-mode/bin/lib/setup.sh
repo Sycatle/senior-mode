@@ -929,8 +929,9 @@ coverage_command() { # root preset
 }
 
 # The quality pack of a preset (spec 471 §4, #733): linter, typing and format rules, each listed `covered by your config`
-# or `proposed`. Setup writes no config file of the tools for python, go and rust (a config file would make the detection
-# declare a tool the project has not installed); it lists, and a config the project has is never changed.
+# or `proposed`. Node writes the config of a tool a new project lacks (tsconfig.json, the ESLint config), unless the
+# project is legacy; setup writes no config file of the tools for python, go and rust (a config file would make the
+# detection declare a tool the project has not installed). A config the project has is never changed.
 # The text of the tool config the project has: the files given that exist, and the manifest $2 ("" for none) when
 # it has a table matching $3.
 pack_cfg() { # root manifest table-ere file...
@@ -941,9 +942,24 @@ pack_cfg() { # root manifest table-ere file...
   printf '%s' "$out"
 }
 
-# One row `id<TAB>status` per rule of the pack of the preset $2 of the project $1; $3 the commands of the project as JSON.
-pack_rows() { # root preset commands
-  local root=$1 cmds=$3 text id
+# Writes the file $3 of the project $1 with the content $4 when $2 is true and it does not exist; prints the status.
+pack_write() { # root apply file content
+  if [ "$2" = true ] && [ ! -e "$1/$3" ]; then
+    printf '%s\n' "$4" >"$1/$3"
+    echo "written to $3"
+  else echo proposed; fi
+}
+
+# One row `id<TAB>status` per rule of the pack of the preset $2 of the project $1; $3 true to write the config of the
+# tools a new project lacks, $4 the commands of the project as JSON.
+# shellcheck disable=SC2016 # the config files written are not shell
+pack_rows() { # root preset apply commands
+  local root=$1 apply=$3 cmds=$4 text id st ts=false ui=""
+  pack_newrows() { # status id...
+    local s=$1
+    shift
+    for id; do printf '%s\t%s\n' "$id" "$s"; done
+  }
   pack_row() { # id ere: covered when the text of the config matches
     if grep -qE -- "$2" <<<"$text"; then printf '%s\tcovered by your config\n' "$1"; else printf '%s\tproposed\n' "$1"; fi
   }
@@ -951,6 +967,40 @@ pack_rows() { # root preset commands
     if grep -qE -- "$3" < <(jq -r --arg k "$2" '.[$k] // ""' <<<"$cmds"); then printf '%s\tcovered by your config\n' "$1"; else printf '%s\tproposed\n' "$1"; fi
   }
   case $2 in
+    node)
+      [ -f "$root/package.json" ] || return 0
+      if [ -f "$root/tsconfig.json" ] || jq -e '[.dependencies, .devDependencies | objects | keys[]] | any(. == "typescript")' "$root/package.json" >/dev/null 2>&1; then ts=true; fi
+      if [ "$ts" = true ]; then
+        text=$(pack_cfg "$root" "" "" tsconfig.json)
+        if [ -z "$text" ]; then
+          st=$(pack_write "$root" "$apply" tsconfig.json $'{\n  "compilerOptions": {\n    "strict": true\n  }\n}')
+          pack_newrows "$st" "tsconfig strict"
+        else pack_row "tsconfig strict" '"strict"[[:space:]]*:[[:space:]]*true'; fi
+      fi
+      text=$(pack_cfg "$root" "" "" eslint.config.js eslint.config.mjs eslint.config.cjs eslint.config.ts eslint.config.mts eslint.config.cts \
+        .eslintrc .eslintrc.js .eslintrc.cjs .eslintrc.json .eslintrc.yml .eslintrc.yaml)
+      text+=$(jq -c '.eslintConfig // empty' "$root/package.json" 2>/dev/null)
+      if [ -z "$text" ] && ! { [ -f "$root/biome.json" ] || [ -f "$root/biome.jsonc" ] ||
+          jq -e '[.dependencies, .devDependencies | objects | keys[]] | any(. == "@biomejs/biome")' "$root/package.json" >/dev/null 2>&1; }; then
+        if [ "$ts" = true ]; then
+          st=$(pack_write "$root" "$apply" eslint.config.mjs $'import tseslint from "typescript-eslint";\n\nexport default tseslint.config(\n  ...tseslint.configs.recommended,\n  {\n    rules: {\n      "@typescript-eslint/no-explicit-any": "error",\n      complexity: ["error", 15],\n      "max-lines-per-function": ["error", 60],\n    },\n  },\n);')
+          pack_newrows "$st" "@typescript-eslint/no-explicit-any"
+        else
+          st=$(pack_write "$root" "$apply" eslint.config.mjs $'export default [\n  {\n    rules: {\n      complexity: ["error", 15],\n      "max-lines-per-function": ["error", 60],\n    },\n  },\n];')
+        fi
+        pack_newrows "$st" complexity max-lines-per-function
+      else
+        [ "$ts" = false ] || pack_row "@typescript-eslint/no-explicit-any" 'no-explicit-any|(plugin:@typescript-eslint/|configs\.)(recommended|strict)'
+        pack_row complexity '(^|[^A-Za-z_-])["'"'"']?complexity["'"'"']?[[:space:]]*:'
+        pack_row max-lines-per-function 'max-lines-per-function'
+      fi
+      ui=$(jq -r '[.dependencies, .devDependencies | objects | keys[]] | if any(. == "vue") then "vuejs-accessibility" elif any(. == "react" or . == "next") then "jsx-a11y" else empty end' "$root/package.json" 2>/dev/null)
+      if [ -n "$ui" ]; then
+        if grep -qF -- "$ui" <<<"$text" || jq -e --arg u "$ui" '[.dependencies, .devDependencies | objects | keys[]] | any(contains($u))' "$root/package.json" >/dev/null 2>&1; then
+          printf 'a11y lint (eslint-plugin-%s)\tcovered by your config\n' "$ui"
+        else printf 'a11y lint (eslint-plugin-%s)\tproposed\n' "$ui"; fi
+      fi
+      ;;
     python)
       text=$(pack_cfg "$root" pyproject.toml 'tool\.mypy|tool\.pyright' mypy.ini .mypy.ini pyrightconfig.json)
       pack_row "mypy strict" 'strict[[:space:]]*(=|":)[[:space:]]*(true|True)|typeCheckingMode"?[[:space:]]*[:=][[:space:]]*"strict"'
@@ -977,17 +1027,18 @@ pack_rows() { # root preset commands
 # What `setup repo` does with the pack of the preset $3 (its file $4): names the packs in `rules.packs` of the config
 # $2 and prints one `rules: <id>: <status>` line per rule. $1 the project, $5 its commands.
 pack_apply() { # root config-file preset-name preset-json commands
-  local id st out=0
+  local id st out=0 apply=true
+  [ "${WF_ADOPT:-}" != legacy ] || apply=false
   jq -e '(.rules.packs // []) | length > 0' "$4" >/dev/null || return 0
   json_update "$2" '.rules.packs = ((.rules.packs // []) + (($p[0].rules.packs // []) - (.rules.packs // [])))' --slurpfile p "$4" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
-  while IFS=$'\t' read -r id st; do echo "rules: $id: $st"; done < <(pack_rows "$1" "$3" "$5")
+  while IFS=$'\t' read -r id st; do echo "rules: $id: $st"; done < <(pack_rows "$1" "$3" "$apply" "$5")
 }
 
 # The pack as a list of the adoption report: the rules of the preset $2 of the project $1.
 pack_report() { # root preset commands
   local rows id st
-  rows=$(pack_rows "$1" "$2" "$3")
+  rows=$(pack_rows "$1" "$2" false "$3")
   [ -z "$rows" ] || { echo; echo "## Quality pack"; echo; while IFS=$'\t' read -r id st; do echo "- \`$id\`: $st"; done <<<"$rows"; }
 }
 
@@ -1010,7 +1061,7 @@ setup_repo() {
     setup_knowledge ${rest[@]+"${rest[@]}"}
     return
   fi
-  local root file tpl pname preset lang name commands='{}' detected pkgs out ours guard owner subjects="" cmdmap dry=false adopt=false debt=false fwd=() fmt mv mvcur
+  local root file tpl pname preset lang name packout commands='{}' detected pkgs out ours guard owner subjects="" cmdmap dry=false adopt=false debt=false fwd=() fmt mv mvcur
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   file=$root/.claude/senior-mode.json
   tpl=$(cd "$(dirname "$SELF")/.." && pwd)
@@ -1068,6 +1119,11 @@ setup_repo() {
   fi
   mkdir -p "$root/.claude"
   [ -f "$file" ] || echo '{}' >"$file"
+  # The pack writes the config of the tools a new project lacks; what the project then declares is detected again.
+  packout=$(pack_apply "$root" "$file" "$pname" "$preset" "$cmdmap") || return 1
+  if [[ $packout == *"written to"* ]]; then
+    detected=$(preset_detect "$root" "$pname") || die "could not read package.json"
+  fi
   lang=$(jq -r '.language // "en"' "$file")
   [ -d "$tpl/$lang" ] || lang=en
   name=$(basename "$root")
@@ -1144,7 +1200,7 @@ setup_repo() {
     | select(length > 0) | "missing: \(join(", ")) (no script; propose tools, never install without a yes)"' "$file"
   lsp_propose "$pname" "$file"
   queries_propose "$root" "$file" "$(dirname "$preset")" "$pname"
-  pack_apply "$root" "$file" "$pname" "$preset" "$cmdmap"
+  [ -z "$packout" ] || echo "$packout"
 
   setup_claude_md "$root" "$tpl/$lang" "$name"
   setup_gitignore "$root"

@@ -1,0 +1,108 @@
+{
+  "rules": [
+    {
+      "id": "io-in-loop",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "loop",
+      "ext": [
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "mjs",
+        "cjs"
+      ],
+      "prodOnly": true,
+      "skip": [
+        "**/migrations/**",
+        "**/migrate/**",
+        "**/seeds/**",
+        "**/seed/**",
+        "**/seed.*",
+        "**/fixtures/**"
+      ],
+      "pattern": "(^|[^[:alnum:]_.])(prisma|db|knex|pool|sql|supabase|sequelize|mongoose|conn|connection)\\.[A-Za-z_.]*\\(|(^|[^[:alnum:]_.])fetch\\(|axios\\.[a-z]+\\(|fs\\.(promises\\.)?(readFile|writeFile|appendFile|readdir|stat|unlink|mkdir)(Sync)?\\(|\\.(query|execute|findMany|findFirst|findUnique|findOne|findAll|insertOne|updateOne|deleteOne)\\(",
+      "stmt": "^[[:space:]]*(for|while)[[:space:](]",
+      "style": "brace",
+      "unless": "--[[:space:]]+#[0-9]+:[[:space:]]*[^[:space:]]",
+      "message": "a database, HTTP or file call inside a loop",
+      "fix": "batch it or use a set-based query (or -- #<issue>: <reason> on the call)",
+      "loop": "\\.(map|forEach|flatMap|reduce|filter|some|every)\\("
+    },
+    {
+      "id": "io-in-loop",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "loop",
+      "ext": [
+        "py"
+      ],
+      "prodOnly": true,
+      "skip": [
+        "**/migrations/**",
+        "**/migrate/**",
+        "**/seeds/**",
+        "**/seed/**",
+        "**/seed.*",
+        "**/fixtures/**"
+      ],
+      "pattern": "(^|[^[:alnum:]_.])(cursor|cur|conn|connection|session|db)\\.(execute|executemany|fetchone|fetchall|query|scalar|scalars|get|add|commit)\\(|requests\\.(get|post|put|patch|delete)\\(|httpx\\.[a-z]+\\(|\\.objects\\.[a-z_]+\\(|(^|[^[:alnum:]_.])open\\(|urlopen\\(",
+      "stmt": "^[[:space:]]*(async[[:space:]]+)?(for|while)[[:space:]].*:[[:space:]]*$",
+      "style": "indent",
+      "unless": "--[[:space:]]+#[0-9]+:[[:space:]]*[^[:space:]]",
+      "message": "a database, HTTP or file call inside a loop",
+      "fix": "batch it or use a set-based query (or -- #<issue>: <reason> on the call)",
+      "loop": "[[(].*[[:space:]]for[[:space:]].*[[:space:]]in[[:space:]]"
+    },
+    {
+      "id": "io-in-loop",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "loop",
+      "ext": [
+        "go"
+      ],
+      "prodOnly": true,
+      "skip": [
+        "**/migrations/**",
+        "**/migrate/**",
+        "**/seeds/**",
+        "**/seed/**",
+        "**/seed.*",
+        "**/fixtures/**"
+      ],
+      "pattern": "(db|tx|conn|pool|stmt)\\.(Query|QueryRow|QueryContext|QueryRowContext|Exec|ExecContext|Get|Select|Prepare|First|Find|Create|Save|Delete)\\(|http\\.(Get|Post|Head|NewRequest)\\(|(^|[^[:alnum:]_.])(client|httpClient)\\.Do\\(|os\\.(ReadFile|WriteFile|Open|Create|ReadDir)\\(",
+      "stmt": "^[[:space:]]*for([[:space:]]|\\{)",
+      "style": "brace",
+      "unless": "--[[:space:]]+#[0-9]+:[[:space:]]*[^[:space:]]",
+      "message": "a database, HTTP or file call inside a loop",
+      "fix": "batch it or use a set-based query (or -- #<issue>: <reason> on the call)"
+    },
+    {
+      "id": "io-in-loop",
+      "tier": 2,
+      "kind": "pattern",
+      "match": "loop",
+      "ext": [
+        "rs"
+      ],
+      "prodOnly": true,
+      "skip": [
+        "**/migrations/**",
+        "**/migrate/**",
+        "**/seeds/**",
+        "**/seed/**",
+        "**/seed.*",
+        "**/fixtures/**"
+      ],
+      "pattern": "sqlx::query|\\.(fetch_one|fetch_all|fetch_optional|execute|query|query_one|query_opt)\\(|reqwest::|std::fs::|fs::(read|write|read_to_string)\\(|File::(open|create)\\(",
+      "stmt": "^[[:space:]]*(for|while|loop)([[:space:]]|\\{)",
+      "style": "brace",
+      "unless": "--[[:space:]]+#[0-9]+:[[:space:]]*[^[:space:]]",
+      "message": "a database, HTTP or file call inside a loop",
+      "fix": "batch it or use a set-based query (or -- #<issue>: <reason> on the call)",
+      "loop": "\\.(map|for_each|filter_map|flat_map)\\("
+    }
+  ]
+}

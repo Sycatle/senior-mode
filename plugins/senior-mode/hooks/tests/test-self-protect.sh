@@ -49,6 +49,9 @@ edit deny "$repo/.github/workflows/ci.yml" Edit
 edit deny "$repo/.github/workflows/new.yml" Write
 edit deny "$repo/.claude/settings.json" MultiEdit
 edit deny "$repo/.claude/senior-mode.json" Edit
+edit deny "$repo/.claude/senior-mode/hooks/x.sh" Edit "" "a hook of the levers directory (#739)"
+edit deny "$repo/.claude/senior-mode/roles/y.md" Write "" "a role of the levers directory (#739)"
+edit deny "$repo/.claude/senior-mode/overrides/z.json" MultiEdit
 # Project memory of the reviewer and architect agents is theirs to write, run or not.
 edit allow "$repo/.claude/agent-memory/reviewer/MEMORY.md" Write
 edit allow "$repo/.claude/agent-memory/x/notes.md" Edit

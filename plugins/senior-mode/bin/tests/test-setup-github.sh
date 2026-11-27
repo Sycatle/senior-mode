@@ -778,6 +778,14 @@ setup
 grep -q "enforces nothing" "$work/out" && fail "warning without protected globs: $(cat "$work/out")"
 set_protected '["*.pem"]'
 
+# The levers directory is owned (#739): the block maps .claude/senior-mode/** to the owner.
+set_protected '[".claude/senior-mode.json", ".claude/senior-mode/**"]'
+setup
+grep -qE '^/\.claude/senior-mode/\*\* @[^ ]+$' "$co" || fail "CODEOWNERS does not own .claude/senior-mode/**: $(cat "$co")"
+grep -qE '^/\.claude/senior-mode\.json @[^ ]+$' "$co" || fail "CODEOWNERS does not own .claude/senior-mode.json: $(cat "$co")"
+set_protected '["*.pem"]'
+setup
+
 # A root or docs/ CODEOWNERS would be shadowed by .github/CODEOWNERS (GitHub reads .github/ first):
 # setup refuses to create the shadow, says so, and goes on with the rest.
 for shadow in CODEOWNERS docs/CODEOWNERS; do

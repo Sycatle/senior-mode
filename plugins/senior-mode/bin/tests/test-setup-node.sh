@@ -60,7 +60,7 @@ for zone in '**/migrations/**' '**/auth/**' '**/payments/**' '.env*' '.github/wo
 done
 jq '.protected = ["only/mine/**"]' "$d/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$d/.claude/senior-mode.json"
 setup "$d"
-[ "$(cfg "$d" '.protected | join(",")')" = "only/mine/**" ] || fail "user's protected list overwritten: $(cfg "$d" '.protected')"
+[ "$(cfg "$d" '.protected | join(",")')" = "only/mine/**,.claude/senior-mode.json,.claude/senior-mode/**" ] || fail "user's protected list overwritten or not extended with the levers: $(cfg "$d" '.protected')"
 jq '.protected = []' "$d/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$d/.claude/senior-mode.json"
 setup "$d"
 [ "$(cfg "$d" '.protected | length')" = 0 ] || fail "an empty protected list, chosen on purpose, was refilled"
@@ -95,7 +95,7 @@ done
 [ "$(check_run "$d" e2e)" = "npm run test:e2e" ] || fail "framework awareness changed the e2e command"
 jq '.protected = ["only/mine/**"]' "$d/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$d/.claude/senior-mode.json"
 setup "$d"
-[ "$(cfg "$d" '.protected | join(",")')" = "only/mine/**" ] || fail "user's protected list overwritten: $(cfg "$d" '.protected')"
+[ "$(cfg "$d" '.protected | join(",")')" = "only/mine/**,.claude/senior-mode.json,.claude/senior-mode/**" ] || fail "user's protected list overwritten or not extended with the levers: $(cfg "$d" '.protected')"
 jq '.protected = []' "$d/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$d/.claude/senior-mode.json"
 setup "$d"
 [ "$(cfg "$d" '.protected | length')" = 0 ] || fail "an empty protected list, chosen on purpose, was refilled"

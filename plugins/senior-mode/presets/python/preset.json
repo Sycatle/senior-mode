@@ -12,7 +12,7 @@
     "**/Dockerfile*",
     "docker-compose*.yml",
     "infra/**",
-    ".claude/senior-mode.json",
+    ".claude/senior-mode.json", ".claude/senior-mode/**",
     ".claude/secret-allowlist",
     ".claude/ratchet-baseline.json",
     ".claude/architecture-baseline.json"

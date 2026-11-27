@@ -64,6 +64,14 @@ usage() {
 . "$LIB/deploy.sh"
 # shellcheck source=lib/status.sh
 . "$LIB/status.sh"
+# shellcheck source=lib/status-hygiene.sh
+. "$LIB/status-hygiene.sh"
+# shellcheck source=lib/status-board.sh
+. "$LIB/status-board.sh"
+# shellcheck source=lib/statusline.sh
+. "$LIB/statusline.sh"
+# shellcheck source=lib/retro.sh
+. "$LIB/retro.sh"
 # shellcheck source=lib/context.sh
 . "$LIB/context.sh"
 # shellcheck source=lib/checkpoint.sh

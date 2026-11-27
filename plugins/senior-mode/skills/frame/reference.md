@@ -44,6 +44,7 @@ questions, when it exists. An idea that contradicts a non-goal is not framed: qu
 and ask it as the first framing question (keep the idea, drop it, or the owner changes the vision himself).
 Nobody to ask: label the idea's issue `needs-human` (created first when it has none) with a comment quoting the
 non-goal, and stop with no spec and no ticket. A wave's milestone also needs a goal: "Tickets", "Hierarchy". No file: skip.
+A `Status: draft` line (an agent's draft awaiting the owner) changes nothing: the file applies as written.
 
 ## Decisions
 

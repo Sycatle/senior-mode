@@ -4,6 +4,7 @@ DEFAULTS='{
   "ci": { "mode": "local" },
   "autonomy": { "maxTickets": 3, "parallel": 1, "maxConsecutiveFailures": 2, "merge": false, "escalate": true, "sessionTimeout": 90, "schedule": "02:00", "ticketsPerHour": 6, "sessionsPerHour": 0, "minMemoryMB": 1024, "userSettings": false, "minDiskMB": 2048, "startupSeconds": 30, "startupMinutes": 3, "stallMinutes": 20 },
   "serve": { "interval": 60, "grace": 600, "breakerCooldown": 900, "breakerMax": 14400, "backoffBase": 30, "backoffMax": 900, "callTimeout": 60, "unknownBackoffMax": 60, "unknownMaxAttempts": 3, "pendingReviewHours": 12 },
+  "sandbox": { "mode": "auto", "runtime": "auto", "image": "", "credentialFile": "~/.config/senior-mode/credentials.env", "memory": "4g", "cpus": "2", "pids": 512 },
   "notify": { "mention": "", "webhook": "", "digest": true, "digestAt": "", "batchMinutes": 60 },
   "agent": { "command": "claude" },
   "commit": { "coAuthor": true },

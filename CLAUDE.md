@@ -56,6 +56,8 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `prompts.sh`: prompts of the run and serve sessions.
 - `schedule.sh`: `schedule install` (cron, systemd).
 - `egress.sh`: the egress allowlist of sandboxed sessions (`egress_decide`, `egress_start`/`egress_stop`); the proxy itself is `plugins/senior-mode/sandbox/egress-proxy.sh` (socat, one handler per connection).
+- `sandbox.sh`: `sandbox_mode`, `sandbox_runtime` (podman, then docker), `sandbox_enabled`, `sandbox_credential_ok` and the pure
+  `sandbox_decide` (container, host or hold).
 - `serve.sh`: `serve` (poll loop, requalify, rebase, merge, digest).
 - `demo.sh`: `demo` (a throwaway repository with three toy tickets, delivered by serve; progress in `demo.json`).
 - `broker.sh`: `broker_allow` (the credential broker's decision: which gh, git push and senior-mode verbs a sandboxed session may run).

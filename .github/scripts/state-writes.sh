@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Checks spec 373 section 3: a function of serve or run that writes under the serve dir goes through state_write (or
 # state_put, state_append), never through a bare redirection, mv, cp, touch, tee or sed -i. A line that has to (a
-# command's own output kept as it comes) says so with `# state-ok: <why>`. Without arguments it reads run.sh and serve.sh.
+# command's own output kept as it comes) says so with `# state-ok: <why>`. Without arguments it reads run.sh and serve*.sh.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 if [ $# -eq 0 ]; then
-  set -- plugins/senior-mode/bin/lib/run.sh plugins/senior-mode/bin/lib/serve.sh
+  set -- plugins/senior-mode/bin/lib/run.sh plugins/senior-mode/bin/lib/serve*.sh
 fi
 status=0
 for file in "$@"; do

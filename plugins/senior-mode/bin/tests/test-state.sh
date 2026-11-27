@@ -15,6 +15,8 @@ fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 . "$lib/state.sh"
 # shellcheck disable=SC1091
 . "$lib/serve.sh"
+# shellcheck disable=SC1091
+. "$lib/serve-launch.sh"
 SERVE_DIR=$work/serve
 RUN_DIR=$SERVE_DIR
 RUN_LAUNCH_LOG=$SERVE_DIR/launches

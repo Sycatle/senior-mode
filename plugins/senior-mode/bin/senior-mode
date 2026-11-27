@@ -115,6 +115,22 @@ done
 . "$LIB/sandbox.sh"
 # shellcheck source=lib/serve.sh
 . "$LIB/serve.sh"
+# shellcheck source=lib/serve-ends.sh
+. "$LIB/serve-ends.sh"
+# shellcheck source=lib/serve-hold.sh
+. "$LIB/serve-hold.sh"
+# shellcheck source=lib/serve-launch.sh
+. "$LIB/serve-launch.sh"
+# shellcheck source=lib/serve-session.sh
+. "$LIB/serve-session.sh"
+# shellcheck source=lib/serve-merge.sh
+. "$LIB/serve-merge.sh"
+# shellcheck source=lib/serve-review.sh
+. "$LIB/serve-review.sh"
+# shellcheck source=lib/serve-frame.sh
+. "$LIB/serve-frame.sh"
+# shellcheck source=lib/serve-duties.sh
+. "$LIB/serve-duties.sh"
 # shellcheck source=lib/demo.sh
 . "$LIB/demo.sh"
 

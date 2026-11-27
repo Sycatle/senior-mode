@@ -100,6 +100,8 @@ usage() {
 . "$LIB/lease.sh"
 # shellcheck source=lib/egress.sh
 . "$LIB/egress.sh"
+# shellcheck source=lib/sandbox.sh
+. "$LIB/sandbox.sh"
 # shellcheck source=lib/serve.sh
 . "$LIB/serve.sh"
 # shellcheck source=lib/demo.sh

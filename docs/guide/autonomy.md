@@ -981,6 +981,15 @@ Anything else, a `--repo` or `--hostname` option, a `GH_HOST` prefix, `--body-fi
 denied: exit 126, `denied: <verb> is not on the sandbox allowlist` on stderr, and one `deny` line in `<serve dir>/broker.log`
 (`epoch session verb allow|deny exit`, the words of the verb joined by `:`). An allowed argv is returned with `GH_REPO=<slug>` first.
 
+### Sandbox
+
+`sandbox.mode` decides where a session runs: `auto` (default) in a container when a runtime (`podman` rootless first, then
+`docker`) and a model credential file (`sandbox.credentialFile`, mode `0600`, the token of `claude setup-token`, never an API
+key) exist, else on the host as today; `required` holds every launch (hold cause `sandbox`, "no model credential for
+containers: run claude setup-token" or no runtime) while an approved pull request still merges; `off` never looks for a runtime.
+The CLI has the pure decision (`sandbox_decide`) and the detection; starting the container and the hold in `serve` come
+in later slices of the epic (#385).
+
 ## Other mechanisms
 
 - **Git hooks.** `commit-msg` refuses a subject that is not a Conventional Commit. `pre-push` runs the

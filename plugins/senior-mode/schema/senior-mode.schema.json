@@ -442,6 +442,19 @@
         "sharedPaths": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Root files that parallel tickets each add to (package.json, README.md, a lockfile): a conflict on one is merged additively, or regenerated for a lockfile." }
       }
     },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["auto", "required", "off"], "description": "Whether a session runs in a container: auto uses one when a runtime and a model credential exist, else the host; required holds every launch (cause sandbox) when it cannot; off never." },
+        "runtime": { "type": "string", "description": "The container runtime: auto finds podman (rootless, the reference), then docker." },
+        "image": { "type": "string", "description": "An image for sessions; empty builds .senior-mode/Dockerfile, else the plugin's base." },
+        "credentialFile": { "type": "string", "minLength": 1, "description": "File (mode 0600) with the model credential of containers, lines NAME=value with NAME matching ANTHROPIC_* or CLAUDE_CODE_* (the token of claude setup-token; ANTHROPIC_API_KEY is never accepted)." },
+        "memory": { "type": "string", "pattern": "^[0-9]+[kmg]?$", "description": "Memory limit of a container." },
+        "cpus": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$", "description": "CPU limit of a container." },
+        "pids": { "type": "integer", "minimum": 1, "description": "Process limit of a container." }
+      }
+    },
     "notify": {
       "type": "object",
       "additionalProperties": false,

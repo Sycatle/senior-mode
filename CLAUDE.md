@@ -18,7 +18,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
   profiles (schema in `plugins/senior-mode/schema/`, shipped profiles in `plugins/senior-mode/profiles/`).
 - `doctor.sh`: `doctor` (installation checks, fixes, customization summary).
 - `state.sh`: `state_write` (tmp + `mv`), `state_update` (flock), `state_get`/`state_num`/`state_json` (tolerant readers).
-  Every write under the serve dir goes through it (`.github/scripts/state-writes.sh` checks `run.sh` and `serve.sh`).
+  Every write under the serve dir goes through it (`.github/scripts/state-writes.sh` checks `run.sh` and `serve*.sh`).
 - `board.sh`: Project items and fields, `issue create`, security alerts, `ready`, `pick`, `start`.
 - `architecture.sh`: `architecture` (the generated map and its block in `docs/architecture.md`).
 - `rules.sh`: `rules-check` (the code rules engine: packs in `plugins/senior-mode/rules/`, pattern and tool rules on the diff, `rules.off`).
@@ -62,7 +62,10 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `egress.sh`: the egress allowlist of sandboxed sessions (`egress_decide`, `egress_start`/`egress_stop`); the proxy itself is `plugins/senior-mode/sandbox/egress-proxy.sh` (socat, one handler per connection).
 - `sandbox.sh`: `sandbox_mode`, `sandbox_runtime` (podman, then docker), `sandbox_enabled`, `sandbox_credential_ok` and the pure
   `sandbox_decide` (container, host or hold).
-- `serve.sh`: `serve` (poll loop, requalify, rebase, merge, digest).
+- `serve.sh`: `serve` (loop, poll, drain, install; the loop runs each `serve_step_<NN>_<name>` of any module, in `<NN>` order). Then `serve-ends.sh`
+  (how a session ended, backoffs), `serve-hold.sh` (hold, probes, breaker), `serve-launch.sh` (may a session start), `serve-session.sh` (roles' finish,
+  report, recovery), `serve-review.sh` (pull requests In review: reviewer, fix rounds, best-of-N, needs-human), `serve-merge.sh` (merge, queue, rebase,
+  requalify, conflicts, main verification), `serve-frame.sh` (ready by rule, framing), `serve-duties.sh` (digests, deps, gardening, questions).
 - `demo.sh`: `demo` (a throwaway repository with three toy tickets, delivered by serve; progress in `demo.json`).
 - `broker.sh`: `broker_allow` (the credential broker's decision: which gh, git push and senior-mode verbs a sandboxed session may run).
 - `additive.sh`: the additive merge of the shared root files of `serve.sharedPaths` (package.json, Markdown; a lockfile is regenerated).

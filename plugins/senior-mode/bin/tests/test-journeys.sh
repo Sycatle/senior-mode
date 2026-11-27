@@ -55,10 +55,12 @@ run journeys-check && fail "B: a test file with no id passes"
 grep -qx 'journey J1 of spec 328 has no test at e2e/pay.spec.ts' "$work/out" || fail "B: J1 not named: $(cat "$work/out")"
 grep -q 'J2' "$work/out" && fail "B: J2 has its id and is reported: $(cat "$work/out")"
 printf 'test("J1 buyer pays", () => {});\n' >"$repo/e2e/pay.spec.ts"
+echo '{"checks":[{"name":"lint","run":"true"}],"commands":{"e2e":"true"}}' >"$repo/.claude/senior-mode.json"
 run journeys-check || fail "B: both tests have their id and the step fails: $(cat "$work/out")"
 printf 'test("J10 buyer pays", () => {});\n' >"$repo/e2e/pay.spec.ts"
 run journeys-check && fail "B: J10 counts as J1"
 rm -rf "$repo/e2e"
+git_ checkout -q -- .claude
 
 # A diff elsewhere selects nothing.
 branch feat-c
@@ -71,7 +73,7 @@ grep -q '^skip  journeys: no journey on the touched paths' "$work/out" || fail "
 
 # check --all selects every journey; journeys.required false makes the missing test a warning.
 run journeys-check --all && fail "D: --all passes with no test"
-grep -q 'journey J1 of spec 328' "$work/out" && grep -q 'journey J2 of spec 328' "$work/out" || fail "D: --all did not select both: $(cat "$work/out")"
+[ "$(grep -c 'journey J[12] of spec 328' "$work/out")" -eq 2 ] || fail "D: --all did not select both: $(cat "$work/out")"
 echo '{"checks":[{"name":"lint","run":"true"}],"journeys":{"required":false}}' >"$repo/.claude/senior-mode.json"
 run journeys-check --all || fail "D: required false fails: $(cat "$work/out")"
 grep -qx 'warning: journey J1 of spec 328 has no test at e2e/pay.spec.ts' "$work/out" || fail "D: no warning: $(cat "$work/out")"
@@ -95,7 +97,8 @@ mkdir -p "$repo/e2e"
 printf 'test("buyer pays", () => {});\n' >"$repo/e2e/pay.spec.ts"
 commit "test: pay"
 run journeys-check && fail "F: a changed test without the id passes"
-grep -q 'J1' "$work/out" && ! grep -q 'J2' "$work/out" || fail "F: not only J1: $(cat "$work/out")"
+grep -q 'J1' "$work/out" || fail "F: J1 not selected: $(cat "$work/out")"
+grep -q 'J2' "$work/out" && fail "F: J2 selected too: $(cat "$work/out")"
 
 # Declaration errors fail naming the spec, in an accepted spec only.
 declare_bad() { # <label> <journeys lines> <expected message>
@@ -124,6 +127,82 @@ commit "feat: draft spec"
 run journeys-check --all || fail "H: a draft spec is not ignored: $(cat "$work/out")"
 run check --all >/dev/null 2>&1
 grep -q 'journeys' "$work/out" && fail "H: a draft spec adds a journeys step"
+
+# The selected journey tests run through commands.e2e under the e2e lock (#796). The stub logs its arguments and the slot, and
+# its mode file says whether it passes, fails once (flaky) or always fails.
+export XDG_RUNTIME_DIR="$work/runtime" SENIOR_MODE_LOCK_POLL=0.05
+mkdir -p "$XDG_RUNTIME_DIR"
+cat >"$work/e2e-stub.sh" <<STUB
+#!/usr/bin/env bash
+echo "args:\$* slot:\${SENIOR_MODE_E2E_SLOT:-}" >>"$work/e2e.log"
+n=\$((\$(cat "$work/e2e.count" 2>/dev/null || echo 0) + 1))
+echo "\$n" >"$work/e2e.count"
+case \$(cat "$work/e2e.mode") in
+  pass) exit 0 ;;
+  flaky) [ "\$n" -ge 2 ] ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod +x "$work/e2e-stub.sh"
+stub() { # <mode>: a fresh log and counter
+  : >"$work/e2e.log"
+  echo 0 >"$work/e2e.count"
+  echo "$1" >"$work/e2e.mode"
+}
+e2e_config() { printf '{"checks":[{"name":"lint","run":"true"}]%s}\n' "${1:+,$1}" >"$repo/.claude/senior-mode.json"; }
+
+git_ checkout -q main
+mkdir -p "$repo/e2e" "$repo/docs/specs"
+spec accepted "$journeys"
+printf 'test("J1 buyer pays", () => {});\n' >"$repo/e2e/pay.spec.ts"
+printf 'test("J2 buyer refunds", () => {});\n' >"$repo/e2e/refund.spec.ts"
+e2e_config ""
+commit "chore: spec, tests and config"
+git_ checkout -q -B feat-j
+echo '// more' >>"$repo/e2e/pay.spec.ts"
+commit "test: pay"
+
+# J: only J1 is selected (its test changed, the paths did not): the stub runs once with J1's file, under a slot.
+e2e_config "\"commands\":{\"e2e\":\"$work/e2e-stub.sh {files}\"}"
+stub pass
+run journeys-check || fail "J: a passing journey fails: $(cat "$work/out")"
+[ "$(wc -l <"$work/e2e.log")" -eq 1 ] || fail "J: the stub did not run once: $(cat "$work/e2e.log")"
+grep -q '^args:e2e/pay.spec.ts slot:[0-9]' "$work/e2e.log" || fail "J: not J1's file only, under the lock: $(cat "$work/e2e.log")"
+grep -q 'refund' "$work/e2e.log" && fail "J: J2's file ran"
+
+# K: no {files} in the command: the whole suite runs once.
+e2e_config "\"commands\":{\"e2e\":\"$work/e2e-stub.sh --all\"}"
+stub pass
+run journeys-check || fail "K: fails: $(cat "$work/out")"
+[ "$(wc -l <"$work/e2e.log")" -eq 1 ] || fail "K: the suite did not run once: $(cat "$work/e2e.log")"
+grep -q '^args:--all ' "$work/e2e.log" || fail "K: the suite ran with other arguments: $(cat "$work/e2e.log")"
+
+# L: a test that fails once and passes on rerun: check passes and its summary says flaky: J1.
+e2e_config "\"commands\":{\"e2e\":\"$work/e2e-stub.sh {files}\"}"
+stub flaky
+run check || fail "L: a flaky journey fails the check: $(cat "$work/out")"
+tail -n 1 "$work/out" | grep -q 'flaky: J1' || fail "L: no flaky: J1 in the summary: $(cat "$work/out")"
+[ "$(wc -l <"$work/e2e.log")" -eq 2 ] || fail "L: not run twice: $(cat "$work/e2e.log")"
+
+# M: a test that fails twice fails the check and names J1.
+stub fail
+run check && fail "M: a journey that fails twice passes"
+grep -q 'journey J1 failed: e2e/pay.spec.ts' "$work/out" || fail "M: J1 not named: $(cat "$work/out")"
+
+# N: journeys selected and no e2e command.
+e2e_config ""
+stub pass
+run journeys-check && fail "N: no e2e command passes"
+grep -qx 'journeys declared and no e2e command: senior-mode setup repo --command e2e=...' "$work/out" || fail "N: message: $(cat "$work/out")"
+
+# O: no journey selected: the e2e command does not run.
+git_ checkout -q main && git_ checkout -q -B feat-o
+echo 5 >"$repo/README.md"
+commit "docs: readme"
+e2e_config "\"commands\":{\"e2e\":\"$work/e2e-stub.sh {files}\"}"
+stub pass
+run journeys-check || fail "O: fails: $(cat "$work/out")"
+[ ! -s "$work/e2e.log" ] || fail "O: the e2e command ran with no journey selected: $(cat "$work/e2e.log")"
 
 # The spec template shows the front matter.
 grep -q '^journeys:$' "$(dirname "$cli")/../skills/spec/template.md" || fail "I: the spec template has no journeys front matter"

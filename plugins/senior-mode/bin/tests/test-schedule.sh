@@ -159,5 +159,28 @@ grep -q 'root' "$work/out" || fail "F: root refusal not explained: $(cat "$work/
 rm -f "$FIX/as-root"
 [ -e "$timer" ] && fail "F: a refused install wrote a unit"
 
+# H: a live serve in this repository: install refuses, status says serve runs; without one, install works.
+sched install --at 03:30 || fail "H: setup install failed"
+cp "$timer" "$work/timer.h"
+(exec -a senior-mode-serve sleep 60) &
+serve_pid=$!
+mkdir -p "$repo/.git/senior-mode/serve"
+echo "$serve_pid" >"$repo/.git/senior-mode/serve/serve.pid"
+sched status || fail "H: status failed: $(cat "$work/out")"
+grep -q "serve: runs in this repository (pid $serve_pid)" "$work/out" || fail "H: status does not say serve runs: $(cat "$work/out")"
+sched remove || fail "H: remove failed with serve running"
+sched install --at 06:00 && fail "H: install accepted while serve runs"
+grep -q 'serve already runs' "$work/out" || fail "H: refusal does not say serve runs: $(cat "$work/out")"
+grep -q 'redundant' "$work/out" || fail "H: refusal does not say the batch is redundant: $(cat "$work/out")"
+grep -q 'serve --uninstall' "$work/out" || fail "H: refusal does not name serve --uninstall: $(cat "$work/out")"
+[ ! -e "$timer" ] && [ ! -s "$SYS_LOG" ] || fail "H: a refused install wrote a unit or called systemctl"
+kill "$serve_pid" 2>/dev/null
+wait "$serve_pid" 2>/dev/null
+sched install --at 03:30 || fail "H: install failed once serve is gone: $(cat "$work/out")"
+cmp -s "$timer" "$work/timer.h" || fail "H: install without serve differs from before"
+sched status || fail "H: status failed"
+grep -q 'serve: does not run' "$work/out" || fail "H: status does not say serve is absent: $(cat "$work/out")"
+sched remove
+
 [ "$failures" -eq 0 ] && echo "schedule: all cases pass"
 exit "$((failures > 0))"

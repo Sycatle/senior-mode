@@ -11,6 +11,14 @@ schedule_paths() {
   SCHED_TAG="# senior-mode-run:$SCHED_NAME"
 }
 
+# The pid of the `serve` running in this repository, empty when there is none (same test as `serve` itself).
+schedule_serve_pid() {
+  local pid
+  pid=$(cat "$(dirname "$SCHED_LOG")/serve/serve.pid" 2>/dev/null) || return 0
+  [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && [[ $(ps -o args= -p "$pid" 2>/dev/null) == *senior-mode* ]] && printf '%s' "$pid"
+  return 0
+}
+
 # Stops unless the crontab is readable or empty: rewriting a table we could not read would erase it.
 schedule_cron_check() {
   local out
@@ -42,10 +50,10 @@ schedule_cron_remove() {
   if [ -n "$table" ]; then printf '%s\n' "$table" | crontab -; else crontab -r 2>/dev/null || printf '' | crontab -; fi
 }
 
-# senior-mode schedule install [--at HH:MM] [--max N] | remove | status: a daily `senior-mode run` on
+# senior-mode schedule install [--at HH:MM] [--max N] | remove | status: the nightly batch, a daily `senior-mode run` on
 # this machine, as a systemd user timer or, without a user systemd, a tagged crontab line (ADR 0012).
 schedule() {
-  local sub=${1:-} at="" max="" cmd table mech="" line m h ts props unit me
+  local sub=${1:-} at="" max="" cmd table mech="" line m h ts props unit me pid
   [ $# -eq 0 ] || shift
   schedule_paths
   unit=$SCHED_UNIT
@@ -67,6 +75,8 @@ schedule() {
         esac
         shift
       done
+      pid=$(schedule_serve_pid)
+      [ -z "$pid" ] || die "serve already runs in this repository (pid $pid): a nightly batch is redundant; to schedule it anyway, stop the daemon with: senior-mode serve --uninstall"
       [ "$(id -u)" != 0 ] || die "schedule cannot work as root: run refuses to skip permission prompts for root; use a normal user"
       schedule_cron_check
       at=${at:-$(config_get autonomy.schedule)}
@@ -153,6 +163,8 @@ UNIT
       else
         echo "not scheduled; install it with: senior-mode schedule install [--at HH:MM] [--max N]"
       fi
+      pid=$(schedule_serve_pid)
+      if [ -n "$pid" ]; then echo "serve: runs in this repository (pid $pid)"; else echo "serve: does not run in this repository"; fi
       ;;
     *) usage ;;
   esac

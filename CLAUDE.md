@@ -38,7 +38,11 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `workflow.sh`: reading the detected `workflow` (branch pattern, base, merge flag, PR gaps) for start, run, serve, status, clean.
 - `setup-answers.sh`: `setup detect` and `setup answers` (the three questions: detection, profile, config layers).
 - `setup-remove.sh`: `setup remove` (files through a pull request, ruleset, labels, workflows).
-- `status.sh`: `status`, hygiene, health, `retro`, `statusline`.
+- `status.sh`: `status` (board drift, decisions, dashboard, hierarchy, `--fix`, local facts, the command).
+- `status-hygiene.sh`: the repository hygiene (stale pull requests, branches, superseded, orphans) and its `--fix` repairs.
+- `status-board.sh`: cycle (iteration) fields, board archive, Project status updates, health of the Project.
+- `retro.sh`: `retro` (facts of the period: history, runs, usage, checks, calibration, iteration).
+- `statusline.sh`: `statusline` and `setup statusline`.
 - `context.sh`: `context` (the session briefing: selection, ranking and budget of specs, ADRs and notes).
 - `checkpoint.sh`: `checkpoint` (the `senior-mode:checkpoint` block of the ticket's draft pull request; read back by `context` and by the plan guard of `run`).
 - `repomap.sh`: the repo map of the briefing (symbols and signatures of the ticket's Paths, ctags or regex, index cached by tree sha).

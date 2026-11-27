@@ -205,7 +205,7 @@ since_sent=$(jq -r '.variables.since' "$FIX/history-bodies")
 [ "$(json '.calibration | map([.size, .outliers, .recalibrate])')" = '[["M",[{"number":6,"title":"Ticket 6","why":["900 lines"]}],null],["S",[],null]]' ] ||
   fail "calibration outliers: $(json .calibration)"
 # Three S tickets, two of them over the budget, and one that took far longer than the others: a hint and an outlier.
-cal=$(bash -c 'source "$1/lib/status.sh"; printf %s "$CALIBRATION_JQ"' _ "$(dirname "$cli")")
+cal=$(bash -c 'source "$1/lib/retro.sh"; printf %s "$CALIBRATION_JQ"' _ "$(dirname "$cli")")
 [ "$(jq -c "$cal | map(select(.size == \"S\") | [.recalibrate, (.outliers | map([.number, .why]))])" <<<'{"usage": {"tickets": [{"ticket": 1, "input": 5, "output": 5, "cacheRead": 0, "cacheWrite5m": 0, "cacheWrite1h": 0}]},
   "done": [{"number": 1, "title": "a", "size": "S", "cycleHours": 1, "lines": 120}, {"number": 2, "title": "b", "size": "S", "cycleHours": 2, "lines": 90},
     {"number": 3, "title": "c", "size": "S", "cycleHours": 30, "lines": 20}]}')" = \

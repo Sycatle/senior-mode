@@ -166,4 +166,50 @@ sup 'console.log("50%");' '// senior-mode: allow debug-print -- #123: progress b
 run rules-check && fail "an allow lifts the line above"
 has "src/a.ts:3: debug-print" "allow lifts the next line only"
 
+# Detections of the language packs (#489, spec 471 §3), on the packs the plugin ships.
+export SENIOR_MODE_RULES_DIR=$real_rules
+lang() { config '{"audit": false, "preset": "'"$1"'", "checks": [{"name": "lint", "run": "true"}], "rules": {"packs": ["common", "'"$1"'"]}}'; }
+# put <preset> <file> <content>: the file of the branch, alone in its diff.
+put() { reset; lang "$1"; mkdir -p "$repo/$(dirname "$2")"; printf '%s\n' "$3" >"$repo/$2"; }
+bad() { put "$1" "$2" "$3"; run rules-check && fail "$2: '$3' passes"; has "$2:1: $4" "$2 '$3'"; }
+good() { put "$1" "$2" "$3"; run rules-check || fail "$2: '$3' fails: $(out)"; }
+
+bad node src/a.ts '} catch (e) {}' swallowed-error
+bad node src/a.ts 'p.catch(() => {});' swallowed-error
+bad python app/a.py 'except: pass' swallowed-error
+bad python app/a.py 'except Exception: pass' swallowed-error
+bad go a.go '_ = err' swallowed-error
+bad go a.go 'if err != nil {}' swallowed-error
+bad rust src/lib.rs 'let _ = send(x);' swallowed-error
+bad rust src/lib.rs 'tx.send(x).ok();' swallowed-error
+good node src/a.ts '} catch (e) { log(e); }'
+good rust src/lib.rs 'let v = tx.send(x).ok();'
+
+bad node src/a.ts 'console.log(x);' debug-print
+bad python app/a.py 'print(x)' debug-print
+bad go a.go 'fmt.Println(x)' debug-print
+bad rust src/lib.rs 'dbg!(x);' debug-print
+good node src/a.test.ts 'console.log(x);'
+good python app/test_a.py 'print(x)'
+good go a_test.go 'fmt.Println(x)'
+good rust tests/x.rs 'println!("x");'
+good go a.go 'fmt.Fprintln(w, x)'
+
+good node src/a.ts '// TODO(#42): split'
+bad node src/a.ts '// TODO later' todo-without-issue
+bad python app/a.py '# FIXME later' todo-without-issue
+good python app/a.py 'TODOS = []'
+
+# The same patterns on lines the diff did not add: nothing is reported.
+reset
+git -C "$repo" checkout -q main
+printf '} catch (e) {}\nconsole.log(1);\n// TODO later\n' >"$repo/src/old.ts"
+printf 'except: pass\nprint(1)\n' >"$repo/src/old.py"
+g add -A && g commit -q -m "chore: old code"
+reset
+lang node
+run rules-check || fail "old patterns fail: $(out)"
+printf 'const k = 1;\n' >>"$repo/src/old.ts"
+run rules-check || fail "a change next to old patterns fails: $(out)"
+
 [ "$failures" -eq 0 ] && echo "ok: rules" || exit 1

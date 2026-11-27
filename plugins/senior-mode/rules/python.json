@@ -1,0 +1,27 @@
+{
+  "rules": [
+    {
+      "id": "swallowed-error",
+      "tier": 2,
+      "kind": "pattern",
+      "ext": [
+        "py"
+      ],
+      "pattern": "except[^:]*:[[:space:]]*pass([[:space:]]|$)",
+      "message": "an error is caught and dropped",
+      "fix": "handle it, re-raise with context, or log and say why"
+    },
+    {
+      "id": "debug-print",
+      "tier": 2,
+      "kind": "pattern",
+      "ext": [
+        "py"
+      ],
+      "prodOnly": true,
+      "pattern": "(^|[^[:alnum:]_.])print\\(|(^|[^[:alnum:]_.])breakpoint\\(\\)|import[[:space:]]+pdb|pdb\\.set_trace\\(",
+      "message": "debug output left in production code",
+      "fix": "remove it, or use the logging module"
+    }
+  ]
+}

@@ -9,6 +9,15 @@
       "never": "\\.only[[:space:]]*\\(|(^|[^[:alnum:]_.])(fit|fdescribe)\\(",
       "message": "a focused test (.only) runs one test and silences the others, whatever the comment says",
       "fix": "remove it; any other suppression takes `-- #<issue>: <reason>` on its line or the line above"
+    },
+    {
+      "id": "todo-without-issue",
+      "tier": 2,
+      "kind": "pattern",
+      "pattern": "(^|[^[:alnum:]_])(TODO|FIXME|XXX|HACK)([^[:alnum:]_]|$)",
+      "unless": "(^|[^[:alnum:]_])(TODO|FIXME|XXX|HACK)[^#]*#[0-9]+",
+      "message": "a TODO, FIXME, XXX or HACK with no issue",
+      "fix": "file an issue and write it as TODO(#<n>), or do it now"
     }
   ]
 }

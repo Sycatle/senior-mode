@@ -1,0 +1,39 @@
+{
+  "rules": [
+    {
+      "id": "swallowed-error",
+      "tier": 2,
+      "kind": "pattern",
+      "ext": [
+        "rs"
+      ],
+      "pattern": "let[[:space:]]+_[[:space:]]*=[[:space:]]*[^;]*\\([^;]*;",
+      "message": "a Result is dropped",
+      "fix": "propagate it with ?, or log and say why"
+    },
+    {
+      "id": "swallowed-error",
+      "tier": 2,
+      "kind": "pattern",
+      "ext": [
+        "rs"
+      ],
+      "pattern": "^[[:space:]]*[^=]*\\.ok\\(\\);[[:space:]]*$",
+      "unless": "^[[:space:]]*(let|return)[[:space:]]",
+      "message": "a Result is dropped",
+      "fix": "propagate it with ?, or log and say why"
+    },
+    {
+      "id": "debug-print",
+      "tier": 2,
+      "kind": "pattern",
+      "ext": [
+        "rs"
+      ],
+      "prodOnly": true,
+      "pattern": "(^|[^[:alnum:]_])(dbg|println|eprintln|print|eprint)!",
+      "message": "debug output left in production code",
+      "fix": "remove it, or use the project's logging crate"
+    }
+  ]
+}

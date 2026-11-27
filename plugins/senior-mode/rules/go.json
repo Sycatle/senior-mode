@@ -1,0 +1,27 @@
+{
+  "rules": [
+    {
+      "id": "swallowed-error",
+      "tier": 2,
+      "kind": "pattern",
+      "ext": [
+        "go"
+      ],
+      "pattern": "(^|[^[:alnum:]_])_[[:space:]]*=[[:space:]]*err[[:space:]]*($|//)|if[[:space:]]+err[[:space:]]*!=[[:space:]]*nil[[:space:]]*\\{[[:space:]]*\\}",
+      "message": "an error is assigned to _ or checked and dropped",
+      "fix": "return it with context, or log and say why"
+    },
+    {
+      "id": "debug-print",
+      "tier": 2,
+      "kind": "pattern",
+      "ext": [
+        "go"
+      ],
+      "prodOnly": true,
+      "pattern": "fmt\\.Print(f|ln)?\\(|(^|[^[:alnum:]_.])println\\(",
+      "message": "debug output left in production code",
+      "fix": "remove it, or use the project's logger"
+    }
+  ]
+}

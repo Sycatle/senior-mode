@@ -209,11 +209,11 @@ setup_board_readme() { # project-id slug language
 
 # Every item of a Project (paged) as {title, public, items: [{item, key, kind, id, title, body, values}]}: key
 # is the node id of the issue or pull request, "draft:<title>" for a draft; values are the item's
-# single-select, text, number and date values by field name.
+# single-select, text, number and date values by field name; number is the issue or pull request number.
 # shellcheck disable=SC2016 # a GraphQL query, not shell
 BOARD_ITEMS_QUERY='query($id: ID!, $after: String) { node(id: $id) { ... on ProjectV2 { title public
   items(first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { id
-    content { __typename ... on Issue { id } ... on PullRequest { id } ... on DraftIssue { title body } }
+    content { __typename ... on Issue { id number } ... on PullRequest { id number } ... on DraftIssue { title body } }
     fieldValues(first: 30) { nodes {
       ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
       ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } }
@@ -232,7 +232,7 @@ board_items() { # project-id
   done
   jq -c '{title: .[0].data.node.title, public: .[0].data.node.public, items: [.[].data.node.items.nodes[] | select(.content != null)
     | .content as $c | {item: .id, kind: $c.__typename, id: $c.id, title: $c.title, body: $c.body,
-      key: (if $c.__typename == "DraftIssue" then "draft:" + $c.title else $c.id end),
+      number: $c.number, key: (if $c.__typename == "DraftIssue" then "draft:" + $c.title else $c.id end),
       values: [.fieldValues.nodes[] | select(.field.name) | {field: .field.name, name, text, number, date}]}]}' <<<"$pages"
 }
 
@@ -389,6 +389,86 @@ setup_migrate() { # config-file dry-run
     [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
   echo "migrate: Project #$new_number is the board now, recorded in .claude/senior-mode.json"
   echo "migrate: Project #$old_number closed, not deleted; reopen it with: gh project close $old_number --owner $owner --undo"
+}
+
+# What the move to a shared Project leaves unmapped, one line per value: a value whose field the target lacks, a
+# single-select value whose option the target lacks. $1 target fields, $2 old items, $3 the target's name.
+# shellcheck disable=SC2016 # a jq program, not shell
+move_unmapped() { # target-fields old-items target
+  jq -nr --argjson tgt "$1" --argjson oi "$2" --arg to "$3" --argjson board "$BOARD" "$MIGRATE_DEFS"'
+    $oi[] | (if .kind == "DraftIssue" then .title else "#\(.number)" end) as $ref
+    | .values[] | . as $v | field($tgt; $v.field) as $t
+    | if $t == null then "move: \($ref) \($v.field): the field is not on Project #\($to), left unmapped"
+      elif $v.name != null and option($t; $v.field; $v.name) == null then
+        "move: \($ref) \($v.field) \($v.name): no such option on Project #\($to), left unmapped"
+      else empty end'
+}
+
+# Moves the repository's items to the shared Project $3 (#723): the items it lacks are added with the field values
+# of the mapping of --migrate, the repository is linked to it and unlinked from its own Project, which is never
+# deleted nor closed, and the config names the shared Project. The shared Project's fields are never touched: a
+# field or option it lacks is reported and the value left unmapped. Items go first and the config last, so a rerun
+# after an interruption adds nothing twice; once the config names the Project there is nothing left to do.
+# With dry set, prints the mapping and changes nothing.
+# shellcheck disable=SC2016 # jq programs, not shell
+setup_move_items() { # config-file dry-run number owner slug
+  local file=$1 dry=$2 number=$3 owner=$4 slug=$5 old_number old_id new_id old oldf tgtf cur plan ops fields
+  old_number=$(jq -r '.project.number // empty' "$file") old_id=$(jq -r '.project.id // empty' "$file")
+  [ -n "$old_number" ] && [ -n "$old_id" ] || die "no Project to move in .claude/senior-mode.json; run senior-mode setup github first"
+  if [ "$old_number" = "$number" ] && [ "$(jq -r '.project.owner // empty' "$file")" = "$owner" ]; then
+    echo "move: $slug is already on Project #$number, nothing to do"
+    return 0
+  fi
+  new_id=$(gh_retry project view "$number" --owner "$owner" --format json --jq .id) ||
+    die "cannot read Project #$number of $owner"
+  old=$(board_items "$old_id") || die "cannot read the items of Project #$old_number"
+  oldf=$(board_fields "$old_id") || die "cannot read the fields of Project #$old_number"
+  tgtf=$(board_fields "$new_id") || die "cannot read the fields of Project #$number"
+  cur=$(board_items "$new_id") || die "cannot read the items of Project #$number"
+  cur=$(jq -c .items <<<"$cur") old=$(jq -c .items <<<"$old")
+  plan=$(migrate_plan "$oldf" "$tgtf" "$old" "$cur")
+  jq -r --arg o "$old_number" --arg n "$number" '
+    "move: Project #\($o) -> Project #\($n)",
+    "move: items: \(.add) to add, \(.present) already on Project #\($n)",
+    (if (.mapped | length) > 0 then "move: values mapped: " + (.mapped | join(", ")) else empty end),
+    (if (.skipped | length) > 0 then "move: not moved: " + (.skipped | join(", ")) else empty end)' <<<"$plan"
+  move_unmapped "$tgtf" "$old" "$number"
+  if [ "$dry" = true ]; then
+    echo "move: dry run, nothing changed; senior-mode setup github --project $number --move-items does it"
+    return 0
+  fi
+  ops=$(migrate_ops "$tgtf" "$old" "$cur")
+  [ -z "$ops" ] || migrate_items "$new_id" "$ops"
+  gh_retry project link "$number" --owner "$owner" --repo "$slug" >/dev/null || die "cannot link $slug to Project #$number"
+  gh_retry project unlink "$old_number" --owner "$owner" --repo "$slug" >/dev/null ||
+    die "cannot unlink $slug from Project #$old_number"
+  fields=$(board_fields "$new_id") || die "cannot read the fields of Project #$number"
+  cache_project "$file" "$owner" "$number" "$new_id" "$fields" false
+  echo "move: Project #$number is the board of $slug now, recorded in .claude/senior-mode.json"
+  echo "move: $slug unlinked from Project #$old_number, which is kept as it is; link it again with: gh project link $old_number --owner $owner --repo $slug"
+}
+
+# `setup github --project <n> --move-items [--dry-run]`: the entry point of setup_move_items. Only the items move: the
+# repository steps of setup github are not run, and --project alone, which would attach the repository (#398), is refused.
+setup_github_move() {
+  local target="" move=false dry=false root file slug owner
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --project) [[ ${2:-} =~ ^[0-9]+$ ]] || usage; target=$2; shift 2 ;;
+      --move-items) move=true; shift ;;
+      --dry-run) dry=true; shift ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$target" ] && [ "$move" = true ] || {
+    [ -n "$target" ] || usage
+    die "setup github --project $target: attaching a repository to a shared Project is not available yet (#398); add --move-items to move this repository's items to it"
+  }
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+  file=$root/.claude/senior-mode.json
+  [ -f "$file" ] && jq empty "$file" 2>/dev/null || die "no valid .claude/senior-mode.json; run senior-mode setup github first"
+  slug=$(repo_slug) owner=${slug%%/*}
+  setup_move_items "$file" "$dry" "$target" "$owner" "$slug"
 }
 
 # Creates missing board fields with their colours, repairs the options of existing ones.

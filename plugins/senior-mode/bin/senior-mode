@@ -88,6 +88,8 @@ usage() {
 . "$LIB/watchdog.sh"
 # shellcheck source=lib/lease.sh
 . "$LIB/lease.sh"
+# shellcheck source=lib/egress.sh
+. "$LIB/egress.sh"
 # shellcheck source=lib/serve.sh
 . "$LIB/serve.sh"
 

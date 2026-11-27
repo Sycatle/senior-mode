@@ -190,6 +190,89 @@ run ratchet-check || fail "cobertura: a touched file at its floor fails: $(out)"
 reset
 lcov src/a.ts 10 4
 
+# Accessibility (#496): the baseline counts the serious axe violations per journey and rule, from the reports of the axe
+# helper (test-results/a11y/<journey>.json). --update-baseline only lowers it; a violation that is not in it is refused.
+printf 'test-results/\n' >>"$repo/.gitignore"
+edit '.a11y = {total: 3, journeys: {checkout: {label: 3}}}'
+g commit -q -a -m "chore: a11y baseline"
+# a11y_report <journey> <impact> <rule> <count>...: the serious and other violations the journey measured.
+a11y_report() {
+  local j=$1; shift; mkdir -p "$repo/test-results/a11y"
+  jq -nc --arg j "$j" '[$ARGS.positional as $p | range(0; $p | length; 3) | {journey: $j, page: "/p", impact: $p[.], rule: $p[. + 1], selector: "#x", n: ($p[. + 2] | tonumber)}
+    | . as $f | range(0; .n) | $f | del(.n)]' --args "$@" >"$repo/test-results/a11y/$j.json"
+}
+a11y_report checkout serious label 2
+run ratchet || fail "ratchet with an a11y baseline fails: $(out)"
+grep -q "^a11y: 3 serious violations in the baseline, 2 measured" "$work/out" || fail "a11y not shown: $(out)"
+run check --update-baseline || fail "update-baseline fails on a lowered a11y count: $(out)"
+jq -e '.a11y == {total: 2, journeys: {checkout: {label: 2}}}' "$repo/.claude/ratchet-baseline.json" >/dev/null || fail "a11y count not lowered: $(cat "$repo/.claude/ratchet-baseline.json")"
+reset
+a11y_report checkout serious label 1 moderate color-contrast 4
+run check --update-baseline || fail "a moderate violation blocks the update: $(out)"
+jq -e '.a11y.journeys.checkout == {label: 1}' "$repo/.claude/ratchet-baseline.json" >/dev/null || fail "moderate violations enter the baseline: $(cat "$repo/.claude/ratchet-baseline.json")"
+reset
+a11y_report checkout critical label 3
+a11y_report login serious label 0
+run check --update-baseline || fail "update-baseline fails with a journey at zero: $(out)"
+jq -e '.a11y == {total: 3, journeys: {checkout: {label: 3}}}' "$repo/.claude/ratchet-baseline.json" >/dev/null || fail "a journey at zero changes the baseline: $(cat "$repo/.claude/ratchet-baseline.json")"
+reset
+a11y_report checkout serious label 3 serious color-contrast 1
+cp "$repo/.claude/ratchet-baseline.json" "$work/before.json"
+run check --update-baseline && fail "update-baseline adds a serious violation"
+grep -q "checkout: color-contrast has 1 serious violations, the baseline allows 0" "$work/out" || fail "new violation not named: $(out)"
+cmp -s "$work/before.json" "$repo/.claude/ratchet-baseline.json" || fail "a refused update writes the baseline"
+reset
+a11y_report checkout serious label 4
+run check --update-baseline && fail "update-baseline raises a count"
+grep -q "checkout: label has 4 serious violations, the baseline allows 3" "$work/out" || fail "raised count not named: $(out)"
+reset
+a11y_report checkout serious label 3
+rm -rf "$repo/test-results"
+run ratchet || fail "ratchet without an a11y report fails: $(out)"
+grep -q "^a11y: not measured: no a11y report in test-results/a11y" "$work/out" || fail "missing a11y report not said: $(out)"
+for e in '.a11y.journeys.checkout.label = 4 | .a11y.total = 4' '.a11y.total = 4' '.a11y.journeys.login = {label: 1} | .a11y.total = 4' '.a11y.journeys.checkout["color-contrast"] = 1'; do
+  edit "$e"
+  run ratchet-check && fail "an a11y hand edit passes: $e"
+  grep -q "ratchet baseline worse than on main" "$work/out" || fail "a11y hand edit not named: $e: $(out)"
+  reset
+done
+edit '.a11y.journeys.checkout.label = 2 | .a11y.total = 2'
+run ratchet-check || fail "lowering an a11y count by hand fails: $(out)"
+reset
+rm "$repo/.claude/ratchet-baseline.json"
+a11y_report checkout serious label 2 moderate color-contrast 1
+run ratchet --init || fail "ratchet --init with an a11y report fails: $(out)"
+jq -e '.a11y == {total: 2, journeys: {checkout: {label: 2}}}' "$repo/.claude/ratchet-baseline.json" >/dev/null || fail "a11y not frozen from the reports: $(cat "$repo/.claude/ratchet-baseline.json")"
+reset
+
+# The axe helper on fixture results, no browser: a serious violation fails with rule, selector and page; a moderate one
+# is reported; a baselined one passes up to its count.
+if command -v node >/dev/null && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 22 ]; then
+  mkdir -p "$work/axe" && cp "$(dirname "$cli")/../presets/node/e2e/axe.ts" "$work/axe/axe.ts"
+  cat >"$work/axe/check.mjs" <<'JS'
+import assert from 'node:assert/strict'
+import { findings, judge } from './axe.ts'
+
+const result = (...v) => ({ violations: v.map(([id, impact, ...targets]) => ({ id, impact, nodes: targets.map((t) => ({ target: [t] })) })) })
+const run = (r, baseline = {}) => judge(findings('signup', '/signup', r), baseline)
+
+let r = run(result(['label', 'critical', '#email']))
+assert.deepEqual(r.failures, ['label (critical) #email on /signup'])
+r = run(result(['color-contrast', 'moderate', '.hint']))
+assert.deepEqual(r.failures, [])
+assert.deepEqual(r.reports, ['color-contrast (moderate) .hint on /signup'])
+const baseline = { a11y: { journeys: { signup: { label: 1 } } } }
+r = run(result(['label', 'serious', '#email']), baseline)
+assert.deepEqual(r.failures, [])
+assert.deepEqual(r.reports, ['label (serious) #email on /signup'])
+r = run(result(['label', 'serious', '#email', '#name']), baseline)
+assert.equal(r.failures.length, 2)
+r = run(result(['label', 'serious', '#email'], ['image-alt', 'serious', 'img']), baseline)
+assert.deepEqual(r.failures, ['image-alt (serious) img on /signup'])
+JS
+  (cd "$work/axe" && node check.mjs) >"$work/out" 2>&1 || fail "axe helper: $(tail -8 "$work/out")"
+else echo "skip: axe helper: node 22 or later is needed to run TypeScript"; fi
+
 # No baseline: the full bar, and no ratchet step.
 git init -q -b main "$work/plain"
 mkdir "$work/plain/.claude"

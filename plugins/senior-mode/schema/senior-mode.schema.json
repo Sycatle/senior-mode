@@ -311,6 +311,11 @@
           "additionalProperties": false,
           "properties": { "report": { "type": "string", "minLength": 1, "description": "Path of the lcov or Cobertura report the ratchet reads." } }
         },
+        "a11y": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "report": { "type": "string", "minLength": 1, "description": "Directory of the axe reports the ratchet reads, one JSON file per journey (default test-results/a11y)." } }
+        },
         "patchCoverage": { "type": "number", "minimum": 0, "maximum": 100, "description": "Percent of lines a new file must cover." }
       }
     },

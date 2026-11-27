@@ -225,7 +225,8 @@ fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2",
 # config <autonomy json> [<serve json> [<notify json>]]; the daily digest is off unless the notify json turns it on.
 config() {
   jq -n --argjson f "$fields" --argjson a "$1" --argjson s "${2:-{\}}" --argjson nt "${3:-{\}}" '{project: {id: "PVT_1", owner: "acme", number: 3, fields: $f},
-    autonomy: ({minMemoryMB: 0} + $a), serve: $s, notify: ({digest: false} + $nt), github: {protection: "ruleset"}, audit: false,
+    autonomy: ({minMemoryMB: 0, parallel: 1, maxConsecutiveFailures: 2, ticketsPerHour: 6} + $a), wip: 1, bestOf: {n: 2}, process: {profile: "strict"},
+    serve: $s, notify: ({digest: false} + $nt), github: {protection: "ruleset"}, audit: false,
     checks: [{name: "ok", run: "true"}], protected: ($ENV.PROT // "" | if . == "" then [] else split(",") end)}' >"$repo/.claude/senior-mode.json"
   git -C "$repo" add -A
   git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: config" --allow-empty
@@ -1174,7 +1175,7 @@ echo '{}' >"$repo/.claude/senior-mode.json"
   [ "$(cd "$repo" && "$cli" config get autonomy.minDiskMB)" = 2048 ] &&
   [ "$(cd "$repo" && "$cli" config get autonomy.startupSeconds)" = 30 ] &&
   [ "$(cd "$repo" && "$cli" config get autonomy.sessionsPerHour)" = 0 ] &&
-  [ "$(cd "$repo" && "$cli" config get autonomy.ticketsPerHour)" = 6 ] &&
+  [ "$(cd "$repo" && "$cli" config get autonomy.ticketsPerHour)" = 0 ] &&
   [ "$(cd "$repo" && "$cli" config get autonomy.minMemoryMB)" = 1024 ] &&
   [ "$(cd "$repo" && "$cli" config get notify.digest)" = true ] &&
   [ -z "$(cd "$repo" && "$cli" config get notify.mention)" ] &&

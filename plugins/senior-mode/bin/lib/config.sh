@@ -114,6 +114,8 @@ CONFIG_OVERRIDES=.claude/senior-mode/overrides
 # `process.lifts`; of these only the independent review has a lift that the code honours today.
 CONFIG_GATES='["secretScan","protectedZones","bashGuard","noForcePush","checkGreen","review","trustGate"]'
 CONFIG_LIFTABLE='["review"]'
+# The ADR that lifts the review for the shipped fast profile, with no ADR of the project.
+CONFIG_FAST_ADR=docs/adr/0034-autonomous-by-default.md
 # shellcheck disable=SC2016 # a jq program, not shell
 CONFIG_MERGE='
 def uniq: reduce .[] as $x ([]; if index([$x]) then . else . + [$x] end);
@@ -159,11 +161,13 @@ repo_list() {
   fi
 }
 
-# The text of the repository layer.
+# The text of the repository layer; empty when the repository has no .claude/senior-mode.json (the defaults and the
+# fast profile then stand).
 config_repo_text() {
   local text="" file
   if config_from_base; then text=$(repo_read .claude/senior-mode.json) || text=""; fi
   if [ -z "$text" ]; then
+    [ -f "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/senior-mode.json" ] || return 0
     file=$(config_file) || return 1
     text=$(<"$file")
   fi
@@ -262,7 +266,7 @@ config_resolve() { # [--validate]
     fi
   done
   pre=$(jq -nc --argjson o "${layer[organization]}" --argjson r "${layer[repository]}" --argjson l "${layer[local]}" '$o * $r * $l')
-  name=$(jq -r '(.process.profile // "strict") | if type == "string" then . else "strict" end' <<<"$pre")
+  name=$(jq -r '(.process.profile // "fast") | if type == "string" then . else "strict" end' <<<"$pre")
   if ! prof=$(profile_load "$name" "$validate"); then
     findings=$(jq -c --arg m "$prof" '. + [{level: "error", layer: "profile", path: "process.profile", message: $m}]' <<<"$findings")
     name=strict
@@ -288,7 +292,11 @@ config_resolve() { # [--validate]
       continue
     fi
     adr=$(jq -r --arg g "$g" '[.[] | select(type == "object" and .rule == $g) | .adr][0] // empty' <<<"$lifts")
-    if [ -z "$adr" ]; then
+    if [ -z "$adr" ] && [ "$g" = review ] && [ "$name" = fast ] && [ "$(jq -r .origin <<<"$prof")" = plugin ]; then
+      # The shipped fast profile lifts the review by ADR 0034 itself: no ADR of the project is needed.
+      gates=$(jq -c --arg g "$g" '.[$g] = false' <<<"$gates")
+      lifted=$(jq -c --arg g "$g" --arg a "$CONFIG_FAST_ADR" --arg p "$name" '. + [{rule: $g, adr: $a, profile: $p}]' <<<"$lifted")
+    elif [ -z "$adr" ]; then
       findings=$(jq -c --arg g "$g" --arg p "$name" '. + [{level: "error", layer: "repository", path: "process.lifts", message: "profile \($p) lifts the locked gate \($g): lifting needs an accepted ADR of this repository, named as {\"rule\": \"\($g)\", \"adr\": \"docs/adr/NNNN-title.md\"} in process.lifts"}]' <<<"$findings")
     elif ! [[ $adr =~ ^[A-Za-z0-9._/-]+\.md$ ]] || [[ $adr == *..* || $adr == /* ]]; then
       findings=$(jq -c --arg g "$g" --arg a "$adr" '. + [{level: "error", layer: "repository", path: "process.lifts", message: "the ADR path \($a) of the lift of \($g) is not a path inside the repository"}]' <<<"$findings")
@@ -319,16 +327,21 @@ config_resolve() { # [--validate]
 # one returns. With no snapshot yet, the keys stand but the process falls back to the plugin's strict profile.
 # shellcheck disable=SC2016 # jq programs, not shell
 config_effective() {
-  local res errors common snap marker merged commit new fp say file root cache key
+  local res errors common snap marker merged commit new fp say file root cache key text
   local strict='.process = {profile: "strict", gates: ($g | map({key: ., value: true}) | from_entries)}'
+  local fast='.process = {profile: "fast", gates: ($g | map({key: ., value: true}) | from_entries | .review = false)}'
   if ! config_from_base; then
     # The common case: no organization or local file, no project profile, nothing under `process`.
     root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
     common=$(git rev-parse --path-format=absolute --git-common-dir)
-    file=$(config_file) || return 1
+    text='{}'
+    if [ -f "$root/.claude/senior-mode.json" ]; then
+      file=$(config_file) || return 1
+      text=$(<"$file")
+    fi
     if [ ! -e "$common/senior-mode/organization.json" ] && [ ! -e "$(dirname "$common")/.claude/senior-mode.local.json" ] &&
-      [ ! -e "$root/.claude/senior-mode/profiles" ] && jq -e 'has("process") | not' "$file" >/dev/null; then
-      jq -c --argjson d "$DEFAULTS" --argjson g "$CONFIG_GATES" "(\$d * .) | $strict" "$file"
+      [ ! -e "$root/.claude/senior-mode/profiles" ] && jq -e 'has("process") | not' <<<"$text" >/dev/null; then
+      jq -c --argjson d "$DEFAULTS" --argjson g "$CONFIG_GATES" "(\$d * .) | $fast" <<<"$text"
       return
     fi
     config_resolve | jq -c .merged
@@ -392,6 +405,18 @@ config_get() {
   merged=$(config_effective) || return 1
   jq -er --arg k "$key" 'getpath($k | split(".")) | if . == null then empty elif type == "string" then . else tojson end' \
     <<<"$merged" 2>/dev/null || die "unknown config key: $key"
+}
+
+# The minutes a ticket session of Size $1 (S, M or L; any other is taken as M) may run: the scalar autonomy.sessionTimeout
+# when a layer above the defaults sets it (it wins for every Size), else autonomy.sessionTimeoutBySize.
+# shellcheck disable=SC2016 # a jq program, not shell
+session_timeout() {
+  local res
+  res=$(config_resolve) || return 1
+  jq -r --arg s "$1" '
+    ([.layers[1:][] | select(.present) | .config.autonomy.sessionTimeout // empty] | last) as $set
+    | if $set != null then $set
+      else (.merged.autonomy.sessionTimeoutBySize | .[$s] // .M) end' <<<"$res"
 }
 
 # `senior-mode config explain <key>`: the value of the key, the layer that won, and what each layer says.

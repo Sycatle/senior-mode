@@ -29,7 +29,7 @@ publish base
 # A: explain names the winning layer and the shadowed values.
 run config explain wip || fail "A: explain failed: $(cat "$work/err")"
 { grep -q '^wip = 4$' "$work/out" && grep -q '^winner: repository' "$work/out"; } || fail "A: wrong winner: $(cat "$work/out")"
-grep -q 'defaults .*1 .*shadowed by repository' "$work/out" || fail "A: the default is not shown as shadowed: $(cat "$work/out")"
+grep -q 'defaults .*3 .*shadowed by repository' "$work/out" || fail "A: the default is not shown as shadowed: $(cat "$work/out")"
 echo '{"wip": 7}' >"$repo/.claude/senior-mode.local.json"
 run config explain wip
 { grep -q '^winner: local' "$work/out" && grep -q 'repository .*4 .*shadowed by local' "$work/out"; } || fail "A: the local file does not win: $(cat "$work/out")"
@@ -42,12 +42,14 @@ run config explain nope.key && fail "A: an unknown key was explained"
 grep -q 'unknown config key' "$work/err" || fail "A: unknown key not named: $(cat "$work/err")"
 reset_layers
 
-# B: a profile that lifts a locked gate needs an accepted ADR of the repository, named in the config.
-config '{"wip": 4, "process": {"profile": "fast"}}'
+# B: a profile of the project that lifts a locked gate needs an accepted ADR of the repository, named in the config.
+mkdir -p "$repo/.claude/senior-mode/profiles"
+echo '{"extends": "strict", "gates": {"review": false}}' >"$repo/.claude/senior-mode/profiles/mine.json"
+config '{"wip": 4, "process": {"profile": "mine"}}'
 [ "$(cd "$repo" && "$cli" config get process.gates.review)" = true ] || fail "B: the review gate is lifted without an ADR"
 run config validate && fail "B: a lift without an ADR was accepted"
 grep -q 'lifting needs an accepted ADR' "$work/out" || fail "B: the refusal has no reason: $(cat "$work/out")"
-config '{"wip": 4, "process": {"profile": "fast", "lifts": [{"rule": "review", "adr": "docs/adr/0016-lift.md"}]}}'
+config '{"wip": 4, "process": {"profile": "mine", "lifts": [{"rule": "review", "adr": "docs/adr/0016-lift.md"}]}}'
 run config validate && fail "B: a lift naming a missing ADR was accepted"
 grep -q 'not found' "$work/out" || fail "B: missing ADR not said: $(cat "$work/out")"
 adr 0016 proposed
@@ -58,10 +60,10 @@ adr 0016 accepted
 run config validate || fail "B: an accepted ADR is refused: $(cat "$work/out")"
 [ "$(cd "$repo" && "$cli" config get process.gates.review)" = false ] || fail "B: the accepted lift does not hold"
 [ "$(cd "$repo" && "$cli" config get process.gates.secretScan)" = true ] || fail "B: a gate that nothing lifts is open"
-[ "$(cd "$repo" && "$cli" config get process.profile)" = fast ] || fail "B: the profile is not fast"
+[ "$(cd "$repo" && "$cli" config get process.profile)" = mine ] || fail "B: the profile is not mine"
 # Another layer cannot carry a lift, and a gate that cannot be lifted is refused.
 config '{"wip": 4}'
-echo '{"process": {"profile": "fast", "lifts": [{"rule": "review", "adr": "docs/adr/0016-lift.md"}]}}' >"$repo/.claude/senior-mode.local.json"
+echo '{"process": {"profile": "mine", "lifts": [{"rule": "review", "adr": "docs/adr/0016-lift.md"}]}}' >"$repo/.claude/senior-mode.local.json"
 [ "$(cd "$repo" && "$cli" config get process.gates.review)" = true ] || fail "B: a local file lifted a gate"
 run config validate
 grep -q 'repository layer only' "$work/out" || fail "B: the local lift is not flagged: $(cat "$work/out")"
@@ -119,17 +121,19 @@ grep -q 'hooks/guard.sh.*safety base' "$work/out" || fail "D: a hook override is
 reset_layers
 
 # E: the daemon reads the base branch, never the working tree or a head; an invalid config keeps the last valid one.
-config '{"wip": 4}'
+mkdir -p "$repo/.claude/senior-mode/profiles"
+echo '{"extends": "strict", "gates": {"review": false}}' >"$repo/.claude/senior-mode/profiles/mine.json"
+config '{"wip": 4, "process": {"profile": "strict"}}'
 publish "wip 4"
 config '{"wip": 9}'
 [ "$(cd "$repo" && "$cli" config get wip)" = 9 ] || fail "E: a person does not read the working tree"
 [ "$(cd "$repo" && SENIOR_MODE_CONFIG_SOURCE=base "$cli" config get wip)" = 4 ] || fail "E: the base mode read the working tree"
 [ "$(cd "$repo" && SENIOR_MODE_RUN=1 "$cli" config get wip)" = 4 ] || fail "E: a run reads something else than the base"
-config '{"wip": 4, "process": {"profile": "fast", "lifts": [{"rule": "review", "adr": "docs/adr/0016-lift.md"}]}}'
+config '{"wip": 4, "process": {"profile": "mine", "lifts": [{"rule": "review", "adr": "docs/adr/0016-lift.md"}]}}'
 [ "$(cd "$repo" && SENIOR_MODE_CONFIG_SOURCE=base "$cli" config get process.gates.review)" = true ] || fail "E: a lift that is not on the base branch holds"
 git -C "$repo" checkout -q -- .claude/senior-mode.json
 rm -f "$repo/docs/adr/0016-lift.md"
-config '{"wip": 4, "process": {"profile": "fast", "lifts": [{"rule": "review", "adr": "docs/adr/0016-lift.md"}]}}'
+config '{"wip": 4, "process": {"profile": "mine", "lifts": [{"rule": "review", "adr": "docs/adr/0016-lift.md"}]}}'
 adr 0016 accepted
 publish "lift"
 [ "$(cd "$repo" && SENIOR_MODE_CONFIG_SOURCE=base "$cli" config get process.gates.review)" = false ] || fail "E: a lift with its ADR on the base does not hold"
@@ -151,6 +155,38 @@ config '{"wip": 4, "process": {"profile": "fast", "lifts": [{"rule": "review", "
 summary=$(cd "$repo" && bash -c '. "$1/lib/common.sh"; . "$1/lib/config.sh"; SELF=$2; LIB=$1/lib; process_summary' _ "$bin" "$cli")
 [ "$(jq -r '.profile' <<<"$summary")" = fast ] && [ "$(jq -r '.lifted[0].rule' <<<"$summary")" = review ] ||
   fail "F: the process summary is wrong: $summary"
+reset_layers
+
+# G: the defaults of ADR 0034 (#825): no file, the fast profile and the autonomous values.
+rm -rf "$repo/.claude/senior-mode.json" "$repo/.git/senior-mode"
+[ "$(cd "$repo" && "$cli" config get process.profile)" = fast ] || fail "G: no config file does not read the fast profile"
+[ "$(cd "$repo" && "$cli" config get process.gates.review)" = false ] || fail "G: the fast profile keeps the review gate"
+run config validate || fail "G: the review lift of the fast profile needs an ADR: $(cat "$work/out")"
+for pair in autonomy.merge=true autonomy.parallel=3 wip=3 autonomy.maxTickets=0 autonomy.maxConsecutiveFailures=3 \
+  autonomy.ticketsPerHour=0 bestOf.n=1 audit=true; do
+  [ "$(cd "$repo" && "$cli" config get "${pair%%=*}")" = "${pair#*=}" ] || fail "G: ${pair%%=*} is not ${pair#*=}"
+done
+[ "$(cd "$repo" && "$cli" config get autonomy.sessionTimeoutBySize)" = '{"S":45,"M":120,"L":240}' ] || fail "G: the timeouts by Size are wrong"
+st() { (cd "$repo" && bash -c '. "$1/lib/common.sh"; . "$1/lib/config.sh"; SELF=$2; LIB=$1/lib; session_timeout "$3"' _ "$bin" "$cli" "$1"); }
+[ "$(st S) $(st M) $(st L)" = "45 120 240" ] || fail "G: the timeout by Size is $(st S) $(st M) $(st L)"
+config '{"autonomy": {"sessionTimeout": 60}}'
+[ "$(st S) $(st M) $(st L)" = "60 60 60" ] || fail "G: a scalar sessionTimeout does not win for every Size"
+config '{"autonomy": {"sessionTimeoutBySize": {"S": 10}}}'
+run config validate || fail "G: sessionTimeoutBySize is refused: $(cat "$work/out")"
+[ "$(st S) $(st M)" = "10 120" ] || fail "G: a partial sessionTimeoutBySize is wrong"
+config '{"process": {"profile": "strict"}}'
+[ "$(cd "$repo" && "$cli" config get process.gates.review)" = true ] || fail "G: strict does not keep the review gate"
+config '{"process": {"profile": "strict", "lifts": [{"rule": "review", "adr": "docs/adr/0016-lift.md"}]}}'
+adr 0016 accepted
+[ "$(cd "$repo" && "$cli" config get process.gates.review)" = true ] || fail "G: strict lifts the review"
+config '{"process": {"profile": "fast", "lifts": [{"rule": "review", "adr": "docs/adr/0016-lift.md"}]}}'
+run config validate || fail "G: the lift of this repository is refused under fast: $(cat "$work/out")"
+for gate in secretScan protectedZones bashGuard noForcePush checkGreen trustGate; do
+  [ "$(cd "$repo" && "$cli" config get "process.gates.$gate")" = true ] || fail "G: the fast profile opens $gate"
+done
+run config explain autonomy.merge
+grep -q '^autonomy.merge = true$' "$work/out" || fail "G: explain does not show the value: $(cat "$work/out")"
+grep -q 'defaults .*true' "$work/out" || fail "G: explain does not show the default layer: $(cat "$work/out")"
 reset_layers
 
 [ "$failures" -eq 0 ] && echo "config layers: all cases pass"

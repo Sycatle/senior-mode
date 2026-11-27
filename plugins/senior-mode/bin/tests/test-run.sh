@@ -223,7 +223,7 @@ git -C "$repo" remote add origin "$work/github.com/acme/app.git"
 mkdir -p "$repo/.claude"
 fields='{"Status": {"id": "F_S", "options": {"Ready": "o1", "In progress": "o2", "In review": "o3", "Backlog": "o0", "Done": "o4"}}}'
 config() {
-  jq -n --argjson f "$fields" --argjson a "$1" '{project: {id: "PVT_1", owner: "acme", number: 3, fields: $f}, autonomy: $a}
+  jq -n --argjson f "$fields" --argjson a "$1" '{project: {id: "PVT_1", owner: "acme", number: 3, fields: $f}, autonomy: ({maxTickets: 3, parallel: 1, maxConsecutiveFailures: 2, merge: false} + $a), wip: 1, bestOf: {n: 2}, process: {profile: "strict"}}
     + $ARGS.named' ${2:+--argjson github "$2"} ${3:+--argjson agent "$3"} ${4:+--argjson commit "$4"} >"$repo/.claude/senior-mode.json"
   git -C "$repo" add -A
   git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "chore: config" --allow-empty

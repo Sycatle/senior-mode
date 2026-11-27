@@ -660,11 +660,15 @@ node_has_node_tests() { # root
 # shellcheck disable=SC2016 # jq program, not shell
 node_detect() { # root [workspace-root]: the package manager is the one of the workspace root, its lockfile lives there
   # exec runs an installed binary only: npx and bunx would download a missing one.
-  local root=$1 pm exec install tsconfig=false nodetest=false
+  local root=$1 pm exec install tsconfig=false nodetest=false e2e=""
   IFS=$'\t' read -r pm exec install < <(node_pm "${2:-$root}")
+  # No e2e script: a Playwright or Cypress configuration gives the command (#798); {files} is the placeholder `check` fills.
+  if compgen -G "$root/playwright.config.*" >/dev/null; then e2e="$exec playwright test {files}"
+  elif compgen -G "$root/cypress.config.*" >/dev/null; then e2e="$exec cypress run"
+  fi
   [ ! -f "$root/tsconfig.json" ] || tsconfig=true
   ! node_has_node_tests "$root" || nodetest=true
-  jq -c --arg pm "$pm" --arg exec "$exec" --arg install "$install" --argjson tsconfig "$tsconfig" --argjson nodetest "$nodetest" '(.scripts // {}) as $s
+  jq -c --arg pm "$pm" --arg exec "$exec" --arg install "$install" --arg e2e "$e2e" --argjson tsconfig "$tsconfig" --argjson nodetest "$nodetest" '(.scripts // {}) as $s
     | def run($n): if $s[$n] then "\($pm) run \($n)" else null end;
     ((.dependencies.typescript // .devDependencies.typescript) != null) as $ts
     # Next.js 15.5+ generates its route types only on build or dev: a fresh worktree needs
@@ -683,7 +687,7 @@ node_detect() { # root [workspace-root]: the package manager is the one of the w
         test: ((if ($s.test // "") | test("no test specified") then null else run("test") end)
           // (if $nodetest then "node --test" else null end)),
         build: run("build"),
-        e2e: (run("test:e2e") // run("e2e")),
+        e2e: (run("test:e2e") // run("e2e") // (if $e2e != "" then $e2e else null end)),
         install: $install
       } | with_entries(select(.value != null))),
       framework: (if (.dependencies.next // .devDependencies.next) then "next" else null end),
@@ -1196,7 +1200,7 @@ setup_repo() {
             commands: ($pk[$k].commands + ($e[$k].commands // {})), deps: $pk[$k].deps})))
       else . end
     | .commands as $all
-    | ($p[0].commands | map(select($all[.] != null) | {name: ., run: $all[.]})) as $derived
+    | ($p[0].commands | map(select($all[.] != null) | {name: ., run: ($all[.] | gsub(" *\\{files\\}"; ""))})) as $derived
     | ($derived + (if $ours then $p[0].checks else [] end)
         + (if $guard then [{name: "env guard", run: ".githooks/env-guard.sh"}] else [] end)) as $want
     | .checks = ((.checks // []) as $have

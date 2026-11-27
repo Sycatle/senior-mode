@@ -302,6 +302,8 @@ retro() {
   data=$(jq -c ". + {calibration: ($CALIBRATION_JQ)}" <<<"$data") || die "could not compare the sizes"
   # The cost of the iteration rules: round trips, time in check, costliest checks, rework (#486).
   data=$(retro_iteration "$data" "$root" "$since_iso" "$until_iso") || die "could not read the check times"
+  # The journeys of the accepted specs and their flaky runs (#798).
+  data=$(retro_journeys "$data" "$root" "$since_iso" "$until_iso") || die "could not read the journeys"
   # The cause label of each failed ticket and the improvement tickets of the causes that repeat (#364).
   data=$(retro_learn "$data" "$history" "$board" "$slug") || exit 1
   # The notes to merge or delete and the agents' drafts (#340): facts for the pull request the skill opens.
@@ -313,6 +315,7 @@ retro() {
   else
     jq -r --arg head "$head" "$HYGIENE_DEF$RETRO_TEXT_JQ" <<<"$data"
     jq -r "$RETRO_ITERATION_TEXT_JQ" <<<"$data"
+    jq -r "$RETRO_JOURNEYS_TEXT_JQ" <<<"$data"
     jq -r "$RETRO_LEARN_TEXT_JQ" <<<"$data"
     jq -r "$RETRO_NOTES_TEXT_JQ" <<<"$data"
     jq -r "$RETRO_PROOF_TEXT_JQ" <<<"$data"

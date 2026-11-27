@@ -328,5 +328,26 @@ echo 'export default [];' >"$d/eslint.config.js"
 setup "$d"
 grep -q "a11y" "$work/out" && fail "a11y plugin proposed to a project that has no UI: $(cat "$work/out")"
 
+# A Playwright configuration with no e2e script records the e2e command with the {files} placeholder; its check runs the whole
+# suite (no placeholder); a Cypress configuration gives the Cypress command; a command already set is unchanged (#798).
+d=$(project pw '{"scripts": {"test": "vitest run"}, "devDependencies": {"@playwright/test": "1"}}' package-lock.json)
+: >"$d/playwright.config.ts"
+setup "$d"
+[ "$(cfg "$d" .commands.e2e)" = "npx --no -- playwright test {files}" ] || fail "playwright config: e2e command not recorded: $(cfg "$d" .commands.e2e)"
+[ "$(check_run "$d" e2e)" = "npx --no -- playwright test" ] || fail "the e2e check keeps the placeholder: $(check_run "$d" e2e)"
+d=$(project cy '{"scripts": {"test": "vitest run"}, "devDependencies": {"cypress": "13"}}' pnpm-lock.yaml)
+: >"$d/cypress.config.js"
+setup "$d"
+[ "$(cfg "$d" .commands.e2e)" = "pnpm exec cypress run" ] || fail "cypress config: e2e command not recorded: $(cfg "$d" .commands.e2e)"
+d=$(project pwset '{"scripts": {"test": "vitest run"}}' package-lock.json)
+: >"$d/playwright.config.ts"
+mkdir -p "$d/.claude"
+echo '{"commands": {"e2e": "make e2e"}}' >"$d/.claude/senior-mode.json"
+setup "$d"
+[ "$(cfg "$d" .commands.e2e)" = "make e2e" ] || fail "a command already set was changed: $(cfg "$d" .commands.e2e)"
+d=$(project nocfg '{"scripts": {"test": "vitest run"}}' package-lock.json)
+setup "$d"
+[ "$(cfg "$d" '.commands.e2e // "none"')" = none ] || fail "an e2e command recorded with no configuration: $(cfg "$d" .commands.e2e)"
+
 [ "$failures" -eq 0 ] && echo "setup-node: all cases pass"
 exit "$failures"

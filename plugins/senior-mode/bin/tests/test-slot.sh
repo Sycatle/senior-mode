@@ -145,5 +145,26 @@ read -ra b <<<"$out2"
 rm "$repo/.senior-mode/slot.env"
 [ "$(slot bash -c 'echo ${KEEP:-none}')" = none ] || fail "the template still read after its removal"
 
+# slotDown and slotUp (#764): down, up, the command, down; down runs last even when the session is killed; a failing up stops it.
+hooks=$work/hooks
+config '{"slotDown": "echo down $SENIOR_MODE_SLOT >>'"$hooks"'", "slotUp": "echo up $SENIOR_MODE_SLOT >>'"$hooks"'"}'
+: >"$hooks"
+slot bash -c 'echo command >>'"$hooks"'; exit 5'
+[ $? -eq 5 ] || fail "slot with hooks does not return the command's exit code"
+[ "$(tr '\n' ',' <"$hooks")" = "down 1,up 1,command,down 1," ] || fail "hooks not in the order down, up, command, down: $(cat "$hooks")"
+[ "$(slot bash -c 'echo out')" = out ] || fail "the session's stdout is not left alone with hooks"
+: >"$hooks"
+(cd "$repo" && "$cli" slot -- bash -c 'echo command >>'"$hooks"'; sleep 30') &
+pid=$!
+for _ in $(seq 100); do grep -q '^command' "$hooks" && break; sleep 0.05; done
+kill -TERM "$pid"
+wait "$pid"
+[ "$(tr '\n' ',' <"$hooks")" = "down 1,up 1,command,down 1," ] || fail "slotDown did not run last after SIGTERM: $(cat "$hooks")"
+config '{"slotUp": "echo up >>'"$hooks"'; echo nope >&2; exit 7", "slotDown": "echo down >>'"$hooks"'"}'
+: >"$hooks"
+slot bash -c 'echo command >>'"$hooks" 2>"$work/err" && fail "a failing slotUp did not stop the session"
+grep -q slotUp "$work/err" || fail "the failing hook is not named: $(cat "$work/err")"
+grep -q command "$hooks" && fail "the command started after a failing slotUp: $(cat "$hooks")"
+
 [ "$failures" -eq 0 ] && echo "slot: all cases pass"
 exit "$((failures > 0))"

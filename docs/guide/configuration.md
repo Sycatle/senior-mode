@@ -137,10 +137,12 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `e2e.slots` | `2` | End-to-end suites that may run at once on the machine (the check named `e2e`) |
 | `sandbox.verbs` | `[]` | Extra read-only `gh` verbs a sandboxed session may run through the [credential broker](autonomy.md#credential-broker), each as `gh <group> <view\|list\|status\|diff\|checks>` (`gh release view`). `gh pr merge`, `gh auth`, `gh repo`, `gh api` (so any method but `GET`), the secret and key groups and any write verb fail `config validate` naming `sandbox.verbs[<i>]`, and the broker denies them anyway |
 | `slot` | `""` | A shell command that derives the environment of a [session slot](autonomy.md#session-slots) from `SENIOR_MODE_SLOT`: it prints `KEY=VALUE` lines (a `PORT`, a `DATABASE_URL`, a cache directory) that are exported into the session. Empty: the session only gets `SENIOR_MODE_SLOT`. Names starting with `SENIOR_MODE_` are refused |
+| `slotDown` | `""` | A shell command, idempotent, that tears down the environment of a [session slot](autonomy.md#session-slots) (for example `docker compose down -v`). It runs in the session's worktree with the slot's environment: before `slotUp`, and after the session whatever way it ends (a SIGTERM included) |
+| `slotUp` | `""` | A shell command that brings up the environment of a session slot (for example `docker compose up -d --wait`), run after `slotDown` and before the session. If it fails the session does not start and the message names `slotUp` |
 
 `senior-mode config get <key>` prints a value, with dots for nested keys (`ci.mode`). The optional keys
-(`protected`, `secrets`, `envGuard.forbidden`, `review.sections`, `docs.extra`, `github.protection`, `slot`)
-print `[]` (an empty line for `github.protection` and `slot`) when absent (`github.requiredChecks` prints `true`); a key the plugin does not know is an error.
+(`protected`, `secrets`, `envGuard.forbidden`, `review.sections`, `docs.extra`, `github.protection`, `slot`, `slotDown`, `slotUp`)
+print `[]` (an empty line for `github.protection`, `slot`, `slotDown` and `slotUp`) when absent (`github.requiredChecks` prints `true`); a key the plugin does not know is an error.
 
 ## Validation and the JSON schema
 

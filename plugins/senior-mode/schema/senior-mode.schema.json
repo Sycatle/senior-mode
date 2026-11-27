@@ -76,6 +76,8 @@
     "audit": { "type": "boolean", "description": "false turns off the dependency audit of `check`." },
     "wip": { "type": "integer", "minimum": 1, "description": "Open tickets In progress at once." },
     "slot": { "type": "string", "description": "A shell command that derives the environment of a session slot." },
+    "slotDown": { "type": "string", "description": "A shell command, idempotent, that tears down the environment of a session slot (run before the session, after it, whatever the exit)." },
+    "slotUp": { "type": "string", "description": "A shell command that brings up the environment of a session slot, after slotDown and before the session." },
     "ci": {
       "type": "object",
       "additionalProperties": false,

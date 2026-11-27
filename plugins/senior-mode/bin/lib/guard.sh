@@ -700,20 +700,63 @@ slot_env() {
   done <<<"$out"
 }
 
+# Runs the slot hook `slotDown` or `slotUp` ($1 names it, $2 is its command) with the slot's environment in
+# the current directory: its output goes to stderr (the session's stdout is the session's). Fails with a
+# message naming the hook.
+slot_hook() {
+  local rc=0
+  [ -z "$2" ] || bash -c "$2" </dev/null >&2 || rc=$?
+  [ "$rc" -eq 0 ] || echo "senior-mode: $1 failed (exit $rc): $2" >&2
+  return "$rc"
+}
+
+# Runs the command $3... of a slot that has hooks: `slotDown` then `slotUp` ($1, $2, empty for none) before it,
+# `slotDown` after it, whatever way it ends: a SIGTERM, SIGINT or SIGHUP to this process goes to the command, and
+# the down hook runs once it is gone. A failing hook stops the session before the command starts. Returns the
+# command's status.
+slot_hooked() {
+  local down=$1 up=$2 rc=0 r
+  shift 2
+  SLOT_PID="" SLOT_STOP=""
+  trap 'SLOT_STOP=1; [ -z "$SLOT_PID" ] || kill -TERM "$SLOT_PID" 2>/dev/null' TERM INT HUP
+  slot_hook slotDown "$down" || return 1
+  slot_hook slotUp "$up" || {
+    slot_hook slotDown "$down" || true
+    return 1
+  }
+  if [ -z "$SLOT_STOP" ]; then
+    "$@" <&0 &
+    SLOT_PID=$!
+    while :; do
+      wait "$SLOT_PID" && r=0 || r=$?
+      kill -0 "$SLOT_PID" 2>/dev/null || {
+        rc=$r
+        break
+      }
+    done
+  else
+    rc=143
+  fi
+  slot_hook slotDown "$down" || true
+  return "$rc"
+}
+
 # senior-mode slot -- <command>...: runs the command in a slot of its own, of `autonomy.parallel` per
 # repository (SENIOR_MODE_SLOTS when a run has more): SENIOR_MODE_SLOT=N, plus the KEY=VALUE lines of the
 # project's template `.senior-mode/slot.env` and then its `slot` command (a port, a database, a cache
 # directory; the command's lines override the template's) exported. `run` starts every session
 # through it, so two sessions never share a slot. It takes the process over (exec), the slot stays
-# taken with the descriptor until the command and its children are gone.
+# taken with the descriptor until the command and its children are gone. With `slotDown` or `slotUp` set
+# it stays the parent instead (slot_hooked): down, up, the command, down.
 slot() {
   [ "${1:-}" = -- ] && [ $# -ge 2 ] || usage
   shift
-  local slots=${SENIOR_MODE_SLOTS:-} SLOT env line
+  local slots=${SENIOR_MODE_SLOTS:-} SLOT env line down up
   unset SENIOR_MODE_SLOTS
   [ -n "$slots" ] || slots=$(config_get autonomy.parallel)
   [[ $slots =~ ^[1-9][0-9]*$ ]] || die "the number of slots (autonomy.parallel) must be a positive number, not $slots"
   command -v flock >/dev/null || die "slot needs flock (util-linux)"
+  down=$(config_get slotDown) up=$(config_get slotUp)
   slot_context
   # Every slot's lines are checked first: a template that breaks on slot 2 does not wait for slot 2 to show it.
   for ((SLOT = 1; SLOT <= slots; SLOT++)); do slot_render "$SLOT"; done
@@ -725,7 +768,9 @@ slot() {
     [ -z "$line" ] || export "$line"
   done <<<"$env"
   export SENIOR_MODE_SLOT=$SLOT
-  exec "$@"
+  if [ -z "$down$up" ]; then exec "$@"; fi
+  slot_hooked "$down" "$up" "$@" || exit $?
+  exit 0
 }
 
 # Files changed on this branch since it left the base (default: the default branch) that match a

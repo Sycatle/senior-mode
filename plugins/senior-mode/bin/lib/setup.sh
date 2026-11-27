@@ -555,6 +555,38 @@ setup_gitignore() {
   echo ".gitignore: .claude/agent-memory/ ignored (agent memory stays on the machine)"
 }
 
+# The per-slot environment template `.senior-mode/slot.env` (#764), written from what the project has: a PORT
+# for a node server (a dev or start script), a compose project name when a compose file exists, a DATABASE_URL
+# when an .env example declares one with a database name. Nothing detected writes nothing; an existing file
+# is never touched.
+setup_slot_env() {
+  local root=$1 file=$1/.senior-mode/slot.env lines="" compose="" f url ex
+  [ ! -e "$file" ] || return 0
+  if [ -f "$root/package.json" ] &&
+    jq -e '(.scripts // {}) | has("dev") or has("start")' "$root/package.json" >/dev/null 2>&1; then
+    lines+="PORT={{port:3000}}"$'\n'
+  fi
+  for f in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+    [ ! -f "$root/$f" ] || { compose=$f; break; }
+  done
+  [ -z "$compose" ] || lines+="COMPOSE_PROJECT_NAME={{repo}}-s{{slot}}"$'\n'
+  for ex in .env.example .env.sample .env.template; do
+    [ -f "$root/$ex" ] || continue
+    url=$(sed -n 's/^\(export \)\{0,1\}DATABASE_URL=//p' "$root/$ex" | head -n 1 | tr -d "\"'\r")
+    url=$(sed -nE 's#^([A-Za-z][A-Za-z0-9+.-]*://[^/?]*/[^/?]+)(\?.*)?$#\1_s{{slot}}\2#p' <<<"$url")
+    [ -z "$url" ] || { lines+="DATABASE_URL=$url"$'\n'; break; }
+  done
+  [ -n "$lines" ] || return 0
+  mkdir -p "$root/.senior-mode"
+  {
+    echo "# One environment per session slot (senior-mode slot): {{slot}} {{port:BASE}} {{repo}} {{ticket}} {{slotdir}}. Yours to edit, setup repo never overwrites it."
+    [ -z "$compose" ] || echo "# $compose: bring the slot's project down with \"slotDown\": \"docker compose down -v\" in .claude/senior-mode.json."
+    printf '%s' "$lines"
+  } >"$file"
+  echo ".senior-mode/slot.env: written, one environment per session slot ($(sed -n 's/^\([A-Z_]*\)=.*/\1/p' <<<"$lines" | paste -sd' ' -))"
+  [ -z "$compose" ] || echo "slots: $compose found; consider \"slotDown\": \"docker compose down -v\" in .claude/senior-mode.json"
+}
+
 # Adds the Principles block to CLAUDE.md, or refreshes it; a missing CLAUDE.md imports AGENTS.md when
 # there is one, else starts from the skeleton that the setup skill fills from the code.
 setup_claude_md() {
@@ -1205,6 +1237,7 @@ setup_repo() {
 
   setup_claude_md "$root" "$tpl/$lang" "$name"
   setup_gitignore "$root"
+  setup_slot_env "$root"
   decisions_attributes "$root"
   if [ -n "$(find "$root" "$root/.github" "$root/docs" -maxdepth 1 -iname 'pull_request_template*' 2>/dev/null)" ]; then
     echo "pull request template: kept"

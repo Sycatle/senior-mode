@@ -48,9 +48,16 @@ board_fields() {
 }
 
 # Copies the template Project into the repository's owner, without draft issues: views and built-in
-# workflows come with it, fields too. Prints "<number> <id>". Reads template and owner_node of setup_github.
-copy_template() { # title
-  jq -nc --arg t "$template" --arg o "$owner_node" --arg title "$1" '{variables: {template: $t, owner: $o, title: $title},
+# workflows come with it, fields too. Prints "<number> <id>". Reads template and owner_node of setup_github. The
+# source is the template of the config, except that the organization layer's board.template (setup org, #401) replaces
+# the plugin's own when the repository sets none; $2 forces a source.
+copy_template() { # title [source]
+  local src=${2:-$template} org
+  if [ -z "${2:-}" ] && [ "$src" = "$(jq -r .board.template <<<"$DEFAULTS")" ]; then
+    org=$(org_layer | jq -r '.board.template // empty')
+    [ -z "$org" ] || src=$org
+  fi
+  jq -nc --arg t "$src" --arg o "$owner_node" --arg title "$1" '{variables: {template: $t, owner: $o, title: $title},
     query: "mutation($template: ID!, $owner: ID!, $title: String!) { copyProjectV2(input: {projectId: $template,
     ownerId: $owner, title: $title, includeDraftIssues: false}) { projectV2 { id number } } }"}' |
     gh_retry api graphql --input - --jq '.data.copyProjectV2.projectV2 | "\(.number) \(.id)"'

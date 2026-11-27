@@ -23,20 +23,22 @@ Wording, follow-ups, status line, no human to ask: `${CLAUDE_SKILL_DIR}/referenc
 
 Run `senior-mode setup github --ci <local|actions>` (`local` unless asked). It:
 
-- finds the Project or copies the template board, links it, ensures its fields (Iteration, Start, End too): see "Board" in the reference;
-- creates the labels `needs-human`, `needs-info`, `blocked`, `security` (and `type:*` on a personal account);
+- finds the Project or copies the template board, links it, ensures its fields: see "Board" in the reference;
+- creates the labels `needs-human`, `needs-info`, `blocked`, `security` (`type:*` on a personal account);
 - allows rebase merges only, deletes merged branches;
 - creates or updates a ruleset `senior-mode` on the default branch: pull requests only, rebase,
-  `senior-mode/ci`, `senior-mode/review` and `senior-mode/security` required, linear history; other rules kept. If it
-  prints `protection: NOT enforced`, see "No branch protection" in the reference;
+  `senior-mode/ci`, `senior-mode/review` and `senior-mode/security` required, linear history; other rules kept. On
+  `protection: NOT enforced`, see "No branch protection" in the reference;
 - with `protected` globs, writes the `senior-mode:begin`/`end` block of `.github/CODEOWNERS` (owner's
-  entries kept) and requires code owner review. Tell the user to commit the file, and that an owner
-  merges their own protected-zone pull request by hand, with `gh pr merge --admin`. `setup repo` writes `protected`, so rerun `setup github` after it;
+  entries kept) and requires code owner review. Tell the user to commit the file; an owner
+  merges their own protected-zone pull request by hand (`gh pr merge --admin`). Rerun after `setup repo`;
 - turns on the scanners: see "Scanners";
 - `local`: disables the repository's workflows (files kept); `actions`: `setup repo` then adds
-  `.github/workflows/senior-mode.yml`. If it prints `releases:`, relay it (the release PR needs
+  `.github/workflows/senior-mode.yml`. On `releases:`, relay it (the release PR needs
   a `RELEASE_PLEASE_TOKEN` secret to get CI). On `built-in workflows off:`, tell the user to turn them on in
   the Project's Workflows tab.
+
+Organization, once: `senior-mode setup org <owner>` (dry run; `--apply` copies the template Project).
 
 ## Repository
 

@@ -16,6 +16,7 @@ clearly which parts are still to come.
 - [Autonomy and guardrails](autonomy.md): what is blocked, what is required before a merge, what is not automated yet.
 - [Running the pipeline on a server](self-hosting.md): account, pinned plugin, sandbox, token, one `serve` unit per repository.
 - [Configuration](configuration.md): `.claude/senior-mode.json`, checks, CI mode, presets, git hooks, releases.
+- [Products of several repositories and organizations](multi-repo.md): attach a repository to a shared Project, serve scope, cross-repo epics, the organization layer, `setup org`, `status --all`.
 - [FAQ](faq.md): cost, GitHub Actions budget, private repositories, existing repositories, leaving senior-mode, French.
 
 ## Design reference

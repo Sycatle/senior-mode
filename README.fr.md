@@ -136,6 +136,7 @@ sur les deux dépôts (superpowers v7.0.2, mattpocock/skills v1.3.2).
 
 - [Guide utilisateur](docs/guide/README.md) (en anglais) : installation, journée type, commandes,
   skills, agents, garde-fous, configuration, FAQ.
+- [Produits de plusieurs dépôts et organisations](docs/guide/multi-repo.md) (en anglais).
 - [Spec de conception](docs/specs/0001-senior-mode.md) et [décisions](docs/adr/).
 - [Changelog](plugins/senior-mode/CHANGELOG.md) et la [feuille de route par jalon](https://github.com/Sycatle/senior-mode/milestones).
 

@@ -305,6 +305,12 @@
         }
       }
     },
+    "rules": {
+      "type": "object",
+      "properties": {
+        "packs": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "The rule packs of the project, written by `setup repo` from its preset (node, python, go, rust); each lists its linter, typing and format rules as `covered by your config`, `proposed` or `written`." }
+      }
+    },
     "ratchet": {
       "type": "object",
       "additionalProperties": false,

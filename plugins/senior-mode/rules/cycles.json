@@ -1,0 +1,26 @@
+{
+  "rules": [
+    {
+      "id": "import-cycle",
+      "tier": 2,
+      "kind": "tool",
+      "presets": ["node"],
+      "run": "depcruise --output-type json --exclude \"node_modules|dist|build\" .",
+      "format": "depcruise",
+      "needs": "depcruise",
+      "install": "npm install -g dependency-cruiser",
+      "fix": "break the cycle: move the shared part into a third module that both import"
+    },
+    {
+      "id": "import-cycle",
+      "tier": 2,
+      "kind": "tool",
+      "presets": ["python"],
+      "run": "lint-imports",
+      "format": "importlinter",
+      "needs": "lint-imports",
+      "install": "pip install import-linter",
+      "fix": "break the cycle: move the shared part into a third module that both import"
+    }
+  ]
+}

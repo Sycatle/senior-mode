@@ -3,11 +3,11 @@
 # report an adapter turns into findings). Definitions only: the entry point dispatches `rules-check`.
 
 RULES_MATCHERS="line call comment loop suppression"
-RULES_FORMATS="jscpd knip knip-deps deptry vulture staticcheck gotidy cargo-dead udeps"
+RULES_FORMATS="jscpd knip knip-deps deptry vulture staticcheck gotidy cargo-dead udeps depcruise importlinter"
 # The formats whose report is text, not JSON: an empty one is a clean run.
-RULES_TEXT_FORMATS=" vulture gotidy "
+RULES_TEXT_FORMATS=" vulture gotidy importlinter "
 # The formats that read the text the diff adds (a manifest line, an import line), not only its line numbers.
-RULES_TEXT_NEEDED=" knip-deps deptry gotidy udeps "
+RULES_TEXT_NEEDED=" knip-deps deptry gotidy udeps depcruise importlinter "
 # The files no rule reads unless it lists their extension in `ext`: prose, data, lock files.
 RULES_SKIP_EXT=" md mdx txt json lock yaml yml svg "
 
@@ -201,8 +201,10 @@ rules_manifest() {
   return 1
 }
 
-# The definitions the adapters of dead code and unused dependencies share (jq): $A the added line numbers per file, $T the
-# added text per file, $root. `depline` is the line of a manifest the diff adds that names the package.
+# The definitions the adapters of dead code, unused dependencies and import cycles share (jq): $A the added line numbers
+# per file, $T the added text per file, $root. `depline` is the line of a manifest the diff adds that names the package;
+# `edgeline` the line of the file $x the diff adds that names the file $y (an import); `cycle_findings` reads closed
+# cycles (the first file repeated last) and keeps those that an added import closes, from the file that adds it.
 # shellcheck disable=SC2016 # a jq program, not shell
 RULES_JQ_DEFS='
   def rel: (if startswith($root + "/") then .[($root | length + 1):] else . end) | sub("^\\./"; "");
@@ -211,6 +213,18 @@ RULES_JQ_DEFS='
   def norm: ascii_downcase | gsub("[_.]"; "-");
   def depline($f; $n): ($T[$f] // {}) | to_entries
     | map(select(.value | norm | test("(^|[^a-z0-9@/-])" + ($n | norm | esc) + "($|[^a-z0-9/-])"))) | .[0].key;
+  def stem: split("/") as $p | ($p[-1] | sub("\\.[^.]*$"; "")) as $b
+    | if ($b == "index" or $b == "__init__") and ($p | length) > 1 then $p[-2] else $b end;
+  def edgeline($x; $y): ($T[$x] // {}) | to_entries
+    | map(select(.value | test("(^|[^A-Za-z0-9_])" + ($y | stem | esc) + "([^A-Za-z0-9_]|$)"))) | .[0].key;
+  def rot($i): .[$i:] + .[:$i];
+  def cycle_findings:
+    map(.[:-1] | select(length > 0))
+    | map({key: (. as $c | ($c | index($c | min)) as $i | rot($i) | join(">")), c: .})
+    | unique_by(.key) | .[]
+    | .c as $c | ($c | length) as $n
+    | first(range(0; $n) as $i | $c[$i] as $x | $c[($i + 1) % $n] as $y | edgeline($x; $y) as $l | select($l != null) | {i: $i, x: $x, l: $l}) as $h
+    | "fail\t\($h.x)\t\($h.l)\timport cycle \((($c | rot($h.i)) + [$c[$h.i]]) | join(" -> "))";
 '
 
 # The adapters below read the report of a tool on stdin and print `fail<TAB>file<TAB>line<TAB>message` for what the diff
@@ -283,6 +297,30 @@ rules_udeps() {
     (.unused_deps // {}) | to_entries[] | .value as $v | ($v.manifest_path | rel) as $f
     | (($v.normal // []) + ($v.development // []) + ($v.build // []))[] | . as $n
     | depline($f; $n) as $l | select($l != null) | "fail\t\($f)\t\($l)\tcrate \($n) is declared and no code uses it"'
+}
+
+# dependency-cruiser (`--output-type json`): a circular dependency, from the modules or the violations.
+# shellcheck disable=SC2016 # a jq program, not shell
+rules_depcruise() {
+  jq -r --argjson A "$1" --arg root "$2" --argjson T "$4" "$RULES_JQ_DEFS"'
+    def names: map((if type == "object" then .name else . end) | rel);
+    def dedup: reduce .[] as $x ([]; if .[-1] == $x then . else . + [$x] end);
+    [ ((.modules // [])[] | .source as $s | (.dependencies // [])[] | select(.circular == true) | ([$s | rel] + ((.cycle // []) | names))),
+      ((.summary.violations // [])[] | select((.cycle // []) | length > 0) | ([.from | rel] + ((.cycle // []) | names))) ]
+    | map(dedup | if .[0] == .[-1] then . else . + [.[0]] end) | cycle_findings'
+}
+
+# import-linter (text): a chain of imports that comes back to its first module, `a -> b (l.3)` then `b -> a (l.9)`.
+# shellcheck disable=SC2016 # a jq program, not shell
+rules_importlinter() {
+  jq -Rrs --argjson A "$1" --arg root "$2" --argjson T "$4" "$RULES_JQ_DEFS"'
+    def file($m): ($m | gsub("\\."; "/")) as $p
+      | ([($A | keys[]), ($T | keys[])] | unique
+        | map(select(. == $p + ".py" or . == $p + "/__init__.py" or endswith("/" + $p + ".py") or endswith("/" + $p + "/__init__.py"))) | .[0]) // ($p + ".py");
+    (split("\n") | map(capture("^[-\\s]*(?<a>[A-Za-z_][A-Za-z0-9_.]*) -> (?<b>[A-Za-z_][A-Za-z0-9_.]*)") // null)) as $ls
+    | reduce $ls[] as $l ({g: [], c: []}; if $l == null then (if (.c | length) > 0 then (.g += [.c] | .c = []) else . end) else .c += [$l] end)
+    | (.g + (if (.c | length) > 0 then [.c] else [] end))
+    | map([.[0].a] + map(.b)) | map(select(.[0] == .[-1])) | map(map(file(.))) | cycle_findings'
 }
 
 # The directory of the rule packs ($SENIOR_MODE_RULES_DIR for the tests).

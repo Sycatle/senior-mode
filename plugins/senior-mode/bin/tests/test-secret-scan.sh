@@ -47,7 +47,7 @@ kind() {
   branch src/app.txt "$3"
   run && fail "$1: the scan passes on $1"
   grep -q "^FAIL  secret scan ([0-9.]*s)$" "$work/out" || fail "$1: scan not reported as failed: $(cat "$work/out")"
-  grep -q "src/app.txt:4: $1" "$work/out" || fail "$1: file, line and kind not given: $(cat "$work/out")"
+  grep -q "src/app.txt:4 secret scan $1" "$work/out" || fail "$1: file, line and kind not given: $(cat "$work/out")"
   ! grep -qF -- "$2" "$work/out" || fail "$1: the secret is printed: $(cat "$work/out")"
 }
 
@@ -174,7 +174,7 @@ git_ checkout -q -b mid
 sed -i -e '2d' -e "5a token=$generic" "$repo/src/long.txt"
 git_ commit -q -a -m "feat: mid"
 run && fail "a secret in the middle of a file passes"
-grep -q "src/long.txt:5: generic secret" "$work/out" || fail "wrong line number: $(cat "$work/out")"
+grep -q "src/long.txt:5 secret scan generic secret" "$work/out" || fail "wrong line number: $(cat "$work/out")"
 # An added line that starts with "++" is a line, not a file header.
 git_ checkout -q main
 branch src/app.txt "++ plus plus"
@@ -182,7 +182,7 @@ printf '+++ b/other\n' >>"$repo/src/app.txt"
 printf '%s\n' "x = $aws" >>"$repo/src/app.txt"
 git_ commit -q -a -m "feat: plus"
 run && fail "a secret after a '+++' line passes"
-grep -q "src/app.txt:6: AWS access key" "$work/out" || fail "a '+++' line shifted the report: $(cat "$work/out")"
+grep -q "src/app.txt:6 secret scan AWS access key" "$work/out" || fail "a '+++' line shifted the report: $(cat "$work/out")"
 
 # A clean change passes and the scan shows as ok; names that only look like secrets are not flagged.
 branch src/app.txt 'password = process.env.DB_PASSWORD_1'
@@ -257,7 +257,7 @@ branch src/a.pem "$keyA"
 run || fail "an allowlisted private key fails: $(cat "$work/out")"
 branch src/b.pem "$keyB"
 run && fail "the allowlist of key A lifts key B under the same header"
-grep -q "src/b.pem:1: private key" "$work/out" || fail "key B not reported: $(cat "$work/out")"
+grep -q "src/b.pem:1 secret scan private key" "$work/out" || fail "key B not reported: $(cat "$work/out")"
 allow "$(sha "$header") the header"
 branch src/a.pem "$keyA"
 run && fail "the hash of the header lifts a private key"

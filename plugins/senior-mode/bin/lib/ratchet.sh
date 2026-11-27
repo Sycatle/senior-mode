@@ -80,6 +80,25 @@ ratchet_coverage() {
     grep . || { echo "the coverage report $rep holds no line coverage"; return 1; }
 }
 
+# The serious and critical axe violations of the journey tests as JSON {"<journey>": {"<rule>": n}}, read from the
+# reports of the axe helper (presets/node/e2e/axe.ts), one file per journey in `ratchet.a11y.report` (a directory,
+# default test-results/a11y). A journey with a report and no violation maps to {}. Fails, with the reason on stdout,
+# when there is no report to read.
+# shellcheck disable=SC2016 # a jq program, not shell
+ratchet_a11y() {
+  local root=$1 dir f out='{}'
+  dir=$(config_get ratchet.a11y.report 2>/dev/null) || dir=""
+  dir=${dir:-test-results/a11y}
+  [ -d "$root/$dir" ] || { echo "no a11y report in $dir: run the journey tests first"; return 1; }
+  for f in "$root/$dir"/*.json; do
+    [ -f "$f" ] || continue
+    out=$(jq -c --arg j "$(basename "$f" .json)" --slurpfile d "$f" '
+      .[$j] = ($d[0] | map(select(.impact == "serious" or .impact == "critical")) | group_by(.rule)
+        | map({key: .[0].rule, value: length}) | from_entries)' <<<"$out") || { echo "$dir/$(basename "$f") is not an a11y report"; return 1; }
+  done
+  printf '%s\n' "$out"
+}
+
 # What is wrong with the baseline $1 (a JSON text), one problem per line.
 # shellcheck disable=SC2016 # a jq program, not shell
 ratchet_baseline_errors() {
@@ -89,11 +108,15 @@ ratchet_baseline_errors() {
       and ([.files[] | type == "object" and ([.[] | cnt] | all)] | all);
     def covok: type == "object" and (.total | type) == "number" and (.files | type) == "object"
       and ([.files[] | type == "number"] | all);
+    def a11yok: type == "object" and (.total | type) == "number" and (.journeys | type) == "object"
+      and ([.journeys[] | type == "object" and ([.[] | cnt] | all)] | all);
     if type != "object" or .version != 1 then "must be an object with \"version\": 1"
     elif (.lint != null and (.lint | lintok | not))
       then "lint must be {\"total\": n, \"files\": {\"<file>\": {\"<rule>\": n}}}, counts of at least 1"
     elif (.coverage != null and (.coverage | covok | not))
       then "coverage must be {\"total\": percent, \"files\": {\"<file>\": percent}}"
+    elif (.a11y != null and (.a11y | a11yok | not))
+      then "a11y must be {\"total\": n, \"journeys\": {\"<journey>\": {\"<rule>\": n}}}, counts of at least 1"
     else empty end' <<<"$1" 2>/dev/null || echo "is not valid JSON"
 }
 
@@ -103,11 +126,17 @@ ratchet_baseline_errors() {
 ratchet_baseline_worse() {
   jq -rn --argjson n "$1" --argjson o "$2" '
     ($o.lint.files // {}) as $of | ($n.lint.files // {}) as $nf | ($o.coverage.files // {}) as $oc | ($n.coverage.files // {}) as $nc
+    | ($o.a11y.journeys // {}) as $oa | ($n.a11y.journeys // {}) as $na
     | (if (($n.lint.total // 0) > ($o.lint.total // 0)) then "lint.total rises from \($o.lint.total // 0) to \($n.lint.total)" else empty end),
       ($nf | to_entries[] | .key as $f
         | if ($of | has($f) | not) then "lint: \($f) enters the baseline"
           else .value | to_entries[] | select(.value > ($of[$f][.key] // 0))
             | "lint: \($f) \(.key) rises from \($of[$f][.key] // 0) to \(.value)" end),
+      (if (($n.a11y.total // 0) > ($o.a11y.total // 0)) then "a11y.total rises from \($o.a11y.total // 0) to \($n.a11y.total)" else empty end),
+      ($na | to_entries[] | .key as $j
+        | if ($oa | has($j) | not) then "a11y: \($j) enters the baseline"
+          else .value | to_entries[] | select(.value > ($oa[$j][.key] // 0))
+            | "a11y: \($j) \(.key) rises from \($oa[$j][.key] // 0) to \(.value)" end),
       (if ($n.coverage != null and $o.coverage != null and $n.coverage.total < $o.coverage.total)
         then "coverage.total falls from \($o.coverage.total) to \($n.coverage.total)" else empty end),
       (if $o.coverage != null then ($nc | to_entries[]) as $e
@@ -221,7 +250,7 @@ ratchet_check() {
 # coverage entry to what is measured, from the tree. Refuses, writing nothing, when a file got worse or a finding is
 # not in the baseline.
 ratchet_update() {
-  local root base baseline findings cov="" out bad
+  local root base baseline findings cov="" a11y out bad
   root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
   base=$root/$RATCHET_FILE
   baseline=$(cat "$base")
@@ -253,6 +282,21 @@ ratchet_update() {
       echo "ratchet: coverage: not measured: $cov"
     fi
   fi
+  if jq -e '.a11y != null' <<<"$baseline" >/dev/null; then
+    if a11y=$(ratchet_a11y "$root"); then
+      bad=$(jq -rn --argjson b "$baseline" --argjson m "$a11y" '$m | to_entries[] | .key as $j | .value | to_entries[]
+        | select(.value > ($b.a11y.journeys[$j][.key] // 0))
+        | "\($j): \(.key) has \(.value) serious violations, the baseline allows \($b.a11y.journeys[$j][.key] // 0)"')
+      [ -z "$bad" ] || { printf 'ratchet baseline: refused, a journey got worse or a violation is new:\n%s\n' "$bad" | sed '2,$s/^/  /'; return 1; }
+      out=$(jq -c --argjson m "$a11y" '
+        .a11y.journeys |= (to_entries | map(.key as $j | if ($m | has($j))
+            then .value |= (to_entries | map(select($m[$j][.key] != null) | .value = $m[$j][.key]) | from_entries) else . end)
+          | map(select(.value | length > 0)) | from_entries)
+        | .a11y.total = ([.a11y.journeys[][]] | add // 0)' <<<"$out")
+    else
+      echo "ratchet: a11y: not measured: $a11y"
+    fi
+  fi
   jq '.' <<<"$out" >"$base.tmp" && mv "$base.tmp" "$base"
   echo "ratchet baseline: rewritten ($(jq -r '.lint.total // 0' "$base") lint findings, coverage $(jq -r '.coverage.total // "not recorded"' "$base"))"
 }
@@ -261,7 +305,7 @@ ratchet_update() {
 # architecture rules. --init freezes the current lint findings and coverage as the baseline, once.
 # shellcheck disable=SC2016 # a jq program, not shell
 ratchet_cmd() {
-  local root base findings cov lint_ok=false cov_ok=false init=false n
+  local root base findings cov a11y lint_ok=false cov_ok=false a11y_ok=false init=false n
   [ $# -eq 0 ] || { [ "$1" = --init ] && [ $# -eq 1 ]; } || usage
   [ $# -eq 0 ] || init=true
   root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
@@ -272,15 +316,17 @@ ratchet_cmd() {
   fi
   if findings=$(ratchet_lint "$root"); then lint_ok=true; fi
   if cov=$(ratchet_coverage "$root"); then cov_ok=true; fi
+  if a11y=$(ratchet_a11y "$root"); then a11y_ok=true; fi
   if [ "$init" = true ]; then
     [ ! -e "$base" ] || die "$RATCHET_FILE exists: only check --update-baseline lowers it"
-    [ "$lint_ok" = true ] || [ "$cov_ok" = true ] || die "nothing to freeze: lint: not measured: $findings; coverage: not measured: $cov"
-    jq -n --arg d "$(date -u +%F)" --arg f "$findings" --argjson l "$lint_ok" --argjson c "$([ "$cov_ok" = true ] && echo "$cov" || echo null)" '
+    [ "$lint_ok" = true ] || [ "$cov_ok" = true ] || [ "$a11y_ok" = true ] || die "nothing to freeze: lint: not measured: $findings; coverage: not measured: $cov; a11y: not measured: $a11y"
+    jq -n --arg d "$(date -u +%F)" --arg f "$findings" --argjson l "$lint_ok" --argjson c "$([ "$cov_ok" = true ] && echo "$cov" || echo null)" --argjson a "$([ "$a11y_ok" = true ] && echo "$a11y" || echo null)" '
       { version: 1, createdAt: $d }
       + (if $l then ([$f | split("\n")[] | select(. != "") | split("\t")] | group_by(.[0]) as $g
           | {lint: {total: ($g | map(length) | add // 0),
               files: ($g | map({key: .[0][0], value: (group_by(.[1]) | map({key: .[0][1], value: length}) | from_entries)}) | from_entries)}}) else {} end)
-      + (if $c != null then {coverage: $c} else {} end)' >"$base.tmp" && mv "$base.tmp" "$base"
+      + (if $c != null then {coverage: $c} else {} end)
+      + (if $a != null then {a11y: {total: ([$a[][]] | add // 0), journeys: ($a | map_values(select(length > 0)))}} else {} end)' >"$base.tmp" && mv "$base.tmp" "$base"
     echo "ratchet baseline: $RATCHET_FILE written"
     return 0
   fi
@@ -292,6 +338,10 @@ ratchet_cmd() {
   if jq -e '.coverage != null' "$base" >/dev/null; then
     if [ "$cov_ok" = true ]; then echo "coverage: $(jq '.coverage.total' "$base")% in the baseline, $(jq '.total' <<<"$cov")% measured"
     else echo "coverage: not measured: $cov"; fi
+  fi
+  if jq -e '.a11y != null' "$base" >/dev/null; then
+    if [ "$a11y_ok" = true ]; then echo "a11y: $(jq '.a11y.total' "$base") serious violations in the baseline, $(jq '[.[][]] | add // 0' <<<"$a11y") measured"
+    else echo "a11y: not measured: $a11y"; fi
   fi
   if [ -f "$root/.claude/architecture-baseline.json" ]; then
     n=$(jq '[.violations[] | (.count // 1)] | add // 0' "$root/.claude/architecture-baseline.json" 2>/dev/null) || n="?"

@@ -73,6 +73,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `bestOf.n` | `2` | Candidates [`serve`](autonomy.md#best-of-n) tries for a ticket whose pull request still has changes requested after its 2 fix rounds, that pull request being the first (1 to 3; `1` turns it off) |
 | `ratchet.lint.command` | the preset's | Lint command whose output the [ratchet](#ratchet-for-legacy-code) reads, in a machine format: ESLint (`--format json`), ruff (`--output-format json`), golangci-lint (`--out-format json`), clippy (`--message-format json`), or a list of `{ "file", "rule", "line" }`; the presets of node, python, go and rust have one, the generic preset none |
 | `ratchet.coverage.report` | none | Path of the lcov or Cobertura report the ratchet reads (produced by the tests; the ratchet does not run them) |
+| `ratchet.a11y.report` | `test-results/a11y` | Directory of the axe reports of the journey E2E tests, one JSON file per journey, written by the helper `presets/node/e2e/axe.ts`; the ratchet reads it for `a11y` |
 | `ratchet.patchCoverage` | `80` | Percent of lines a new file must cover under the ratchet (0 to 100) |
 | `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |
 | `docs.extra` | none | Extra living documents the `docs` skill keeps current after a merge: a list of `{ "path", "purpose" }`; its changes are flagged for human review. Add it yourself |
@@ -594,6 +595,13 @@ When the baseline exists, `check` runs the `ratchet` step (`senior-mode ratchet-
   a coverage entry or lowers a coverage floor fails. Raising a coverage floor is allowed: it only tightens the bar. A baseline the base
   branch does not have yet is the first freeze and is accepted.
 - An **untouched file** is never held to the bar, whatever it contains.
+
+The baseline may also hold an `a11y` section, `{ "total": 3, "journeys": { "checkout": { "label": 3 } } }`: the serious and critical
+[axe](https://github.com/dequelabs/axe-core) violations a journey already has, counted per journey and rule. The journey E2E tests call
+`expectAccessible(page, '<journey>')` (the helper `presets/node/e2e/axe.ts`) on each page they visit: a serious or critical violation beyond
+its baseline count fails the test with the rule id, the selector and the page (`label (critical) #email on /signup`); a moderate or minor
+one is printed and never fails. `senior-mode ratchet --init` freezes what the reports hold, `check --update-baseline` only lowers a
+count from the reports of the journeys that ran, and refuses, writing nothing, when a rule exceeds its entry or is not in the baseline.
 
 A metric that cannot be read is `not measured`, never guessed: `ratchet` and `check` print `lint: not measured: set ratchet.lint.command`
 (no lint command with a machine format, or output in none of the known ones) or `coverage: not measured: set ratchet.coverage.report`

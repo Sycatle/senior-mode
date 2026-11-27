@@ -244,6 +244,10 @@ case "${1:-}" in
     [ $# -eq 1 ] || usage
     fk_check
     ;;
+  migrations-check)
+    [ $# -eq 1 ] || usage
+    migrations_check
+    ;;
   untested)
     shift
     untested "$@"

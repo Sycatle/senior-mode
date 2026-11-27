@@ -807,6 +807,59 @@ fk_applies() {
   git -c core.quotePath=false diff --name-only --no-renames --diff-filter=d "$base...HEAD" 2>/dev/null | grep -qE '\.(prisma|sql)$'
 }
 
+# The linter of the migrations (#747, tier 2): `performance.migrations.linter` (`squawk`, `django-migration-linter`), else
+# `django-migration-linter` for a Django project (a `manage.py` at the root), else none.
+migrations_linter() {
+  local linter root
+  linter=$(config_get performance.migrations.linter 2>/dev/null) || linter=""
+  if [ -z "$linter" ]; then
+    root=$(git rev-parse --show-toplevel) || return 0
+    [ ! -f "$root/manage.py" ] || linter=django-migration-linter
+  fi
+  printf '%s\n' "$linter"
+}
+
+# The migrations the branch adds or changes, one path per line: `performance.migrations.paths`, else the Django migration modules
+# or the SQL files of a `migrations` folder.
+migrations_changed() {
+  local base globs
+  base=$(default_branch) || return 0
+  globs=$(config_get performance.migrations.paths 2>/dev/null) || globs=""
+  if [ -z "$globs" ] || [ "$globs" = null ]; then
+    if [ "$(migrations_linter)" = django-migration-linter ]; then globs='["**/migrations/*.py"]'; else globs='["**/migrations/**/*.sql"]'; fi
+  fi
+  git -c core.quotePath=false diff --name-only --no-renames --diff-filter=d "$base...HEAD" 2>/dev/null | protected_match "$globs" || true
+}
+
+# The step `migrations` (#747): the linter of the project on the migrations the branch adds or changes, and on those only.
+# squawk prints `<file>:<line>:<column>: <level>: <rule>`; django-migration-linter lints the migrations by name. With no linter,
+# or one that is not installed, it says `not measured` and passes: the reviewer applies the expand/contract checklist.
+migrations_check() {
+  local linter files f
+  local -a names=()
+  linter=$(migrations_linter)
+  mapfile -t files < <(migrations_changed)
+  [ "${#files[@]}" -gt 0 ] && [ -n "${files[0]}" ] || {
+    echo "skipped: no migration change"
+    return 0
+  }
+  if [ -z "$linter" ]; then
+    echo "skipped: not measured, set performance.migrations.linter (squawk or django-migration-linter); the reviewer applies the expand/contract checklist"
+    return 0
+  fi
+  command -v "$linter" >/dev/null 2>&1 || {
+    echo "skipped: not measured, $linter is not installed"
+    return 0
+  }
+  case $linter in
+    squawk) squawk "${files[@]}" ;;
+    django-migration-linter)
+      for f in "${files[@]}"; do names+=(--include-name "$(basename "$f" .py)"); done
+      django-migration-linter "${names[@]}" .
+      ;;
+  esac
+}
+
 # The warning of `check` about suppressions the branch adds (#437): a lint or type check silenced, a test
 # skipped. One line per added line, `file:line` and the text. Never fails: review judges each one, and a
 # suppression with its reason written next to it is legitimate. Markdown is prose, not code: left out.
@@ -1226,6 +1279,11 @@ check() {
   if fk_applies; then
     names+=("foreign keys")
     cmds+=("$(printf '%q' "$SELF") fk-check")
+  fi
+  # The linter of the migrations, when the branch adds or changes one (#747).
+  if [ -n "$(migrations_changed)" ]; then
+    names+=("migrations")
+    cmds+=("$(printf '%q' "$SELF") migrations-check")
   fi
   if [ "$run2" = false ]; then
     names=()

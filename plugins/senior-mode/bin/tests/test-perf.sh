@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for the performance rules of `senior-mode check` (#472): a foreign key added without an index (#744). Offline: each case is a
+# Tests for the performance rules of `senior-mode check` (#472): a foreign key added without an index (#744), the linter of the migrations (#747). Offline: each case is a
 # branch off main in a fixture repository.
 set -u
 cli=$(cd "$(dirname "$0")/.." && pwd)/senior-mode
@@ -108,6 +108,71 @@ grep -q "db/migrations/004_alter.sql:1 foreign keys posts.editor_id is a foreign
 branch README.md 'two'
 run || fail "a diff with no schema change fails: $(cat "$work/out")"
 grep -q "foreign keys" "$work/out" && fail "the rule runs on a diff with no schema or migration change: $(cat "$work/out")"
+
+# Migrations (#747): stub linters on the PATH log what they are given and print fixed findings.
+mkdir "$work/bin"
+cat >"$work/bin/squawk" <<'STUB'
+#!/usr/bin/env bash
+echo "squawk $*" >>"$CALLS"
+rc=0
+for f in "$@"; do
+  if grep -q 'CREATE INDEX' "$f" && ! grep -q 'CONCURRENTLY' "$f"; then
+    echo "$f:1:1: warning: require-concurrent-index-creation"
+    rc=1
+  fi
+done
+exit "$rc"
+STUB
+cat >"$work/bin/django-migration-linter" <<'STUB'
+#!/usr/bin/env bash
+echo "django-migration-linter $*" >>"$CALLS"
+echo "(app, 0002_bad)... ERR (NOT_NULL)"
+exit 1
+STUB
+chmod +x "$work/bin/squawk" "$work/bin/django-migration-linter"
+export CALLS="$work/calls"
+export PATH="$work/bin:$PATH"
+base_config=$(cat "$repo/.claude/senior-mode.json")
+config() { printf '%s\n' "$1" >"$repo/.claude/senior-mode.json"; : >"$CALLS"; }
+
+# squawk runs on the migrations the branch adds, those only, and fails naming file, line and rule.
+branch db/migrations/010_index.sql 'CREATE INDEX posts_title_idx ON posts (title);'
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}],"performance":{"migrations":{"linter":"squawk","paths":["db/migrations/*.sql"]}}}'
+run && fail "an index created without CONCURRENTLY passes: $(cat "$work/out")"
+grep -q "FAIL  migrations" "$work/out" || fail "migrations not reported as failed: $(cat "$work/out")"
+grep -q "db/migrations/010_index.sql:1 migrations warning: require-concurrent-index-creation" "$work/out" || fail "file, line and rule not given: $(cat "$work/out")"
+[ "$(cat "$CALLS")" = "squawk db/migrations/010_index.sql" ] || fail "squawk did not run on the changed migration only: $(cat "$CALLS")"
+
+# A migration the linter accepts passes.
+branch db/migrations/011_ok.sql 'CREATE INDEX CONCURRENTLY posts_body_idx ON posts (body);'
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}],"performance":{"migrations":{"linter":"squawk","paths":["db/migrations/*.sql"]}}}'
+run || fail "a clean migration fails: $(cat "$work/out")"
+grep -q "ok    migrations" "$work/out" || fail "the migrations step did not run: $(cat "$work/out")"
+
+# A Django project: django-migration-linter on the changed migrations, by name.
+mkdir -p "$repo/shop/migrations"
+branch manage.py '#!/usr/bin/env python'
+echo 'x = 1' >"$repo/shop/migrations/0002_bad.py"
+git_ add -A
+git_ commit -q -m "feat: django migration"
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
+run && fail "a Django migration the linter rejects passes: $(cat "$work/out")"
+[ "$(cat "$CALLS")" = "django-migration-linter --include-name 0002_bad ." ] || fail "django-migration-linter not run on the changed migration: $(cat "$CALLS")"
+
+# No linter and no Django: not measured, and the step passes.
+branch db/migrations/012_plain.sql 'ALTER TABLE posts DROP COLUMN title;'
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
+run || fail "a migration with no linter fails: $(cat "$work/out")"
+grep -q "migrations: not measured" "$work/out" || fail "not measured not reported: $(cat "$work/out")"
+[ ! -s "$CALLS" ] || fail "a linter ran with none configured: $(cat "$CALLS")"
+
+# A diff with no migration does not run the linter.
+branch README.md 'three'
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}],"performance":{"migrations":{"linter":"squawk"}}}'
+run || fail "a diff with no migration fails: $(cat "$work/out")"
+grep -q "migrations" "$work/out" && fail "the migrations step runs on a diff with no migration: $(cat "$work/out")"
+[ ! -s "$CALLS" ] || fail "the linter ran on a diff with no migration: $(cat "$CALLS")"
+printf '%s\n' "$base_config" >"$repo/.claude/senior-mode.json"
 
 [ "$failures" -eq 0 ] && echo "perf: all cases pass"
 exit "$failures"

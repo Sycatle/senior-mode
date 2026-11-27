@@ -39,6 +39,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `framework` | none | `next` when Next.js is a dependency; the node preset then adds `middleware.*`, `src/middleware.*`, `proxy.*` and `src/proxy.*` to `protected` |
 | `envGuard.forbidden` | none | Strings, or `/regex/` patterns, that must never appear on an agent machine; turns on the `env guard` check |
 | `performance.queries.helper` | set by `setup repo` | Path of the [query-count helper](#query-count-helper) of the project's ORM; a path you set is kept |
+| `performance.migrations.linter`, `performance.migrations.paths` | none, `django-migration-linter` for Django; SQL or Django migrations | The linter `check` runs on [the migrations a branch adds or changes](#checks), `squawk` or `django-migration-linter`, and the globs that say which files are migrations |
 | `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks); an optional `"tier"` (2, the default, or 3) says [when it runs](#checks); an optional `"fix"` is the command that fixes what the check reports, printed as `fix: <command>` under a failure; an optional `"inputs"` (globs) turns on the [cache](#checks) of its successes |
 | `check.edit` | none | Tier 1 fixers, such as `["pnpm prettier --write {file}", "pnpm eslint --fix {file}"]`: after each `Edit`, `Write` or `MultiEdit`, the `edit-fix` hook runs them on the edited file, `{file}` standing for its quoted path, see [Checks](#checks) |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, adding `.claude/senior-mode.json` and `.claude/senior-mode/**` (the levers: hooks, roles, overrides) at the end when it lacks them (an empty list stays empty), so what controls customization is code the owner reviewed; `senior-mode protected` and the reviewer read it, and `setup github` maps it to [CODEOWNERS](autonomy.md#code-owners) |
@@ -387,6 +388,14 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   `@@index`, `@@unique` or `@@id` of the model, `@unique` or `@id` on the field (Prisma), or a `CREATE INDEX`, `PRIMARY KEY` or
   `UNIQUE` anywhere in the SQL of the tree (an earlier migration counts). A key the base branch already had is not reported, and
   with no schema or migration change the step does not run.
+- When the branch adds or changes a migration, `senior-mode check` runs the `migrations` step (tier 2): the linter named by
+  `performance.migrations.linter` on those files only, never on a migration the branch leaves alone. `squawk` (Postgres) fails,
+  naming `<file>:<line>` and the rule, on an index created without `CONCURRENTLY`, a `NOT NULL` column with no default, a column
+  renamed or dropped, a type changed or a constraint added without `NOT VALID`; `django-migration-linter` is the linter of a
+  Django project (a `manage.py` at the root) and lints the changed migration modules by name. `performance.migrations.paths`
+  (globs) says which files are migrations; the default is `**/migrations/**/*.sql`, or `**/migrations/*.py` for Django. With no
+  linter, or one that is not installed, the step says `migrations: not measured` and passes: the reviewer applies the
+  expand/contract checklist. A diff with no migration does not run it.
 - On a push the `pre-push` hook runs `senior-mode check --changed` ([changed checks](#changed-checks)), which gives the
   checks the paths the branch changes against the merge base, in a file named by `SENIOR_MODE_CHANGED_FILES`
   (unset in a full run). A check that can narrow itself to them does; the others ignore it. The hook that `setup repo`

@@ -837,6 +837,18 @@ run, a session of your own) the next one waits. The lock files live next to thos
 session before it starts, so it fails like any ticket. `run` needs `flock` (util-linux). A session you start
 by hand gets a slot the same way: `senior-mode slot -- claude`.
 
+The environment of a slot can also come from a committed template, `.senior-mode/slot.env`: `KEY=VALUE` lines (`#` and
+blank lines skipped) with these tokens: `{{slot}}` (N), `{{port:BASE}}` (BASE + N), `{{repo}}`, `{{ticket}}` (from the
+branch name, empty when it has none), `{{worktree}}`, `{{machine}}` (the worker name, `serve.worker`) and `{{slotdir}}`
+(`~/.local/share/senior-mode/slots/<repo>-<hash>/N`, created on first use and kept between tickets). For example
+`PORT={{port:3000}}`, `DATABASE_URL=postgres://localhost:5432/{{repo}}_s{{slot}}` and
+`COMPOSE_PROJECT_NAME={{repo}}-s{{slot}}` give slots 1 and 2 the ports 3001 and 3002, the databases `repo_s1` and `repo_s2`
+and two compose projects. The template is read first, the lines of the `slot` command override it. An unknown token, a
+`SENIOR_MODE_` key, a name that is not an identifier, a newline in a value or a port outside 1..65535 (for any of the
+slots) stops the session before it starts, naming the line. A slot whose `{{port:BASE}}` ports a foreign process
+listens on is skipped (the log says which port); when every slot is skipped or taken the session waits and names the
+port. Without a template or a `slot` command nothing changes.
+
 ### Hygiene
 
 `senior-mode clean [--dry-run] [--days N]` removes what is finished, so worktrees and branches do not

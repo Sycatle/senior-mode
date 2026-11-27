@@ -62,6 +62,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "migrations": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "linter": { "type": "string", "enum": ["squawk", "django-migration-linter"], "description": "The linter `check` runs on the migrations the branch adds or changes: `squawk` (Postgres), `django-migration-linter`; a Django project (a `manage.py` at the root) gets the second one. With none, `check` says `migrations: not measured`." },
+            "paths": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Globs of the migrations the linter reads (default `**/migrations/**/*.sql`, or `**/migrations/*.py` for Django)." }
+          }
+        },
         "queries": {
           "type": "object",
           "additionalProperties": false,

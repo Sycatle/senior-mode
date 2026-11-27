@@ -24,6 +24,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `ratchet.sh`: `ratchet` (the lint and coverage baseline of legacy code, `ratchet-check` step of `check`, `check --update-baseline`).
 - `release.sh`: `release` (release-please).
 - `check.sh`: `check`, spec drift, `security_verdict`, `publish`.
+- `journeys.sh`: the `journeys` step of `check` (journeys declared in accepted specs, selected by the diff, each with its test file).
 - `characterize.sh`: `untested` (files with no tests that need a characterization commit, `--check`), the pinned-edit gate of `ready`.
 - `evals.sh`: the skill eval gate of `ready` (an improvement pull request on a skill or agent needs its before/after table).
 - `guard.sh`: `secret_scan`, `audit`, `e2e_lock`, slots, `protected`, `red_tests`.

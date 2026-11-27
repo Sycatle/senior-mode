@@ -1198,6 +1198,12 @@ check() {
     names+=("knowledge")
     cmds+=("$(printf '%q' "$SELF") knowledge-check")
   fi
+  # The journeys of the accepted specs, before the e2e check (#795).
+  if [ "$(journeys_specs "$root" | jq 'length')" -gt 0 ]; then
+    names+=("journeys")
+    cmds+=("$(printf '%q' "$SELF") journeys-check")
+    [ "$all" = false ] || cmds[${#cmds[@]}-1]+=" --all"
+  fi
   if [ "$(config_get commit.coAuthor 2>/dev/null)" = false ]; then
     names+=("commit trailers")
     cmds+=("$(printf '%q' "$SELF") commit-trailers")

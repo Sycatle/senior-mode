@@ -521,6 +521,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": { "slots": { "type": "integer", "minimum": 1 } }
+    },
+    "journeys": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "required": { "type": "boolean", "description": "Whether a selected journey of an accepted spec must have its test file with the journey id in it (default true); false makes a missing test a warning." } }
     }
   }
 }

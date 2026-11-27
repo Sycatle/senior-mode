@@ -794,14 +794,18 @@ unless the token secret is stored. `setup github --ci actions` warns when neithe
 ## Rule packs
 
 Each preset proposes a quality pack: linter, typing and format rules, and `setup repo` names it under `rules.packs`.
-It lists each rule as `covered by your config` or `proposed`, and `setup repo --adopt` carries the same list under
-"Quality pack" in the adoption pull request. A config the project has is never changed.
+It lists each rule as `covered by your config`, `proposed` or `written to <file>`, and `setup repo --adopt` carries the
+same list under "Quality pack" in the adoption pull request. A config the project has is never changed.
 
 | Preset | Rules of the pack |
 |---|---|
+| node | `tsconfig strict` (TypeScript projects); ESLint `@typescript-eslint/no-explicit-any` (TypeScript), `complexity` 15, `max-lines-per-function` 60; `eslint-plugin-jsx-a11y` (react, next) or `eslint-plugin-vuejs-accessibility` (vue) for a UI project |
 | python | `mypy strict` (or pyright `strict`); `ruff` with `BLE`, `T20`, `C90`, `PLR`; `ruff format` |
 | go | `go vet`; `staticcheck`; `errcheck`, `gocognit` and `funlen` of golangci-lint; `gofmt` |
 | rust | `clippy -D warnings` with `cognitive_complexity` and `too_many_lines`; `rustfmt` |
 
-setup writes no config file of these tools: a config file would make the detection declare a tool the project has not
-installed.
+On node, a tool the project has no config for gets the config of the pack written: `tsconfig.json` with
+`strict: true`, an `eslint.config.mjs` with the rules above (setup installs no package: add `eslint` and
+`typescript-eslint`). Nothing is written in a legacy project, in one that formats and lints with Biome, or over a
+config that exists; the a11y plugin is only proposed. Python, go and rust get no config file: one would make the
+detection declare a tool the project has not installed.

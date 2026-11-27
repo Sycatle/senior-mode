@@ -32,6 +32,8 @@ usage() {
 . "$LIB/check.sh"
 # shellcheck source=lib/journeys.sh
 . "$LIB/journeys.sh"
+# shellcheck source=lib/shots.sh
+. "$LIB/shots.sh"
 # shellcheck source=lib/characterize.sh
 . "$LIB/characterize.sh"
 # shellcheck source=lib/architecture.sh

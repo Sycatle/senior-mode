@@ -25,6 +25,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `release.sh`: `release` (release-please).
 - `check.sh`: `check`, spec drift, `security_verdict`, `publish`.
 - `journeys.sh`: the `journeys` step of `check` (journeys declared in accepted specs, selected by the diff, each with its test file).
+- `shots.sh`: UI pull requests (`ui_pr`, `ui_predicted`: `ui.paths`, the label `ui`), their preview and screenshots (epic #389).
 - `characterize.sh`: `untested` (files with no tests that need a characterization commit, `--check`), the pinned-edit gate of `ready`.
 - `evals.sh`: the skill eval gate of `ready` (an improvement pull request on a skill or agent needs its before/after table).
 - `guard.sh`: `secret_scan`, `audit`, `e2e_lock`, slots, `protected`, `red_tests`.

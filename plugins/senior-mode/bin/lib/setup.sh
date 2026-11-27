@@ -1209,7 +1209,9 @@ setup_repo() {
     | if has("protected") then
         (if (.protected | type) == "array" and (.protected | length) > 0 then .protected += ([".claude/senior-mode.json", ".claude/senior-mode/**"] - .protected) else . end)
       else (($p[0].protected // []) + ($p[0].frameworks[.framework // ""].protected // [])) as $g
-        | if ($g | length) > 0 then .protected = $g else . end end' \
+        | if ($g | length) > 0 then .protected = $g else . end end
+    | ($p[0].frameworks[.framework // ""].ui.paths // []) as $ui
+    | if ($ui | length) > 0 and ((.ui // {}) | has("paths") | not) then .ui.paths = $ui else . end' \
     --argjson c "$commands" --argjson ours "$ours" --arg sub "$subjects" --argjson guard "$guard" --slurpfile p "$preset" --arg pn "$pname" \
     --argjson d "$detected" --argjson pk "$pkgs" --arg sch "$CONFIG_SCHEMA_URL" --arg mv "$mv" --argjson debt "$debt" \
     --arg cov "$(coverage_command "$root" "$pname")" || out=$?

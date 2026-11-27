@@ -170,6 +170,13 @@
         "previews": { "type": "string", "enum": ["platform", "ready", "off"], "description": "Hosted preview deployments (Vercel, Netlify, Cloudflare Pages) of the branches senior-mode pushes: platform leaves them to the platform, ready deploys one preview per pull request once senior-mode preview asks, off deploys none." }
       }
     },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "paths": { "type": "array", "items": { "type": "string" }, "description": "Globs of the files of the user interface: a pull request whose diff touches one is a UI pull request (so is one whose ticket is labelled ui), and a ticket whose Paths reach one is predicted UI by ready. setup repo writes them from the preset and never overwrites a set value." }
+      }
+    },
     "security": {
       "type": "object",
       "additionalProperties": false,

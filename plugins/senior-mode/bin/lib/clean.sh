@@ -252,6 +252,9 @@ clean() {
     echo "senior-mode: could not list the branches of origin; remote branches left alone" >&2
   fi
 
+  # The screenshots of a pull request closed more than seven days ago.
+  shots_clean "$prs"
+
   # Files of the runs. A directory counts as old when nothing in it changed for N days.
   for d in "$common"/senior-mode/runs/*/; do
     d=${d%/}

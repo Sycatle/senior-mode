@@ -342,7 +342,8 @@ sbx_run true --since 7d || fail "status with a runtime failed: $(cat "$work/err"
 grep -qE '^Sandbox: podman \(rootless\), image senior-mode/base:[0-9.]+, network allowlist$' "$work/out" || fail "plain status lacks the sandbox line: $(cat "$work/out")"
 grep -q 'warning' "$work/out" && fail "a rootless runtime is flagged: $(cat "$work/out")"
 sbx_run false --since 7d
-grep -qE '^Sandbox: podman \(rootful\)' "$work/out" && grep -q '  warning: rootful runtime: allowed' "$work/out" || fail "a rootful runtime is not flagged: $(cat "$work/out")"
+grep -qE '^Sandbox: podman \(rootful\)' "$work/out" || fail "a rootful runtime is not said: $(cat "$work/out")"
+grep -q '  warning: rootful runtime: allowed' "$work/out" || fail "a rootful runtime is not flagged: $(cat "$work/out")"
 # Refusals and denials: only the last 24 hours count (an egress file by its mtime, a broker line by its epoch).
 mkdir -p "$serve_dir"
 now=$(date +%s)
@@ -358,6 +359,14 @@ grep -qF '  last 24h: 2 egress refusals, 2 broker denials' "$work/out" || fail "
 rm -rf "$serve_dir"
 sbx_run true --json --since 7d || fail "status fails without the sandbox files"
 [ "$(json '.sandbox | [.egressDenied, .brokerDenied] | join(",")')" = '"0,0"' ] || fail "absent files are not 0: $(json '.sandbox')"
+# network open is a warning (#783), the default is not.
+sbx_run true --json --since 7d
+[ "$(json '.sandbox.warnings')" = '[]' ] || fail "a warning with the default network: $(json '.sandbox.warnings')"
+sbx_config '{"network":"open"}'
+sbx_run true --json --since 7d
+[ "$(json '.sandbox | [.network, .warnings[0]] | join(",")')" = '"open,sandbox network: open"' ] || fail "network open: $(json '.sandbox')"
+sbx_run true --since 7d
+grep -qF '  warning: sandbox network: open' "$work/out" || fail "plain status lacks the open network warning: $(cat "$work/out")"
 # off and no runtime.
 sbx_config '{"mode":"off"}'
 sbx_run true --since 7d

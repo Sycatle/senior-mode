@@ -234,3 +234,33 @@ sandbox_setup() {
   [ "$rc" -ne 1 ] || die "could not write .claude/senior-mode.json"
   echo "sandbox: mode required ($rt, serve unit installed)"
 }
+
+# The internal network of the repository $1 (its root): one name per repository, so that its sessions share it.
+sandbox_network_name() {
+  local root=${1:-$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")}
+  printf 'senior-mode-%s-%s\n' "$(basename "$root" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_.\n-' '-')" \
+    "$(printf '%s' "$root" | sha256sum | cut -c1-8)"
+}
+
+# Creates the internal network $2 (no route out, no resolver) with the runtime $1, once: not when it exists.
+sandbox_network_ensure() {
+  "$1" network inspect "$2" >/dev/null 2>&1 || "$1" network create --internal "$2" >/dev/null
+}
+
+# The network arguments of a container launch, one per line: sandbox_net_args <mode> <network name> <proxy url>.
+#   allowlist  the internal network, the proxy variables (HTTPS_PROXY, HTTP_PROXY, lower case, and git's through
+#              GIT_CONFIG_*); no --dns: the network has no resolver, the proxy resolves the names
+#   none       --network none, no proxy variables
+#   open       the bridge network, no proxy variables
+sandbox_net_args() {
+  local v
+  case $1 in
+    none) printf '%s\n' --network none ;;
+    open) printf '%s\n' --network bridge ;;
+    *)
+      printf '%s\n' --network "$2"
+      for v in HTTPS_PROXY HTTP_PROXY https_proxy http_proxy; do printf '%s\n' -e "$v=$3"; done
+      printf '%s\n' -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=http.proxy -e "GIT_CONFIG_VALUE_0=$3"
+      ;;
+  esac
+}

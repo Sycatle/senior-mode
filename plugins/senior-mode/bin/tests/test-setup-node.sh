@@ -208,5 +208,40 @@ printf "import test from 'node:test';\n" >"$d/a.test.mjs"
 setup "$d"
 [ "$(cfg "$d" .commands.test)" = "pnpm run test" ] || fail "the test script lost to node --test: $(cfg "$d" .commands.test)"
 
+# The coverage report: the config names the file (#494); the ratchet reads it once the command wrote it.
+coverage_read() { # dir report-content
+  local rep
+  rep=$(cfg "$1" '.ratchet.coverage.report // empty')
+  [ -n "$rep" ] || { fail "$(basename "$1"): no ratchet.coverage.report"; return; }
+  mkdir -p "$1/$(dirname "$rep")"
+  printf '%s\n' "$2" >"$1/$rep"
+  (cd "$1" && "$cli" ratchet --init) >"$work/out" 2>&1 || fail "$(basename "$1"): the ratchet does not read $rep: $(cat "$work/out")"
+  jq -e '.coverage.total == 50' "$1/.claude/ratchet-baseline.json" >/dev/null 2>&1 || fail "$(basename "$1"): coverage of $rep not 50: $(cat "$1/.claude/ratchet-baseline.json" 2>/dev/null)"
+}
+
+# A coverage command per test runner, lcov at coverage/lcov.info; the project's own script is kept (#494).
+d=$(project covvitest '{"scripts": {"test": "vitest run"}, "devDependencies": {"vitest": "2"}}' pnpm-lock.yaml)
+setup "$d"
+[ "$(cfg "$d" .commands.coverage)" = "pnpm exec vitest run --coverage --coverage.reporter=lcov" ] || fail "vitest coverage command: $(cfg "$d" .commands.coverage)"
+[ "$(cfg "$d" .ratchet.coverage.report)" = coverage/lcov.info ] || fail "report not named: $(cfg "$d" .ratchet.coverage.report)"
+[ -z "$(check_run "$d" coverage)" ] || fail "coverage became a check"
+coverage_read "$d" "$(printf 'SF:src/a.ts\nLF:10\nLH:5\nend_of_record')"
+d=$(project covjest '{"scripts": {"test": "jest"}, "devDependencies": {"jest": "29"}}')
+setup "$d"
+[ "$(cfg "$d" .commands.coverage)" = "npx --no -- jest --coverage --coverageReporters=lcov" ] || fail "jest coverage command: $(cfg "$d" .commands.coverage)"
+d=$(project covother '{"scripts": {"test": "mocha"}}')
+setup "$d"
+[ "$(cfg "$d" .commands.coverage)" = "npx --no -- c8 --reporter=lcov npm run test" ] || fail "c8 coverage command: $(cfg "$d" .commands.coverage)"
+d=$(project covscript '{"scripts": {"test": "vitest run", "test:coverage": "vitest run --coverage"}, "devDependencies": {"vitest": "2"}}')
+setup "$d"
+[ "$(cfg "$d" .commands.coverage)" = "npm run test:coverage" ] || fail "the project's coverage script lost: $(cfg "$d" .commands.coverage)"
+d=$(project covown '{"scripts": {"test": "vitest run"}, "devDependencies": {"vitest": "2"}}')
+mkdir -p "$d/.claude" && echo '{"commands": {"coverage": "make cov"}}' >"$d/.claude/senior-mode.json"
+setup "$d"
+[ "$(cfg "$d" .commands.coverage)" = "make cov" ] || fail "an existing coverage command was replaced: $(cfg "$d" .commands.coverage)"
+[ "$(cfg "$d" '.ratchet.coverage.report // "none"')" = none ] || fail "a report was named for the project's own command"
+setup "$d" --command coverage="make other"
+[ "$(cfg "$d" .commands.coverage)" = "make other" ] || fail "--command coverage not stored: $(cfg "$d" .commands.coverage)"
+
 [ "$failures" -eq 0 ] && echo "setup-node: all cases pass"
 exit "$failures"

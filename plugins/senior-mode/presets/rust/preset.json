@@ -1,5 +1,6 @@
 {
   "commands": ["lint", "format", "test", "build"],
+  "coverage": { "report": "lcov.info" },
   "protected": [
     "**/migrations/**",
     "**/auth/**",

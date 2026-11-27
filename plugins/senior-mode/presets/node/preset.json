@@ -1,6 +1,7 @@
 {
   "commands": ["lint", "typecheck", "test", "build", "e2e"],
   "checks": [{ "name": "commit subjects", "run": ".githooks/commit-msg --branch" }],
+  "coverage": { "report": "coverage/lcov.info" },
   "protected": [
     "**/migrations/**", "**/auth/**", "auth.*", "**/security/**", "SECURITY.md", "**/permissions/**",
     "**/rbac/**", ".env*", "**/secrets/**", "*.pem", "*.key", "**/payments/**", "**/billing/**",

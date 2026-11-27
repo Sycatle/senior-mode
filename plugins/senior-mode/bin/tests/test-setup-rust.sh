@@ -84,5 +84,28 @@ jq -e '.protected | map(test("Cargo")) | any' "$preset" >/dev/null && fail "Carg
 # The install command of a new worktree (#110).
 [ "$(cfg "$d" .commands.install)" = "cargo fetch" ] || fail "rust install is $(cfg "$d" .commands.install)"
 
+# The coverage report: the config names the file (#494); the ratchet reads it once the command wrote it.
+coverage_read() { # dir report-content
+  local rep
+  rep=$(cfg "$1" '.ratchet.coverage.report // empty')
+  [ -n "$rep" ] || { fail "$(basename "$1"): no ratchet.coverage.report"; return; }
+  mkdir -p "$1/$(dirname "$rep")"
+  printf '%s\n' "$2" >"$1/$rep"
+  (cd "$1" && "$cli" ratchet --init) >"$work/out" 2>&1 || fail "$(basename "$1"): the ratchet does not read $rep: $(cat "$work/out")"
+  jq -e '.coverage.total == 50' "$1/.claude/ratchet-baseline.json" >/dev/null 2>&1 || fail "$(basename "$1"): coverage of $rep not 50: $(cat "$1/.claude/ratchet-baseline.json" 2>/dev/null)"
+}
+
+# cargo llvm-cov writes lcov at lcov.info; the project's own command is kept (#494).
+d=$(project covrust Cargo.toml Cargo.lock)
+setup "$d"
+[ "$(cfg "$d" .commands.coverage)" = "cargo llvm-cov --lcov --output-path lcov.info" ] || fail "rust coverage command: $(cfg "$d" .commands.coverage)"
+[ "$(cfg "$d" .ratchet.coverage.report)" = lcov.info ] || fail "report not named: $(cfg "$d" .ratchet.coverage.report)"
+[ -z "$(check_run "$d" coverage)" ] || fail "coverage became a check"
+coverage_read "$d" "$(printf 'SF:src/lib.rs\nLF:10\nLH:5\nend_of_record')"
+d=$(project covown Cargo.toml)
+mkdir -p "$d/.claude" && echo '{"commands": {"coverage": "make cov"}}' >"$d/.claude/senior-mode.json"
+setup "$d"
+[ "$(cfg "$d" .commands.coverage)" = "make cov" ] || fail "an existing coverage command was replaced: $(cfg "$d" .commands.coverage)"
+
 [ "$failures" -eq 0 ] && echo "setup-rust: all cases pass"
 exit "$failures"

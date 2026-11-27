@@ -1,5 +1,6 @@
 {
   "commands": ["lint", "format", "typecheck", "test", "build"],
+  "coverage": { "report": "coverage.xml" },
   "protected": [
     "**/migrations/**",
     "alembic/**",

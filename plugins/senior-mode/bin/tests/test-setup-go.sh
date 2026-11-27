@@ -95,5 +95,28 @@ jq -e '.protected | map(test("go\\.(sum|mod)")) | any' "$preset" >/dev/null && f
 # The install command of a new worktree (#110).
 [ "$(cfg "$d" .commands.install)" = "go mod download" ] || fail "go install is $(cfg "$d" .commands.install)"
 
+# The coverage report: the config names the file (#494); the ratchet reads it once the command wrote it.
+coverage_read() { # dir report-content
+  local rep
+  rep=$(cfg "$1" '.ratchet.coverage.report // empty')
+  [ -n "$rep" ] || { fail "$(basename "$1"): no ratchet.coverage.report"; return; }
+  mkdir -p "$1/$(dirname "$rep")"
+  printf '%s\n' "$2" >"$1/$rep"
+  (cd "$1" && "$cli" ratchet --init) >"$work/out" 2>&1 || fail "$(basename "$1"): the ratchet does not read $rep: $(cat "$work/out")"
+  jq -e '.coverage.total == 50' "$1/.claude/ratchet-baseline.json" >/dev/null 2>&1 || fail "$(basename "$1"): coverage of $rep not 50: $(cat "$1/.claude/ratchet-baseline.json" 2>/dev/null)"
+}
+
+# go test -coverprofile, converted to Cobertura at coverage.xml; the project's own command is kept (#494).
+d=$(project covgo go.mod)
+setup "$d"
+[ "$(cfg "$d" .commands.coverage)" = "go test -coverprofile=coverage.out ./... && gocover-cobertura < coverage.out > coverage.xml" ] || fail "go coverage command: $(cfg "$d" .commands.coverage)"
+[ "$(cfg "$d" .ratchet.coverage.report)" = coverage.xml ] || fail "report not named: $(cfg "$d" .ratchet.coverage.report)"
+[ -z "$(check_run "$d" coverage)" ] || fail "coverage became a check"
+coverage_read "$d" '<?xml version="1.0"?><coverage line-rate="0.5"><packages><package name="a"><classes><class name="a" filename="a.py" line-rate="0.5"><lines/></class></classes></package></packages></coverage>'
+d=$(project covown go.mod)
+mkdir -p "$d/.claude" && echo '{"commands": {"coverage": "make cov"}}' >"$d/.claude/senior-mode.json"
+setup "$d"
+[ "$(cfg "$d" .commands.coverage)" = "make cov" ] || fail "an existing coverage command was replaced: $(cfg "$d" .commands.coverage)"
+
 [ "$failures" -eq 0 ] && echo "setup-go: all cases pass"
 exit "$failures"

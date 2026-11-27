@@ -1,5 +1,6 @@
 {
   "commands": ["lint", "test", "build"],
+  "coverage": { "report": "coverage.xml" },
   "protected": [
     "**/migrations/**",
     "**/auth/**",

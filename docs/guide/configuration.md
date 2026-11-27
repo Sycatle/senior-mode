@@ -39,7 +39,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `framework` | none | `next` when Next.js is a dependency; the node preset then adds `middleware.*`, `src/middleware.*`, `proxy.*` and `src/proxy.*` to `protected` |
 | `envGuard.forbidden` | none | Strings, or `/regex/` patterns, that must never appear on an agent machine; turns on the `env guard` check |
 | `performance.queries.helper` | set by `setup repo` | Path of the [query-count helper](#query-count-helper) of the project's ORM; a path you set is kept |
-| `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks); an optional `"tier"` (2, the default, or 3) says [when it runs](#checks); an optional `"fix"` is the command that fixes what the check reports, printed as `fix: <command>` under a failure |
+| `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks); an optional `"tier"` (2, the default, or 3) says [when it runs](#checks); an optional `"fix"` is the command that fixes what the check reports, printed as `fix: <command>` under a failure; an optional `"inputs"` (globs) turns on the [cache](#checks) of its successes |
 | `check.edit` | none | Tier 1 fixers, such as `["pnpm prettier --write {file}", "pnpm eslint --fix {file}"]`: after each `Edit`, `Write` or `MultiEdit`, the `edit-fix` hook runs them on the edited file, `{file}` standing for its quoted path, see [Checks](#checks) |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, adding `.claude/senior-mode.json` and `.claude/senior-mode/**` (the levers: hooks, roles, overrides) at the end when it lacks them (an empty list stays empty), so what controls customization is code the owner reviewed; `senior-mode protected` and the reviewer read it, and `setup github` maps it to [CODEOWNERS](autonomy.md#code-owners) |
 | `ci.mode` | `local` | `local`, `actions` or `existing` (the project's own CI is reused, see [CI mode](#ci-mode)) |
@@ -338,6 +338,14 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   the agent is told `edit-fix: <fixer> timed out`. It never blocks and never fails the edit: what the fixers leave unfixed
   goes back to the agent as `<file>:<line> <message>` lines (10 at most) from the `file:line` lines of their output. A file
   that git ignores or that is outside the repository gets no fixer, and without `check.edit` the hook does nothing.
+- A check may list the files it reads with `"inputs": ["src/**", "eslint.config.js"]` (globs). A success is then kept under a
+  key made of the check's name and command, the blob ids of the tracked files the globs match, the configuration and the
+  lockfiles (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `Cargo.lock`, `go.sum`, `uv.lock`...), and the next run prints
+  `ok    <name> (cached)` without running the check while that key is unchanged: a change outside the inputs, such as
+  `docs/a.md`, does not miss it. Only successes are kept, never while a matching file has uncommitted changes (the
+  check then runs, every time), and a check with no `inputs` always runs. The results are in `senior-mode/cache` of the
+  common git directory, so every worktree of the repository shares them. A run narrowed to the changed paths (`--pre-push`,
+  `--changed`) neither reads nor writes it. `senior-mode check --no-cache` runs every check.
 - On a push the `pre-push` hook runs `senior-mode check --changed` ([changed checks](#changed-checks)), which gives the
   checks the paths the branch changes against the merge base, in a file named by `SENIOR_MODE_CHANGED_FILES`
   (unset in a full run). A check that can narrow itself to them does; the others ignore it. The hook that `setup repo`

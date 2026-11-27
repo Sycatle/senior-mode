@@ -50,6 +50,13 @@
         }
       }
     },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "edit": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Tier 1 fixers (formatter, lint --fix) run on the file the agent just wrote, `{file}` standing for its quoted path. They never block: at most 10 unfixed findings go back to the agent." }
+      }
+    },
     "performance": {
       "type": "object",
       "additionalProperties": false,

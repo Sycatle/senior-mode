@@ -88,4 +88,92 @@ config '{"sandbox":{"mode":"always"}}'
 (cd "$repo" && "$cli" config validate) >"$work/out" 2>&1 && fail "a bad mode passes"
 grep -q 'sandbox.mode' "$work/out" || fail "bad mode not named: $(cat "$work/out")"
 
+# sandbox_image (#763): the runtime is a stub that logs its arguments and remembers the tags it built.
+rt=$work/rt
+mkdir -p "$rt/state"
+cat >"$rt/podman" <<'STUB'
+#!/bin/sh
+echo "$*" >>"$RT_LOG"
+tag() { printf %s "$1" | tr '/:' '__'; }
+if [ "$1 $2" = "image inspect" ]; then [ -e "$RT_STATE/$(tag "$3")" ]; exit $?; fi
+if [ "$1" = build ]; then
+  if [ -e "$RT_STATE/fail" ]; then
+    i=1
+    while [ "$i" -le 30 ]; do echo "step $i"; i=$((i + 1)); done
+    exit 1
+  fi
+  shift
+  while [ $# -gt 0 ]; do
+    [ "$1" = -t ] && touch "$RT_STATE/$(tag "$2")"
+    shift
+  done
+fi
+exit 0
+STUB
+printf '#!/bin/sh\necho "9.9.9 (Claude Code)"\n' >"$rt/claude"
+chmod +x "$rt/podman" "$rt/claude"
+export RT_LOG=$work/rt.log RT_STATE=$rt/state
+img() { fn "$rt" sandbox_image; }
+builds() { grep -c "^build " "$RT_LOG" 2>/dev/null || true; }
+: >"$RT_LOG"
+
+# sandbox.image set: its name, no build.
+config '{"sandbox":{"image":"my/img:1"}}'
+[ "$(SENIOR_MODE_RUNTIME=podman SELF=$bin/senior-mode img)" = my/img:1 ] || fail "sandbox.image not printed"
+[ -z "$(cat "$RT_LOG")" ] || fail "a runtime call with sandbox.image set: $(cat "$RT_LOG")"
+
+# A project Dockerfile: one build of senior-mode/<repo>:<12 hex of its sha256>, none when unchanged, one more when changed.
+config '{}'
+export SENIOR_MODE_RUNTIME=podman SELF=$bin/senior-mode SENIOR_MODE_CLAUDE=$rt/claude
+mkdir -p "$repo/.senior-mode"
+printf 'FROM senior-mode/base:0.0.0\n# RUN apt-get install -y make\n' >"$repo/.senior-mode/Dockerfile"
+sum1=$(sha256sum "$repo/.senior-mode/Dockerfile" | cut -c1-12)
+out=$(img) || fail "sandbox_image failed on a project Dockerfile: $out"
+[ "$out" = "senior-mode/repo:$sum1" ] || fail "project image: $out"
+[ "$(grep -c "^build -t senior-mode/repo:" "$RT_LOG")" = 1 ] || fail "not exactly one project build: $(cat "$RT_LOG")"
+[ "$(grep -c "^build -t senior-mode/base:" "$RT_LOG")" = 1 ] || fail "the base it starts FROM is not built first"
+: >"$RT_LOG"
+img >/dev/null
+[ "$(builds)" = 0 ] || fail "a build for an unchanged Dockerfile: $(cat "$RT_LOG")"
+printf '# RUN apt-get install -y cmake\n' >>"$repo/.senior-mode/Dockerfile"
+sum2=$(sha256sum "$repo/.senior-mode/Dockerfile" | cut -c1-12)
+out=$(img)
+[ "$out" = "senior-mode/repo:$sum2" ] && [ "$sum1" != "$sum2" ] || fail "changed Dockerfile, same tag: $out"
+[ "$(grep -c "^build -t senior-mode/repo:" "$RT_LOG")" = 1 ] || fail "not one build for a changed Dockerfile: $(cat "$RT_LOG")"
+
+# Neither: the plugin's base, built from its Dockerfile with the host's version of claude.
+rm -rf "$repo/.senior-mode"
+rm -f "$rt"/state/*
+: >"$RT_LOG"
+version=$(jq -r .version "$bin/../.claude-plugin/plugin.json")
+out=$(img)
+[ "$out" = "senior-mode/base:$version" ] || fail "base image: $out"
+grep -q "^build -t senior-mode/base:$version -f $bin/../sandbox/Dockerfile --build-arg CLAUDE_VERSION=9.9.9 " "$RT_LOG" || fail "base build: $(cat "$RT_LOG")"
+
+# The base Dockerfile: the tools, Node LTS, the claude CLI, a non-root user last.
+df=$bin/../sandbox/Dockerfile
+for w in bash git jq curl ca-certificates; do grep -qE "apt-get install .*\b$w\b" "$df" || fail "base Dockerfile lacks $w"; done
+grep -qE '^FROM node:lts' "$df" || fail "base Dockerfile is not on Node LTS"
+grep -q '@anthropic-ai/claude-code' "$df" || fail "base Dockerfile lacks the claude CLI"
+[ "$(grep -E '^USER ' "$df" | tail -n 1)" != "USER root" ] && [ "$(grep -vE '^(#|$)' "$df" | tail -n 1 | cut -d' ' -f1)" = USER ] || fail "base Dockerfile does not end with a non-root USER"
+# A real runtime also builds it (SENIOR_MODE_TEST_NO_BUILD=1 skips: it pulls Node and the CLI).
+real=$(PATH=$(dirname "$(command -v bash)"):/usr/bin command -v podman || PATH=/usr/bin command -v docker) || real=""
+if [ -n "$real" ] && [ -z "${SENIOR_MODE_TEST_NO_BUILD:-}" ] && "$real" info >/dev/null 2>&1; then
+  tagr=senior-mode/test-base:$$
+  "$real" build -q -t "$tagr" -f "$df" "$bin/../sandbox" >"$work/real.log" 2>&1 || fail "the base image does not build: $(tail -n 5 "$work/real.log")"
+  out=$("$real" run --rm "$tagr" sh -c 'id -u; command -v git jq curl node claude' 2>&1) || fail "base image tools: $out"
+  [ "$(head -n 1 <<<"$out")" != 0 ] || fail "base image runs as root"
+  "$real" rmi -f "$tagr" >/dev/null 2>&1
+fi
+
+# A failing build: hold with the last 20 lines of the output, no image printed.
+rm -f "$rt"/state/*
+touch "$rt/state/fail"
+out=$(img) && fail "sandbox_image succeeds on a failed build"
+[ "$(head -n 1 <<<"$out" | cut -d' ' -f1)" = hold ] || fail "a failed build does not hold: $out"
+[ "$(grep -c '^step ' <<<"$out")" = 20 ] || fail "not 20 lines: $out"
+grep -q '^step 30$' <<<"$out" && ! grep -q '^step 10$' <<<"$out" || fail "not the last lines: $out"
+rm -f "$rt/state/fail"
+unset SENIOR_MODE_RUNTIME SENIOR_MODE_CLAUDE SELF
+
 [ "$failures" -eq 0 ] && echo "ok: sandbox" || exit 1

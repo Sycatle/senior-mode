@@ -880,6 +880,11 @@ GitHub, never from git ancestry, so squash and rebase merges are handled.
 
 ### Scheduled runs
 
+Use `serve` when the machine stays on: it picks tickets as they become ready. Use `schedule` when the
+machine cannot keep a daemon: it is the nightly batch, one `run` a day. Do not use both in one
+repository: `schedule install` refuses while `serve` runs here, and `schedule status` says whether it
+does.
+
 `senior-mode schedule install [--at HH:MM] [--max N]` runs `senior-mode run` every day on the machine
 you are on, with its own Claude login: no API key, no budget flag
 ([ADR 0012](../adr/0012-scheduled-runs-on-the-agent-machine.md)). The time is `--at`, else

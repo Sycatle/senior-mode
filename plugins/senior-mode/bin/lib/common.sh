@@ -13,6 +13,8 @@ DEFAULTS='{
   "limits": { "prLines": 400, "diffLines": { "S": 300, "M": 800, "L": 2000 }, "diffWeights": { "tests": 0.5, "docs": 0.25 }, "diffExclude": [] },
   "wip": 1,
   "slot": "",
+  "slotDown": "",
+  "slotUp": "",
   "hygiene": { "days": 14 },
   "hierarchy": { "enforce": false },
   "protected": [],

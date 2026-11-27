@@ -887,6 +887,16 @@ slots) stops the session before it starts, naming the line. A slot whose `{{port
 listens on is skipped (the log says which port); when every slot is skipped or taken the session waits and names the
 port. Without a template or a `slot` command nothing changes.
 
+`slotDown` and `slotUp` (optional shell commands, in `.claude/senior-mode.json`) give the slot an environment that has a
+life cycle, for example a compose project or a database. They run in the worktree with the slot's environment: `slotDown`
+then `slotUp` before the session, `slotDown` after it, whatever the exit; a SIGTERM to the slot goes to the session and
+`slotDown` still runs last. A `slotUp` that fails stops the session before it starts, and the message names it. Write
+`slotDown` so that it can run on nothing: a crash leaves at worst a stale environment, which the `slotDown` of the next
+claim cleans first. `senior-mode setup repo` writes a `.senior-mode/slot.env` stub from what it finds (a `PORT` for a
+node server, a per-slot `COMPOSE_PROJECT_NAME` and the `docker compose down -v` suggestion when a compose file exists, a
+`DATABASE_URL` only when an `.env.example` declares one), writes nothing when it finds none of them, and never overwrites
+an existing file.
+
 ### Hygiene
 
 `senior-mode clean [--dry-run] [--days N]` removes what is finished, so worktrees and branches do not

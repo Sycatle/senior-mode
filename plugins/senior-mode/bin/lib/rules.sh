@@ -3,7 +3,11 @@
 # report an adapter turns into findings). Definitions only: the entry point dispatches `rules-check`.
 
 RULES_MATCHERS="line call comment loop suppression"
-RULES_FORMATS="jscpd"
+RULES_FORMATS="jscpd knip knip-deps deptry vulture staticcheck gotidy cargo-dead udeps"
+# The formats whose report is text, not JSON: an empty one is a clean run.
+RULES_TEXT_FORMATS=" vulture gotidy "
+# The formats that read the text the diff adds (a manifest line, an import line), not only its line numbers.
+RULES_TEXT_NEEDED=" knip-deps deptry gotidy udeps "
 # The files no rule reads unless it lists their extension in `ext`: prose, data, lock files.
 RULES_SKIP_EXT=" md mdx txt json lock yaml yml svg "
 
@@ -174,6 +178,113 @@ rules_jscpd() {
       else "fail\t\(.a.f)\t\(.a.s)\tcopy of a block already at \(.o | join(" and ")); extract it into \(if $shared == "" then "a shared folder (set rules.shared)" else $shared end)" end'
 }
 
+# The text the diff adds, as JSON `{file: {line: text}}`: stdin is `file<TAB>added line numbers` per line, $1 the root,
+# $2 the merge base. A manifest line that only differs from a base line by a comma is not new (the entry before an
+# appended one gains a comma).
+rules_added_text() {
+  local f ls base
+  while IFS=$'\t' read -r f ls; do
+    [ -f "$1/$f" ] || continue
+    base=""
+    ! rules_manifest "$f" || base=$(git -C "$1" show "$2:$f" 2>/dev/null | sed -E 's/^[[:space:]]+//; s/[[:space:]]*,?[[:space:]]*$//')
+    awk -v want=" $ls " -v base="$base" 'BEGIN { n = split(want, a, " "); for (i = 1; i <= n; i++) w[a[i]] = 1; n = split(base, b, "\n"); for (i = 1; i <= n; i++) old[b[i]] = 1 }
+      (NR in w) { t = $0; sub(/^[ \t]+/, "", t); sub(/[ \t]*,?[ \t]*$/, "", t); if (!(t in old)) print NR "\t" $0 }' "$1/$f" |
+      jq -Rs --arg f "$f" '{($f): (split("\n") | map(select(. != "") | split("\t") | {key: .[0], value: (.[1:] | join("\t"))}) | from_entries)}'
+  done | jq -s 'add // {}'
+}
+
+# Whether the path $1 is a manifest (a file that declares dependencies).
+rules_manifest() {
+  case ${1##*/} in
+    package.json | go.mod | Cargo.toml | pyproject.toml | Pipfile | setup.py | setup.cfg | requirements*.txt) return 0 ;;
+  esac
+  return 1
+}
+
+# The definitions the adapters of dead code and unused dependencies share (jq): $A the added line numbers per file, $T the
+# added text per file, $root. `depline` is the line of a manifest the diff adds that names the package.
+# shellcheck disable=SC2016 # a jq program, not shell
+RULES_JQ_DEFS='
+  def rel: (if startswith($root + "/") then .[($root | length + 1):] else . end) | sub("^\\./"; "");
+  def isadd($f; $l): any(($A[$f] // [])[]; . == $l);
+  def esc: gsub("(?<c>[.+*?()\\[\\]{}|^$\\\\])"; "\\\(.c)");
+  def norm: ascii_downcase | gsub("[_.]"; "-");
+  def depline($f; $n): ($T[$f] // {}) | to_entries
+    | map(select(.value | norm | test("(^|[^a-z0-9@/-])" + ($n | norm | esc) + "($|[^a-z0-9/-])"))) | .[0].key;
+'
+
+# The adapters below read the report of a tool on stdin and print `fail<TAB>file<TAB>line<TAB>message` for what the diff
+# adds ($1: the added lines per file as JSON, $2: the root, $3: unused here, $4: the added text per file as JSON).
+
+# knip (`--reporter json`, exports, types and files): an export on an added line, a file the diff creates.
+# shellcheck disable=SC2016 # a jq program, not shell
+rules_knip() {
+  jq -r --argjson A "$1" --arg root "$2" --argjson T "$4" "$RULES_JQ_DEFS"'
+    ((.files // [])[] | rel as $f | select(isadd($f; 1)) | "fail\t\($f)\t1\tunused file, nothing imports it"),
+    ((.issues // [])[] | (.file | rel) as $f
+      | ((.exports // []) + (.types // []) + (.nsExports // []) + (.nsTypes // []))[]
+      | select(isadd($f; .line)) | "fail\t\($f)\t\(.line)\tunused export \(.name), nothing imports it")'
+}
+
+# knip (dependencies): a package that the diff adds to a manifest and no file imports.
+# shellcheck disable=SC2016 # a jq program, not shell
+rules_knip_deps() {
+  jq -r --argjson A "$1" --arg root "$2" --argjson T "$4" "$RULES_JQ_DEFS"'
+    (.issues // [])[] | (.file | rel) as $f
+    | ((.dependencies // []) + (.devDependencies // []) + (.optionalPeerDependencies // []))[] | .name as $n
+    | depline($f; $n) as $l | select($l != null) | "fail\t\($f)\t\($l)\tpackage \($n) is declared and no file imports it"'
+}
+
+# deptry (`--json-output`): DEP002, a dependency declared and never used.
+# shellcheck disable=SC2016 # a jq program, not shell
+rules_deptry() {
+  jq -r --argjson A "$1" --arg root "$2" --argjson T "$4" "$RULES_JQ_DEFS"'
+    (if type == "array" then . else [] end)[] | select(.error.code == "DEP002") | (.location.file // "pyproject.toml" | rel) as $f | .module as $n
+    | depline($f; $n) as $l | select($l != null) | "fail\t\($f)\t\($l)\tpackage \($n) is declared and no file imports it"'
+}
+
+# vulture (text, `file:line: message`): a line the diff adds.
+# shellcheck disable=SC2016 # a jq program, not shell
+rules_vulture() {
+  jq -Rr --argjson A "$1" --arg root "$2" "$RULES_JQ_DEFS"'
+    capture("^(?<f>[^:]+):(?<l>[0-9]+): (?<m>.*)$") | (.f | rel) as $f | (.l | tonumber) as $l
+    | select(isadd($f; $l)) | "fail\t\($f)\t\($l)\t\(.m)"'
+}
+
+# staticcheck (`-f json`, one object per line): U1000, a name nothing uses, on an added line.
+# shellcheck disable=SC2016 # a jq program, not shell
+rules_staticcheck() {
+  jq -r --argjson A "$1" --arg root "$2" "$RULES_JQ_DEFS"'
+    select(.code == "U1000") | (.location.file | rel) as $f | .location.line as $l
+    | select(isadd($f; $l)) | "fail\t\($f)\t\($l)\t\(.message)"'
+}
+
+# `go mod tidy -diff` (text, a unified diff of go.mod): a module the tidy removes and the diff adds to go.mod.
+# shellcheck disable=SC2016 # a jq program, not shell
+rules_gotidy() {
+  jq -Rr --argjson A "$1" --arg root "$2" --argjson T "$4" "$RULES_JQ_DEFS"'
+    capture("^-[ \\t]+(require[ \\t]+)?(?<n>[^ \\t]+)[ \\t]+v[0-9]") | .n as $n
+    | depline("go.mod"; $n) as $l | select($l != null) | "fail\tgo.mod\t\($l)\tmodule \($n) is required and no file imports it"'
+}
+
+# cargo check (`--message-format json`, one object per line): a `dead_code` warning on an added line.
+# shellcheck disable=SC2016 # a jq program, not shell
+rules_cargo_dead() {
+  jq -r --argjson A "$1" --arg root "$2" "$RULES_JQ_DEFS"'
+    select(.reason == "compiler-message" and .message.code.code == "dead_code") | .message as $m
+    | (($m.spans // []) | map(select(.is_primary)) | .[0]) as $s | select($s != null)
+    | ($s.file_name | rel) as $f | select(isadd($f; $s.line_start)) | "fail\t\($f)\t\($s.line_start)\t\($m.message)"'
+}
+
+# cargo udeps (`--output json`): a crate that the diff adds to a Cargo.toml and no code uses.
+# shellcheck disable=SC2016 # a jq program, not shell
+rules_udeps() {
+  jq -r --argjson A "$1" --arg root "$2" --argjson T "$4" "$RULES_JQ_DEFS"'
+    (.unused_deps // {}) | to_entries[] | .value as $v | ($v.manifest_path | rel) as $f
+    | (($v.normal // []) + ($v.development // []) + ($v.build // []))[] | . as $n
+    | depline($f; $n) as $l | select($l != null) | "fail\t\($f)\t\($l)\tcrate \($n) is declared and no code uses it"'
+}
+
 # The directory of the rule packs ($SENIOR_MODE_RULES_DIR for the tests).
 rules_dir() { printf '%s\n' "${SENIOR_MODE_RULES_DIR:-$(cd "$(dirname "$SELF")/.." && pwd)/rules}"; }
 
@@ -193,12 +304,13 @@ rules_under() {
 rules_check() {
   local root cfg packs pack pfile errs="" b mb f line r id why kind tier match rext prod skip fix msg pat unless comment code doc min stmt loop style never
   local okpaths okkey ext out findings="" warns="" lifted="" tool_hit=0 preset n i sev tf tl tm
-  local needs install tmp report format shared addedjson
+  local needs install tmp report format shared addedjson addedtext="{}" reads
   local -a rules=() recs=() files=() content=()
   local -A added=() off=() offpaths=() verified=() allow=() allowwhy=() okcfg=()
   local US=$'\x1f'
   root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
   cfg=$(config_effective | jq -c '.rules // {}') || return 1
+  preset=$(project_preset "$root")
   packs=$(rules_packs "$root" "$cfg")
   [ -n "$packs" ] || { echo "skipped: no rule packs (rules.packs is empty and the preset names none)"; return 0; }
   while IFS= read -r pack; do
@@ -212,7 +324,8 @@ rules_check() {
       errs+="$n"$'\n'
       continue
     fi
-    while IFS= read -r r; do rules+=("$r"); done < <(jq -c '.rules[]' "$pfile")
+    # A rule that names `presets` is read only by a project of one of them.
+    while IFS= read -r r; do rules+=("$r"); done < <(jq -c --arg p "$preset" '.rules[] | select((.presets // []) | length == 0 or index($p))' "$pfile")
   done <<<"$packs"
   errs+=$(rules_off_errors "$cfg")
   [ -z "${errs//$'\n'/}" ] || { printf 'configuration error: %s\n' "${errs%$'\n'}" | sed '2,$s/^/  /'; return 1; }
@@ -239,7 +352,6 @@ rules_check() {
   while IFS=$'\t' read -r f line; do [ "$f" = /dev/null ] || added[$f]+="$line "; done < <(ratchet_changed_lines "$root" "$mb")
   for f in "${!added[@]}"; do [ ! -f "$root/$f" ] || files+=("$f"); done
   [ "${#files[@]}" -eq 0 ] || mapfile -t files < <(printf '%s\n' "${files[@]}" | LC_ALL=C sort)
-  preset=$(project_preset "$root")
   for f in ${files[@]+"${files[@]}"}; do
     mapfile -t content <"$root/$f"
     ext=$(rules_ext "$f")
@@ -295,16 +407,22 @@ rules_check() {
       done <<<"$out"
     done
   done
-  # The tool rules run once, on the tree, when the diff gives them a file to read (not prose or data).
-  local -a codefiles=()
-  for f in ${files[@]+"${files[@]}"}; do [[ $RULES_SKIP_EXT == *" $(rules_ext "$f") "* ]] || codefiles+=("$f"); done
-  if [ "${#codefiles[@]}" -gt 0 ]; then
+  # The tool rules run once, on the tree, when the diff gives them a file to read (not prose or data); a rule that
+  # `reads` the manifests runs when the diff touches one (package.json, go.mod...).
+  local -a codefiles=() manifests=()
+  for f in ${files[@]+"${files[@]}"}; do
+    [[ $RULES_SKIP_EXT == *" $(rules_ext "$f") "* ]] || codefiles+=("$f")
+    ! rules_manifest "$f" || manifests+=("$f")
+  done
+  if [ "${#codefiles[@]}" -gt 0 ] || [ "${#manifests[@]}" -gt 0 ]; then
     i=0
     for r in ${rules[@]+"${rules[@]}"}; do
       IFS="$US" read -r id kind tier _ _ _ _ fix _ <<<"${recs[i]}"
       i=$((i + 1))
       [ "$kind" = tool ] && [ "$tier" = 2 ] || continue
       [ -z "${off[$id]:-}" ] || [ -n "${offpaths[$id]}" ] || continue
+      reads=$(jq -r '.reads // "code"' <<<"$r")
+      if [ "$reads" = manifest ]; then [ "${#manifests[@]}" -gt 0 ] || continue; else [ "${#codefiles[@]}" -gt 0 ] || continue; fi
       needs=$(jq -r '.needs // (.run | split(" ")[0])' <<<"$r")
       install=$(jq -r '.install // "install it"' <<<"$r")
       if ! command -v "$needs" >/dev/null 2>&1; then
@@ -315,17 +433,23 @@ rules_check() {
       format=$(jq -r '.format' <<<"$r")
       tmp=$(mktemp -d)
       report=$(rules_tool_report "$r" "$tmp" "$root")
-      jq -e . <<<"$report" >/dev/null 2>&1 || report=$(cat "$tmp/jscpd-report.json" 2>/dev/null || true)
+      if [[ $RULES_TEXT_FORMATS != *" $format "* ]]; then
+        jq -e . <<<"$report" >/dev/null 2>&1 || report=$(cat "$tmp/jscpd-report.json" "$tmp/report.json" 2>/dev/null || true)
+        if ! jq -e . <<<"$report" >/dev/null 2>&1; then
+          rm -rf "$tmp"
+          echo "tool failed: $needs printed no report ($id)"
+          tool_hit=1
+          continue
+        fi
+      fi
       rm -rf "$tmp"
-      if ! jq -e . <<<"$report" >/dev/null 2>&1; then
-        echo "tool failed: $needs printed no report ($id)"
-        tool_hit=1
-        continue
+      if [ "$addedtext" = "{}" ] && [[ $RULES_TEXT_NEEDED == *" $format "* ]]; then
+        addedtext=$(for f in ${files[@]+"${files[@]}"}; do printf '%s\t%s\n' "$f" "${added[$f]}"; done | rules_added_text "$root" "$mb")
       fi
       shared=$(jq -r '(.shared // [])[0] // ""' <<<"$cfg")
       shared=${shared%/\*\*}
       shared=${shared%/\*}
-      addedjson=$(for f in "${codefiles[@]}"; do printf '%s\t%s\n' "$f" "${added[$f]}"; done |
+      addedjson=$(for f in ${codefiles[@]+"${codefiles[@]}"}; do printf '%s\t%s\n' "$f" "${added[$f]}"; done |
         jq -Rn '[inputs | split("\t") | {key: .[0], value: (.[1] | split(" ") | map(select(. != "") | tonumber))}] | from_entries')
       while IFS=$'\t' read -r sev tf tl tm; do
         [ -n "$sev" ] || continue
@@ -335,7 +459,7 @@ rules_check() {
         else
           findings+="$tf:$tl: $id: $tm (fix: $fix)"$'\n'
         fi
-      done < <("rules_$format" "$addedjson" "$root" "$shared" <<<"$report")
+      done < <("rules_${format//-/_}" "$addedjson" "$root" "$shared" "$addedtext" <<<"$report")
     done
   fi
   printf '%s%s' "$warns" "$lifted"

@@ -708,6 +708,12 @@ copies it fails, naming both places and the `rules.shared` folder to extract int
 reported. Without jscpd on the machine the step fails with `tool missing: jscpd`, `npm install -g jscpd` and the `rules.off.duplication`
 key that turns it off.
 
+The `dead-code` pack (opt-in, `"rules": { "packs": ["node", "dead-code"] }`, one tool per preset) runs `dead-code` and
+`unused-dependency` on what the diff adds: an export (or a file) that nothing uses fails with `file:line`, a package that the diff adds
+to a manifest and no file imports fails naming the package. Unused code that existed before the diff is never reported. The tools are knip
+(node), vulture and deptry (python), staticcheck `U1000` and `go mod tidy -diff` (go), the `dead_code` warning of `cargo check` and
+cargo-udeps (rust). A tool that is not installed fails with `tool missing: <tool>`, its install command and the `rules.off.<id>` key.
+
 A rule is turned off only with a reason, in `.claude/senior-mode.json` (a protected path, so the change reaches a human):
 
 ```json

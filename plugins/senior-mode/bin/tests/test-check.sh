@@ -25,6 +25,7 @@ case "$*" in
         | from_entries | {data: {repository: .}}'
     else cat "$FIX/item" 2>/dev/null || exit 1; fi ;;
   "api repos/acme/app/commits/"*"/status --jq "*) all=$*; jq -r "${all#*--jq }" "$FIX/status" 2>/dev/null || true ;;
+  "api repos/acme/app/commits/"*"/pulls --jq "*) echo 12 ;;
 esac
 STUB
 chmod +x "$work/stub/gh"
@@ -1074,6 +1075,85 @@ git -C "$repo" worktree add -q "$work/wt-cache" -b wt-cache
 grep -q '^ok    lint (cached)$' "$work/out" || fail "O: the second worktree does not hit the cache of the first: $(cat "$work/out")"
 [ "$(runs)" = 11 ] || fail "O: the second worktree ran the check: $(runs)"
 git -C "$repo" worktree remove --force "$work/wt-cache"
+
+# The heavy tier of publish (#717): senior-mode/heavy is pending at once and the tier 3 run is detached.
+export XDG_DATA_HOME="$work/xdg"
+hlog="$work/heavy.log"
+: >"$hlog"
+cat >"$work/slow.sh" <<SLOW
+echo run >>"$hlog"
+if [ -e "$work/heavy-fail" ]; then echo "src/a.ts:3 error boom"; exit 1; fi
+SLOW
+hconfig() {
+  config "$(jq -n --arg c "bash $work/slow.sh" '{audit: false, checks: [{name: "lint", run: "true"}, {name: "slow", tier: 3, run: $c}]}')"
+}
+hwait() {
+  local k
+  for ((k = 0; k < 120; k++)); do
+    grep -q -- "-f state=$1 -f context=senior-mode/heavy" "$GH_LOG" && return 0
+    sleep 0.5
+  done
+  return 1
+}
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+hconfig
+run check || fail "P: $(cat "$work/out")"
+: >"$GH_LOG"
+t0=$(date +%s)
+run publish || fail "P: publish fails with a tier 3 check: $(cat "$work/out")"
+[ $(($(date +%s) - t0)) -lt 5 ] || fail "P: publish waited for the heavy run"
+grep -q -- "statuses/$(sha) -f state=pending -f context=senior-mode/heavy" "$GH_LOG" || fail "P: senior-mode/heavy is not pending at once: $(cat "$GH_LOG")"
+hwait success || fail "P: senior-mode/heavy does not become success: $(cat "$GH_LOG")"
+[ "$(wc -l <"$hlog" | tr -d ' ')" = 1 ] || fail "P: the heavy run did not run the tier 3 check once: $(cat "$hlog")"
+run publish || fail "P: $(cat "$work/out")"
+sleep 1
+[ "$(wc -l <"$hlog" | tr -d ' ')" = 1 ] || fail "P: a head with a heavy run got a second one"
+# A failing heavy run: failure status naming the check, and the compact lines and the log path in a pull request comment.
+: >"$work/heavy-fail"
+hconfig
+run check || fail "P: $(cat "$work/out")"
+: >"$GH_LOG"
+run publish || fail "P: $(cat "$work/out")"
+hwait failure || fail "P: a failing heavy run does not set failure: $(cat "$GH_LOG")"
+grep -q -- "statuses/$(sha) -f state=failure -f context=senior-mode/heavy -f description=failed: slow" "$GH_LOG" || fail "P: failure does not name the check: $(cat "$GH_LOG")"
+for k in $(seq 1 20); do grep -q "issues/12/comments -f body=" "$GH_LOG" && break; sleep 0.5; done
+grep -q "issues/12/comments -f body=<!-- senior-mode:heavy -->" "$GH_LOG" || fail "P: no heavy comment on the pull request: $(cat "$GH_LOG")"
+grep -qF "src/a.ts:3 slow error boom" "$GH_LOG" || fail "P: the compact failure line is not in the comment: $(cat "$GH_LOG")"
+grep -qF "heavy/$(sha).log" "$GH_LOG" || fail "P: the log path is not in the comment: $(cat "$GH_LOG")"
+rm "$work/heavy-fail"
+# No tier 3 check: no heavy status.
+config '{"audit":false,"checks":[{"name":"lint","run":"true"}]}'
+run check || fail "P: $(cat "$work/out")"
+: >"$GH_LOG"
+run publish || fail "P: $(cat "$work/out")"
+grep -q "senior-mode/heavy" "$GH_LOG" && fail "P: a heavy status is set with no tier 3 check: $(cat "$GH_LOG")"
+# A rebase whose git range-diff is identical: the heavy result is carried over to the new head and does not run again.
+hconfig
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+base0=$(sha)
+git -C "$repo" switch -q -c hv-old
+echo x >"$repo/hv.txt"
+commit -q -m "feat: hv"
+old=$(sha)
+run check || fail "P: $(cat "$work/out")"
+: >"$GH_LOG"
+run publish || fail "P: $(cat "$work/out")"
+hwait success || fail "P: the head to rebase gets no heavy result: $(cat "$GH_LOG")"
+runs_before=$(wc -l <"$hlog" | tr -d ' ')
+git -C "$repo" switch -q -c hv-base "$base0"
+echo m >"$repo/hv-main.txt"
+commit -q -m "chore: the base moves"
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+git -C "$repo" switch -q -c hv-new
+git -C "$repo" -c user.name=t -c user.email=t@t cherry-pick "$old" >/dev/null || fail "P: cannot rebase the fixture"
+run check || fail "P: $(cat "$work/out")"
+: >"$GH_LOG"
+(cd "$repo" && SENIOR_MODE_HEAVY_FROM=$old "$cli" publish) >"$work/out" 2>&1 || fail "P: publish after the rebase: $(cat "$work/out")"
+grep -q -- "statuses/$(sha) -f state=success -f context=senior-mode/heavy -f description=carried over from ${old:0:7}" "$GH_LOG" || fail "P: the heavy result is not carried over: $(cat "$GH_LOG")"
+grep -q "state=pending -f context=senior-mode/heavy" "$GH_LOG" && fail "P: the rebased head is set pending"
+sleep 2
+[ "$(wc -l <"$hlog" | tr -d ' ')" = "$runs_before" ] || fail "P: the heavy checks ran again after an identical rebase"
 
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

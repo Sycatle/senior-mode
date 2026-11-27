@@ -1298,7 +1298,7 @@ serve_tested_from() {
 # tree is one that `check` passed with senior-mode/ci success (#412) runs no check: its result is carried over, the
 # description names the tree and the commit, and publish only adds what depends on the head (security).
 serve_requalify() {
-  local t=$1 pr=$2 old=$3 new=$4 ref=$5 wt log="$SERVE_DIR/$1.check.log" same=false ob nb ci review rd tree from="" ran
+  local t=$1 pr=$2 old=$3 new=$4 ref=$5 wt log="$SERVE_DIR/$1.check.log" same=false ob nb ci review rd tree from="" ran heavy_from
   git_bound fetch -q origin 2>/dev/null || true
   if git cat-file -e "$old^{commit}" 2>/dev/null && git cat-file -e "$new^{commit}" 2>/dev/null &&
     ob=$(git merge-base "$old" "$new") && nb=$(git merge-base "$RUN_BASE" "$new") &&
@@ -1307,13 +1307,16 @@ serve_requalify() {
     awk 'NF && $3 != "=" { bad = 1 } END { exit (bad || NR == 0) }' "$SERVE_DIR/$t.range-diff"; then
     same=true
   fi
+  # With the same patches the heavy result of the old head is carried over by publish (#717).
+  heavy_from=""
+  [ "$same" != true ] || heavy_from=$old
   tree=$(git rev-parse "$new^{tree}" 2>/dev/null) && from=$(serve_tested_from "$old" "$tree") || from=""
   if [ -n "$from" ]; then
     log=$SERVE_DIR/$t.carry.log
     ran="the tree of the new head (\`${tree:0:12}\`) is the tree of \`${from:0:7}\`, which has senior-mode/ci success, so that status is carried over and no check ran"
     if ! (cd "$RUN_ROOT" && mkdir -p "$(dirname "$(check_record x)")" &&
       printf 'success\ncarried over from %s: same tree %s, no check ran\n' "${from:0:7}" "${tree:0:12}" >"$(check_record "$new")" &&
-      "$SELF" publish "$new") >"$log" 2>&1; then
+      SENIOR_MODE_HEAVY_FROM=$heavy_from "$SELF" publish "$new") >"$log" 2>&1; then
       serve_needs_human "$t" "$pr" "it was rebased on $RUN_BASE but its check result could not be published (log $log)"
       return 0
     fi
@@ -1327,7 +1330,7 @@ serve_requalify() {
     fi
     serve_install "$wt" >"$log" 2>&1 || true
     (cd "$wt" && "$SELF" check) >>"$log" 2>&1 || true
-    if ! (cd "$wt" && "$SELF" publish) >>"$log" 2>&1; then
+    if ! (cd "$wt" && SENIOR_MODE_HEAVY_FROM=$heavy_from "$SELF" publish) >>"$log" 2>&1; then
       git worktree remove --force "$wt" 2>/dev/null || true
       serve_needs_human "$t" "$pr" "it was rebased on $RUN_BASE but its check result could not be published (log $log)"
       return 0

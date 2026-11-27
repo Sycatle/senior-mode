@@ -105,7 +105,7 @@ rules_packs() {
     [ ! -f "$preset" ] || packs=$(jq -r '(.rules.packs // [])[]' "$preset")
   fi
   # `common` holds the rules of every language: any pack brings it.
-  [ -z "$packs" ] || printf '%s\n' "$packs" | { grep -qx common <<<"$packs" || echo common; cat; }
+  [ -z "$packs" ] || printf '%s\n' "$packs" | { { grep -qx common <<<"$packs" || [ ! -f "$(rules_dir)/common.json" ]; } || echo common; cat; }
 }
 
 # Whether `check` has a code rules step in the project at $1.

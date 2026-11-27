@@ -129,7 +129,7 @@ grep -q "field Paths: would be created" "$work/out" || fail "the dry run does no
 # A Project of another owner is refused, naming both owners; nothing is linked.
 reset
 attach --project https://github.com/orgs/other/projects/7 && fail "a Project of another owner was accepted"
-grep -q "belongs to other" "$work/err" && grep -q "acme/web belongs to acme" "$work/err" || fail "both owners not named: $(cat "$work/err")"
+{ grep -q "belongs to other" "$work/err" && grep -q "acme/web belongs to acme" "$work/err"; } || fail "both owners not named: $(cat "$work/err")"
 logged "project link" && fail "linked to a Project of another owner"
 [ "$(cat "$cfgfile")" = '{}' ] || fail "a refused Project was recorded"
 attach --project https://github.com/orgs/acme/projects/7 || fail "the URL of the owner's Project refused: $(cat "$work/err")"

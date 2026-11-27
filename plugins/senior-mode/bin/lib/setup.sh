@@ -893,6 +893,41 @@ queries_propose() { # root config-file preset-dir preset-name
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
 }
 
+# The command that runs the tests with coverage and writes the report the preset names (`coverage.report` of its
+# preset.json, which `ratchet.coverage.report` takes, #494): lcov from the runner of node (a `coverage` or
+# `test:coverage` script of the project first), Cobertura from `coverage xml` for python, from `gocover-cobertura` for
+# go (`-coverprofile` is neither lcov nor Cobertura), lcov from `cargo llvm-cov` for rust. Nothing for another preset.
+coverage_command() { # root preset
+  local root=$1 pm exec deps name
+  case $2 in
+    node)
+      [ -f "$root/package.json" ] || return 0
+      IFS=$'\t' read -r pm exec _ < <(node_pm "$root")
+      name=$(jq -r '(.scripts // {}) | if .coverage then "coverage" elif .["test:coverage"] then "test:coverage" else empty end' "$root/package.json" 2>/dev/null) || return 0
+      [ -z "$name" ] || { echo "$pm run $name"; return; }
+      deps=" $(jq -r '[(.dependencies // {}), (.devDependencies // {}) | keys[]] | join(" ")' "$root/package.json" 2>/dev/null) "
+      if [[ $deps == *" vitest "* ]]; then echo "$exec vitest run --coverage --coverage.reporter=lcov"
+      elif [[ $deps == *" jest "* ]]; then echo "$exec jest --coverage --coverageReporters=lcov"
+      elif jq -e '(.scripts.test // "") | . != "" and (test("no test specified") | not)' "$root/package.json" >/dev/null 2>&1; then
+        echo "$exec c8 --reporter=lcov $pm run test"
+      else echo "$exec c8 --reporter=lcov node --test"
+      fi
+      ;;
+    python)
+      local run=""
+      if [ -f "$root/uv.lock" ]; then run="uv run "
+      elif [ -f "$root/poetry.lock" ]; then run="poetry run "
+      fi
+      if py_uses "$root" pytest pytest.ini conftest.py; then echo "${run}coverage run -m pytest && ${run}coverage xml"
+      else echo "${run}coverage run -m unittest && ${run}coverage xml"
+      fi
+      ;;
+    go) echo "go test -coverprofile=coverage.out ./... && gocover-cobertura < coverage.out > coverage.xml" ;;
+    rust) echo "cargo llvm-cov --lcov --output-path lcov.info" ;;
+  esac
+  return 0
+}
+
 # The documents and checks of a project (spec 0001 §12, §14, #12), idempotent; whatever the project
 # already has is extended, never replaced. The preset is the stored one (typescript, its former name,
 # becomes node), else node when a package.json exists, else the one of its manifest (go, rust, python),
@@ -930,8 +965,8 @@ setup_repo() {
       --debt) debt=true; fwd+=(--debt); shift; continue ;;
     esac
     [ "$1" = --command ] && [[ ${2:-} == ?*=?* ]] || usage
-    jq -e --arg k "${2%%=*}" '.commands + ["install"] | index($k)' "$preset" >/dev/null ||
-      die "unknown command ${2%%=*}; expected one of $(jq -r '.commands + ["install"] | join(", ")' "$preset")"
+    jq -e --arg k "${2%%=*}" '.commands + ["install", "coverage"] | index($k)' "$preset" >/dev/null ||
+      die "unknown command ${2%%=*}; expected one of $(jq -r '.commands + ["install", "coverage"] | join(", ")' "$preset")"
     commands=$(jq -c --arg k "${2%%=*}" --arg v "${2#*=}" '.[$k] = $v' <<<"$commands")
     fwd+=("$1" "$2")
     shift 2
@@ -999,7 +1034,10 @@ setup_repo() {
   json_update "$file" '(if has("$schema") then . else {"$schema": $sch} + . end)
     | if $mv != "" then .minVersion = $mv else . end
     | if $debt then .maintenance.debt = true else . end
-    | .preset = $pn | .commands = ($d.commands // {}) + (.commands // {}) + $c
+    | ((.commands.coverage // "") == "") as $nocov
+    | .preset = $pn | .commands = ($d.commands // {}) + (if $cov != "" then {coverage: $cov} else {} end) + (.commands // {}) + $c
+    | if $nocov and $cov != "" and ($p[0].coverage.report // "") != "" and (.ratchet.coverage.report // "") == ""
+        then .ratchet.coverage.report = $p[0].coverage.report else . end
     | if $d.framework then .framework = $d.framework else . end
     | if ($pk | length) > 0 then .packages = ((.packages // {}) as $e
         | reduce ($pk | keys[]) as $k ($e; .[$k] = (($e[$k] // {}) + {preset: ($e[$k].preset // $pk[$k].preset),
@@ -1016,7 +1054,8 @@ setup_repo() {
       else (($p[0].protected // []) + ($p[0].frameworks[.framework // ""].protected // [])) as $g
         | if ($g | length) > 0 then .protected = $g else . end end' \
     --argjson c "$commands" --argjson ours "$ours" --arg sub "$subjects" --argjson guard "$guard" --slurpfile p "$preset" --arg pn "$pname" \
-    --argjson d "$detected" --argjson pk "$pkgs" --arg sch "$CONFIG_SCHEMA_URL" --arg mv "$mv" --argjson debt "$debt" || out=$?
+    --argjson d "$detected" --argjson pk "$pkgs" --arg sch "$CONFIG_SCHEMA_URL" --arg mv "$mv" --argjson debt "$debt" \
+    --arg cov "$(coverage_command "$root" "$pname")" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
   echo "preset: $pname$(jq -r --argjson d "$detected" '[if $d.typescript == true then "TypeScript"
     elif $d.typescript == false then "JavaScript" else empty end, .framework // empty]

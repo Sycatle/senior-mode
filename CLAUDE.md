@@ -59,6 +59,8 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `serve.sh`: `serve` (poll loop, requalify, rebase, merge, digest).
 - `demo.sh`: `demo` (a throwaway repository with three toy tickets, delivered by serve; progress in `demo.json`).
 - `broker.sh`: `broker_allow` (the credential broker's decision: which gh, git push and senior-mode verbs a sandboxed session may run).
+- `additive.sh`: the additive merge of the shared root files of `serve.sharedPaths` (package.json, Markdown; a lockfile is regenerated).
+- `dependabot.sh`: `dependabot_assess` (a Dependabot pull request: ready, wait until a release age, or human).
 - `watchdog.sh`: serve's watchdog (hung sessions, orphan processes, stale `index.lock`).
 
 ## Pitfalls

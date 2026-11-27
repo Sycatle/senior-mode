@@ -109,6 +109,8 @@ usage() {
 . "$LIB/broker.sh"
 # shellcheck source=lib/additive.sh
 . "$LIB/additive.sh"
+# shellcheck source=lib/dependabot.sh
+. "$LIB/dependabot.sh"
 
 # Never inherited: only `run` may hold one (see run_token_ok).
 unset RUN_TOKEN

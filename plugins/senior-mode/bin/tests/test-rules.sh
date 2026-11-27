@@ -433,5 +433,38 @@ miss python dead-code app.py vulture "pip install vulture"
 miss python dead-code pyproject.toml deptry "pip install deptry"
 miss go dead-code a.go staticcheck "go install honnef.co/go/tools/cmd/staticcheck@latest"
 miss rust dead-code Cargo.toml cargo-udeps "cargo install cargo-udeps --locked"
+miss node cycles src/old.ts depcruise "npm install -g dependency-cruiser"
+miss python cycles pkg/a.py lint-imports "pip install import-linter"
+
+# An import the diff adds that closes a cycle fails import-cycle naming the files in order; an old cycle passes.
+reset
+pack node cycles
+printf 'import { c1 } from "./c1";\n' >>"$repo/src/d1.ts"
+rep depcruise '{"modules": [
+  {"source": "src/d1.ts", "dependencies": [{"resolved": "src/c1.ts", "circular": true, "cycle": [{"name": "src/c1.ts"}, {"name": "src/d1.ts"}]}]},
+  {"source": "src/c1.ts", "dependencies": [{"resolved": "src/d1.ts", "circular": true, "cycle": [{"name": "src/d1.ts"}, {"name": "src/c1.ts"}]}]},
+  {"source": "src/p.ts", "dependencies": [{"resolved": "src/q.ts", "circular": true, "cycle": [{"name": "src/q.ts"}, {"name": "src/p.ts"}]}]}]}'
+run rules-check && fail "a cycle closed by the diff passes"
+has "src/d1.ts:2: import-cycle: import cycle src/d1.ts -> src/c1.ts -> src/d1.ts" "the cycle in order"
+lacks "src/p.ts" "an old cycle is not reported"
+reset
+pack node cycles
+printf 'export const extra = 1;\n' >>"$repo/src/p.ts"
+run rules-check || fail "a cycle that existed before fails: $(out)"
+reset
+pack python cycles
+printf 'from pkg import b\n' >>"$repo/pkg/a.py"
+rep lint-imports "$(printf 'Cycles BROKEN\n\n-   pkg.a -> pkg.b (l.2)\n    pkg.b -> pkg.a (l.1)\n')"
+run rules-check && fail "a python cycle closed by the diff passes"
+has "pkg/a.py:2: import-cycle: import cycle pkg/a.py -> pkg/b.py -> pkg/a.py" "import-linter cycle in order"
+
+# A go or rust project runs no cycle rule.
+for p in go rust; do
+  reset
+  pack $p cycles
+  printf 'x\n' >>"$repo/Cargo.toml"
+  PATH=/usr/bin:/bin run rules-check || fail "$p runs a cycle rule: $(out)"
+  lacks "tool missing" "$p has no cycle rule"
+done
 
 [ "$failures" -eq 0 ] && echo "ok: rules" || exit 1

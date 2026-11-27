@@ -714,6 +714,10 @@ to a manifest and no file imports fails naming the package. Unused code that exi
 (node), vulture and deptry (python), staticcheck `U1000` and `go mod tidy -diff` (go), the `dead_code` warning of `cargo check` and
 cargo-udeps (rust). A tool that is not installed fails with `tool missing: <tool>`, its install command and the `rules.off.<id>` key.
 
+The `cycles` pack (opt-in, `"rules": { "packs": ["node", "cycles"] }`) runs `import-cycle` with dependency-cruiser (node) and
+import-linter (python): an import that the diff adds and that closes a cycle fails, naming the files of the cycle in order. A cycle
+that existed before the diff is never reported. Go (the compiler) and Rust (`forbidImport` rules) have no cycle rule here.
+
 A rule is turned off only with a reason, in `.claude/senior-mode.json` (a protected path, so the change reaches a human):
 
 ```json

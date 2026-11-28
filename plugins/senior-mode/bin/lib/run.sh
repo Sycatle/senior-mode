@@ -655,7 +655,7 @@ run_blocker() {
 run_full_check() {
   local n=$1 sha=$2 wt=${RUN_WT[$1]:-} tmp="" rc=0
   if [ -n "${SENIOR_MODE_RUN_CHECK:-}" ]; then
-    (cd "$RUN_ROOT" && SENIOR_MODE_CHECK_HEAD=$sha bash -c "$SENIOR_MODE_RUN_CHECK") </dev/null >"$RUN_DIR/$n.check" 2>&1 || rc=$?
+    (cd "$RUN_ROOT" && SENIOR_MODE_CHECK_HEAD=$sha bash -c "$SENIOR_MODE_RUN_CHECK") </dev/null >"$RUN_DIR/$n.check" 2>&1 || rc=$? # state-ok: the check's own output
   else
     if [ -z "$wt" ] || [ "$(git -C "$wt" rev-parse HEAD 2>/dev/null)" != "$sha" ] || [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
       tmp=$(worktree_path "$RUN_ROOT" "check-$n")
@@ -669,7 +669,7 @@ run_full_check() {
       fi
       wt=$tmp
     fi
-    (cd "$wt" && "$SELF" check) </dev/null >"$RUN_DIR/$n.check" 2>&1 || rc=$?
+    (cd "$wt" && "$SELF" check) </dev/null >"$RUN_DIR/$n.check" 2>&1 || rc=$? # state-ok: the check's own output
     [ -z "$tmp" ] || git -C "$RUN_ROOT" worktree remove --force "$tmp" 2>/dev/null || true
   fi
   [ "$rc" -eq 0 ] || echo "the full check is red on its head (output in $RUN_DIR/$n.check)"

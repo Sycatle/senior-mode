@@ -845,6 +845,15 @@ review passes merges like any pull request, and the other pull requests of the t
 comment that names the winner. A candidate whose review fails is closed, with no fix rounds. When every
 candidate has failed, the ticket is `needs-human` as before. A ticket that never failed runs once.
 
+### The plugin snapshot
+
+An update of the installed plugin rewrites the script bash is reading and the files a session loads, which changes a
+session in the middle of a ticket. So `senior-mode serve` does not run from the installed plugin. At start it copies the
+plugin to `.git/senior-mode/serve/plugin/<version>-<sha>/` (the version of `plugin.json` and a hash of the files), runs
+the copy (`exec`) and gives it to every session as `--plugin-dir` (`SENIOR_MODE_PLUGIN_DIR`). `.git/senior-mode/serve/version`
+names the copy in use. The same installed version restarted reuses its directory; a daemon already running from a copy
+does not copy again. When the copy cannot be written (a full disk), `serve` does not start and says why.
+
 ### The watchdog
 
 At each poll `serve` looks at the activity of every live session: the worktree (`HEAD`, `git status`, the newest file

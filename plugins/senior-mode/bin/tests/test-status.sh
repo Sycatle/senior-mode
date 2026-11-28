@@ -1055,7 +1055,7 @@ SECTION
 cli_real=$cli cli=$work/bin/senior-mode
 run status --json --since 7d || fail "status --json with a stub section failed: $(cat "$work/err")"
 [ "$(json '.stub.items > 0 and .stub.core == (.inProgress | length)')" = true ] || fail "the stub section's key: $(json '.stub')"
-[ "$(json 'keys_unsorted | .[-5:]')" = '["stub","maintenance","sandbox","serve","retro"]' ] || fail "the sections are not merged by order: $(json 'keys_unsorted')"
+[ "$(json 'keys_unsorted | .[-6:]')" = '["stub","maintenance","sandbox","serve","retro","serveConfig"]' ] || fail "the sections are not merged by order: $(json 'keys_unsorted')"
 run status --since 7d || fail "status with a stub section failed: $(cat "$work/err")"
 grep -A1 '^Stub: [0-9]* items, [0-9]* in progress$' "$work/out" | grep -qx 'Release' || fail "the stub line is not before Release: $(cat "$work/out")"
 cli=$cli_real

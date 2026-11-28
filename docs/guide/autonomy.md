@@ -822,6 +822,17 @@ is not fatal: it is set aside as `<file>.corrupt-<epoch>` (kept 7 days, said onc
 the temporary files of a write that a kill cut are removed. A `serve.pid` whose process is not a `senior-mode` is
 replaced; one that is refuses the second `serve`.
 
+### Reloading the config
+
+`serve` reads the config of the default branch again at each poll, so a merged change of the autonomy settings (`autonomy.parallel`,
+`autonomy.maxConsecutiveFailures`, the hourly limits, `serve.breakerMax`, `autonomy.minDiskMB`, `autonomy.escalate`, `autonomy.merge`,
+`protected` and the other numeric keys of the `serve` and `autonomy` blocks) is in force at the next poll, without a restart. The log says
+`serve: config reloaded: <key> <old> -> <new>`. `SIGHUP` reloads at once instead of waiting for the poll. Nothing running is stopped: lowering
+`autonomy.parallel` below the number of sessions that run only holds back new launches until fewer run; `serve.interval` applies at the next
+sleep. A config that does not validate changes nothing and logs no reload (the last valid one stands, see the alert of the invalid config); a
+value that validates but cannot be applied is said once and kept as it was. `status` says when the running settings differ from the default
+branch's, with the keys.
+
 ### Best-of-N
 
 A ticket whose pull request still has changes requested after its 2 fix rounds has failed once. With

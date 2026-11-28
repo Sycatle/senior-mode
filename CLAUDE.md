@@ -66,6 +66,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
   (how a session ended, backoffs), `serve-hold.sh` (hold, probes, breaker), `serve-launch.sh` (may a session start; the sandbox gate), `serve-sandbox.sh` (the `sandbox` hold's recovery step), `serve-session.sh` (roles' finish,
   report, recovery), `serve-review.sh` (pull requests In review: reviewer, fix rounds, best-of-N, needs-human), `serve-merge.sh` (merge, queue, rebase,
   requalify, conflicts, main verification), `serve-frame.sh` (ready by rule, framing), `serve-duties.sh` (digests, deps, gardening, questions), `serve-plugin.sh` (the plugin version frozen in a snapshot per run).
+- `serve-config.sh`: serve's config reload at each poll (`serve_step_05_config_reload`, SIGHUP, `config.running`); `status.d/serveconfig.sh` shows the drift.
 - `demo.sh`: `demo` (a throwaway repository with three toy tickets, delivered by serve; progress in `demo.json`).
 - `broker.sh`: `broker_allow` (the credential broker's decision: which gh, git push and senior-mode verbs a sandboxed session may run).
 - `additive.sh`: the additive merge of the shared root files of `serve.sharedPaths` (package.json, Markdown; a lockfile is regenerated).

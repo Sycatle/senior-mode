@@ -135,6 +135,8 @@ done
 . "$LIB/serve-duties.sh"
 # shellcheck source=lib/serve-plugin.sh
 . "$LIB/serve-plugin.sh"
+# shellcheck source=lib/serve-config.sh
+. "$LIB/serve-config.sh"
 # shellcheck source=lib/demo.sh
 . "$LIB/demo.sh"
 

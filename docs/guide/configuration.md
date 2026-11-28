@@ -41,7 +41,8 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `performance.queries.helper` | set by `setup repo` | Path of the [query-count helper](#query-count-helper) of the project's ORM; a path you set is kept |
 | `performance.migrations.linter`, `performance.migrations.paths` | none, `django-migration-linter` for Django; SQL or Django migrations | The linter `check` runs on [the migrations a branch adds or changes](#checks), `squawk` or `django-migration-linter`, and the globs that say which files are migrations |
 | `performance.bench.command`, `performance.bench.threshold` | none, `10` | The benchmark command: a [hot path](#checks) of a spec must name a benchmark, and the lookup of `check` reports `bench: not measured` without it; it writes a JSON object of benchmark name to median to the file `{out}` stands for, or prints it, and the percent a benchmark may be slower than on the base before [tier 3](#checks) fails it |
-| `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks); an optional `"tier"` (2, the default, or 3) says [when it runs](#checks); an optional `"fix"` is the command that fixes what the check reports, printed as `fix: <command>` under a failure; an optional `"inputs"` (globs) turns on the [cache](#checks) of its successes |
+| `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks); an optional `"tier"` (2, the default, or 3) says [when it runs](#checks); an optional `"fix"` is the command that fixes what the check reports, printed as `fix: <command>` under a failure; an optional `"inputs"` (globs) turns on the [cache](#checks) of its successes; an optional `"since"` (`YYYY-MM-DD`) makes a failure [only warn](#checks) for `check.warnDays` days |
+| `check.warnDays` | `14` | Days a check with a `since` only warns when it fails before it blocks; the first day after the period it blocks |
 | `check.edit` | none | Tier 1 fixers, such as `["pnpm prettier --write {file}", "pnpm eslint --fix {file}"]`: after each `Edit`, `Write` or `MultiEdit`, the `edit-fix` hook runs them on the edited file, `{file}` standing for its quoted path, see [Checks](#checks) |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, adding `.claude/senior-mode.json` and `.claude/senior-mode/**` (the levers: hooks, roles, overrides) at the end when it lacks them (an empty list stays empty), so what controls customization is code the owner reviewed; `senior-mode protected` and the reviewer read it, and `setup github` maps it to [CODEOWNERS](autonomy.md#code-owners) |
 | `ci.mode` | `local` | `local`, `actions` or `existing` (the project's own CI is reused, see [CI mode](#ci-mode)) |
@@ -422,6 +423,12 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   directory (the 20 latest are kept) and its path is printed as `full log: <path>` under those lines.
   A check whose first output line is `skipped: <reason>` passes and prints `skip <name>: <reason>`,
   so a check that had nothing to do is visible instead of a silent `ok`.
+- A new check warns before it blocks. A check with `"since": "2026-11-27"` that fails prints `warn  <name>` with its findings and
+  passes for `check.warnDays` days (14 by default) after that date; from the day after, it blocks as any check. `setup repo` stamps
+  `since` (today) on every check it adds to a configuration that already had checks, and leaves the existing ones alone; a new
+  project starts blocking at once, and so does a check without `since`. The secret scan and the dependency audit never warn: a
+  `since` on them is a configuration error. `.claude/senior-mode.json` is a protected path, so moving a `since` forward is a human's
+  change.
 - A check may say when it runs with `"tier": 2` or `"tier": 3`. A check with no `tier` is tier 2, so an existing
   configuration behaves as before. `senior-mode check` and the `pre-push` hook run tier 2; a tier 3 check (the
   heavy ones) is skipped there with `heavy: <name> runs after the push`. `senior-mode check --tier 3` runs the
@@ -741,6 +748,11 @@ an unknown `kind`, is a configuration error naming the pack and the entry. `kind
 each added line) or `tool` (an outside tool, its `run` command and the `format` of its report; a tool that is not installed fails
 with `tool missing: <tool>`, its `install` command and the `rules.off` key, and never passes silently).
 
+A shipped rule carries a `since` (`YYYY-MM-DD`, the day it was added to the pack). For `check.warnDays` days after it
+(14 by default) a finding of that rule is listed as `warning: <file>:<line>: <rule-id>: ... [new rule since <date>: ...]` and
+does not fail; from the day after, it fails. A `since` that is not a date is a configuration error naming the pack and the entry.
+`rules.off` still turns a rule off, and the warnings are shown by `check` under the `code rules` step.
+
 The packs of the node, python, go and rust presets hold these rules on added lines (the `debug-print`, `outbound-no-timeout` and
 `scattered-env` rules skip test files): `swallowed-error` (an empty `catch`, `except: pass`, Go `_ = err`, Rust `let _ = <call>;`),
 `debug-print`, `todo-without-issue` (a TODO, FIXME, XXX or HACK with no `#<issue>`), `commented-code` (two or more added comment
@@ -751,7 +763,7 @@ line or the line above, the issue must exist (`suppression: #<n> not found`; whe
 not verified` is a warning), a focused test (`.only`) fails whatever the comment says, and `senior-mode: allow <rule-id> --
 #<issue>: <reason>` lifts that rule's finding on the next line (the lifted finding is listed).
 
-The `perf` pack (opt-in: `"rules": { "packs": ["node", "perf"] }`) holds `io-in-loop`: a database, HTTP or file call
+The `perf` and `duplication` packs stay opt-in (jscpd is not a dependency the plugin declares, and the loop heuristic of `io-in-loop` has false alarms to measure first). The `perf` pack (opt-in: `"rules": { "packs": ["node", "perf"] }`) holds `io-in-loop`: a database, HTTP or file call
 added inside a loop body (`for`, `while`, `forEach`, `map`, a list comprehension, a Go or Rust loop) fails with the fix "batch it or
 use a set-based query", naming file and line. The call outside a loop, a loop that only computes, a migration, a seed, a fixture
 and a test file are left alone, and `-- #<issue>: <reason>` on the call lifts the line. The loop is read from the brackets

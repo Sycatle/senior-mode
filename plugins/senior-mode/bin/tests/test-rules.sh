@@ -6,6 +6,8 @@ cli=$(cd "$(dirname "$0")/.." && pwd)/senior-mode
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 failures=0
+# After the warning period of the shipped packs (since 2026-11-28, #872): their findings block, as these cases expect.
+export SENIOR_MODE_NOW=1799971200
 
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 g() { git -C "$repo" -c user.name=t -c user.email=t@t "$@"; }
@@ -307,5 +309,18 @@ PATH=/usr/bin:/bin run rules-check && fail "a missing jscpd passes"
 has "tool missing: jscpd" "missing tool"
 has "npm install -g jscpd" "install command"
 has "rules.off.duplication" "off key"
+
+# The warning period of a rule (#872): a rule with a `since` inside it only warns, with the day after it blocks.
+mkdir -p "$work/packs"
+printf '{"rules": [{"id": "no-foo", "tier": 2, "kind": "pattern", "since": "2026-11-28", "pattern": "foo", "message": "foo", "fix": "no foo"}]}\n' >"$work/packs/warn.json"
+reset; config '{"audit": false, "checks": [{"name": "lint", "run": "true"}], "rules": {"packs": ["warn"]}}'
+echo "const foo = 1;" >"$repo/src/w.ts"
+SENIOR_MODE_RULES_DIR=$work/packs SENIOR_MODE_NOW=1795996800 run rules-check || fail "a rule in its warning period fails: $(out)"
+has "warning: src/w.ts:1: no-foo: foo (fix: no foo) [new rule since 2026-11-28" "the finding warns during the period"
+SENIOR_MODE_RULES_DIR=$work/packs SENIOR_MODE_NOW=1799971200 run rules-check && fail "a rule past its warning period passes"
+has "src/w.ts:1: no-foo: foo (fix: no foo)" "the finding blocks after the period"
+sed -i 's/2026-11-28/28 Nov/' "$work/packs/warn.json"
+SENIOR_MODE_RULES_DIR=$work/packs run rules-check && fail "a bad since passes"
+has "since must be a date YYYY-MM-DD" "bad since"
 
 [ "$failures" -eq 0 ] && echo "ok: rules" || exit 1

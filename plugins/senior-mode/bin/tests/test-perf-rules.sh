@@ -6,6 +6,8 @@ cli=$(cd "$(dirname "$0")/.." && pwd)/senior-mode
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 failures=0
+# After the warning period of the shipped packs (since 2026-11-28, #872): their findings block, as these cases expect.
+export SENIOR_MODE_NOW=1799971200
 
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 g() { git -C "$repo" -c user.name=t -c user.email=t@t "$@"; }

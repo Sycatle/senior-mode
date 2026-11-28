@@ -2,6 +2,7 @@
   "rules": [
     {
       "id": "suppression",
+      "since": "2026-11-28",
       "tier": 2,
       "kind": "pattern",
       "match": "suppression",
@@ -12,6 +13,7 @@
     },
     {
       "id": "todo-without-issue",
+      "since": "2026-11-28",
       "tier": 2,
       "kind": "pattern",
       "pattern": "(^|[^[:alnum:]_])(TODO|FIXME|XXX|HACK)([^[:alnum:]_]|$)",

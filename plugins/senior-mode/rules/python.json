@@ -2,6 +2,7 @@
   "rules": [
     {
       "id": "swallowed-error",
+      "since": "2026-11-28",
       "tier": 2,
       "kind": "pattern",
       "ext": [
@@ -13,6 +14,7 @@
     },
     {
       "id": "debug-print",
+      "since": "2026-11-28",
       "tier": 2,
       "kind": "pattern",
       "ext": [
@@ -25,6 +27,7 @@
     },
     {
       "id": "commented-code",
+      "since": "2026-11-28",
       "tier": 2,
       "kind": "pattern",
       "match": "comment",
@@ -40,6 +43,7 @@
     },
     {
       "id": "outbound-no-timeout",
+      "since": "2026-11-28",
       "tier": 2,
       "kind": "pattern",
       "match": "call",
@@ -54,6 +58,7 @@
     },
     {
       "id": "scattered-env",
+      "since": "2026-11-28",
       "tier": 2,
       "kind": "pattern",
       "ext": [

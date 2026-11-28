@@ -629,8 +629,8 @@ run_blocker() {
   elif zones=$(protected_match "$RUN_GLOBS" < <(cut -f1 <<<"$files")) && [ -n "$zones" ]; then
     echo "it touches a protected zone ($(paste -sd, - <<<"$zones" | sed 's/,/, /g'))"
   else
-    # One commit per ticket (#297), the size budget and Self-review are warnings only (ADR 0034), then their red tests (#306).
-    reason=$(delivery_blocker "$RUN_SLUG" "$pr" "$3" "$files" 2>/dev/null)
+    # One commit per ticket and the size budget of the tickets it closes (#297, #303), then their red tests (#306).
+    reason=$(delivery_blocker "$RUN_SLUG" "$pr" "$3" "$files")
     [ -n "$reason" ] || reason=$(red_blocker "$RUN_SLUG" "$pr" "$(jq -r '.body // ""' <<<"$3")" "$RUN_ROOT")
     if [ -n "$reason" ]; then
       echo "$reason"
@@ -655,7 +655,7 @@ run_blocker() {
 run_full_check() {
   local n=$1 sha=$2 wt=${RUN_WT[$1]:-} tmp="" rc=0
   if [ -n "${SENIOR_MODE_RUN_CHECK:-}" ]; then
-    (cd "$RUN_ROOT" && SENIOR_MODE_CHECK_HEAD=$sha bash -c "$SENIOR_MODE_RUN_CHECK") </dev/null >"$RUN_DIR/$n.check" 2>&1 || rc=$? # state-ok: the check's own output
+    (cd "$RUN_ROOT" && SENIOR_MODE_CHECK_HEAD=$sha bash -c "$SENIOR_MODE_RUN_CHECK") </dev/null >"$RUN_DIR/$n.check" 2>&1 || rc=$?
   else
     if [ -z "$wt" ] || [ "$(git -C "$wt" rev-parse HEAD 2>/dev/null)" != "$sha" ] || [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
       tmp=$(worktree_path "$RUN_ROOT" "check-$n")
@@ -669,7 +669,7 @@ run_full_check() {
       fi
       wt=$tmp
     fi
-    (cd "$wt" && "$SELF" check) </dev/null >"$RUN_DIR/$n.check" 2>&1 || rc=$? # state-ok: the check's own output
+    (cd "$wt" && "$SELF" check) </dev/null >"$RUN_DIR/$n.check" 2>&1 || rc=$?
     [ -z "$tmp" ] || git -C "$RUN_ROOT" worktree remove --force "$tmp" 2>/dev/null || true
   fi
   [ "$rc" -eq 0 ] || echo "the full check is red on its head (output in $RUN_DIR/$n.check)"

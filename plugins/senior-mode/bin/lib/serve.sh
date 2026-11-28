@@ -185,7 +185,7 @@ serve_step_80_snapshot() { serve_snapshot; }
 # every serve.interval seconds instead of a batch. TERM and INT stop the launching and drain. State is under
 # <git common dir>/senior-mode/serve/. SENIOR_MODE_SERVE_ONCE=1 polls once, waits for its sessions and exits.
 serve_loop() {
-  local interval old sleeper steps step
+  local interval old sleeper steps step size
   local -a running=() RUN_MERGED=() RUN_NOT_DONE=() RUN_REVIEWED=() RUN_NOT_REVIEW=() RUN_WAITING=() RUN_FAILED=() RUN_PRS=()
   local -A RUN_TITLE=() RUN_BRANCH=() RUN_WT=() RUN_MODEL=() RUN_ESCALATED=() RUN_REASON=() RUN_STARTED=() RUN_ROLE=() RUN_CWD=() RUN_BATCH=()
   local -A SERVE_PR=() SERVE_SHA=() SERVE_SIZE=() SERVE_NOTED=() WD_TICK=() WD_START=() WD_SIG=() WD_BASE=() WD_AT=()
@@ -195,13 +195,14 @@ serve_loop() {
   local SERVE_DIR SERVE_COMMON SERVE_TERM=false SERVE_PARALLEL SERVE_PER_HOUR SERVE_TICKETS_PER_HOUR SERVE_MIN_MEM SERVE_COOLDOWN SERVE_GRACE
   local SERVE_BREAKER_MAX SERVE_BACKOFF_BASE SERVE_BACKOFF_MAX SERVE_MIN_DISK SERVE_STARTUP SERVE_UNKNOWN_MAX SERVE_UNKNOWN_CAP SERVE_PENDING_HOURS GH_CALL_TIMEOUT GH_DOWN_FILE
   local SERVE_HELD="" SERVE_GUARDS="" SERVE_WAIT=""
+  local -A SERVE_TIMEOUT=()
   run_prepare serve
   # ADR 0018: under serve everything green merges, unless the repository sets autonomy.merge itself.
   jq -e '(.autonomy // {}) | has("merge")' "$(config_file)" >/dev/null || RUN_MERGE=true
   interval=$(serve_int serve.interval 1)
   SERVE_GRACE=$(serve_int serve.grace 0)
   SERVE_COOLDOWN=$(serve_int serve.breakerCooldown 0)
-  SERVE_TICKETS_PER_HOUR=$(serve_int autonomy.ticketsPerHour 1)
+  SERVE_TICKETS_PER_HOUR=$(serve_int autonomy.ticketsPerHour 0)
   SERVE_BREAKER_MAX=$(serve_int serve.breakerMax 1)
   SERVE_BACKOFF_BASE=$(serve_int serve.backoffBase 1)
   SERVE_BACKOFF_MAX=$(serve_int serve.backoffMax 1)
@@ -216,6 +217,14 @@ serve_loop() {
   SERVE_PER_HOUR=$(serve_int autonomy.sessionsPerHour 0)
   SERVE_MIN_MEM=$(serve_int autonomy.minMemoryMB 0)
   SERVE_PARALLEL=$(serve_int autonomy.parallel 1)
+  # The wall clock of a session follows its ticket's Size (session_timeout, ADR 0034); run's own timeout is the longest
+  # of them, so the watchdog, which applies the Size's, always stops a session first.
+  for size in S M L; do
+    SERVE_TIMEOUT[$size]=$(session_timeout "$size")
+    [[ ${SERVE_TIMEOUT[$size]} =~ ^[1-9][0-9]*$ ]] && [ "${SERVE_TIMEOUT[$size]}" -le 1440 ] ||
+      die "autonomy.sessionTimeoutBySize.$size must be a whole number of minutes from 1 to 1440, not ${SERVE_TIMEOUT[$size]}"
+    [ "${SERVE_TIMEOUT[$size]}" -le "$RUN_TIMEOUT" ] || RUN_TIMEOUT=${SERVE_TIMEOUT[$size]}
+  done
   maintenance_reserved "$SERVE_PARALLEL" >/dev/null
   # A ticket costs several role sessions (#355): the safety cap is 6 per slot unless the repository sets one.
   [ "$SERVE_PER_HOUR" -gt 0 ] || SERVE_PER_HOUR=$((6 * SERVE_PARALLEL))

@@ -1,38 +1,4 @@
 # shellcheck shell=bash
-# A ticket named by its ref (#450, spec 329 §2.1): `n` for a ticket of the current repository, `owner/name#n` for one of any
-# repository of the Project (an issue number is unique per repository, not per Project). ref_split prints `<owner/name>\t<n>`
-# (the current repository for a plain number) and fails on anything else.
-REF_RE='^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$'
-ref_split() {
-  if [[ $1 =~ ^[1-9][0-9]*$ ]]; then
-    printf '%s\t%s\n' "$(repo_slug)" "$1"
-  elif [[ $1 =~ $REF_RE ]]; then
-    printf '%s\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
-  else
-    return 1
-  fi
-}
-
-# Whether the repository $1 is the current one (GitHub names are case-insensitive).
-repo_is_here() {
-  [ "${1,,}" = "$(repo_slug | tr '[:upper:]' '[:lower:]')" ]
-}
-
-# The number of the ticket named by the ref $1 when it is a ticket of this clone's repository; another repository's ref is refused
-# (a session works in a clone of its own repository). Usage error on anything that is no ref.
-ref_here() {
-  local parts repo
-  parts=$(ref_split "$1") || usage
-  repo=${parts%%$'\t'*}
-  repo_is_here "$repo" || die "$1 is a ticket of $repo: run it in a clone of $repo"
-  printf '%s\n' "${parts#*$'\t'}"
-}
-
-# How a ticket of the repository $1 and number $2 is written: `#n` in this repository, its ref in another.
-ref_label() {
-  if repo_is_here "$1"; then printf '#%s\n' "$2"; else printf '%s#%s\n' "$1" "$2"; fi
-}
-
 # Id of a board option cached in the config; dies naming the known fields or options. Called in a command substitution,
 # it only ends that subshell: the caller must stop on its status (`|| return 1`), whether `set -e` is on or not.
 option_id() {
@@ -52,13 +18,9 @@ option_id() {
 # written. Fails when gh does, even where `set -e` is off (a caller's `||`), so `(item_set ...) || ...` sees it.
 item_set() {
   [ $# -ge 3 ] && [ $(($# % 2)) -eq 1 ] || usage
-  local issue=$1 file project owner number item field option i parts repo label
+  local issue=$1 file project owner number item field option i
   local ids=() flags=()
   shift
-  parts=$(ref_split "$issue") || usage
-  repo=${parts%%$'\t'*}
-  issue=${parts#*$'\t'}
-  label=$(ref_label "$repo" "$issue")
   file=$(config_file)
   project=$(jq -r '.project.id // empty' "$file")
   owner=$(jq -r '.project.owner // empty' "$file")
@@ -85,11 +47,11 @@ item_set() {
     ids+=("$(jq -r --arg f "$field" '.project.fields[$f].id' "$file")" "$option")
   done
   item=$(gh_retry project item-add "$number" --owner "$owner" \
-    --url "https://github.com/$repo/issues/$issue" --format json --jq .id) || return 1
+    --url "https://github.com/$(repo_slug)/issues/$issue" --format json --jq .id) || return 1
   for ((i = 0; i < ${#ids[@]}; i += 2)); do
     gh_retry project item-edit --project-id "$project" --id "$item" \
       --field-id "${ids[i]}" "${flags[i / 2]}" "${ids[i + 1]}" >/dev/null || return 1
-    echo "$label ${*:i+1:1} = ${*:i+2:1}"
+    echo "#$issue ${*:i+1:1} = ${*:i+2:1}"
   done
 }
 
@@ -123,48 +85,35 @@ ITEM_QUERY='query($owner: String!, $name: String!, $number: Int!) {
       ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } } } } } }
 }'
 item_get() {
-  [ $# -ge 1 ] && [ $# -le 2 ] || usage
-  local issue field=${2:-} file project slug answer err parts label
-  parts=$(ref_split "$1") || usage
-  slug=${parts%%$'\t'*}
-  issue=${parts#*$'\t'}
-  label=$(ref_label "$slug" "$issue")
+  [ $# -ge 1 ] && [ $# -le 2 ] && [[ $1 =~ ^[0-9]+$ ]] || usage
+  local issue=$1 field=${2:-} file project slug answer err
   file=$(config_file)
   project=$(jq -r '.project.id // empty' "$file")
   [ -n "$project" ] || die "no Project in .claude/senior-mode.json; run /senior-mode:setup"
+  slug=$(repo_slug)
   answer=$(jq -nc --arg q "$ITEM_QUERY" --arg o "${slug%%/*}" --arg n "${slug#*/}" --argjson i "$issue" \
     '{query: $q, variables: {owner: $o, name: $n, number: $i}}' | gh_retry api graphql --input -) ||
-    die "cannot read $label from GitHub"
+    die "cannot read #$issue from GitHub"
   err=$(jq -r '.errors[0].message // empty' <<<"$answer" 2>/dev/null) || die "GitHub answered something that is not JSON"
-  [ -z "$err" ] || die "GitHub refused the query for $label: $err"
+  [ -z "$err" ] || die "GitHub refused the query for #$issue: $err"
   jq -e --arg p "$project" '[.data.repository.issue.projectItems.nodes[]? | select(.project.id == $p)] | length > 0' \
-    <<<"$answer" >/dev/null || die "$label is not on the board"
-  jq -r --arg p "$project" --arg f "$field" --arg i "$label" '
+    <<<"$answer" >/dev/null || die "#$issue is not on the board"
+  jq -r --arg p "$project" --arg f "$field" --arg i "$issue" '
     [.data.repository.issue.projectItems.nodes[] | select(.project.id == $p) | .fieldValues.nodes[] | select(.field.name)] | map(.name = (.name // .text))
-    | if $f == "" then .[] | "\($i) \(.field.name) = \(.name)" else (map(select(.field.name == $f) | .name)[0] // "") end' <<<"$answer"
+    | if $f == "" then .[] | "#\($i) \(.field.name) = \(.name)" else (map(select(.field.name == $f) | .name)[0] // "") end' <<<"$answer"
 }
 
-# Numbers of the issues linked to an issue through a REST list (blocked_by, sub_issues), or with $4 = refs their `owner/name#n`.
+# Numbers of the issues linked to an issue through a REST list (blocked_by, sub_issues).
 linked() {
-  if [ "${4:-}" = refs ]; then
-    gh_retry api "repos/$1/issues/$2/$3" --paginate --jq '.[] | "\(.repository_url | sub(".*/repos/"; ""))#\(.number)"'
-  else
-    gh_retry api "repos/$1/issues/$2/$3" --paginate --jq '.[].number'
-  fi
+  gh_retry api "repos/$1/issues/$2/$3" --paginate --jq '.[].number'
 }
 
-# Adds a link unless it exists. Not retried: a POST applied before a timeout would fail again. $6 is the repository of the
-# issue $5 when it is not the one of $2 (a link across repositories, #450).
+# Adds a link unless it exists. Not retried: a POST applied before a timeout would fail again.
 link() {
-  local slug=$1 issue=$2 path=$3 key=$4 other=$5 other_slug=${6:-$1} existing id
-  if [ "$other_slug" = "$slug" ]; then
-    existing=$(linked "$slug" "$issue" "$path")
-    ! grep -qx "$other" <<<"$existing" || return 0
-  else
-    existing=$(linked "$slug" "$issue" "$path" refs)
-    ! grep -qixF "$other_slug#$other" <<<"$existing" || return 0
-  fi
-  id=$(gh_retry api "repos/$other_slug/issues/$other" --jq .id)
+  local slug=$1 issue=$2 path=$3 key=$4 other=$5 existing id
+  existing=$(linked "$slug" "$issue" "$path")
+  ! grep -qx "$other" <<<"$existing" || return 0
+  id=$(gh_retry api "repos/$slug/issues/$other" --jq .id)
   gh api -X POST "repos/$slug/issues/$issue/$path" -F "$key=$id" >/dev/null
 }
 
@@ -231,12 +180,11 @@ paths_of_finding() {
 # its body, fields, milestone, label and links converge to the arguments, its Status only with --status.
 issue_create() {
   local title="" body="" size="" priority="" severity="" status="" milestone="" type="" parent="" paths="" timebox=""
-  local kind="" path="" rule="" details="" sid="" text private no_advisory="" upstream="" repo="" tag="" parts
+  local kind="" path="" rule="" details="" sid="" text private no_advisory="" upstream=""
   local blockers=() edits=() file slug found number url b fields implied have
   while [ $# -gt 0 ]; do
     case $1 in -h | --help)
-      echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> [--priority <option>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <file|-> | --no-advisory]] [--status <option>] [--milestone <title>] [--type feature|bug|task|chore|spike] [--timebox <N>m|<N>h|<N>[k] tokens] [--paths <globs>] [--blocked-by <n>]... [--parent <n>] [--repo <owner/name>] [--upstream]"
-      echo "--repo files the ticket in another repository linked to the Project (default: this one); --parent and --blocked-by take a number or owner/name#n, whatever their repository."
+      echo "usage: senior-mode issue create --title <t> --body-file <file|-> --size <S|M|L> [--priority <option>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <file|-> | --no-advisory]] [--status <option>] [--milestone <title>] [--type feature|bug|task|chore|spike] [--timebox <N>m|<N>h|<N>[k] tokens] [--paths <globs>] [--blocked-by <n>]... [--parent <n>] [--upstream]"
       echo "--timebox is the timebox of a spike (--type spike needs it, no other type takes it): a duration or a token budget, written to the body as the line Timebox: <value>."
       echo "--paths is a comma-separated list of the globs the ticket touches (the board field Paths: tickets whose paths overlap never run at the same time). A session (SENIOR_MODE_RUN) that gives none gets the directory of --path <file>, else of the first file:line of the body, else the command fails."
       echo "--upstream marks a finding whose fix is in senior-mode itself: no ticket, a draft under .claude/upstream/ naming Sycatle/senior-mode (a body or --path citing plugins/senior-mode/ does the same)."
@@ -271,7 +219,6 @@ issue_create() {
       --paths) paths=$2 ;;
       --blocked-by) blockers+=("$2") ;;
       --parent) parent=$2 ;;
-      --repo) repo=$2 ;;
       *) usage ;;
     esac
     shift 2
@@ -320,9 +267,9 @@ issue_create() {
   fi
   # ${a[@]+...}: an empty array is unbound under set -u before bash 4.4.
   for b in ${blockers[@]+"${blockers[@]}"}; do
-    ref_split "$b" >/dev/null || die "not an issue number: $b"
+    [[ $b =~ ^[1-9][0-9]*$ ]] || die "not an issue number: $b"
   done
-  [ -z "$parent" ] || ref_split "$parent" >/dev/null || die "not an issue number: $parent"
+  [ -z "$parent" ] || [[ $parent =~ ^[1-9][0-9]*$ ]] || die "not an issue number: $parent"
   file=$(config_file)
   [ -z "$priority" ] || option_id "$file" Priority "$priority" >/dev/null
   if [ -n "$implied" ]; then
@@ -342,18 +289,6 @@ issue_create() {
   option_id "$file" Priority "$priority" >/dev/null
   option_id "$file" Status "${status:-Backlog}" >/dev/null
   slug=$(repo_slug)
-  # A repository of the Project (#450, spec 329 §2.2): it must be linked to it, so nothing is filed in a stranger's repository.
-  if [ -n "$repo" ]; then
-    [[ $repo == */* ]] || repo=${slug%%/*}/$repo
-    [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "--repo takes owner/name, not $repo"
-    if repo_is_here "$repo"; then
-      repo=""
-    else
-      project_repos | grep -qixF "$repo" || die "--repo $repo is not adopted with this Project (its repositories: $(project_repos | paste -sd, - | sed 's/,/, /g')); nothing was created"
-      slug=$repo
-      tag=$slug
-    fi
-  fi
 
   if [ -n "$sid" ]; then
     found=$(gh_retry issue list --repo "$slug" --state open --limit 1000 --json number,title,body,labels |
@@ -390,7 +325,7 @@ issue_create() {
       | join("\n")) // empty')
   number=$(head -1 <<<"$found")
   if [ -n "$number" ]; then
-    echo "$tag#$number $title (already open, body updated)"
+    echo "#$number $title (already open, body updated)"
     [ -z "$milestone" ] || edits+=(--milestone "$milestone")
     [ -z "$severity" ] || edits+=(--add-label security)
     if [ -n "$type" ]; then
@@ -406,44 +341,23 @@ issue_create() {
     url=$(gh issue create --repo "$slug" --title "$title" --body-file "$body" \
       ${milestone:+--milestone "$milestone"} ${type:+--label "$(workflow_label "" "type:$type")"} ${severity:+--label security})
     number=${url##*/}
-    echo "$tag#$number $title (created)"
+    echo "#$number $title (created)"
     status=${status:-Backlog}
   fi
   [ -z "$sid${SENIOR_MODE_RUN:-}$timebox" ] || rm -f "$body"
   [ -z "$status" ] || fields=(Status "$status" "${fields[@]}")
-  item_set "$tag${tag:+#}$number" "${fields[@]}"
-  # A blocker or a parent is a number of this repository or a ref of any repository of the Project (#450).
+  item_set "$number" "${fields[@]}"
   for b in ${blockers[@]+"${blockers[@]}"}; do
-    parts=$(ref_split "$b")
-    link "$slug" "$number" dependencies/blocked_by issue_id "${parts#*$'\t'}" "${parts%%$'\t'*}"
-    echo "$tag#$number blocked by $(ref_label "${parts%%$'\t'*}" "${parts#*$'\t'}")"
+    link "$slug" "$number" dependencies/blocked_by issue_id "$b"
+    echo "#$number blocked by #$b"
   done
   if [ -n "$parent" ]; then
-    parts=$(ref_split "$parent")
-    # The parent holds the sub-issue: its repository is the one of the POST, the child's the one of the id.
-    if err=$(link "${parts%%$'\t'*}" "${parts#*$'\t'}" sub_issues sub_issue_id "$number" "$slug" 2>&1); then
-      echo "$tag#$number under $(ref_label "${parts%%$'\t'*}" "${parts#*$'\t'}")"
-    elif [ "${parts%%$'\t'*}" = "$slug" ]; then
-      part_of_body "$slug" "$number" "${parts#*$'\t'}" "$err"
+    if err=$(link "$slug" "$parent" sub_issues sub_issue_id "$number" 2>&1); then
+      echo "#$number under #$parent"
     else
-      printf '%s\n' "$err" >&2
-      return 1
+      part_of_body "$slug" "$number" "$parent" "$err"
     fi
   fi
-}
-
-# The repositories linked to the Project of the config (`owner/name`, one a line), plus this one: the repositories a ticket may
-# be filed in (#450). Fails when GitHub does not answer.
-# shellcheck disable=SC2016 # a GraphQL query, not shell
-PROJECT_REPOS_QUERY='query($project: ID!) { node(id: $project) { ... on ProjectV2 { repositories(first: 100) { nodes { nameWithOwner } } } } }'
-project_repos() {
-  local project answer
-  project=$(jq -r '.project.id // empty' "$(config_file)")
-  [ -n "$project" ] || die "no Project in .claude/senior-mode.json; run /senior-mode:setup"
-  repo_slug
-  answer=$(jq -nc --arg q "$PROJECT_REPOS_QUERY" --arg p "$project" '{query: $q, variables: {project: $p}}' | gh_retry api graphql --input -) ||
-    die "cannot read the repositories of the Project from GitHub"
-  jq -r '.data.node.repositories.nodes[]?.nameWithOwner' <<<"$answer"
 }
 
 # A parent that refuses one more sub-issue (GitHub allows 100 per parent, #614): the ticket says `Part of #<parent>` in
@@ -525,15 +439,9 @@ READY_QUERY='query($project: ID!, $after: String) { node(id: $project) { ... on 
   nodes { fieldValues(first: 20) { nodes {
       ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
       ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } }
-    content { ... on Issue { number repository { nameWithOwner } state body labels(first: 20) { nodes { name } } milestone { title }
-      blockedBy(first: 20) { nodes { number state repository { nameWithOwner } } }
+    content { ... on Issue { number state body labels(first: 20) { nodes { name } } milestone { title }
+      blockedBy(first: 20) { nodes { number state } }
       parent { number labels(first: 20) { nodes { name } } milestone { title description } } } } } } } } }'
-# An issue number is unique per repository, not per Project (#450, spec 329 §2.1): an item of the Project is a ticket of this
-# repository when its issue is in it (an item with no repository, as old fixtures have, is). Needs $slug. `blocker` names a blocking issue: its
-# number in this repository, its ref in another.
-# shellcheck disable=SC2016 # a jq program, not shell
-REPO_DEF='def mine: ((.content.repository.nameWithOwner // $slug) | ascii_downcase) == ($slug | ascii_downcase);
-  def blocker: if ((.repository.nameWithOwner // $slug) | ascii_downcase) == ($slug | ascii_downcase) then .number else "\(.repository.nameWithOwner)#\(.number)" end;'
 # The hierarchy (spec 325 §7, #358): the reason a ticket is an orphan, null when it is not. A ticket needs a parent epic
 # under a milestone whose description has a `Goal:` line, unless it carries a label of $h.exempt (hierarchy.exempt, default security and hotfix)
 # or sits under the maintenance epic (label `maintenance`); an epic (label `epic`) needs no parent. Its input has `labels`
@@ -556,12 +464,12 @@ ORPHAN_DEF=$PART_OF_DEF'def epic_of: if . then {number, labels: [.labels.nodes[]
 # shellcheck disable=SC2016 # a jq program, not shell
 STATUS_DEF='def status: single("Status") | if . != null and ascii_downcase == "todo" then "Backlog" else . end;'
 # shellcheck disable=SC2016 # a jq program, not shell
-READY_ITEMS=$REPO_DEF$ORPHAN_DEF'def single($f): [.fieldValues.nodes[]? | select(.field.name == $f and .name != null) | .name][0];
+READY_ITEMS=$ORPHAN_DEF'def single($f): [.fieldValues.nodes[]? | select(.field.name == $f and .name != null) | .name][0];
   def text($f): [.fieldValues.nodes[]? | select(.field.name == $f and .text != null) | .text][0];
   '$STATUS_DEF'
-  [.[].data.node.items.nodes[]? | select(.content.number != null and mine) | .content as $c
+  [.[].data.node.items.nodes[]? | select(.content.number != null) | .content as $c
     | {number: $c.number, open: ($c.state == "OPEN"), body: ($c.body // ""), labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation, parent: ($c.parent | epic_of), bodyParent: ($c.body | part_of),
-       milestone: ($c.milestone.title // null), blockers: [$c.blockedBy.nodes[]? | select(.state == "OPEN") | blocker],
+       milestone: ($c.milestone.title // null), blockers: [$c.blockedBy.nodes[]? | select(.state == "OPEN") | .number],
        status: status, priority: single("Priority"), size: single("Size"), severity: single("Severity"),
        agent: (($c.body // "") | test("(^|\n)filed-by: agent[ \t]*(\n|$)")),
        framed: (($c.body // "") | test("(^|\n)framed-by: serve[ \t]*(\n|$)")),
@@ -584,7 +492,7 @@ ready_items() {
     count=$((count + 1))
     [ "$count" -lt 20 ] || break
   done
-  jq -c --arg slug "$slug" "$READY_ITEMS" <<<"$pages" || die "could not read the Project"
+  jq -c "$READY_ITEMS" <<<"$pages" || die "could not read the Project"
 }
 
 # The open issues of the repository that are not on the Project of the config (#687): "Auto-add to project" cannot be
@@ -673,7 +581,7 @@ ready_in_zone() {
 
 # What stops the ticket $1 (an item of ready_items) from being Ready, as a JSON array of reasons, empty when
 # nothing does. The Definition of Ready for any ticket: acceptance criteria (a list under an "Acceptance
-# criteria", "Acceptance" or "Criteria" heading, #611), Size, Priority, Paths. A ticket an agent filed, with $2 the protected globs: also size S or M,
+# criteria", "Acceptance" or "Criteria" heading, #611), Size, Priority, Paths. A ticket an agent filed, with $2 the protected globs: also size S,
 # no high or critical security severity, no Paths in a protected zone. $3 is the hierarchy settings as JSON
 # ({enforce, exempt}): when enforced, an orphan (see ORPHAN_DEF) lacks its link to a goal.
 # shellcheck disable=SC2016 # a jq program, not shell
@@ -683,7 +591,7 @@ ready_missing() {
     (if .size == null then "Size" else empty end), (if .priority == null then "Priority" else empty end),
     (if (.paths | length) == 0 then "Paths" else empty end),
     (if .agent or .framed then
-      (if .size != null and .size != "S" and .size != "M" then "size \(.size) (a ticket an agent filed is Ready only when S or M)" else empty end),
+      (if .size != null and .size != "S" and (.size != "M" or (.framed | not)) then "size \(.size) (a ticket an agent filed is Ready only when S, M when it comes from a framing)" else empty end),
       (if .severity == "high" or .severity == "critical" then "\(.severity) security severity (a ticket an agent filed is never Ready by rule)" else empty end)
      else empty end),
     (if $h.enforce == true then orphan($h; .bodyParent) | if . then "hierarchy: \(.)" else empty end else empty end)]' <<<"$it")
@@ -742,8 +650,6 @@ diff_kind() {
 #   (limits.diffLines) of the Size of the tickets it closes.
 # A pull request that closes no ticket, or one, with a commit of its own, is only held to the second rule.
 # Other phrases say what could not be read.
-# The size budget and the Self-review table only warn (ADR 0034): the reason goes to stderr as a `warning: ` line and
-# the pull request is not held; callers that only gate drop stderr.
 # The acceptance criteria of the tickets $3... that the "Self-review" table of the pull request body $2 lacks
 # or leaves without evidence (#356), as "#<n>.<k>" words. A criterion is a top-level bullet under the
 # "Acceptance criteria" heading of the issue (or `Acceptance`, `Criteria`, #611); its row starts with `#<n>.<k>` (or `<k>` when the pull request
@@ -852,12 +758,13 @@ delivery_blocker() {
   done <<<"$files"
   lines=$(jq -r --argjson c "$code" --argjson t "$tests" --argjson d "$docs" \
     '($c + $t * (.tests // 0.5) + $d * (.docs // 0.25)) | ceil' <<<"$weights")
-  if [ "$lines" -gt "$total" ]; then
+  [ "$lines" -le "$total" ] || {
     detail=""
     [ $((tests + docs)) -eq 0 ] ||
       detail=" ($code of code, $tests of tests counted at $(jq -r '.tests // 0.5' <<<"$weights"), $docs of docs counted at $(jq -r '.docs // 0.25' <<<"$weights"))"
-    echo "warning: $lines changed lines$detail, $((lines - total)) over the size budget of $total (limits.diffLines: $sizes)" >&2
-  fi
+    echo "not ready: $lines changed lines$detail, $((lines - total)) over the size budget of $total (limits.diffLines: $sizes)"
+    return 0
+  }
   gaps=$(skeleton_blocker "$slug" "$pr" "$pull" "$files")
   [ -z "$gaps" ] || {
     echo "$gaps"
@@ -872,22 +779,21 @@ delivery_blocker() {
     echo "the acceptance criteria of its tickets could not be read"
     return 0
   }
-  [ -z "$gaps" ] ||
-    echo "warning: the Self-review table has no row with evidence for ${gaps// /, } (one row per acceptance criterion: | #<ticket>.<k> criterion | evidence |)" >&2
+  [ -z "$gaps" ] || {
+    echo "not ready: the Self-review table has no row with evidence for ${gaps// /, } (one row per acceptance criterion: | #<ticket>.<k> criterion | evidence |)"
+    return 0
+  }
   eval_blocker "$slug" "$pr" "$pull" "$files"
 }
 
 # senior-mode ready --pr <n> on an open pull request that is no framing one: whether it is ready to merge on
-# account of its tickets (see delivery_blocker). Says so, and fails when it is not; its warnings are printed and do not fail it.
+# account of its tickets (see delivery_blocker). Says so, and fails when it is not.
 ready_delivery() {
-  local slug=$1 pr=$2 pull files reason warned
+  local slug=$1 pr=$2 pull files reason
   pull=$(gh_retry api "repos/$slug/pulls/$pr") || die "cannot read pull request #$pr"
   files=$(gh_retry api "repos/$slug/pulls/$pr/files" --paginate --jq '.[] | "\(.filename)\t\(.changes // 0)"') ||
     die "cannot read the files of pull request #$pr"
-  warned=$(mktemp)
-  reason=$(delivery_blocker "$slug" "$pr" "$pull" "$files" 2>"$warned")
-  grep '^warning: ' "$warned" || true
-  rm -f "$warned"
+  reason=$(delivery_blocker "$slug" "$pr" "$pull" "$files")
   case $reason in
     "") echo "pull request #$pr is ready" ;;
     "not ready: "*)
@@ -952,9 +858,9 @@ ready() {
         ;;
       --optin) optin=true ;;
       --dry-run) dry=true ;;
-      [1-9]* | [A-Za-z0-9]*/*#*)
-        n=$(ref_here "$1") || exit 1
-        add_t=$(jq -c --argjson n "$n" '. + [$n]' <<<"$add_t")
+      [1-9]*)
+        [[ $1 =~ ^[1-9][0-9]*$ ]] || usage
+        add_t=$(jq -c --argjson n "$1" '. + [$n]' <<<"$add_t")
         optin=true
         ;;
       *) usage ;;
@@ -1066,8 +972,8 @@ BOARD_QUERY='query($project: ID!, $owner: String!, $name: String!, $after: Strin
       id isArchived updatedAt
       fieldValues(first: 20) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
         ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } }
-      content { ... on Issue { number repository { nameWithOwner } title url state body closedAt updatedAt authorAssociation labels(first: 20) { nodes { name } }
-        milestone { title dueOn } blockedBy(first: 20) { nodes { number state repository { nameWithOwner } } }
+      content { ... on Issue { number title url state body closedAt updatedAt authorAssociation labels(first: 20) { nodes { name } }
+        milestone { title dueOn } blockedBy(first: 20) { nodes { number state } }
         parent { number labels(first: 20) { nodes { name } } milestone { title description } }
         comments(last: 10) { nodes { body authorAssociation } } } } } } } }
   repository(owner: $owner, name: $name) @include(if: $repo) {
@@ -1181,7 +1087,7 @@ board_data() {
     [ "$count" -lt 20 ] || break
   done
   hier=$(config_get hierarchy) || exit 1
-  data=$(jq -c --argjson hier "$hier" --arg slug "$slug" "$REPO_DEF$HYGIENE_NODES$ORPHAN_DEF"'def single($f): [.fieldValues.nodes[] | select(.field.name == $f) | .name][0];
+  data=$(jq -c --argjson hier "$hier" "$HYGIENE_NODES$ORPHAN_DEF"'def single($f): [.fieldValues.nodes[] | select(.field.name == $f) | .name][0];
     def text($f): [.fieldValues.nodes[] | select(.field.name == $f) | .text][0];
     '"$STATUS_DEF"'
     def failing: [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
@@ -1191,17 +1097,14 @@ board_data() {
     def decisionc($n): ([($n.comments.nodes // [])[] | select((.body | contains("<!-- senior-mode:decision -->")) and (.authorAssociation | IN("OWNER", "MEMBER", "COLLABORATOR")))][-1] // null)
       | if . then {body} else null end;
     (.[0].data.repository // {}) as $r
-    | {items: [.[].data.node.items.nodes[] | select(.content.number != null and mine) | .updatedAt as $moved | .id as $iid | (.isArchived // false) as $arch | .content as $c
+    | {items: [.[].data.node.items.nodes[] | select(.content.number != null) | .updatedAt as $moved | .id as $iid | (.isArchived // false) as $arch | .content as $c
         | {number: $c.number, title: $c.title, url: $c.url, open: ($c.state == "OPEN"), itemId: $iid, archived: $arch, closedAt: $c.closedAt,
            status: status, priority: single("Priority"), size: single("Size"), severity: single("Severity"), paths: (text("Paths") // ""),
            labels: [$c.labels.nodes[].name], assoc: $c.authorAssociation, milestone: $c.milestone.title, due: $c.milestone.dueOn,
            updated: ([$c.updatedAt, $moved] | map(select(. != null)) | max),
-           blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | blocker], last: lastc($c), decision: decisionc($c), parent: ($c.parent | epic_of),
-           spec: ([($c.body // "") | scan("docs/specs/[A-Za-z0-9._-]+\\.md")][0])}
+           blockers: [$c.blockedBy.nodes[] | select(.state == "OPEN") | .number], last: lastc($c), decision: decisionc($c), parent: ($c.parent | epic_of)}
         | . + {orphan: orphan($hier; $c.body | part_of)}],
        hierarchy: {enforce: ($hier.enforce == true)},
-       others: ([.[].data.node.items.nodes[] | select(.content.number != null and (mine | not)) | .content.repository.nameWithOwner]
-         | group_by(.) | map({repository: .[0], items: length})),
        prs: [$r.pullRequests.nodes[]? | {number, title, url, branch: .headRefName, labels: [.labels.nodes[].name], failing: failing,
          updated: .updatedAt, last: lastc(.)}],
        branches: [$r.branches.nodes[]?.name],
@@ -1211,22 +1114,7 @@ board_data() {
        merged: [$r.merged.nodes[]? | {number, title, mergedAt}],
        release: ($r.latestRelease | if . then {tag: .tagName, date: .publishedAt} else null end)}' <<<"$pages") ||
     die "could not read the Project"
-  data=$(board_spec_merged "$data")
   if [ "$repo" = true ]; then board_more "$data"; else printf '%s\n' "$data"; fi
-}
-
-# A board_data result with `specMerged` on its items: an L ticket whose body names a spec (docs/specs/<file>.md) is specced
-# once the file is on the default branch, its framing pull request merged (ADR 0034, `pick`).
-board_spec_merged() {
-  local base n spec ok=()
-  base=$(default_branch 2>/dev/null) || base=""
-  if [ -n "$base" ]; then
-    while IFS=$'\t' read -r n spec; do
-      ! git cat-file -e "$base:$spec" 2>/dev/null || ok+=("$n")
-    done < <(jq -r '.items[] | select(.size == "L" and .spec != null) | [.number, .spec] | @tsv' <<<"$1")
-  fi
-  jq -c --argjson ok "$(printf '%s\n' ${ok[@]+"${ok[@]}"} | jq -Rsc '[split("\n")[] | select(. != "") | tonumber]')" \
-    '.items |= map(. + {specMerged: (.number | IN($ok[]))})' <<<"$1"
 }
 
 # The trust gate (ADR 0024, #427), the one rule every selection of a ticket to work on applies (`pick`, hence
@@ -1242,11 +1130,11 @@ TRUST_DEF='def trusted: . as $i | (($i.labels | index("triage")) | not)
 # shellcheck disable=SC2016 # a jq program, not shell
 HAS_CRITERIA_DEF='def has_criteria: test("(^|\n)#{1,6}[ \t]*(acceptance criteria|acceptance|criteria)[ \t]*:?[ \t]*\n+[ \t]*([-*]|[0-9]+[.)])[ \t]+\\S"; "i");'
 
-# The tickets `run` and `next` take (spec 0001 §7): Ready, open, trusted, not size L unless its spec is merged (`specMerged`, ADR 0034), not blocked (open
+# The tickets `run` and `next` take (spec 0001 §7): Ready, open, trusted, not size L, not blocked (open
 # "blocked by" link, `blocked` label), not waiting for information (`needs-info`) or for a decision (`needs-decision`, #363), not reserved for a person (`needs-human`, #603). Sorted by Priority
 # (P0 first), a critical Severity ahead of the others, then milestone due date, then number.
 # shellcheck disable=SC2016 # a jq program, not shell
-PICK_DEF=$TRUST_DEF'def pick: . as $d | [.items[] | select(.open and trusted and .status == "Ready" and (.size != "L" or .specMerged == true) and (.blockers | length == 0)
+PICK_DEF=$TRUST_DEF'def pick: . as $d | [.items[] | select(.open and trusted and .status == "Ready" and .size != "L" and (.blockers | length == 0)
     and ($d.hierarchy.enforce != true or .orphan == null)
     and ((.labels | index("blocked")) | not) and ((.labels | index("needs-info")) | not)
     and ((.labels | index("needs-decision")) | not) and ((.labels | index("needs-human")) | not))]
@@ -1277,15 +1165,11 @@ pick_free() {
     [ -z "$3" ] || echo 0
     return 0
   fi
-  # A ticket is a number, or `owner/name#n` for an item of another repository (#450): Paths are relative to their repository, so
-  # tickets of two repositories never collide.
   jq -r --arg r "$2" --arg q "$3" "$PATHS_DEF"'
-    def key: if test("#") then . else "#" + . end;
-    ($r | split(" ") | map(select(. != "") | key)) as $run
-    | ($q | split(" ") | map(select(. != "") | split("+") | map(key))) as $queue
-    | ([.items[] | {key: ((if .repo then "\(.repo)" else "" end) + "#\(.number)"), value: {repo: (.repo // ""), globs: globs}}] | from_entries) as $g
-    | def clash($a; $b): $g[$a].repo == $g[$b].repo and collide($g[$a].globs; $g[$b].globs);
-    [range(0; $queue | length) | select(. as $i | $run | all(.[]; . as $r | $queue[$i] | all(.[]; clash(.; $r) | not)))] | first // empty' <<<"$1"
+    ($r | split(" ") | map(select(. != "") | tonumber)) as $run
+    | ($q | split(" ") | map(select(. != "") | split("+") | map(tonumber))) as $queue
+    | ([.items[] | {key: (.number | tostring), value: globs}] | from_entries) as $g
+    | [range(0; $queue | length) | select(. as $i | $run | all(.[]; . as $r | $queue[$i] | all(.[]; collide($g[tostring]; $g[$r | tostring]) | not)))] | first // empty' <<<"$1"
 }
 
 # Batches (#189): the picked tickets in order, each with `batch`, the numbers of the tickets delivered
@@ -1562,7 +1446,7 @@ start() {
     shift
     case $arg in
       --base) [ $# -gt 0 ] && [ -n "$1" ] || usage; base_ref=${1#origin/}; shift ;;
-      *) [ -z "$issue" ] || usage; issue=$(ref_here "$arg") || exit 1 ;;
+      *) [ -z "$issue" ] && [[ $arg =~ ^[1-9][0-9]*$ ]] || usage; issue=$arg ;;
     esac
   done
   [ -n "$issue" ] || usage

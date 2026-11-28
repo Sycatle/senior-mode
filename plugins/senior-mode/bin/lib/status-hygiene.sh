@@ -61,7 +61,7 @@ local_branches() {
 # The hygiene report as JSON. $1 board_data result, $2 the worktrees of the tickets (`ticket_trees`), $3 now,
 # $4 the local branches (`local_branches`).
 hygiene_report() {
-  jq -c --slurpfile t <(printf '%s' "$2") --arg now "$3" --argjson days "$(hygiene_days)" --slurpfile l <(printf '%s' "$4") "$HYGIENE_DEF"'hygiene($days; $t[0]; $now; $l[0])' <<<"$1"
+  jq -c --argjson t "$2" --arg now "$3" --argjson days "$(hygiene_days)" --argjson l "$4" "$HYGIENE_DEF"'hygiene($days; $t; $now; $l)' <<<"$1"
 }
 
 # The worktrees of the tickets of the repository at $1 as a JSON object {"<issue>": "<path>"}.

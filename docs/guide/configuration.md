@@ -163,7 +163,7 @@ print `[]` (an empty line for `github.protection`, `slot`, `slotDown` and `slotU
 ### Multi-repo keys
 
 The keys of [products of several repositories and organizations](multi-repo.md), all optional. A repository that sets none
-behaves as before. Only `project.home` is read today (its row is in the table above); the others are **planned**, with the
+behaves as before. Only `project.home` and the `org.*` keys other than `org.allowExec` are read today; the others are **planned**, with the
 ticket that adds each, and the plugin does not know them yet: `config get` and `config validate` refuse them until then.
 
 | Key | Default | Meaning | Where | Ticket |
@@ -175,11 +175,11 @@ ticket that adds each, and the plugin does not know them yet: `config get` and `
 | `serve.repoOrder` | `[]` | Repositories that win a tie in the queue, first to last; the unlisted come last | repository, organization | planned, #455 |
 | `autonomy.repoParallel` | `0` | Cap on the sessions of one repository at once, `0` for none beyond `autonomy.parallel` | repository | planned, #455 |
 | `epics.available` | `merged` | Default `Available:` of a cross-repo ticket: `merged` (closed) or `released` (closed and contained in a published release) | repository, organization | planned, #399 |
-| `org.inherit` | `true` | `false` turns off the read of the organization layer | repository, local | planned, #400 |
-| `org.repo` | `.github` | Repository of the owner that holds the organization layer | repository, local | planned, #400 |
-| `org.path` | `senior-mode` | Directory of that repository that holds it; selects one of several product directories | repository, local | planned, #400 |
-| `org.ref` | default branch | Branch, tag or commit of the organization layer to read, to pin it | repository, local | planned, #400 |
-| `org.allowExec` | `[]` | Keys that run a command (`commands`, `checks`, `agent.command`, `slot`, `slotUp`, `slotDown`, `notify.webhook`) accepted from the organization layer | repository, local | planned, #400 |
+| `org.inherit` | `true` | `false` turns off the read of the organization layer | repository, local | available |
+| `org.repo` | `.github` | Repository of the owner that holds the organization layer | repository, local | available |
+| `org.path` | `senior-mode` | Directory of that repository that holds it; selects one of several product directories | repository, local | available |
+| `org.ref` | default branch | Branch, tag or commit of the organization layer to read, to pin it | repository, local | available |
+| `org.allowExec` | `[]` | Keys that run a command (`commands`, `checks`, `agent.command`, `slot`, `slotUp`, `slotDown`, `notify.webhook`) accepted from the organization layer | repository, local | planned, #735 |
 | `project.home` | written by `setup github --project` | The repository that holds the Project's duties (digest, Ready-by-rule pass); every member names the same one | repository | available |
 
 ## Validation and the JSON schema
@@ -226,10 +226,18 @@ higher layer replaces the lower one. Lowest first:
 
 1. the plugin defaults;
 2. the **profile** (`process.profile`, below);
-3. the **organization**: `<git common dir>/senior-mode/organization.json` (shared by the worktrees of a clone;
-   `.github` repository of the organization, copied there by whoever manages the machine);
+3. the **organization**: `config.json` in the directory `org.path` of the repository `<owner>/<org.repo>` (default
+   `.github/senior-mode`; it exists for a user account too), read from its default branch only, or from `org.ref`;
+   a pull request or another branch is never read. A file `<git common dir>/senior-mode/organization.json` of the
+   machine replaces it when present. `org.inherit: false` turns the read off, and the `org.*` keys come from the
+   repository and local layers only (an `org` key of the organization is ignored);
 4. the **repository**: `.claude/senior-mode.json`;
 5. the **local** file, untracked: `.claude/senior-mode.local.json` at the root of the main worktree.
+
+The organization layer is fetched with one conditional read (ETag) at most every 10 minutes per clone (every hour for
+`serve`) and kept in `${XDG_CACHE_HOME:-~/.cache}/senior-mode/org/<owner>/<sha>/`. With GitHub unreachable the last good
+copy is used and one line says `org layer: cached <sha>, <age>`; with none the layer is empty and one line says so. A
+missing repository or directory is an empty layer, checked again after an hour. Reading it never fails a command.
 
 The safety lists (`protected`, `secrets`, `envGuard.forbidden`) are the **union** of the layers: a layer adds to
 them, none removes. `senior-mode config explain <key>` prints the value, the layer that won, and every layer's

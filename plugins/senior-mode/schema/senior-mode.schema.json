@@ -584,6 +584,17 @@
       "type": "object",
       "additionalProperties": false,
       "properties": { "required": { "type": "boolean", "description": "Whether a selected journey of an accepted spec must have its test file with the journey id in it (default true); false makes a missing test a warning." } }
+    },
+    "org": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The organization layer (#400): read from the repository and local layers only, never from the organization itself.",
+      "properties": {
+        "inherit": { "type": "boolean", "description": "false turns off the read of the organization layer (default true)." },
+        "repo": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$", "description": "Repository of the owner that holds the organization layer (default .github)." },
+        "path": { "type": "string", "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$", "description": "Directory of that repository that holds it (default senior-mode)." },
+        "ref": { "type": "string", "pattern": "^[A-Za-z0-9._/-]*$", "description": "Branch, tag or commit of the organization layer to read, to pin it; empty reads the default branch." }
+      }
     }
   }
 }

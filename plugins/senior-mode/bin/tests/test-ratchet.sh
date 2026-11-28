@@ -313,5 +313,13 @@ run check && fail "check passes with an eighth finding"
 grep -q "^FAIL  ratchet (" "$work/out" || fail "the ratchet failure is not named: $(out)"
 reset
 
+# ADR 0034: with no baseline, patch coverage never blocks: a new file at 0% passes, the ratchet says it is skipped.
+g rm -q .claude/ratchet-baseline.json && g commit -q -m "chore: no baseline"
+printf 'const z = 1;\n' >"$repo/src/new.ts"
+lcov src/a.ts 10 4 src/new.ts 10 0
+run ratchet-check || fail "a new file at 0% coverage blocks without a baseline: $(out)"
+grep -q "^skipped: no .claude/ratchet-baseline.json" "$work/out" || fail "the missing baseline is not said: $(out)"
+reset
+
 [ "$failures" -eq 0 ] && echo "ratchet: all cases pass"
 exit "$failures"

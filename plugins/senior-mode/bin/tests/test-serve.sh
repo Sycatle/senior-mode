@@ -1619,8 +1619,8 @@ once || fail "W: serve failed: $(cat "$work/out")"
 grep -q 'issues/.*/labels\|issues/.*/comments' "$GH_LOG" && fail "W: a transient blocker got needs-human: $(cat "$GH_LOG")"
 grep -q 'Waiting for a human.*senior-mode/security not green' "$work/out" || fail "W: the transient wait is not said: $(cat "$work/out")"
 green "$sha66"
-# A pull request that is not ready for its tickets (#297, #303): needs-human on the pull request and the ticket, with
-# the numbers; it is never merged. One that is within budget, with a commit per ticket, merges.
+# A pull request over its size budget only warns (ADR 0034) and merges; one that is not ready for its tickets (#297):
+# needs-human on the pull request and the ticket, with the numbers; it is never merged. One with a commit per ticket merges.
 size_item() { jq -nc --arg s "$2" '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"},
   fieldValues: {nodes: [{name: $s, field: {name: "Size"}}]}}]}}}}}' >"$FIX/item-$1.json"; }
 size_item 66 S
@@ -1629,10 +1629,8 @@ printf 'src/big.ts\t450\npackage-lock.json\t9000\n' >"$FIX/files-166"
 PRBODY="Closes #66" pr 166 feat/66-x "$sha66" clean
 fresh
 once || fail "X: serve failed: $(cat "$work/out")"
-grep -q '^pr merge' "$GH_LOG" && fail "X: merged a pull request over its size budget"
-grep -q 'issues/166/comments.*450 changed lines, 150 over the size budget of 300' "$GH_LOG" || fail "X: no comment with the numbers: $(grep 'issues/166' "$GH_LOG")"
-grep -q 'issues/166/labels.*needs-human' "$GH_LOG" || fail "X: #166 not needs-human: $(cat "$GH_LOG")"
-grep -q 'issues/66/labels.*needs-human' "$GH_LOG" || fail "X: ticket #66 not needs-human: $(cat "$GH_LOG")"
+grep -q "^pr merge 166 --rebase --match-head-commit $sha66" "$GH_LOG" || fail "X: a pull request over its size budget is held: $(cat "$work/out")"
+grep -q 'issues/166/labels.*needs-human' "$GH_LOG" && fail "X: #166 over its budget got needs-human: $(cat "$GH_LOG")"
 printf 'src/ok.ts\t200\n' >"$FIX/files-166"
 printf '%s\n' '[{"commit": {"message": "feat: both\n\nRefs #66"}}]' >"$FIX/commits-166.json"
 PRBODY=$'Closes #66\nCloses #67' pr 166 feat/66-x "$sha66" clean

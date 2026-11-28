@@ -1206,7 +1206,8 @@ setup_repo() {
         + (if $guard then [{name: "env guard", run: ".githooks/env-guard.sh"}] else [] end)) as $want
     | .checks = ((.checks // []) as $have
       | [$have[] | if $c[.name] then .run = $c[.name] else . end]
-        + [$want[] | select(.name as $n | $have | any(.name == $n) | not)])
+        + [$want[] | select(.name as $n | $have | any(.name == $n) | not)
+            | if ($have | length) > 0 then .since = $today else . end])
     | if has("protected") then
         (if (.protected | type) == "array" and (.protected | length) > 0 then .protected += ([".claude/senior-mode.json", ".claude/senior-mode/**"] - .protected) else . end)
       else (($p[0].protected // []) + ($p[0].frameworks[.framework // ""].protected // [])) as $g
@@ -1215,7 +1216,7 @@ setup_repo() {
     | if ($ui | length) > 0 and ((.ui // {}) | has("paths") | not) then .ui.paths = $ui else . end' \
     --argjson c "$commands" --argjson ours "$ours" --arg sub "$subjects" --argjson guard "$guard" --slurpfile p "$preset" --arg pn "$pname" \
     --argjson d "$detected" --argjson pk "$pkgs" --arg sch "$CONFIG_SCHEMA_URL" --arg mv "$mv" --argjson debt "$debt" \
-    --arg cov "$(coverage_command "$root" "$pname")" || out=$?
+    --arg cov "$(coverage_command "$root" "$pname")" --arg today "$(iso_time "$(serve_now)" | cut -c1-10)" || out=$?
   [ "$out" -ne 1 ] || die "could not write .claude/senior-mode.json"
   echo "preset: $pname$(jq -r --argjson d "$detected" '[if $d.typescript == true then "TypeScript"
     elif $d.typescript == false then "JavaScript" else empty end, .framework // empty]

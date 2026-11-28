@@ -1005,6 +1005,18 @@ HIER_FAIL=1 run_hier status --json || fail "status fails when the hierarchy cann
 HIER_FAIL=1 run_hier status || fail "text status fails when the hierarchy cannot be read"
 grep -q '^Progress: not read' "$work/out" || fail "note missing: $(cat "$work/out")"
 
+# A large board (#877): the documents the report is built from (hierarchy, local branches) outgrow the argument list of jq
+# (128 KiB for one argument) and reach it through files, never through argv.
+jq -nc '{data: {repository: {milestones: {nodes: [range(500) | {number: ., title: ("Milestone \(.) " + ("x" * 500)), description: "",
+  issues: {totalCount: 1, nodes: [{number: (1000 + .), title: "Item", state: "OPEN", body: "", parent: null, subIssuesSummary: {total: 0, completed: 0}}]}}]}}}}' >"$FIX/hierarchy.json"
+[ "$(wc -c <"$FIX/hierarchy.json")" -gt 262144 ] || fail "the large hierarchy is not large"
+for i in $(seq 4000); do echo "create refs/heads/feat/9$i-a-long-branch-name-to-fill-the-list-of-local-branches HEAD"; done | git -C "$hier" update-ref --stdin
+run_hier status --json || fail "a large board: status --json failed: $(cat "$work/err")"
+[ "$(json '.hierarchy.milestones | length')" = 500 ] || fail "a large board: hierarchy: $(json '.hierarchy.note')"
+run_hier status || fail "a large board: status failed: $(cat "$work/err")"
+grep -q '^Progress' "$work/out" || fail "a large board: no Progress section: $(head -c 600 "$work/out")"
+echo '{"data": {"repository": {"milestones": {"nodes": []}}}}' >"$FIX/hierarchy.json"
+
 # Errors.
 run status --since soon && fail "accepted --since soon"
 grep -q "duration" "$work/err" || fail "bad duration not explained: $(cat "$work/err")"

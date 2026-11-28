@@ -120,7 +120,7 @@ health_needs_human() {
 # the earliest due date of an open milestone, if any; the body names the rule that decided.
 # shellcheck disable=SC2016 # a jq program, not shell
 HEALTH_JQ='def plural($n; $w): "\($n) \($w)\(if $n == 1 then "" else "s" end)";
-  . as $d | ($d.items | map(select(.archived | not))) as $items | ($now | fromdateiso8601) as $t
+  . as $d | $drift[0] as $drift | $nh[0] as $nh | ($d.items | map(select(.archived | not))) as $items | ($now | fromdateiso8601) as $t
   | [$items[] | select(.open and .milestone != null and .due != null)] as $dated
   | [$dated[] | select(.due < $now)] as $late
   | ($late | sort_by(.due) | group_by(.milestone) | map({milestone: .[0].milestone, due: .[0].due[:10], open: length}) | sort_by(.due)) as $ms
@@ -150,7 +150,7 @@ HEALTH_JQ='def plural($n; $w): "\($n) \($w)\(if $n == 1 then "" else "s" end)";
 health_publish() {
   local nh health
   nh=$(health_needs_human "$1") || { echo "senior-mode: could not read when the tickets got needs-human; no status update posted" >&2; return 1; }
-  health=$(jq -c --argjson drift "$2" --argjson nh "$nh" --arg now "$3" "$HEALTH_JQ" <<<"$1") ||
+  health=$(jq -c --slurpfile drift <(printf '%s' "$2") --slurpfile nh <(printf '%s' "$nh") --arg now "$3" "$HEALTH_JQ" <<<"$1") ||
     { echo "senior-mode: could not work out the health of the Project; no status update posted" >&2; return 1; }
   project_post_update "$(jq -r .body <<<"$health")" "$(jq -r .status <<<"$health")" "$(jq -r .startDate <<<"$health")" \
     "$(jq -r '.targetDate // empty' <<<"$health")" ||

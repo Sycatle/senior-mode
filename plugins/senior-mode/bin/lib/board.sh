@@ -1534,6 +1534,8 @@ start() {
         base=$(start_base "$main") || die "no default branch to start $branch from"
       fi
       git -C "$main" worktree add -q --no-track -b "$branch" "$path" "$base" >/dev/null || die "cannot create the worktree"
+      # A stacked branch's red tests are computed against its parent (#875, red_base).
+      [ -z "$base_ref" ] || git -C "$main" config "branch.$branch.senior-mode-base" "$base"
       fresh=true
     else
       [ -z "$base_ref" ] || ignored="base $base_ref ignored: the branch $branch exists"

@@ -459,6 +459,10 @@ for role in test-author reviewer integrator ""; do
   dir=$tw bash_ allow "rm tests/a.sh" "$tw"
 done
 role=ticket
+# A list binds the branch of its own ticket only (#875): the branch of another ticket, a stacked one for instance, or
+# a ticket whose branch is merged and gone, edits the files of that list.
+git -C "$repo" worktree add -q "$work/other" -b feat/3-stacked 2>/dev/null
+dir=$work/other edit allow "$work/other/tests/a.sh" Edit "" "another ticket's branch edits a file of ticket 2's list"
 # A branch with no list, a list that is not there, and a branch that names no ticket have nothing to protect.
 dir=$work/wt edit allow "$work/wt/tests/a.sh" Edit "" "ticket 1 has no list"
 mkdir -p "$work/nobranch"

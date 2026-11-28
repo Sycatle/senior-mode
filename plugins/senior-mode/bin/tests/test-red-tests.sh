@@ -51,6 +51,20 @@ git -C "$repo" worktree add -q "$work/wt" -b feat/8-other main
 dir=$work/wt record 8 >/dev/null || fail "record from a linked worktree failed: $(cat "$work/err")"
 [ "$(cat "$repo/.git/senior-mode/runs/8/red-tests")" = "t/c.sh" ] || fail "linked worktree list: $(cat "$repo/.git/senior-mode/runs/8/red-tests")"
 
+# A stacked branch (#875): its list is computed against its parent (branch.<name>.senior-mode-base), so the files of the
+# parent's list and the production code the parent changed are not in it. A parent that is gone falls back to main.
+g switch -c feat/9-stacked
+git -C "$repo" config branch.feat/9-stacked.senior-mode-base feat/7-thing
+commit_files "test: red tests for #9" tests/stack.sh
+record 9 >/dev/null || fail "record on a stacked branch failed: $(cat "$work/err")"
+[ "$(cat "$work/repo/.git/senior-mode/runs/9/red-tests")" = "tests/stack.sh" ] ||
+  fail "the stacked list is not its own tests: $(cat "$work/repo/.git/senior-mode/runs/9/red-tests")"
+g switch -c feat/10-orphan
+git -C "$repo" config branch.feat/10-orphan.senior-mode-base feat/gone
+record 10 >/dev/null || fail "record with a vanished parent failed: $(cat "$work/err")"
+grep -qx 'tests/a.sh' "$work/repo/.git/senior-mode/runs/10/red-tests" || fail "a vanished parent does not fall back to main"
+g switch -q feat/7-thing
+
 # Bad usage.
 record >/dev/null && fail "record without an issue"
 record abc >/dev/null && fail "record with a non-numeric issue"

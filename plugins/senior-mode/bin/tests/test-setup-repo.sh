@@ -567,18 +567,5 @@ grep -q 'would set sandbox.mode required' "$work/out" || fail "dry run does not 
 [ ! -e "$d/.senior-mode" ] && [ ! -e "$d/.claude/senior-mode.json" ] || fail "dry run wrote files"
 unset XDG_CONFIG_HOME
 
-# The checks added to a configuration that already had some get `since` today; the existing ones are unchanged (#481).
-d=$work/since
-git init -q -b main "$d"
-mkdir -p "$d/.claude"
-echo '{"checks":[{"name":"lint","run":"true"}]}' >"$d/.claude/senior-mode.json"
-(cd "$d" && SENIOR_MODE_NOW=$(date -u -d 2026-12-01T12:00:00Z +%s) "$cli" setup repo --command lint=true --command test=true) >"$work/out" 2>"$work/err" ||
-  fail "setup on a configuration with checks: $(cat "$work/err")"
-[ "$(jq -c '.checks[0]' "$d/.claude/senior-mode.json")" = '{"name":"lint","run":"true"}' ] || fail "an existing check changed: $(jq -c .checks "$d/.claude/senior-mode.json")"
-[ "$(jq -r '[.checks[] | select(.name == "test")][0].since' "$d/.claude/senior-mode.json")" = 2026-12-01 ] ||
-  fail "a check added to a configuration with checks has no since: $(jq -c .checks "$d/.claude/senior-mode.json")"
-# A new project has no since: its checks block at once.
-jq -e '[.checks[] | has("since")] | any | not' "$new/.claude/senior-mode.json" >/dev/null || fail "a new project's checks have a since: $(jq -c .checks "$new/.claude/senior-mode.json")"
-
 [ "$failures" -eq 0 ] && echo "setup-repo: all cases pass"
 exit "$failures"

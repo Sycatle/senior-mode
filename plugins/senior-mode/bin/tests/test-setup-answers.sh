@@ -48,7 +48,7 @@ sm setup detect --bogus >/dev/null 2>&1 && fail "detect accepted an unknown opti
 
 # Dry run: the summary, nothing written.
 out=$(sm setup answers --dry-run) || fail "dry run failed: $out"
-for want in '^Detected' '^Your answers' 'process: fast \(default\)' 'language: fr \(recommended\)' 'agents alone: no \(recommended\)' \
+for want in '^Detected' '^Your answers' 'process: strict \(recommended\)' 'language: fr \(recommended\)' 'agents alone: no \(recommended\)' \
   '^Defaults' 'risky changes: you decide' 'Dry run: nothing written'; do
   grep -Eq "$want" <<<"$out" || fail "summary lacks $want: $out"
 done
@@ -63,27 +63,28 @@ before=$(cat "$repo/.claude/senior-mode.json")
 sm setup answers >/dev/null 2>&1
 [ "$before" = "$(cat "$repo/.claude/senior-mode.json")" ] || fail "a rerun changed the config"
 
-# Explicit answers (#854): fast is the shipped default, so it writes no process key and no ADR; English, agents alone.
-# The existing keys stay, and a review lift of an older setup goes (the shipped fast profile needs none).
-echo '{"preset": "node", "wip": 2, "process": {"profile": "fast", "lifts": [{"rule": "review", "adr": "docs/adr/0008-lift-independent-review.md"}]}}' >"$repo/.claude/senior-mode.json"
+# Explicit answers: fast with its ADR, English, agents alone. The existing keys stay.
+echo '{"preset": "node", "wip": 2}' >"$repo/.claude/senior-mode.json"
+mkdir -p "$repo/docs/adr"
+echo '---
+id: 0007
+status: accepted
+---' >"$repo/docs/adr/0007-something.md"
 sm setup answers --strictness fast --language en --autonomy alone >"$work/out" 2>&1 || fail "fast answers failed: $(cat "$work/out")"
-[ "$(jq -c '[.language, .wip, .process, .autonomy.merge]' "$repo/.claude/senior-mode.json")" = '["en",2,null,true]' ] || fail "fast answers: $(cat "$repo/.claude/senior-mode.json")"
-[ ! -e "$repo/docs/adr" ] || fail "fast wrote an ADR: $(ls "$repo/docs/adr")"
+grep -q 'written: docs/adr/0008-lift-independent-review.md' "$work/out" || fail "ADR not written: $(cat "$work/out")"
+[ "$(jq -c '[.language, .wip, .process.profile, .process.lifts[0].rule, .process.lifts[0].adr, .autonomy.merge]' "$repo/.claude/senior-mode.json")" = \
+  '["en",2,"fast","review","docs/adr/0008-lift-independent-review.md",true]' ] || fail "fast answers: $(cat "$repo/.claude/senior-mode.json")"
+grep -q '^status: accepted$' "$repo/docs/adr/0008-lift-independent-review.md" || fail "ADR not accepted"
 sm config validate >"$work/out" 2>&1 || fail "fast config not valid: $(cat "$work/out")"
-[ "$(sm config get process.gates.review)" = false ] || fail "the review gate is not lifted by the shipped fast profile"
+[ "$(sm config get process.gates.review)" = false ] || fail "the review gate is not lifted"
 sm setup answers >"$work/out" 2>&1
-grep -q 'process: fast' "$work/out" || fail "a rerun on a config with no process key does not read fast: $(cat "$work/out")"
+[ ! -e "$repo/docs/adr/0009-lift-independent-review.md" ] || fail "a rerun wrote a second ADR"
+grep -q 'process: fast' "$work/out" || fail "a rerun lost the stored answer: $(cat "$work/out")"
 
-# Strict (#854): writes process.profile "strict" (no key would now select fast), the other keys stay; a rerun keeps it.
+# Back to strict: no process key, the other keys stay.
 sm setup answers --strictness strict >/dev/null 2>&1 || fail "strict answer failed"
-[ "$(jq -r .process.profile "$repo/.claude/senior-mode.json")" = strict ] || fail "strict did not write process.profile strict: $(cat "$repo/.claude/senior-mode.json")"
+jq -e 'has("process") | not' "$repo/.claude/senior-mode.json" >/dev/null || fail "strict kept process: $(cat "$repo/.claude/senior-mode.json")"
 [ "$(jq -r .wip "$repo/.claude/senior-mode.json")" = 2 ] || fail "strict dropped a key"
-sm config validate >"$work/out" 2>&1 || fail "strict config not valid: $(cat "$work/out")"
-[ "$(sm config get process.gates.review)" = true ] || fail "strict does not keep the review gate: $(sm config get process.gates.review)"
-sm setup answers >"$work/out" 2>&1
-grep -q 'process: strict' "$work/out" || fail "a rerun lost the stored strict answer: $(cat "$work/out")"
-sm setup answers --strictness fast >/dev/null 2>&1
-jq -e '(.process // {}) | has("profile") | not' "$repo/.claude/senior-mode.json" >/dev/null || fail "fast kept process.profile: $(cat "$repo/.claude/senior-mode.json")"
 
 # A bad answer is refused, and an invalid config is not overwritten.
 sm setup answers --strictness lax >/dev/null 2>&1 && fail "accepted an unknown strictness"

@@ -199,6 +199,25 @@ run pick --json || fail "empty pick --json failed"
 [ "$(cat "$work/out")" = "[]" ] || fail "empty pick --json: $(cat "$work/out")"
 cp "$FIX/page-first.full" "$FIX/page-first.json"
 
+# pick takes a Ready L ticket whose spec is merged (its body names docs/specs/<file>.md, on the default branch); an L whose spec is
+# not there, or that names none, stays out (ADR 0034).
+mkdir -p "$repo/docs/specs"
+echo "spec" >"$repo/docs/specs/60-big.md"
+git -C "$repo" add -A
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "docs: spec 60"
+lbody() { jq -c --arg b "$1" '.content.body = $b'; }
+jq -sc '.' < <(
+  item 60 Ready "P1 next" L null '[]' '[]' | lbody 'Spec: docs/specs/60-big.md'
+  item 61 Ready "P1 next" L null '[]' '[]' | lbody 'Spec: docs/specs/61-missing.md'
+  item 62 Ready "P1 next" L null '[]' '[]' | lbody 'no spec'
+  item 63 Ready "P1 next" S null '[]' '[]'
+) >"$FIX/lspec.json"
+page "" "$(cat "$FIX/lspec.json")" >"$FIX/page-first.json"
+run pick --json || fail "pick with L tickets failed: $(cat "$work/err")"
+[ "$(json 'map(.number)')" = "[60,63]" ] || fail "pick of L tickets: only the L with a merged spec is taken: $(cat "$work/out")"
+git -C "$repo" reset -q --hard HEAD~1
+cp "$FIX/page-first.full" "$FIX/page-first.json"
+
 # A Project page over the 128 KiB a single argument may hold is read whole (#583).
 jq -c '(.data.node.items.nodes[] | select(.content.number == 10) | .content.body) = ("x" * 300000)' \
   "$FIX/page-first.full" >"$FIX/page-first.json"
@@ -380,9 +399,12 @@ cp "$work/config.hier" "$repo/.claude/senior-mode.json"
 levers='.hooks = {on: [{name: "slack", event: ["needs-human"], run: ".claude/senior-mode/hooks/slack.sh"}, {name: "audit", event: "pr.merged", url: "https://h.example.com/sm"}]}
   | .roles = {designer: {agent: ".claude/senior-mode/roles/designer.md", kind: "reviewer", when: {labels: ["ui"]}}}
   | .models = [{role: "implementer", size: "S", model: "haiku"}, {role: "reviewer", model: "opus"}, {role: "*", type: "chore", model: "haiku"}]'
+# The shipped fast profile lifts the review (ADR 0034): the cases of the customization line run on the strict one.
+strict='.process = {profile: "strict"}'
+jq "$strict" "$work/config.hier" >"$repo/.claude/senior-mode.json"
 run status --since 7d || fail "status without levers failed: $(cat "$work/err")"
 grep -q '^customized:' "$work/out" && fail "plain status prints a customization line with nothing customized: $(cat "$work/out")"
-jq "$levers" "$work/config.hier" >"$repo/.claude/senior-mode.json"
+jq "$strict | $levers" "$work/config.hier" >"$repo/.claude/senior-mode.json"
 run status --since 7d || fail "status with levers failed: $(cat "$work/err")"
 grep -qxF 'customized: 2 hooks, 1 role, 3 rows; lifted: none' "$work/out" || fail "status lacks the customization line: $(cat "$work/out")"
 run status --json --since 7d || fail "status --json with levers failed: $(cat "$work/err")"

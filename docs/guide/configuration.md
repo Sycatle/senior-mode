@@ -41,8 +41,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `performance.queries.helper` | set by `setup repo` | Path of the [query-count helper](#query-count-helper) of the project's ORM; a path you set is kept |
 | `performance.migrations.linter`, `performance.migrations.paths` | none, `django-migration-linter` for Django; SQL or Django migrations | The linter `check` runs on [the migrations a branch adds or changes](#checks), `squawk` or `django-migration-linter`, and the globs that say which files are migrations |
 | `performance.bench.command`, `performance.bench.threshold` | none, `10` | The benchmark command: a [hot path](#checks) of a spec must name a benchmark, and the lookup of `check` reports `bench: not measured` without it; it writes a JSON object of benchmark name to median to the file `{out}` stands for, or prints it, and the percent a benchmark may be slower than on the base before [tier 3](#checks) fails it |
-| `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks); an optional `"tier"` (2, the default, or 3) says [when it runs](#checks); an optional `"fix"` is the command that fixes what the check reports, printed as `fix: <command>` under a failure; an optional `"inputs"` (globs) turns on the [cache](#checks) of its successes; an optional `"since"` (`YYYY-MM-DD`) makes a failure [only warn](#checks) for `check.warnDays` days |
-| `check.warnDays` | `14` | Days a check with a `since` only warns when it fails before it blocks; the first day after the period it blocks |
+| `checks` | from `commands` | The check list: `{ "name", "run" }` entries, run in order; an optional `"changed"` is the command `check --changed` runs on the changed files only, see [Changed checks](#changed-checks); an optional `"tier"` (2, the default, or 3) says [when it runs](#checks); an optional `"fix"` is the command that fixes what the check reports, printed as `fix: <command>` under a failure; an optional `"inputs"` (globs) turns on the [cache](#checks) of its successes |
 | `check.edit` | none | Tier 1 fixers, such as `["pnpm prettier --write {file}", "pnpm eslint --fix {file}"]`: after each `Edit`, `Write` or `MultiEdit`, the `edit-fix` hook runs them on the edited file, `{file}` standing for its quoted path, see [Checks](#checks) |
 | `protected` | preset's globs | Globs of [protected zones](autonomy.md#protected-zones): setup writes the preset's list (plus the framework's, for Next.js) when the key is absent and keeps yours, adding `.claude/senior-mode.json` and `.claude/senior-mode/**` (the levers: hooks, roles, overrides) at the end when it lacks them (an empty list stays empty), so what controls customization is code the owner reviewed; `senior-mode protected` and the reviewer read it, and `setup github` maps it to [CODEOWNERS](autonomy.md#code-owners) |
 | `ci.mode` | `local` | `local`, `actions` or `existing` (the project's own CI is reused, see [CI mode](#ci-mode)) |
@@ -164,7 +163,7 @@ print `[]` (an empty line for `github.protection`, `slot`, `slotDown` and `slotU
 ### Multi-repo keys
 
 The keys of [products of several repositories and organizations](multi-repo.md), all optional. A repository that sets none
-behaves as before. Only `project.home` and the `org.*` keys other than `org.allowExec` are read today; the others are **planned**, with the
+behaves as before. Only `project.home` is read today (its row is in the table above); the others are **planned**, with the
 ticket that adds each, and the plugin does not know them yet: `config get` and `config validate` refuse them until then.
 
 | Key | Default | Meaning | Where | Ticket |
@@ -176,11 +175,11 @@ ticket that adds each, and the plugin does not know them yet: `config get` and `
 | `serve.repoOrder` | `[]` | Repositories that win a tie in the queue, first to last; the unlisted come last | repository, organization | planned, #455 |
 | `autonomy.repoParallel` | `0` | Cap on the sessions of one repository at once, `0` for none beyond `autonomy.parallel` | repository | planned, #455 |
 | `epics.available` | `merged` | Default `Available:` of a cross-repo ticket: `merged` (closed) or `released` (closed and contained in a published release) | repository, organization | planned, #399 |
-| `org.inherit` | `true` | `false` turns off the read of the organization layer | repository, local | available |
-| `org.repo` | `.github` | Repository of the owner that holds the organization layer | repository, local | available |
-| `org.path` | `senior-mode` | Directory of that repository that holds it; selects one of several product directories | repository, local | available |
-| `org.ref` | default branch | Branch, tag or commit of the organization layer to read, to pin it | repository, local | available |
-| `org.allowExec` | `[]` | Keys that run a command (`commands`, `checks`, `agent.command`, `slot`, `slotUp`, `slotDown`, `notify.webhook`) accepted from the organization layer | repository, local | planned, #735 |
+| `org.inherit` | `true` | `false` turns off the read of the organization layer | repository, local | planned, #400 |
+| `org.repo` | `.github` | Repository of the owner that holds the organization layer | repository, local | planned, #400 |
+| `org.path` | `senior-mode` | Directory of that repository that holds it; selects one of several product directories | repository, local | planned, #400 |
+| `org.ref` | default branch | Branch, tag or commit of the organization layer to read, to pin it | repository, local | planned, #400 |
+| `org.allowExec` | `[]` | Keys that run a command (`commands`, `checks`, `agent.command`, `slot`, `slotUp`, `slotDown`, `notify.webhook`) accepted from the organization layer | repository, local | planned, #400 |
 | `project.home` | written by `setup github --project` | The repository that holds the Project's duties (digest, Ready-by-rule pass); every member names the same one | repository | available |
 
 ## Validation and the JSON schema
@@ -227,18 +226,10 @@ higher layer replaces the lower one. Lowest first:
 
 1. the plugin defaults;
 2. the **profile** (`process.profile`, below);
-3. the **organization**: `config.json` in the directory `org.path` of the repository `<owner>/<org.repo>` (default
-   `.github/senior-mode`; it exists for a user account too), read from its default branch only, or from `org.ref`;
-   a pull request or another branch is never read. A file `<git common dir>/senior-mode/organization.json` of the
-   machine replaces it when present. `org.inherit: false` turns the read off, and the `org.*` keys come from the
-   repository and local layers only (an `org` key of the organization is ignored);
+3. the **organization**: `<git common dir>/senior-mode/organization.json` (shared by the worktrees of a clone;
+   `.github` repository of the organization, copied there by whoever manages the machine);
 4. the **repository**: `.claude/senior-mode.json`;
 5. the **local** file, untracked: `.claude/senior-mode.local.json` at the root of the main worktree.
-
-The organization layer is fetched with one conditional read (ETag) at most every 10 minutes per clone (every hour for
-`serve`) and kept in `${XDG_CACHE_HOME:-~/.cache}/senior-mode/org/<owner>/<sha>/`. With GitHub unreachable the last good
-copy is used and one line says `org layer: cached <sha>, <age>`; with none the layer is empty and one line says so. A
-missing repository or directory is an empty layer, checked again after an hour. Reading it never fails a command.
 
 The safety lists (`protected`, `secrets`, `envGuard.forbidden`) are the **union** of the layers: a layer adds to
 them, none removes. `senior-mode config explain <key>` prints the value, the layer that won, and every layer's
@@ -271,8 +262,8 @@ skills/review/SKILL.md` prints the text in force, and `context` tells a session 
 
 ### Process profiles
 
-`senior-mode setup answers --strictness strict|fast` chooses the profile of the repository layer: `strict` writes
-`process.profile: "strict"`, `fast` (the default) removes the key and any review lift: the shipped fast profile needs no ADR of the project (below).
+`senior-mode setup answers --strictness strict|fast` chooses the profile of the repository layer: `strict` writes no
+key, `fast` writes `process.profile` and the lift with its ADR (below).
 
 A profile is a file: `plugins/senior-mode/profiles/<name>.json` (shipped), or
 `.claude/senior-mode/profiles/<name>.json` in the project (shadows a shipped one of the same name). It has
@@ -376,12 +367,6 @@ and, in `actions` mode, the workflow all run it, from the repository root.
   directory (the 20 latest are kept) and its path is printed as `full log: <path>` under those lines.
   A check whose first output line is `skipped: <reason>` passes and prints `skip <name>: <reason>`,
   so a check that had nothing to do is visible instead of a silent `ok`.
-- A new check warns before it blocks. A check with `"since": "2026-11-27"` that fails prints `warn  <name>` with its findings and
-  passes for `check.warnDays` days (14 by default) after that date; from the day after, it blocks as any check. `setup repo` stamps
-  `since` (today) on every check it adds to a configuration that already had checks, and leaves the existing ones alone; a new
-  project starts blocking at once, and so does a check without `since`. The secret scan and the dependency audit never warn: a
-  `since` on them is a configuration error. `.claude/senior-mode.json` is a protected path, so moving a `since` forward is a human's
-  change.
 - A check may say when it runs with `"tier": 2` or `"tier": 3`. A check with no `tier` is tier 2, so an existing
   configuration behaves as before. `senior-mode check` and the `pre-push` hook run tier 2; a tier 3 check (the
   heavy ones) is skipped there with `heavy: <name> runs after the push`. `senior-mode check --tier 3` runs the
@@ -722,16 +707,6 @@ rule of three): a block the diff adds with one existing copy is a warning, `dupl
 copies it fails, naming both places and the `rules.shared` folder to extract into. A duplicate that existed before the diff is never
 reported. Without jscpd on the machine the step fails with `tool missing: jscpd`, `npm install -g jscpd` and the `rules.off.duplication`
 key that turns it off.
-
-The `dead-code` pack (opt-in, `"rules": { "packs": ["node", "dead-code"] }`, one tool per preset) runs `dead-code` and
-`unused-dependency` on what the diff adds: an export (or a file) that nothing uses fails with `file:line`, a package that the diff adds
-to a manifest and no file imports fails naming the package. Unused code that existed before the diff is never reported. The tools are knip
-(node), vulture and deptry (python), staticcheck `U1000` and `go mod tidy -diff` (go), the `dead_code` warning of `cargo check` and
-cargo-udeps (rust). A tool that is not installed fails with `tool missing: <tool>`, its install command and the `rules.off.<id>` key.
-
-The `cycles` pack (opt-in, `"rules": { "packs": ["node", "cycles"] }`) runs `import-cycle` with dependency-cruiser (node) and
-import-linter (python): an import that the diff adds and that closes a cycle fails, naming the files of the cycle in order. A cycle
-that existed before the diff is never reported. Go (the compiler) and Rust (`forbidImport` rules) have no cycle rule here.
 
 A rule is turned off only with a reason, in `.claude/senior-mode.json` (a protected path, so the change reaches a human):
 

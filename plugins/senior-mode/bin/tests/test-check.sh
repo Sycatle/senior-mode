@@ -1155,32 +1155,5 @@ grep -q "state=pending -f context=senior-mode/heavy" "$GH_LOG" && fail "P: the r
 sleep 2
 [ "$(wc -l <"$hlog" | tr -d ' ')" = "$runs_before" ] || fail "P: the heavy checks ran again after an identical rebase"
 
-# A new check warns for `check.warnDays` days after its `since`, then blocks (#481); the clock is SENIOR_MODE_NOW.
-t0=$(date -u -d 2026-06-10T12:00:00Z +%s)
-at() { (cd "$repo" && SENIOR_MODE_NOW=$1 "$cli" check) >"$work/out" 2>&1; }
-config '{"audit":false,"checks":[{"name":"lint","run":"true"},{"name":"newrule","run":"echo src/a.ts:3 bad; false","since":"2026-06-07"}]}'
-at "$t0" || fail "warn: a failing check 3 days after its since blocks: $(cat "$work/out")"
-grep -q '^warn  newrule' "$work/out" || fail "warn: the failing check is not reported as a warning: $(cat "$work/out")"
-grep -q 'src/a.ts:3 newrule bad' "$work/out" || fail "warn: the findings of the warning are not shown: $(cat "$work/out")"
-grep -q 'FAIL' "$work/out" && fail "warn: a warning prints FAIL: $(cat "$work/out")"
-at $((t0 + 11 * 86400)) || fail "warn: day 14 blocks: $(cat "$work/out")"
-at $((t0 + 12 * 86400)) && fail "warn: day 15 passes: $(cat "$work/out")"
-grep -q 'FAIL  newrule' "$work/out" || fail "warn: day 15 does not name the failure: $(cat "$work/out")"
-config '{"audit":false,"check":{"warnDays":2},"checks":[{"name":"lint","run":"true"},{"name":"newrule","run":"false","since":"2026-06-07"}]}'
-at "$t0" && fail "warn: check.warnDays 2 still warns on day 3: $(cat "$work/out")"
-# A check that passes during its period is ok, and one without `since` blocks.
-config '{"audit":false,"checks":[{"name":"lint","run":"true"},{"name":"newrule","run":"true","since":"2026-06-07"}]}'
-at "$t0" || fail "warn: a passing check with a since fails: $(cat "$work/out")"
-grep -q '^ok    newrule' "$work/out" || fail "warn: a passing check with a since is not ok: $(cat "$work/out")"
-config '{"audit":false,"checks":[{"name":"lint","run":"true"},{"name":"newrule","run":"false"}]}'
-at "$t0" && fail "warn: a failing check without since passes: $(cat "$work/out")"
-# The secret scan and the dependency audit never warn: a since on them is a configuration error.
-config '{"audit":false,"checks":[{"name":"secret scan","since":"2026-06-07","run":"true"}]}'
-run check && fail "warn: a since on the secret scan is accepted"
-grep -q 'checks\[0\].since: secret scan is a built-in check that never warns' "$work/out" || fail "warn: the since error does not name the key: $(cat "$work/out")"
-config '{"audit":false,"checks":[{"name":"lint","run":"true","since":"last week"}]}'
-run check && fail "warn: a since that is not a date is accepted"
-grep -q 'checks\[0\].since must be a date' "$work/out" || fail "warn: the date error does not name the key: $(cat "$work/out")"
-
 [ "$failures" -eq 0 ] && echo "check: all cases pass"
 exit "$failures"

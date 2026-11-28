@@ -152,7 +152,7 @@ reset_layers
 
 # F: status carries one line on a customized process; a lift is flagged.
 config '{"wip": 4, "process": {"profile": "fast", "lifts": [{"rule": "review", "adr": "docs/adr/0016-lift.md"}]}}'
-summary=$(cd "$repo" && bash -c '. "$1/lib/common.sh"; . "$1/lib/config.sh"; . "$1/lib/org.sh"; SELF=$2; LIB=$1/lib; process_summary' _ "$bin" "$cli")
+summary=$(cd "$repo" && bash -c '. "$1/lib/common.sh"; . "$1/lib/config.sh"; SELF=$2; LIB=$1/lib; process_summary' _ "$bin" "$cli")
 [ "$(jq -r '.profile' <<<"$summary")" = fast ] && [ "$(jq -r '.lifted[0].rule' <<<"$summary")" = review ] ||
   fail "F: the process summary is wrong: $summary"
 reset_layers
@@ -167,7 +167,7 @@ for pair in autonomy.merge=true autonomy.parallel=3 wip=3 autonomy.maxTickets=0 
   [ "$(cd "$repo" && "$cli" config get "${pair%%=*}")" = "${pair#*=}" ] || fail "G: ${pair%%=*} is not ${pair#*=}"
 done
 [ "$(cd "$repo" && "$cli" config get autonomy.sessionTimeoutBySize)" = '{"S":45,"M":120,"L":240}' ] || fail "G: the timeouts by Size are wrong"
-st() { (cd "$repo" && bash -c '. "$1/lib/common.sh"; . "$1/lib/config.sh"; . "$1/lib/org.sh"; SELF=$2; LIB=$1/lib; session_timeout "$3"' _ "$bin" "$cli" "$1"); }
+st() { (cd "$repo" && bash -c '. "$1/lib/common.sh"; . "$1/lib/config.sh"; SELF=$2; LIB=$1/lib; session_timeout "$3"' _ "$bin" "$cli" "$1"); }
 [ "$(st S) $(st M) $(st L)" = "45 120 240" ] || fail "G: the timeout by Size is $(st S) $(st M) $(st L)"
 config '{"autonomy": {"sessionTimeout": 60}}'
 [ "$(st S) $(st M) $(st L)" = "60 60 60" ] || fail "G: a scalar sessionTimeout does not win for every Size"

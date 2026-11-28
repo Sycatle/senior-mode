@@ -39,6 +39,7 @@ serve_patterns() {
     deps) echo 'dependencies not installed|ERR_PNPM_(FETCH|NO_MATCHING|TARBALL)|npm (ERR!|error) code E(404|TARGET|RESOLVE|INTEGRITY)|No matching distribution found' ;;
     main-red) echo 'main is red|red on main|base branch is red|fails on a clean checkout of main' ;;
     startup) echo 'still loading your organization' ;;
+    apierror) echo 'No messages returned from query|API Error|api_error|Error: .*\bAPI\b' ;;
     transient) echo 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|getaddrinfo|socket hang up|could not resolve host|temporary failure in name resolution|network is unreachable|unable to connect|connection error|fetch failed|error connecting to api\.|API Error: (429|5[0-9][0-9])|HTTP 5[0-9][0-9]|overloaded_error|\boverloaded\b|"type": ?"api_error"|internal server error|bad gateway|service unavailable|gateway time-?out|still loading your organization|cannot allocate memory|ENOMEM|(connection|request|operation|gh|git|API) (call )?timed out' ;;
   esac
 }
@@ -101,15 +102,17 @@ serve_give_back() {
 # Why a session ended, the classes of spec 373 section 1, from its outcome, its exit code and the end of its output.
 # Prints `class|cause|why`: `environment` (the machine, not the ticket: disk, gh or Claude auth, dependencies, main red;
 # hold every launch), `transient` (network, API 5xx, memory, a startup error: resume on the same model with a backoff,
-# nothing counted; the cause is `startup` for a session that died at once) or `ticket` (anything else: the retry,
-# escalation and needs-human path). The session's own verdict (`delivered`, `outgrown`, `failed`) is a ticket's, but
+# nothing counted; the cause is `startup` for a session that died at once), `api-error` (the log ends on an API error
+# that no pattern names: one relaunch, serve_api_error) or `ticket` (anything else: the retry, escalation and
+# needs-human path). The session's own verdict (`delivered`, `outgrown`, `failed`) is a ticket's, but
 # for `failed: environment:`, which is the session saying that the machine is the problem; a session that left no
-# verdict and exited 0 is a ticket's too. Only an output that goes with a non-zero exit is read, so a retried request
+# verdict and exited 0 is a ticket's too; a session that left no exit code (`gone`, #819) is read by its output like a
+# failed one. Only an output that goes with a non-zero exit is read, so a retried request
 # in the log of a session that went on is not a cause.
 serve_classify() {
   local n=$1 outcome code text why cause="" life re c
   outcome=$(cat "$RUN_DIR/$n.outcome" 2>/dev/null) || outcome=""
-  code=$(cat "$RUN_DIR/$n.exit" 2>/dev/null) || code=0
+  code=$(cat "$RUN_DIR/$n.exit" 2>/dev/null) || code=gone
   if [ -n "$outcome" ]; then
     if ! grep -qiE '(^|^#[0-9]+ )failed: environment:' <<<"$outcome"; then
       echo "ticket||"
@@ -152,6 +155,12 @@ serve_classify() {
     echo "transient||$(grep -iE "$re" <<<"$text" | head -n 1 | cut -c1-200)"
     return 0
   fi
+  re=$(serve_patterns apierror)
+  text=$(tail -c 1000 <<<"$text")
+  if grep -qiE "$re" <<<"$text"; then
+    echo "api-error||$(grep -iE "$re" <<<"$text" | tail -n 1 | cut -c1-200)"
+    return 0
+  fi
   echo "ticket||"
 }
 
@@ -175,6 +184,10 @@ serve_end() {
       serve_transient "$n" "$cause" "$why"
       return 0
       ;;
+    api-error)
+      serve_api_error "$n" "$why"
+      return 0
+      ;;
   esac
   serve_settled "$n"
   if diag=$(serve_probe_cheap); then
@@ -188,6 +201,48 @@ serve_end() {
   return 1
 }
 
+# RUN_ON_VANISH of serve (see run_reap, #819): a session script that is gone without its exit file. Its output is read
+# like the end of any session: an API error, a transient one or an environment one is not the ticket's failure. Returns 0
+# when it took care of the end, 1 when run_vanished does (needs-human with the log).
+serve_vanished() {
+  local n=$1 class cause why
+  [ ! -s "$RUN_DIR/$n.outcome" ] || return 1
+  IFS='|' read -r class cause why < <(serve_classify "$n")
+  case $class in
+    environment) serve_environment "$n" "$cause" "#$n: ${why:-the session ended on an environment problem}" ;;
+    transient) serve_transient "$n" "$cause" "$why" ;;
+    api-error) serve_api_error "$n" "$why" ;;
+    *) return 1 ;;
+  esac
+}
+
+# A session of the ticket $1 that ended on an API error with no verdict (#819: `Error: No messages returned from query`,
+# no exit code; $2 the line): not the ticket's failure. The first time it is relaunched once, as a transient end
+# (serve_transient: backoff, same model, every ticket of a batch back to Ready together); the log tail is kept in
+# <n>.apierror. The same end again in a row gives needs-human to each ticket of the batch, with both log tails.
+serve_api_error() {
+  local n=$1 why=$2 tail prev m
+  tail=$(tail -c 600 "$RUN_DIR/$n-${RUN_MODEL[$n]}.log" 2>/dev/null | tr -d '\000') || tail=""
+  [ -n "$tail" ] || tail=$why
+  prev=$(cat "$SERVE_DIR/$n.apierror" 2>/dev/null) || prev=""
+  if [ -z "$prev" ]; then
+    state_put "$SERVE_DIR/$n.apierror" "$tail"
+    serve_transient "$n" "" "$why"
+    return 0
+  fi
+  serve_settled "$n"
+  echo "#$n: the session ended on an API error twice in a row ($why); not relaunched, needs-human" >&2
+  for m in $(run_members "$n"); do
+    notify needs-human "$m" "the session ended on an API error twice in a row and was not relaunched again.
+First end, end of the log:
+$prev
+Second end, end of the log:
+$tail
+Remove needs-human to launch it again."
+  done
+  serve_give_back "$n"
+}
+
 # A session of the ticket $1 that ended for the ticket's own reasons: its transient backoff, the streak of sessions that
 # died at startup and the usage limit's streak are over. A ticket that was retried ten times in a row has recovered.
 serve_settled() {
@@ -198,7 +253,7 @@ serve_settled() {
     notify recovered "" "#$n: the session ran again after $count transient ends in a row"
   fi
   rm -f "$SERVE_DIR/$n.transient" "$SERVE_DIR/$n.resumed" "$SERVE_DIR/$n.retry" "$SERVE_DIR/$n.model" "$SERVE_DIR/startup-streak" \
-    "$SERVE_DIR/launch-backoff-until" "$SERVE_DIR/limit-streak" "$SERVE_DIR/$n.envfail" "$SERVE_DIR/$n.envhold"
+    "$SERVE_DIR/launch-backoff-until" "$SERVE_DIR/limit-streak" "$SERVE_DIR/$n.envfail" "$SERVE_DIR/$n.envhold" "$SERVE_DIR/$n.apierror"
 }
 
 # A session of the ticket $1 ended on a problem of the environment ($2 the cause, $3 the diagnosis): the ticket goes back

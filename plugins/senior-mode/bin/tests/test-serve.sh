@@ -3,7 +3,7 @@
 # stubs on PATH, as in test-run.sh. gh answers the board query and the REST calls from fixtures in $FIX; claude
 # plays a ticket session from $FIX/claude-<n>-<model> (line 1: the outcome to write, empty for none; line 2:
 # "pr" to open a pull request; line 3: "hang" to never end, with a child process recorded in $FIX/pids-<n>,
-# "slow" to end once $FIX/release-<n> exists (the case creates it; bounded at 60 s), "limit" to end on the subscription usage limit with the message in
+# "vanish:<message>" to die with the message on stderr and no exit code, "slow" to end once $FIX/release-<n> exists (the case creates it; bounded at 60 s), "limit" to end on the subscription usage limit with the message in
 # $FIX/limit-msg, "flaky:<message>" to die once with the message on stderr (exit 1), then behave; the file claude-<n>-<model>-<role> wins over claude-<n>-<model> for a session with that
 # SENIOR_MODE_ROLE, and <file>.<k> wins for the k-th session of that ticket, model and role; line 2 may be "pr:<number>" for another pull request number; line 4: "review:<state>" posts
 # senior-mode/review on the head checked out, "commit" commits a test file). gh serves the open pull requests,
@@ -158,6 +158,10 @@ case $(sed -n 3p "$fx") in
       echo "${spec#*:}" >&2
       exit 1
     fi ;;
+  vanish:*)
+    # vanish:<message> says it on stderr and takes the whole session group down: no exit file (#819).
+    echo "$(sed -n 3p "$fx" | cut -d: -f2-)" >&2
+    kill -KILL -- "-$(ps -o pgid= -p $$ | tr -d ' ')" ;;
   limit)
     jq -nc --rawfile m "$FIX/limit-msg" '{type: "result", is_error: true, result: $m}'
     exit 1 ;;
@@ -953,6 +957,60 @@ done
 SENIOR_MODE_NOW=1800000901 once || fail "AA: serve failed: $(cat "$work/out")"
 grep -q '"event":"recovered"' "$CURL_LOG" || fail "AA: no recovered alert once the API answers: $(cat "$CURL_LOG")"
 outcome_of 70 delivered AA
+# AD: a session that ends on an API error with no exit code (#819) is a transient failure, relaunched once; the same end
+# twice in a row gives needs-human with both log tails; a batch is treated as one session, not failed one by one.
+apierr='Error: No messages returned from query'
+config '{"maxConsecutiveFailures": 1}'
+board 90
+session 90-sonnet delivered pr "vanish:$apierr"
+fresh
+SENIOR_MODE_NOW=1800000000 once || fail "AD: serve failed: $(cat "$work/out")"
+grep -q 'leaving its exit code' "$work/out" && fail "AD: an API error was read as a vanished session: $(cat "$work/out")"
+[ -s "$state/90.apierror" ] && [ "$(cat "$state/90.transient" 2>/dev/null)" = 1 ] || fail "AD: not a transient end: $(ls "$state")"
+[ ! -e "$state/90.json" ] && [ ! -e "$state/paused" ] || fail "AD: counted as a failure"
+grep -q 'issues/90/' "$GH_LOG" && fail "AD: the first end made the ticket needs-human"
+grep -c 'item-edit.*--single-select-option-id o1' "$GH_LOG" | grep -qx 1 || fail "AD: #90 not back to Ready: $(grep item-edit "$GH_LOG")"
+SENIOR_MODE_NOW=1800000100 once || fail "AD: serve failed: $(cat "$work/out")"
+started 90 || fail "AD: not relaunched: $(cat "$work/out")"
+grep -q 'issues/90/comments' "$GH_LOG" || fail "AD: the second end did not give needs-human: $(cat "$work/out")"
+[ "$(grep -c 'No messages returned from query' "$GH_LOG")" -ge 2 ] || fail "AD: the comment lacks both log tails: $(grep issues/90 "$GH_LOG")"
+grep -q 'First end' "$GH_LOG" || fail "AD: the first tail is not named"
+grep -q 'Second end' "$GH_LOG" || fail "AD: the second tail is not named"
+[ ! -e "$state/90.apierror" ] || fail "AD: the count outlived needs-human"
+# One end, then a session that runs: the count is over.
+board 91
+session 91-sonnet delivered pr "vanish:$apierr"
+fresh
+SENIOR_MODE_NOW=1800000000 once || fail "AD: serve failed: $(cat "$work/out")"
+session 91-sonnet delivered pr
+SENIOR_MODE_NOW=1800000100 once || fail "AD: serve failed: $(cat "$work/out")"
+outcome_of 91 delivered AD
+[ ! -e "$state/91.apierror" ] || fail "AD: a delivery kept the API error count"
+grep -q 'issues/91/' "$GH_LOG" && fail "AD: a recovered ticket got needs-human"
+# A batch that ends this way: every ticket goes back to Ready together, none is failed.
+paths_of() { # <ticket> <globs>: Paths of a ticket of the board
+  jq -c --argjson n "$1" --arg p "$2" '(.data.node.items.nodes[] | select(.content.number == $n) | .fieldValues.nodes)
+    += [{text: $p, field: {name: "Paths"}}]' "$FIX/board.json" >"$work/b" && mv "$work/b" "$FIX/board.json"
+}
+saved_fields=$fields
+fields=$(jq '. + {Paths: {id: "F_PA"}}' <<<"$fields")
+config '{"maxConsecutiveFailures": 1}'
+board 92 93
+paths_of 92 'src/a/**'
+paths_of 93 'src/a/x.ts'
+session 92-sonnet "" "" "vanish:$apierr"
+fresh
+SENIOR_MODE_NOW=1800000000 once || fail "AD: serve failed: $(cat "$work/out")"
+[ -s "$state/92.apierror" ] || fail "AD: the batch end is not an API error: $(cat "$work/out")"
+[ ! -e "$state/92.json" ] && [ ! -e "$state/93.json" ] || fail "AD: a ticket of the batch was marked failed"
+grep -q 'issues/9[23]/' "$GH_LOG" && fail "AD: a ticket of the batch got needs-human at the first end"
+grep -c 'item-edit.*--single-select-option-id o1' "$GH_LOG" | grep -qx 2 || fail "AD: the batch is not back to Ready: $(grep item-edit "$GH_LOG")"
+SENIOR_MODE_NOW=1800000100 once || fail "AD: serve failed: $(cat "$work/out")"
+for n in 92 93; do
+  grep -q "issues/$n/comments" "$GH_LOG" || fail "AD: #$n of the batch is not needs-human: $(grep issues/9 "$GH_LOG")"
+done
+fields=$saved_fields
+
 # A session that dies at startup with no output at all is a transient end too (#334); the third in a row, across tickets,
 # holds every launch until launch-backoff-until, said in the log, and escalates nothing.
 config '{"parallel": 3, "maxConsecutiveFailures": 1}'

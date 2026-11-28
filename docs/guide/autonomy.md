@@ -590,8 +590,17 @@ command, not a model, applies these bounds:
   process of the same user bent on it.
 - **Alerts first:** before it looks at the board, `run` files the open high or critical alerts of
   GitHub's scanners as issues (see [GitHub's scanners](#githubs-scanners)).
-- **Batch:** at most `autonomy.maxTickets` tickets (default 3), `autonomy.parallel` at a time
-  (default 1), taken in the order of `senior-mode pick`.
+- **Batch:** at most `autonomy.maxTickets` tickets (default 0: no cap), `autonomy.parallel` at a time
+  (default 3), taken in the order of `senior-mode pick`.
+- **Sessions in proportion to the risk** ([ADR 0034](../adr/0034-autonomous-by-default.md)): a ticket of size S or M whose
+  Paths reach no protected zone is on the *light* path: one dev session that writes its own red tests first (no
+  `test-author` session), a `reviewer` on Sonnet that requests changes only for a defect (wrong behaviour, a missing
+  criterion, a security hole; style and nits are comments), and the questions it cannot settle from the code, the spec or the
+  ADRs are its own: it applies the recommended option, writes it in the pull request under `Decided by the agent` and goes
+  on. It stops with `decision:` only for a question of high or critical security, or when the work reaches a protected zone.
+  A ticket of size L, a size that is not known, or Paths that may reach a protected zone is on the *full* path: an
+  architect plan, a `test-author`, the full review and the `security` agent. The full `check` runs once, on the head
+  that every bound lets merge; the sessions push after `check --changed`.
 - **Collisions:** tickets whose board field Paths overlap never run at the same time, and a ticket
   with no Paths runs alone: nothing else starts while it runs. Two Paths overlap when a glob of one
   matches a path prefix of the other (`src/a/**` and `src/a/x.ts`), or is the same glob; a ticket
@@ -610,7 +619,7 @@ command, not a model, applies these bounds:
   compared with what runs next to it.
 - **Retry on Opus:** a ticket that fails on Sonnet is tried once more on Opus, from the same worktree
   (`autonomy.escalate`, default true).
-- **Circuit breaker:** after `autonomy.maxConsecutiveFailures` failed tickets in a row (default 2), or
+- **Circuit breaker:** after `autonomy.maxConsecutiveFailures` failed tickets in a row (default 3), or
   as soon as a ticket outgrows its size, no new ticket starts. A failed ticket goes back to Backlog
   with a comment that says why; its branch and worktree are kept. A session that ends `outgrown: needs a person: <what>`
   (a push it is denied, a choice between documented options) is not a failure: the ticket gets `needs-human`, goes back to
@@ -631,8 +640,9 @@ command, not a model, applies these bounds:
   left alone; the wait then lasts until a change or `--resume`, which also start the count again. The
   first end sends one `environment` alert, the stop one decision; the retries between them send nothing.
   A Ready ticket labelled `needs-human` is never launched by `serve`, by a retry or after `--resume`.
-- **Session timeout:** a session still running after `autonomy.sessionTimeout` minutes (default 90,
-  at most 1440) is killed: the signal reaches its process group, so what the session started in it
+- **Session timeout:** a session still running after the timeout of its ticket's Size (`autonomy.sessionTimeoutBySize`:
+  S 45, M 120, L 240 minutes; a scalar `autonomy.sessionTimeout`, at most 1440, set by the project applies to every
+  Size) is killed: the signal reaches its process group, so what the session started in it
   stops too, but not a process that left the group. The ticket gets the `needs-human` label and a
   comment with the log path, counts as a failure for the circuit breaker, and is not retried on Opus:
   a stuck session is not failed work ([ADR 0014](../adr/0014-model-escalation-in-runs.md)). Its Status
@@ -671,8 +681,8 @@ command, not a model, applies these bounds:
   not hold there anyway.
 - **Proof:** a session counts as delivered only if a pull request is open for its branch, or for the ticket (a body line
   `Closes #<n>`, `Fixes`, `Resolves` or `Supersedes #<n>`: the fix may have gone to a `-r2` branch).
-- **Merge** ([ADR 0008](../adr/0008-merge-off-by-default.md)): off by default. With
-  `autonomy.merge: true`, a pull request merges (`gh pr merge --rebase`) only when `senior-mode/ci`,
+- **Merge** ([ADR 0034](../adr/0034-autonomous-by-default.md), which supersedes ADR 0008 in part): on by default;
+  `autonomy.merge: false` stops at the reviewed pull request. A pull request merges (`gh pr merge --rebase`) only when `senior-mode/ci`,
   `senior-mode/review` and `senior-mode/security` are all `success` on its head, it has no `needs-human` label, the
   server enforces protection (`github.protection` is `ruleset`) or senior-mode does (`local`, see
   [below](#audit-of-direct-pushes)), and none of its files matches a
@@ -729,29 +739,31 @@ questions, test seams).
 `senior-mode ready --pr <n>` on an open pull request that is no framing one (its branch is not `docs/...`)
 says whether it is ready to merge on account of the tickets it closes (`Closes #n`, `Fixes #n`, `Resolves #n`
 in its body), and exits 1 when it is not. `run` and `serve` apply the same rules before they merge. A pull
-request that closes no ticket is held to neither.
+request that closes no ticket is held to neither. The size budget and the self-review table only **warn**
+([ADR 0034](../adr/0034-autonomous-by-default.md)): each prints a `warning:` line, and the pull request is still ready
+and still merges. The other rules below block.
 
 - **One commit per ticket** (#297): a pull request that closes several tickets (a batch) needs each of them
   referenced (`Refs #n`, `Closes #n`) by at least one commit of the branch; the tickets with none are named.
   A single-ticket pull request is not held to it.
-- **Size budget** (#303): the lines the pull request changes (additions and deletions; lockfiles, generated
+- **Size budget** (#303), a warning: the lines the pull request changes (additions and deletions; lockfiles, generated
   files and fixtures are left out, and the globs of `limits.diffExclude`; test lines weigh 0.5 and documentation
   lines 0.25 by default, [`limits.diffWeights`](configuration.md#keys-the-plugin-reads-today), #637) must not exceed the budget of the Size of its ticket,
   [`limits.diffLines`](configuration.md#keys-the-plugin-reads-today) (S 300, M 800, L 2000); a batch sums the budgets of its tickets.
-  The answer says by how much it is over.
-- **Self-review** (#356): before asking for review, the session runs the review checklist on its own diff and
+  The warning says by how much it is over.
+- **Self-review** (#356), a warning: before asking for review, the session runs the review checklist on its own diff and
   fills the "Self-review" table of the pull request template: one row per acceptance criterion of each ticket
   closed (the top-level bullets under the issue's "Acceptance criteria" (or `Acceptance`, `Criteria`) heading, numbered from 1), its first
   cell starting with `#<ticket>.<k>` (`<k>` alone for a single ticket), its last cell the evidence: a test name,
-  or a command and its result. A missing row or an empty evidence (`-`, `TODO`, `n/a`) is named. A ticket with
+  or a command and its result. A missing row or an empty evidence (`-`, `TODO`, `n/a`) is named in the warning. A ticket with
   no acceptance criteria needs no row. It adds to the independent review, never replaces it (ADR 0019).
 - **Red skeletons** (#311): `senior-mode start` turns each Given/When/Then criterion of the ticket into a failing test
   (see [`start`](commands.md#the-senior-mode-script)); a file of the pull request named after a closed ticket
   (`ticket-<n>`, `ticket_<n>`) that still says `not implemented`, or skips a test (`.skip(`, `.todo(`, `xit(`,
   `@pytest.mark.skip`, `t.Skip(`, `#[ignore]`, `todo!`), is named and the pull request is not ready.
 - **Skill evals** (#368): a pull request that closes an improvement ticket (a ticket `retro` filed for a repeated
-  failure cause: its body has a `retro-cause:` line) and changes a skill or an agent (`plugins/*/skills/**`,
-  `plugins/*/agents/**`, `.claude/skills/**`, `.claude/agents/**`) needs an `## Eval` table in its body, one row per
+  failure cause: its body has a `retro-cause:` line) and changes a shipped skill or agent (`plugins/senior-mode/skills/**`,
+  `plugins/senior-mode/agents/**`; a project's own `.claude/` ones are not held to it) needs an `## Eval` table in its body, one row per
   case: `| Case | Before | After |` with scores as `k/n` (runs graded ok out of runs). `evals/compare.sh <case> [runs] [base]`
   runs the targeted `evals/<case>/run.sh` with `claude -p` on the plugin of the base (`origin/main`) and on the
   branch, 3 runs each by default, and prints the table. Without a table (the cases found under `evals/` are named),
@@ -825,7 +837,7 @@ replaced; one that is refuses the second `serve`.
 ### Best-of-N
 
 A ticket whose pull request still has changes requested after its 2 fix rounds has failed once. With
-`bestOf.n` at its default of 2 (3 at most; `1` turns it off), `serve` then tries one more candidate instead of
+`bestOf.n` set to 2 or 3 (the default is 1, which turns it off), `serve` then tries one more candidate instead of
 calling a person: a new session starts from the base branch, on `<branch>-b2` in its own worktree
 (`-b3` for a third), told what the first attempt got wrong and not to copy it. The candidates run one after
 the other; each takes a slot and counts against `autonomy.sessionsPerHour`. The first candidate whose
@@ -837,13 +849,16 @@ candidate has failed, the ticket is `needs-human` as before. A ticket that never
 
 At each poll `serve` looks at the activity of every live session: the worktree (`HEAD`, `git status`, the newest file
 modification), its process group (the CPU time of its processes and the children that are neither a shell, `claude`
-nor the slot wrapper) and the size of its log. A long test suite is *long*: its CPU and its children change at every
-poll. A session blocked on stdin, a deadlocked dev server or a socket that never answers is *hung*: nothing moves.
+nor the slot wrapper) and the size of its log. A session is *hung* when it has written no output and changed no file of
+its worktree: a process that only burns CPU, or a test suite that prints nothing and touches no file, is stalled too.
+The process group shows life at startup only. A session blocked on stdin, a deadlocked dev server or a socket that never
+answers is hung the same way.
 
 - `autonomy.startupMinutes` (3): nothing at all moved since the launch.
-- `autonomy.stallMinutes` (20): nothing moved for that long. It is above the 10 minutes of the API client's request
+- `autonomy.stallMinutes` (20): no output and no file change for that long. It is above the 10 minutes of the API client's request
   timeout, so a model waiting for a slow answer is not stopped.
-- `autonomy.sessionTimeout` (90): the absolute bound, even for a session that is still active.
+- `autonomy.sessionTimeoutBySize` (S 45, M 120, L 240; `autonomy.sessionTimeout` replaces it for every Size when a project
+  sets it): the absolute bound, even for a session that is still active.
 
 The log says which signals were quiet. The session's process group gets `TERM`, then `KILL` after 2 seconds. The
 **first** stop of a ticket's session (`<n>.resumed`) is an interruption, not a failure: the ticket goes back to Ready and
@@ -959,7 +974,7 @@ does.
 you are on, with its own Claude login: no API key, no budget flag
 ([ADR 0012](../adr/0012-scheduled-runs-on-the-agent-machine.md)). The time is `--at`, else
 `autonomy.schedule`, else `02:00`; `--max` is passed to `run`, which otherwise reads
-`autonomy.maxTickets`.
+`autonomy.maxTickets` (`0`, the default, is no cap).
 
 - **systemd.** It writes `~/.config/systemd/user/senior-mode-run-<repo>.service` and `.timer`
   (`Persistent=true`: a run missed while the machine was off starts at the next boot) and enables the
@@ -1029,8 +1044,8 @@ broker denials of the last 24 hours.
 
 ## Other mechanisms
 
-- **Git hooks.** `commit-msg` refuses a subject that is not a Conventional Commit. `pre-push` runs the
-  check list. Both work in any terminal, without Claude Code.
+- **Git hooks.** `commit-msg` refuses a subject that is not a Conventional Commit. `pre-push` runs
+  `check --changed`. Both work in any terminal, without Claude Code.
 - **Permissions.** Setup adds to `.claude/settings.json` an allow-list (the `senior-mode` script,
   read-only `git` and `gh` commands) and a deny-list that mirrors the Bash guard.
 
@@ -1042,4 +1057,5 @@ broker denials of the last 24 hours.
 | Retry on Opus in `next` (it exists in `run`) | Not planned: in `next` you decide |
 | Formatter after each edit, desktop notifications, auto-allowed check commands during a run | Planned in [spec §16](../specs/0001-senior-mode.md#hooks), no milestone yet |
 
-Nothing merges unless you ask for it: by hand, or with `autonomy.merge: true` for `run`.
+A pull request merges once its statuses are green and no bound stops it (`autonomy.merge`, on by default; `false` leaves the merge
+to a person). To go back to the previous process, see [Upgrading to 0.9.0](configuration.md#upgrading-to-090-autonomous-by-default).

@@ -75,12 +75,12 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `maintenance.maxOpen` | `5` | Most open tickets labelled `gardening`: `serve` files no more while that many are open (a positive whole number) |
 | `maintenance.debt` | `false` | Set by `setup repo --adopt --debt`: `serve` files the next ranked [debt ticket](#debt-tickets) of a legacy project (`adopt.kind`) when a gardening ticket closes, within `maintenance.maxOpen` |
 | `retro.repeat` | `3` | Tickets with the same `cause:<x>` label on the same paths or skill, in the period, that make [`retro`](commands.md#retro) open one improvement ticket aimed at that cause (a positive whole number) |
-| `bestOf.n` | `2` | Candidates [`serve`](autonomy.md#best-of-n) tries for a ticket whose pull request still has changes requested after its 2 fix rounds, that pull request being the first (1 to 3; `1` turns it off) |
+| `bestOf.n` | `1` | Candidates [`serve`](autonomy.md#best-of-n) tries for a ticket whose pull request still has changes requested after its 2 fix rounds, that pull request being the first (1 to 3; `1`, the default, turns it off) |
 | `commands.coverage` | the preset's | Command that runs the tests and writes the report of `ratchet.coverage.report`: lcov from the runner (vitest, jest, c8) for node, `coverage xml` for python, `go test -coverprofile` converted to Cobertura with `gocover-cobertura` for go, `cargo llvm-cov --lcov` for rust. It is not a check, and a coverage command the project already has is kept |
 | `ratchet.lint.command` | the preset's | Lint command whose output the [ratchet](#ratchet-for-legacy-code) reads, in a machine format: ESLint (`--format json`), ruff (`--output-format json`), golangci-lint (`--out-format json`), clippy (`--message-format json`), or a list of `{ "file", "rule", "line" }`; the presets of node, python, go and rust have one, the generic preset none |
 | `ratchet.coverage.report` | the preset's | Path of the lcov or Cobertura report the ratchet reads (produced by the tests; the ratchet does not run them). `setup repo` sets it with `commands.coverage` (node `coverage/lcov.info`, python and go `coverage.xml`, rust `lcov.info`) unless the project already has a coverage command |
 | `ratchet.a11y.report` | `test-results/a11y` | Directory of the axe reports of the journey E2E tests, one JSON file per journey, written by the helper `presets/node/e2e/axe.ts`; the ratchet reads it for `a11y` |
-| `ratchet.patchCoverage` | `80` | Percent of lines a new file must cover under the ratchet (0 to 100) |
+| `ratchet.patchCoverage` | `80` | Percent of lines a new file must cover under the ratchet (0 to 100). It blocks only in a project that has a ratchet baseline (`.claude/ratchet-baseline.json`) |
 | `architecture.rules` | `[]` | Rules `check` enforces, see [Architecture rules](#architecture-rules): `{ "id", "forbidImport": { "from", "to" } \| "maxLines" \| "banned", "paths", "why" }` |
 | `rules.packs` | the preset's | Rule packs the `code rules` step of `check` runs on the diff, see [Code rules](#code-rules); `common` (the rules of every language) is always added |
 | `rules.off` | `{}` | Rules turned off, by id: `{ "<id>": { "why", "paths" } }`; `why` is required, `paths` narrows the rule off to those globs |
@@ -90,7 +90,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `context.claudeMdLines` | `80` | Most lines a tracked `CLAUDE.md` may have before `check` fails (context hygiene); a whole number from 1 |
 | `context.budget` | `2000` | Tokens (estimated as bytes / 4) the session briefing of [`senior-mode context`](commands.md#the-senior-mode-script) may take; the router and the ticket with its criteria are never dropped, the lowest ranked items go first: the related work, then the history, then the notes, specs and ADRs (a positive whole number) |
 | `context.repoMapTokens` | `400` | Tokens (bytes / 4) of the repo map of the briefing, inside `context.budget`: the top-level symbols and signatures of the ticket's Paths and of the files they import, most referenced first (a positive whole number) |
-| `wip` | `1` | Open tickets In progress at once: `senior-mode start` refuses another and names the one to finish first; `status` shows the count when it is over. A [run](autonomy.md#run) is bounded by `autonomy.parallel` instead, and is the only caller that skips `wip`: it proves itself with a token, so setting `SENIOR_MODE_RUN=1` by hand does not |
+| `wip` | `3` | Open tickets In progress at once: `senior-mode start` refuses another and names the one to finish first; `status` shows the count when it is over. A [run](autonomy.md#run) is bounded by `autonomy.parallel` instead, and is the only caller that skips `wip`: it proves itself with a token, so setting `SENIOR_MODE_RUN=1` by hand does not |
 | `hygiene.days` | `14` | Age in days (a positive whole number). [`senior-mode clean`](autonomy.md#hygiene) removes the remote branch of a merged or closed pull request and the run files under `.git/senior-mode` older than that (`--days` overrides it). The hygiene report of `senior-mode status` and `retro` ([commands](commands.md)) calls an open pull request with no activity for that long stale (reported, never acted on), and `status --fix` only deletes a branch whose last commit, or moves a ticket whose last activity, is older |
 | `ui.paths` | `[]` | Globs of the files of the user interface (same glob rules as `protected`). A pull request whose diff touches one is a UI pull request, and so is one whose ticket is labelled `ui`; a project with neither has no UI tickets. [`ready`](commands.md#the-senior-mode-script) predicts it from a ticket's Paths (a line `#<n> UI ticket (predicted)`), `publish` says `ui: UI pull request` when the diff decides it is, and keeps one comment on the pull request (`<!-- senior-mode:preview -->`, edited in place after each push, none on a pull request that is not UI): `Preview: <url>` or `No preview: <reason>`. `setup repo` writes it from the preset for a Next.js project (`app/**/*.tsx`, `components/**`, `**/*.css`, `public/**`) and never overwrites a value that is set |
 | `preview.url` | none | Template of the preview URL of a UI pull request (see `ui.paths`): `{{pr}}`, `{{branch}}`, `{{sha}}` and `{{slug}}` (the branch as lower case letters, digits and `-`) are replaced. It is shown only after one `curl -fsS --max-time 10` of it answers 2xx or 3xx, else the comment says why it is not. Without it, the `environment_url` of a successful GitHub deployment status on the head commit is used |
@@ -103,20 +103,21 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `preview.public` | `false` | In a public repository the screenshots are pushed to `senior-mode/shots` only when this is `true` |
 | `hierarchy.enforce` | `false` | `true` makes the [Definition of Ready](commands.md#the-senior-mode-script) refuse an orphan ticket (`needs-human` and a comment naming the missing link) and `pick` leave it out. An orphan has no parent epic, or a parent epic whose milestone description has no `Goal:` line. Off by default until the repository is migrated: [`status`](commands.md#status) then lists the orphans in an "Orphans" section and `pick` is unchanged |
 | `hierarchy.exempt` | `["security", "hotfix"]` | Labels of the tickets that need no parent epic (a list replaces the default). A ticket under the epic labelled `maintenance` is never an orphan either, and an epic (label `epic`) needs no parent |
-| `autonomy.maxTickets` | `3` | Tickets per [run](autonomy.md#run) |
-| `autonomy.parallel` | `1` | Tickets a run works on at once, and the number of [session slots](autonomy.md#session-slots); those whose [Paths](autonomy.md#run) overlap never run together, and one with no Paths runs alone |
+| `autonomy.maxTickets` | `0` | Tickets per [run](autonomy.md#run); `0` means no cap |
+| `autonomy.parallel` | `3` | Tickets a run works on at once, and the number of [session slots](autonomy.md#session-slots); those whose [Paths](autonomy.md#run) overlap never run together, and one with no Paths runs alone |
 | `limits.prLines` | `400` | A positive whole number of lines. `senior-mode pick` batches Ready S tickets whose Paths overlap, at most `prLines` / 50 per batch (3 at most; an S is about 50 lines), see [batches](autonomy.md#run) |
-| `limits.diffLines` | `{ "S": 300, "M": 800, "L": 2000 }` | Positive whole numbers of changed lines by Size: the budget of a pull request for the ticket it closes (a batch sums its tickets' budgets). Lockfiles, generated files and fixtures are not counted, and test and documentation lines weigh less than code (`limits.diffWeights`). `ready --pr`, `run` and `serve` treat a pull request over budget as [not ready](autonomy.md#ready-pull-request); a key you set replaces its default, the others stay |
+| `limits.diffLines` | `{ "S": 300, "M": 800, "L": 2000 }` | Positive whole numbers of changed lines by Size: the budget of a pull request for the ticket it closes (a batch sums its tickets' budgets). Lockfiles, generated files and fixtures are not counted, and test and documentation lines weigh less than code (`limits.diffWeights`). `ready --pr`, `run` and `serve` [warn](autonomy.md#ready-pull-request) on a pull request over budget and merge it all the same (ADR 0034); a key you set replaces its default, the others stay |
 | `limits.diffWeights` | `{ "tests": 0.5, "docs": 0.25 }` | How much a changed line weighs against `limits.diffLines`, from 0 to 1 (code weighs 1): `tests` for a test file (a `test`, `tests`, `spec` or `__tests__` directory, `*.test.*`, `*.spec.*`, `*_test.*`, `test_*`, `test-*`), `docs` for documentation (`docs/`, a README, a changelog, Markdown, except the Markdown of a skill, an agent or a command, which is code). The weighted total is rounded up; a refusal says the code, test and doc counts |
 | `limits.diffExclude` | `[]` | Globs of the files the size budget does not count at all, for generated or fixture data the built-in list misses (`*` matches across directories) |
-| `autonomy.maxConsecutiveFailures` | `2` | Failed tickets in a row after which a run starts no new one |
-| `autonomy.merge` | `false` | Whether a run merges the pull requests that pass every bound. Under [`serve`](commands.md#the-senior-mode-script) it defaults to `true` unless the repository sets it ([ADR 0018](../adr/0018-daemon-merge-policy.md)); the setup question "may agents work alone" writes it (`setup answers --autonomy`) |
+| `autonomy.maxConsecutiveFailures` | `3` | Failed tickets in a row after which a run starts no new one |
+| `autonomy.merge` | `true` | Whether `run` and `serve` merge the pull requests that pass every bound (green statuses, no protected zone, no `needs-human`, no security finding): [ADR 0034](../adr/0034-autonomous-by-default.md). `false` stops at the reviewed pull request and leaves the merge to a person ([ADR 0008](../adr/0008-merge-off-by-default.md), [ADR 0018](../adr/0018-daemon-merge-policy.md)); the setup question "may agents work alone" writes it (`setup answers --autonomy`) |
 | `autonomy.escalate` | `true` | Whether a ticket that fails on Sonnet is retried once on Opus |
 | `autonomy.startupMinutes` | `3` | Minutes after which a `serve` session on which nothing moved since its launch (worktree, process group, log) is [stopped as hung at startup](autonomy.md#the-watchdog) and resumed once |
-| `autonomy.stallMinutes` | `20` | Minutes without any change in a `serve` session (worktree, CPU and children of its process group, log) after which it is [stopped as hung](autonomy.md#the-watchdog) and resumed once; keep it above 10, the API client's request timeout |
-| `autonomy.sessionTimeout` | `90` | Minutes a ticket session may run (a whole number from 1 to 1440). Past it, a [run](autonomy.md#run) kills the session (its process group), labels the ticket `needs-human` with the log path, counts a failure for the circuit breaker and does not retry on Opus; the ticket's Status is left as it is. The docs session after merges is bounded by the same limit |
+| `autonomy.stallMinutes` | `20` | Minutes with no output (log) and no file change in the worktree of a `serve` session, after which it is [stopped as hung](autonomy.md#the-watchdog) and resumed once; CPU alone does not count as progress; keep it above 10, the API client's request timeout |
+| `autonomy.sessionTimeoutBySize` | `{ "S": 45, "M": 120, "L": 240 }` | Minutes a ticket session may run, by the Size of its ticket, when `autonomy.sessionTimeout` is not set by the project |
+| `autonomy.sessionTimeout` | none (the Size decides) | Minutes a ticket session may run (a whole number from 1 to 1440): a value a project sets applies to every Size and replaces `autonomy.sessionTimeoutBySize`. Past it, a [run](autonomy.md#run) kills the session (its process group), labels the ticket `needs-human` with the log path, counts a failure for the circuit breaker and does not retry on Opus; the ticket's Status is left as it is. The docs session after merges is bounded by the same limit |
 | `autonomy.schedule` | `"02:00"` | Time of day (`HH:MM`) of the [scheduled run](autonomy.md#scheduled-runs), unless `senior-mode schedule install --at` says otherwise |
-| `autonomy.ticketsPerHour` | `6` | Tickets [`serve`](commands.md#the-senior-mode-script) begins in any 60 minutes (a whole number of at least 1). It counts ticket starts, not the role sessions a ticket costs (test author, implementer, retries, reviewer, integrator); a resume after a transient error is no start. Past it a new ticket waits for the next poll and the log names this cap |
+| `autonomy.ticketsPerHour` | `0` | Tickets [`serve`](commands.md#the-senior-mode-script) begins in any 60 minutes (`0`, the default, means no limit). It counts ticket starts, not the role sessions a ticket costs (test author, implementer, retries, reviewer, integrator); a resume after a transient error is no start. Past it a new ticket waits for the next poll and the log names this cap |
 | `autonomy.sessionsPerHour` | `0` | Safety cap on all the sessions `serve` launches in any 60 minutes, roles and Opus retries included; `0` means 6 per slot (6 × `autonomy.parallel`). Past it any launch waits for the next poll and the log names this cap |
 | `autonomy.userSettings` | `false` | Whether `run` and `serve` sessions load the owner's user-level Claude Code configuration (user `CLAUDE.md`, plugins, MCP servers, settings). Off, a session sees only the project's settings and MCP servers and the plugin, the same on every machine ([autonomy](autonomy.md#sessions-without-a-human)) |
 | `autonomy.minMemoryMB` | `1024` | Available memory (MB, `MemAvailable`) under which `serve` launches nothing until the next poll; `0` turns the check off. `serve` also waits while the load average is over the CPU count |
@@ -147,7 +148,7 @@ An example written by setup for a JavaScript Next.js project using pnpm:
 | `notify.batchMinutes` | `60` | Under `serve`, how long the webhook waits to gather the `needs-human` questions into one `decisions` notification (at most one per window); `0` sends them at each poll. `failed`, `breaker` and `environment` alerts are never delayed |
 | `agent.command` | `claude` | The headless CLI `run` starts for each ticket and for the docs session, on `PATH` or in `~/.local/bin`; the guards of senior-mode do not hold under another CLI until it supports them (see [Run](autonomy.md#run)) |
 | `commit.coAuthor` | `true` | `false` makes `run` and `serve` start each claude session with `--settings '{"attribution": {"commit": ""}}'`, which ranks above the user, project and local settings: the commits of a session carry no `Co-Authored-By: Claude` trailer. It also adds a `commit trailers` step to `check`, which fails and names every commit of the branch (those the default branch lacks) whose message has a `Co-Authored-By:` line naming Claude or an `anthropic.com` address, or a `Generated with Claude Code` line |
-| `characterize.below` | `50` | The coverage percent (ratchet baseline `coverage.files`) under which an existing file counts as untested: a branch that changes it needs a `test(<scope>): characterize <unit>` commit first (`senior-mode untested`) |
+| `characterize.below` | `50` | The coverage percent (ratchet baseline `coverage.files`) under which an existing file counts as untested: a `refactor` branch that changes it needs a `test(<scope>): characterize <unit>` commit first (`senior-mode untested`); a feature or a bug branch does not (ADR 0034) |
 | `characterize.exempt` | `[]` | Globs of files that need no characterization commit, on top of docs, tests, generated files, types and constants |
 | `e2e.slots` | `2` | End-to-end suites that may run at once on the machine (the check named `e2e`) |
 | `sandbox.verbs` | `[]` | Extra read-only `gh` verbs a sandboxed session may run through the [credential broker](autonomy.md#credential-broker), each as `gh <group> <view\|list\|status\|diff\|checks>` (`gh release view`). `gh pr merge`, `gh auth`, `gh repo`, `gh api` (so any method but `GET`), the secret and key groups and any write verb fail `config validate` naming `sandbox.verbs[<i>]`, and the broker denies them anyway |
@@ -262,8 +263,15 @@ skills/review/SKILL.md` prints the text in force, and `context` tells a session 
 
 ### Process profiles
 
-`senior-mode setup answers --strictness strict|fast` chooses the profile of the repository layer: `strict` writes no
-key, `fast` writes `process.profile` and the lift with its ADR (below).
+The shipped profile is `fast` ([ADR 0034](../adr/0034-autonomous-by-default.md)): a repository with no
+`.claude/senior-mode.json`, or with no `process.profile`, reads it. To go back to the strict process, set
+`process.profile` in the repository layer:
+
+```json
+{ "process": { "profile": "strict" } }
+```
+
+`senior-mode setup answers --strictness strict|fast` writes the same choice (see [`setup answers`](commands.md)).
 
 A profile is a file: `plugins/senior-mode/profiles/<name>.json` (shipped), or
 `.claude/senior-mode/profiles/<name>.json` in the project (shadows a shipped one of the same name). It has
@@ -274,24 +282,71 @@ A profile is a file: `plugins/senior-mode/profiles/<name>.json` (shipped), or
 { "process": { "profile": "team" } }
 ```
 
-- `strict` (the default): every locked gate stands.
-- `fast` ([ADR 0016](../adr/0016-this-repository-delivery.md)): no independent review, a pull request merges
-  once `check` is green.
+- `fast` (the default): no independent review at the merge, a pull request merges once `check` is green and no bound
+  stops it. It lifts the review gate by [ADR 0034](../adr/0034-autonomous-by-default.md), so a project needs no ADR of
+  its own for it. It does not change the numbers: the autonomous values (merge on, 3 in parallel, no ticket cap, a
+  timeout per Size, a breaker at 3) are the plugin defaults, so `strict` has them too.
+- `strict` (opt-in, `process.profile: "strict"`): every locked gate stands, the independent review included. The
+  profile does not bring back the old numbers: to merge by hand, set `autonomy.merge: false`; to run one ticket
+  at a time, `autonomy.parallel: 1` and `wip: 1`.
 - A custom profile: `{"extends": "strict", "config": {"wip": 2}}`.
 
 The **locked safety base** is the secret scan, the protected zones, the bash guard, no force-push or
 `--no-verify`, `check` green before a merge, and the trust gate; `process.gates` says which stand. Lifting one
 means a profile that sets it to `false` **and** an entry in `process.lifts` of the repository layer naming an ADR of
-the repository whose status is `accepted` and which is on the base branch:
+the repository whose status is `accepted` and which is on the base branch. The shipped `fast` profile is the one
+exception: ADR 0034 is the record of its review lift. A project profile that lifts a gate, and `strict` with a lift,
+still need the ADR:
 
 ```json
-{ "process": { "profile": "fast", "lifts": [{ "rule": "review", "adr": "docs/adr/0016-this-repository-delivery.md" }] } }
+{ "process": { "profile": "team", "lifts": [{ "rule": "review", "adr": "docs/adr/0016-this-repository-delivery.md" }] } }
 ```
 
 Without the ADR the lift is refused with the reason (`config validate` fails, the gate stays locked, the daemon
 keeps the last valid config). A lift in another layer is ignored. In this version only the review gate can be
 lifted: a profile that opens another gate is refused. `status` shows the profile and one `WARNING locked gate
 lifted` line per lift.
+
+### Upgrading to 0.9.0: autonomous by default
+
+0.9.0 changes the shipped defaults ([ADR 0034](../adr/0034-autonomous-by-default.md)): the plugin asks for less ceremony
+and keeps it for risky work. A project that already has a `.claude/senior-mode.json` loses nothing it chose:
+
+- **A key the project sets keeps its value.** Only a **missing** key takes the new default. `senior-mode config explain
+  <key>` says which layer wins, and `senior-mode doctor` lists what the project sets.
+- **No file, or no `process.profile`, now reads `fast`.** A project that wants the independent review before every
+  merge sets `"process": { "profile": "strict" }`.
+- **Security does not change:** the secret scan and secret reads, egress, self-protection, `--no-verify` and `--admin`,
+  the dependency audit on high and critical, the protected zones, the trust gate, `audit`, `protected`, `secrets` and
+  `envGuard` keep their defaults.
+
+The behaviour changes, and the key that brings each one back when the project does not set it:
+
+| Before 0.9.0 | From 0.9.0 | Go back |
+|---|---|---|
+| `autonomy.merge` `false` for `run`, `true` for `serve` | `true` for both: a pull request merges once its statuses are green, outside protected zones and security findings | `autonomy.merge: false` |
+| `autonomy.parallel` 1, `wip` 1 | 3 and 3 | `autonomy.parallel: 1`, `wip: 1` |
+| `autonomy.maxTickets` 3 per run | `0`, no cap | `autonomy.maxTickets: 3` |
+| `autonomy.ticketsPerHour` 6 | `0`, no limit | `autonomy.ticketsPerHour: 6` |
+| `autonomy.maxConsecutiveFailures` 2 | 3 | `autonomy.maxConsecutiveFailures: 2` |
+| `autonomy.sessionTimeout` 90 minutes for every ticket | by Size: S 45, M 120, L 240 (`autonomy.sessionTimeoutBySize`); a `sessionTimeout` a project sets applies to every Size | `autonomy.sessionTimeout: 90` |
+| A session stalls after `autonomy.stallMinutes` with nothing moving, CPU included | No output and no file change for that long; CPU alone is not progress | none |
+| `bestOf.n` 2 | 1 | `bestOf.n: 2` |
+| An M ticket: test-author, implementer, reviewer, and a plan | S and M outside the protected zones: one dev session that writes its own red tests, then a light Sonnet reviewer that blocks only on a defect. L or a protected zone: architect plan, test-author, full reviewer, security agent | none |
+| `strict` profile, an independent review at every merge | `fast`: no independent review at the merge | `process.profile: "strict"` |
+| The pre-push hook runs the full `check` | `check --changed` (about 2 minutes); the full `check` runs once, before the merge. The dependency audit and the registry lookup are cached for 24 hours | none |
+| An open decision stops on a person | S and M: the agent applies the recommended option and writes it in the pull request as "decided by the agent". A person is needed for L, high and critical security, and protected zones | none |
+| `ready` accepts a ticket an agent filed when it is size S (M from a framing) | S and M. `pick` also takes an L ticket whose spec is on the default branch | none |
+| The size budget and the self-review table block a pull request | They warn | none |
+| A characterization commit before any change to an untested file | `refactor` branches only | none |
+| The skill eval table is asked for the skills and agents of the project too | Only the shipped ones (`plugins/senior-mode/`) | none |
+| `brief-guard` refuses a delegation without its seven sections, `proof.sh` can block the Stop | `brief-guard` requires the goal and the verification, advises the rest; `proof.sh` reminds and never blocks | none |
+
+A repository that wants the whole of the old process sets, in `.claude/senior-mode.json`:
+
+```json
+{ "process": { "profile": "strict" }, "autonomy": { "merge": false, "parallel": 1, "maxTickets": 3, "ticketsPerHour": 6, "maxConsecutiveFailures": 2, "sessionTimeout": 90 }, "wip": 1, "bestOf": { "n": 2 } }
+```
 
 ### Diagnosing the configuration
 

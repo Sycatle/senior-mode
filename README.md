@@ -61,8 +61,11 @@ You need [`gh`](https://cli.github.com/) logged in (`gh auth refresh -s project`
    The checks run before each push and publish `senior-mode/ci`.
 3. **Review.** A `reviewer` agent with a fresh context reviews the PR against the spec and against
    engineering standards, then sets `senior-mode/review`.
-4. **Merge and release.** Rebase merge once both statuses are green. Changes to protected zones wait
-   for a human. release-please turns the commits into a changelog and a version.
+4. **Merge and release.** Rebase merge once the statuses are green: the shipped process is autonomous (the `fast`
+   profile, merge on, three tickets in parallel), and `process.profile: "strict"` brings back an independent
+   review at every merge. Changes to protected zones, security findings of high severity and L tickets wait for a
+   human. release-please turns the commits into a changelog and a version. Upgrading a project from before 0.9.0:
+   [what changes and how to go back](docs/guide/configuration.md#upgrading-to-090-autonomous-by-default).
 
 ```mermaid
 flowchart LR

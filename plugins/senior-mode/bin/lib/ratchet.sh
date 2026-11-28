@@ -50,9 +50,10 @@ ratchet_lint() {
 }
 
 # The coverage of the tree $1 as JSON {total, files}, percent of lines from `ratchet.coverage.report` (lcov or
-# Cobertura). Fails, with the reason on stdout, when there is none to read.
+# Cobertura). Fails, with the reason on stdout, when there is none to read. gocover-cobertura writes the import path of a
+# Go file (`<module>/pkg/file.go`): the module line of the root go.mod is stripped to get the repo-relative path.
 ratchet_coverage() {
-  local root=$1 rep rows
+  local root=$1 rep rows mod=""
   rep=$(config_get ratchet.coverage.report 2>/dev/null) || rep=""
   [ -n "$rep" ] || { echo "no coverage report: set ratchet.coverage.report"; return 1; }
   [ -f "$root/$rep" ] || { echo "the coverage report $rep does not exist: run the tests with coverage first"; return 1; }
@@ -66,11 +67,14 @@ ratchet_coverage() {
         if (tf > 0) printf "T\t%.1f\n", 100 * th / tf
       }' "$root/$rep")
   elif grep -q '<coverage' "$root/$rep"; then
-    rows=$(sed 's/>/>\n/g' "$root/$rep" | awk -v root="$root/" '
+    [ -f "$root/go.mod" ] && mod=$(awk '$1 == "module" { gsub(/"/, "", $2); print $2; exit }' "$root/go.mod")
+    rows=$(sed 's/>/>\n/g' "$root/$rep" | awk -v root="$root/" -v mod="$mod" '
       function attr(s, n) { if (match(s, "[ \t]" n "=\"[^\"]*\"")) return substr(s, RSTART + length(n) + 3, RLENGTH - length(n) - 4); return "" }
       /<coverage[ \t]/ { r = attr($0, "line-rate"); if (r != "") printf "T\t%.1f\n", 100 * r }
       /<class[ \t]/ { f = attr($0, "filename"); r = attr($0, "line-rate")
-        if (f != "" && r != "") { if (index(f, root) == 1) f = substr(f, length(root) + 1); sub(/^\.\//, "", f); printf "F\t%s\t%.1f\n", f, 100 * r } }')
+        if (f != "" && r != "") { if (index(f, root) == 1) f = substr(f, length(root) + 1)
+          if (mod != "" && index(f, mod "/") == 1) f = substr(f, length(mod) + 2)
+          sub(/^\.\//, "", f); printf "F\t%s\t%.1f\n", f, 100 * r } }')
   else
     echo "the coverage report $rep is neither lcov nor Cobertura"
     return 1

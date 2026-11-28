@@ -187,6 +187,18 @@ run ratchet || fail "cobertura: $(out)"
 grep -q "^coverage: 50.0% in the baseline, 50.0% measured" "$work/out" || fail "cobertura total not read: $(out)"
 sed -i '25s/1/2/' "$repo/src/a.ts"
 run ratchet-check || fail "cobertura: a touched file at its floor fails: $(out)"
+# Go: gocover-cobertura writes the import path (`<module>/pkg/file.go`), the module line of go.mod is stripped.
+printf 'module example.com/acme/app\n\ngo 1.21\n' >"$repo/go.mod"
+cat >"$repo/coverage/lcov.info" <<XML
+<?xml version="1.0"?><coverage line-rate="0.5" branch-rate="0"><sources><source>/usr/local/go/src</source></sources><packages>
+<package name="example.com/acme/app/src"><classes><class name="a.ts" filename="example.com/acme/app/src/a.ts" line-rate="0.4"><lines/></class></classes></package>
+</packages></coverage>
+XML
+run ratchet-check || fail "go: a touched file at its floor, named by import path, fails: $(out)"
+grep -q "src/a.ts: coverage" "$work/out" && fail "go: the import path was not matched to src/a.ts: $(out)"
+sed -i 's/line-rate="0.4"/line-rate="0.3"/' "$repo/coverage/lcov.info"
+run ratchet-check && fail "go: a fall of a file named by import path passes"
+grep -q "src/a.ts: coverage 30.0% below the baseline 40" "$work/out" || fail "go: the fall is not named by repo path: $(out)"
 reset
 lcov src/a.ts 10 4
 

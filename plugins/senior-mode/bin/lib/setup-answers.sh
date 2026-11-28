@@ -75,50 +75,13 @@ setup_detect() {
     "language: \(if .language.code then "\(.language.code) (from \(.language.source))" else "not found, ask or read the conversation" end)"' <<<"$facts"
 }
 
-# The number of the next ADR of the project at $1: one more than the highest four-digit prefix, 0001 when none.
-adr_next() { # root
-  local n=0 f b
-  for f in "$1"/docs/adr/[0-9][0-9][0-9][0-9]-*.md; do
-    [ -f "$f" ] || continue
-    b=${f##*/}
-    [ "$((10#${b:0:4}))" -le "$n" ] || n=$((10#${b:0:4}))
-  done
-  printf '%04d\n' $((n + 1))
-}
-
-# The decision that the `fast` profile needs to lift the independent review (ADR 0027): written from the answer.
-adr_lift_review() { # number
-  cat <<EOF
----
-id: $1
-title: A pull request merges once check is green, without an independent review
-status: accepted
----
-
-## Context
-
-The default process has an independent review before every merge. The owner of this repository chose the \`fast\`
-process profile when setting senior-mode up, knowing that it lifts that gate.
-
-## Decision ($(date +%F), owner)
-
-The \`review\` gate is lifted: a pull request merges once \`senior-mode check\` is green. The other gates stay locked:
-the secret scan, the protected zones, the bash guard, no force push, a green check and the trust gate.
-
-## Consequences
-
-- \`process.profile\` is \`fast\` and \`process.lifts\` names this ADR; \`senior-mode status\` reports the lifted gate.
-- Going back is one answer: \`senior-mode setup answers --strictness strict\`.
-EOF
-}
-
 # `senior-mode setup answers [--strictness strict|fast] [--language en|fr] [--autonomy ask|alone] [--lsp yes|no] [--dry-run]`.
 # `--lsp` records the answer to the language server proposal of `setup repo` (#341); left out, the key is untouched.
 # An answer left out keeps the value of the repository, else takes the recommended one. Prints one summary (what was
 # detected, what each answer changes, the defaults that apply) and writes it unless --dry-run.
 # shellcheck disable=SC2016 # jq programs, not shell
 setup_answers() {
-  local root file facts strict="" lang="" auto="" lsp="" prev="" dry=false rec_lang cur_strict cur_auto cur_prev=platform adr="" write=false hosts
+  local root file facts strict="" lang="" auto="" lsp="" prev="" dry=false rec_lang cur_strict cur_auto cur_prev=platform hosts
   while [ $# -gt 0 ]; do
     case $1 in
       --strictness) [ "${2:-}" = strict ] || [ "${2:-}" = fast ] || usage; strict=$2; shift 2 ;;
@@ -136,9 +99,9 @@ setup_answers() {
     jq empty "$file" 2>/dev/null || die "invalid .claude/senior-mode.json; fix or remove it, then run setup again"
   fi
   facts=$(setup_facts "$root")
-  cur_strict=strict cur_auto=ask
+  cur_strict=fast cur_auto=ask
   if [ -f "$file" ]; then
-    cur_strict=$(jq -r '.process.profile // "strict"' "$file")
+    cur_strict=$(jq -r '.process.profile // "fast"' "$file")
     jq -e '.autonomy.merge == true' "$file" >/dev/null && cur_auto=alone
     rec_lang=$(jq -r '.language // empty' "$file")
     cur_prev=$(jq -r '.deploy.previews // "platform"' "$file")
@@ -151,22 +114,13 @@ setup_answers() {
   [ -n "$lang" ] || lang=$rec_lang
   [ -n "$auto" ] || auto=$cur_auto
 
-  # The lift of the review that `fast` needs: kept when the repository already has an accepted one.
-  if [ "$strict" = fast ]; then
-    adr=$(jq -r '[.process.lifts[]? | select(type == "object" and .rule == "review") | .adr][0] // empty' "$file" 2>/dev/null) || adr=""
-    if [ -z "$adr" ] || [ "$(adr_status "$adr")" != accepted ]; then
-      adr=docs/adr/$(adr_next "$root")-lift-independent-review.md
-      write=true
-    fi
-  fi
-
   echo "Detected"
   setup_detect | sed 's/^/  /'
   echo "Your answers (recommended first)"
   if [ "$strict" = strict ]; then
-    echo "  process: strict (recommended): every guard stands, an independent review before each merge. Writes no process key."
+    echo "  process: strict: every guard stands, an independent review before each merge. Writes process.profile strict."
   else
-    echo "  process: fast: no independent review, a pull request merges once check is green; the other guards stay. Writes process.profile fast and process.lifts, with the accepted ADR $adr."
+    echo "  process: fast (default): no independent review, a pull request merges once check is green; the other guards stay. Writes no process key: the shipped fast profile lifts the review with no ADR of the project."
   fi
   echo "  language: $lang$([ "$lang" != "$rec_lang" ] || echo ' (recommended)'): templates and what Claude writes for you. Writes language."
   if [ "$auto" = alone ]; then
@@ -186,7 +140,7 @@ setup_answers() {
   echo "Defaults (documented in docs/guide/configuration.md, change them in .claude/senior-mode.json)"
   echo "  risky changes: you decide; a pull request that touches a protected zone waits for your approval, and no answer lifts that."
   jq -nr --argjson d "$DEFAULTS" '"  checks: \($d.ci.mode), before each push (free); setup github --ci actions also runs them on GitHub Actions and spends its budget",
-    "  work: \($d.autonomy.maxTickets) tickets per run, \($d.autonomy.parallel) at a time, \($d.wip) in progress at once, \($d.limits.prLines) changed lines per pull request",
+    "  work: \(if $d.autonomy.maxTickets == 0 then "no cap on tickets" else "\($d.autonomy.maxTickets) tickets" end) per run, \($d.autonomy.parallel) at a time, \($d.wip) in progress at once, \($d.limits.prLines) changed lines per pull request",
     "  board: a Project copied from the template, with Status, Priority, Size, Severity, Paths and Iteration"'
   if $dry; then
     echo "Dry run: nothing written."
@@ -196,20 +150,14 @@ setup_answers() {
   mkdir -p "$root/.claude"
   [ -f "$file" ] || echo '{}' >"$file"
   json_update "$file" '.language = $l | .autonomy.merge = ($a == "alone") | if $lsp == "" then . else .lsp = ($lsp == "yes") end
-    | if $s == "fast" then .process.profile = "fast"
-        | .process.lifts = ([(.process.lifts // [])[] | select((type == "object" and .rule == "review") | not)] + [{rule: "review", adr: $adr}])
-      else del(.process.profile) | .process.lifts = [(.process.lifts // [])[] | select((type == "object" and .rule == "review") | not)]
-        | if (.process.lifts | length) == 0 then del(.process.lifts) else . end
-        | if (.process | length) == 0 then del(.process) else . end end' \
-    --arg l "$lang" --arg a "$auto" --arg s "$strict" --arg adr "$adr" --arg lsp "$lsp" || [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
+    | if $s == "fast" then del(.process.profile) | .process.lifts = [(.process.lifts // [])[] | select((type == "object" and .rule == "review") | not)]
+      else .process.profile = "strict" | .process.lifts = [(.process.lifts // [])[] | select((type == "object" and .rule == "review") | not)] end
+    | if (.process.lifts // []) | length == 0 then del(.process.lifts) else . end
+    | if (.process // {}) | length == 0 then del(.process) else . end' \
+    --arg l "$lang" --arg a "$auto" --arg s "$strict" --arg lsp "$lsp" || [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
   if [ -n "$prev" ]; then
     json_update "$file" 'if $p == "platform" then del(.deploy.previews) | if (.deploy // {}) == {} then del(.deploy) else . end else .deploy.previews = $p end' \
       --arg p "$prev" || [ $? -eq 2 ] || die "could not write .claude/senior-mode.json"
   fi
   echo "written: .claude/senior-mode.json"
-  if [ "$write" = true ]; then
-    mkdir -p "$root/docs/adr"
-    adr_lift_review "$(basename "$adr" | cut -c1-4)" >"$root/$adr"
-    echo "written: $adr (commit it to the default branch: the daemon reads the base branch)"
-  fi
 }

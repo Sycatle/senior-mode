@@ -262,8 +262,8 @@ skills/review/SKILL.md` prints the text in force, and `context` tells a session 
 
 ### Process profiles
 
-`senior-mode setup answers --strictness strict|fast` chooses the profile of the repository layer: `strict` writes no
-key, `fast` writes `process.profile` and the lift with its ADR (below).
+`senior-mode setup answers --strictness strict|fast` chooses the profile of the repository layer: `strict` writes
+`process.profile: "strict"`, `fast` (the default) removes the key and any review lift: the shipped fast profile needs no ADR of the project (below).
 
 A profile is a file: `plugins/senior-mode/profiles/<name>.json` (shipped), or
 `.claude/senior-mode/profiles/<name>.json` in the project (shadows a shipped one of the same name). It has

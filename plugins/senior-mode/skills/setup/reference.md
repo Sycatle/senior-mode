@@ -55,10 +55,10 @@ Three (a fourth when `setup detect` lists `hosted previews`), asked once, in the
 `senior-mode setup answers` takes each as a flag and keeps what the repository already holds, so a rerun
 asks only what changed.
 
-1. How strict the process is: `--strictness strict` (recommended: an independent review before every merge) or
-   `fast` (a pull request merges once check is green; the other guards stay). `fast` lifts the review: say so, and
-   that setup then writes an accepted ADR (`docs/adr/`), which the user commits to the default branch. It maps to
-   the `process.profile` of the repository layer; `strict` writes no key.
+1. How strict the process is: `--strictness fast` (the default: a pull request merges once check is green; the other guards
+   stay, and the shipped profile lifts the review by ADR 0034, so setup writes no ADR) or `strict` (an independent review
+   before every merge). It maps to the `process.profile` of the repository layer: `strict` writes `"strict"`, `fast`
+   removes the key.
 2. Which language: `--language en|fr`, recommended from `setup detect` (the user's `CLAUDE.md`, then the locale),
    else from the conversation; never `en` silently. It picks the templates `setup repo` writes. Another language
    than `en` or `fr` is not a setup answer: keep the conversation in it and use `en`.
@@ -112,7 +112,7 @@ run `senior-mode setup statusline`.
 ## Without a human
 
 Nobody can answer in `claude -p` or a session with `SENIOR_MODE_RUN=1`. Take the recommended option
-of each reversible question and say so in the report: `setup answers` with no flag (strict, the detected
+of each reversible question and say so in the report: `setup answers` with no flag (fast, the detected
 language, agents ask), checks `local`, no status line (it edits settings). Never acknowledge `protection: NOT enforced`: finish the rest,
 report that the gap awaits a human, stop there. The permissions that `setup repo` writes to
 `.claude/settings.json` are ignored by a headless session in a workspace Claude Code does not trust

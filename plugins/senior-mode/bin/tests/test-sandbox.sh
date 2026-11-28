@@ -19,13 +19,13 @@ config() { printf '%s\n' "$1" >"$repo/.claude/senior-mode.json"; }
 fn() {
   local p=$1
   shift
-  (cd "$repo" && PATH="$p:$PATH" bash -c '. "$1"; . "$2"; . "$3"; shift 3; "$@"' _ "$bin/lib/common.sh" "$bin/lib/config.sh" "$bin/lib/sandbox.sh" "$@")
+  (cd "$repo" && PATH="$p:$PATH" bash -c '. "$1"; . "$2"; . "$3"; . "$4"; shift 4; "$@"' _ "$bin/lib/common.sh" "$bin/lib/config.sh" "$bin/lib/org.sh" "$bin/lib/sandbox.sh" "$@")
 }
 # A PATH with the tools the module needs and no runtime: podman and docker of the host are hidden.
 for t in bash jq git stat grep sed cat env dirname mktemp tr awk sort head wc date readlink; do
   p=$(command -v "$t") && ln -s "$p" "$work/empty/$t"
 done
-nort() { (cd "$repo" && env -u SENIOR_MODE_RUNTIME PATH="$work/empty" bash -c '. "$1"; . "$2"; . "$3"; shift 3; "$@"' _ "$bin/lib/common.sh" "$bin/lib/config.sh" "$bin/lib/sandbox.sh" "$@"); }
+nort() { (cd "$repo" && env -u SENIOR_MODE_RUNTIME PATH="$work/empty" bash -c '. "$1"; . "$2"; . "$3"; . "$4"; shift 4; "$@"' _ "$bin/lib/common.sh" "$bin/lib/config.sh" "$bin/lib/org.sh" "$bin/lib/sandbox.sh" "$@"); }
 
 # A runtime named by SENIOR_MODE_RUNTIME is found, mode unset: enabled.
 config '{}'
@@ -33,7 +33,7 @@ out=$(SENIOR_MODE_RUNTIME=mystub fn "$work/bin" sandbox_runtime) || fail "a stub
 [ "$out" = mystub ] || fail "runtime: $out"
 SENIOR_MODE_RUNTIME=mystub fn "$work/bin" sandbox_enabled || fail "sandbox_enabled fails with a runtime"
 # Else podman before docker; sandbox.runtime overrides auto.
-out=$(env -u SENIOR_MODE_RUNTIME bash -c 'cd "$1" && PATH="$2:$PATH" && . "$3" && . "$4" && . "$5" && sandbox_runtime' _ "$repo" "$work/bin" "$bin/lib/common.sh" "$bin/lib/config.sh" "$bin/lib/sandbox.sh")
+out=$(env -u SENIOR_MODE_RUNTIME bash -c 'cd "$1" && PATH="$2:$PATH" && . "$3" && . "$4" && . "$5" && . "$6" && sandbox_runtime' _ "$repo" "$work/bin" "$bin/lib/common.sh" "$bin/lib/config.sh" "$bin/lib/org.sh" "$bin/lib/sandbox.sh")
 [ "$out" = podman ] || fail "podman first: $out"
 config '{"sandbox":{"runtime":"docker"}}'
 out=$(SENIOR_MODE_RUNTIME=mystub fn "$work/bin" sandbox_runtime)

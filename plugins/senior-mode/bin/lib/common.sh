@@ -36,7 +36,8 @@ DEFAULTS='{
   "architecture": { "rules": [] },
   "ratchet": { "patchCoverage": 80 },
   "github": { "protection": "", "requiredChecks": true },
-  "deploy": { "previews": "platform" }
+  "deploy": { "previews": "platform" },
+  "org": { "inherit": true, "repo": ".github", "path": "senior-mode", "ref": "" }
 }'
 die() {
   echo "senior-mode: $*" >&2

@@ -121,6 +121,8 @@ done
 . "$LIB/serve-hold.sh"
 # shellcheck source=lib/serve-launch.sh
 . "$LIB/serve-launch.sh"
+# shellcheck source=lib/serve-sandbox.sh
+. "$LIB/serve-sandbox.sh"
 # shellcheck source=lib/serve-session.sh
 . "$LIB/serve-session.sh"
 # shellcheck source=lib/serve-merge.sh

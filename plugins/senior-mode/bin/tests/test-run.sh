@@ -1306,6 +1306,16 @@ grep -qx 'pr merge 584 --rebase --match-head-commit sha484 -R acme/app' "$GH_LOG
 for n in 481 482 483; do grep -q "Waiting for a human.*#$n.*external" "$work/out" || fail "X2: #$n not reported as external: $(cat "$work/out")"; done
 rm -f "$FIX"/external-48*
 
+# Z0 (#854): autonomy.maxTickets 0 is no cap: every Ready ticket the slots allow starts; a positive value still caps.
+config '{"maxTickets": 0, "parallel": 4}'
+board 951 '[]' 952 '[]' 953 '[]' 954 '[]' 955 '[]'
+for n in 951 952 953 954 955; do session "$n-sonnet" delivered pr; done
+run || fail "Z0: run failed: $(cat "$work/out")"
+for n in 951 952 953 954 955; do grep -q "app-$n" "$CLAUDE_LOG" || fail "Z0: #$n not started under maxTickets 0: $(cat "$work/out")"; done
+config '{"maxTickets": 2, "parallel": 4}'
+run || fail "Z0: capped run failed: $(cat "$work/out")"
+[ "$(grep -c '^app-95[0-9] sonnet' "$CLAUDE_LOG")" = 2 ] || fail "Z0: a positive maxTickets did not cap: $(cat "$CLAUDE_LOG")"
+
 # Y: an irreversible choice the session cannot settle (#363) goes to the decision inbox: the question and a recommended
 # option in a comment, `needs-decision` (and `needs-human`, the inbox until a decision list exists), the ticket back to
 # Ready, the work kept; no retry on Opus, the run goes on with the next ticket; a ticket labelled needs-decision is

@@ -370,11 +370,12 @@ doctor_hook_versions() {
 # What the repository customizes (spec 330 §6, what the layers, the overrides and the profiles provide): the profile, the
 # lifted gates with their ADR, the override files, the hooks, roles, routing rows and providers, and the layer values that
 # differ from the defaults (the keys that `setup` writes for every project, preset, checks, ci, github and project, do
-# not count as customization; the levers are listed apart).
+# not count as customization; the levers are listed apart). The default `fast` profile with its shipped review lift
+# (ADR 0034) is the default process: nothing overridden.
 # shellcheck disable=SC2016 # a jq program, not shell
 doctor_customization() {
   [ -n "${DOCTOR_RES:-}" ] || { echo '{"profile":"strict","lifts":[],"overrides":[],"values":[],"hooks":[],"roles":[],"rows":[],"providers":[],"nothing":true}'; return 0; }
-  jq -c --argjson d "$DEFAULTS" --argjson levers "$(customization_levers <<<"$DOCTOR_RES")" \
+  jq -c --arg fastadr "$CONFIG_FAST_ADR" --argjson d "$DEFAULTS" --argjson levers "$(customization_levers <<<"$DOCTOR_RES")" \
     --argjson ov "$(override_files | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t") | {file: .[0], mode: .[1], target: .[2]})')" '
     def flat($p): if type == "object" then (to_entries[] | .key as $k | .value | flat($p + [$k])) else {path: $p, value: .} end;
     ([.layers[] | select(.name != "defaults" and .name != "profile") | .name as $n
@@ -384,7 +385,8 @@ doctor_customization() {
         | {layer: "profile", key: (.path | join(".")), value: .value}]) as $values
     | {profile: .profile.name, origin: .profile.origin, chain: .profile.chain,
        lifts: [.lifted[] | . + {status: "accepted"}], overrides: $ov, values: $values} + $levers
-    | . + {nothing: (.profile == "strict" and ([.lifts, .overrides, .values, .hooks, .roles, .rows, .providers] | all(length == 0)))}' <<<"$DOCTOR_RES"
+    | . + {nothing: ((.profile == "strict" or .profile == "fast")
+        and ([[.lifts[] | select((.profile == "fast" and .adr == $fastadr) | not)], .overrides, .values, .hooks, .roles, .rows, .providers] | all(length == 0)))}' <<<"$DOCTOR_RES"
 }
 
 # The one line of `status` (spec 330 §6): `customized: 2 hooks, 1 role, 3 rows; lifted: none`, as {hooks, roles, rows, providers,

@@ -90,6 +90,15 @@ prompt_review_light() {
   echo "It requests changes only for a defect (wrong behaviour, a missing acceptance criterion, a security hole); style and nits are comments that do not block."
 }
 
+# What the reviewer files as issues (review.followUps): `blocking` (the default) keeps the stock of tickets small.
+prompt_follow_ups() {
+  if [ "$(config_get review.followUps)" = all ]; then
+    echo "File each out-of-scope or pre-existing defect as an issue (review.followUps is all)."
+  else
+    echo "File an issue only for a finding that blocks the milestone in progress or is a real security risk (label security); any other finding is a comment on the pull request, no issue (review.followUps is blocking)."
+  fi
+}
+
 # Step 4 of the prompts of a session that reviews its own pull request (run): $1 the tickets, $2 `batch` for a batch session. The light
 # path has the reviewer agent on Sonnet with the light brief; the security agent, full review and every other rule are as before.
 prompt_review() {
@@ -437,6 +446,7 @@ with its brief, then set senior-mode/review on $4 (\`gh api repos/$RUN_SLUG/stat
   a blocking finding is \`failure\` even on a protected pull request, without the label (a labelled pull request is
   skipped, so no fix round would start); the person is asked once the review passes.
 You change no file and merge nothing.
+$(prompt_follow_ups)
 You have 30 turns and a review posted late is worth nothing: by turn 20 at the latest, post the review comment and set
 the status on what you verified so far (what you only read goes under Not verified). With turns left, go deeper and add
 what you find in a follow-up comment; a finding that blocks changes the status to \`failure\`.

@@ -1187,7 +1187,8 @@ run_token_new() {
 # One look at the sessions in `running` (the caller's array): finished ones are read (run_finish), the ones
 # past autonomy.sessionTimeout are killed (run_timeout), the others stay. RUN_ON_EXIT, when set, names a
 # function that gets a finished session first and returns 0 when it took care of it (serve: a usage limit);
-# RUN_FINISH names the one that reads how it went (default run_finish; serve: one per role).
+# RUN_FINISH names the one that reads how it went (default run_finish; serve: one per role). RUN_ON_VANISH is the same
+# for a session script that is gone without its exit file (serve: an API error is not a failure, #819).
 # SENIOR_MODE_TIMEOUT_UNIT: seconds in a minute of autonomy.sessionTimeout (default 60), for the tests.
 run_reap() {
   local n still=()
@@ -1205,6 +1206,7 @@ run_reap() {
       run_timeout "$n"
       continue
     elif run_dead "$n"; then
+      if [ -n "${RUN_ON_VANISH:-}" ] && "$RUN_ON_VANISH" "$n"; then continue; fi
       run_vanished "$n"
       continue
     fi

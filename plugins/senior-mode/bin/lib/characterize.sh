@@ -120,11 +120,10 @@ characterize_pinned_edits() {
 # and the tracked files matching the globs; a file with coverage at or above characterize.below (default 50) in the ratchet
 # baseline of the base branch, or with no coverage data but a test that mentions it, is covered. Prints `untested <file>: <why>`
 # and `exempt <file>: <why>` (docs, generated, types or constants, characterize.exempt), nothing for a covered file. With
-# --changed or --check, on a branch with a `refactor(...)` commit, each untested file also says `characterized` (the commit) or
-# `missing`; --check fails on a missing one and on a refactor that edits a pinned assertion. A branch with no refactor commit
-# (a feature, a bug) needs no characterization commit: its untested files are only listed.
+# --changed or --check each untested file also says `characterized` (the commit) or `missing`; --check fails on a missing one and on
+# a refactor that edits a pinned assertion.
 untested() {
-  local changed=false check=false a root base preset below exempt f line status why pin bad=0 g refactor=false
+  local changed=false check=false a root base preset below exempt f line status why pin bad=0 g
   local -a globs=() files=()
   while [ $# -gt 0 ]; do
     a=$1
@@ -142,8 +141,6 @@ untested() {
   cd "$root"
   base=$(default_branch) || base=HEAD
   preset=$(project_preset "$root")
-  # Only a refactor must pin what it changes; a feature or a bug changes behaviour, and its own tests say what it should do (ADR 0034).
-  ! git log --format=%s "$base..HEAD" 2>/dev/null | grep -qE '^refactor(\([^)]*\))?!?: ' || refactor=true
   below=$(config_get characterize.below 2>/dev/null) || below=50
   [[ $below =~ ^[0-9]+$ ]] || below=50
   exempt=$(config_get characterize.exempt 2>/dev/null) || exempt='[]'
@@ -161,7 +158,7 @@ untested() {
     case $status in
       exempt) echo "exempt $f: $why" ;;
       untested)
-        if [ "$changed" = true ] && [ "$refactor" = true ]; then
+        if [ "$changed" = true ]; then
           if pin=$(characterize_pin "$base" "$preset" "$f"); then
             echo "characterized $f: ${pin%% *} ${pin#* }"
           else

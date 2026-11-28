@@ -71,22 +71,11 @@ said '^characterized src/pricing.sh: [0-9a-f]{40} test\(pricing\): characterize 
 # D: a characterization commit made after the change does not count (it must pin the code as it was).
 g reset -q --hard main
 put src/pricing.sh 'price() { echo 11; }'
-commit "refactor(pricing): new price"
+commit "feat(pricing): new price"
 put tests/test-pricing.sh 'source ../src/pricing.sh; [ "$(price)" = 11 ] || exit 1'
 commit "test(pricing): characterize price"
 run --check && fail "D: a characterization commit after the change passes"
 said '^missing src/pricing.sh' || fail "D: the late commit is not refused: $(cat "$work/out")"
-
-# D2 (ADR 0034): a feature or a bug changes behaviour, its own tests say what it should do: no characterization commit is
-# required, the untested file is only listed. A refactor (above) still needs one.
-for kind in feat fix; do
-  g reset -q --hard main
-  put src/pricing.sh 'price() { echo 11; }'
-  commit "$kind(pricing): new price"
-  run --check || fail "D2: a $kind commit on untested code is refused: $(cat "$work/out")"
-  said '^untested src/pricing.sh' || fail "D2: the untested file is not listed for a $kind: $(cat "$work/out")"
-  said '^missing' && fail "D2: a $kind is asked for a characterization commit: $(cat "$work/out")"
-done
 
 # E: a refactor that edits a pinned assertion fails; a behaviour change (no refactor commit) is left to the reviewer.
 g reset -q --hard main

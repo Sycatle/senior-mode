@@ -38,10 +38,11 @@ wd_signals() {
 }
 
 # RUN_WATCH of serve (see run_reap), for a session that has not ended: its activity is looked at (at most once a second),
-# and one that did nothing for autonomy.startupMinutes since its launch, or for autonomy.stallMinutes, or that ran longer
-# than autonomy.sessionTimeout, is stopped (wd_react). Returns 0 when it stopped the session.
+# and one that did nothing for autonomy.startupMinutes since its launch, or wrote no output and changed no file of its
+# worktree for autonomy.stallMinutes (a process that only burns CPU is stalled), or that ran longer than the timeout of
+# its ticket's Size (SERVE_TIMEOUT, ADR 0034), is stopped (wd_react). Returns 0 when it stopped the session.
 wd_watch() {
-  local n=$1 now=$SECONDS i unit=${SENIOR_MODE_TIMEOUT_UNIT:-60} why="" quiet="" last=0 base=true
+  local n=$1 now=$SECONDS i unit=${SENIOR_MODE_TIMEOUT_UNIT:-60} why="" quiet="" last=0 base=true limit
   local -a cur=()
   [ "${WD_TICK[$n]:-}" != "$now" ] || return 1
   WD_TICK[$n]=$now
@@ -63,12 +64,14 @@ wd_watch() {
       WD_AT[$n.$i]=$now
     fi
     [ "${WD_SIG[$n.$i]}" = "${WD_BASE[$n.$i]}" ] || base=false
-    # `last` is the newest change of any signal.
+    # The process group shows life at startup, not progress: `last` is the newest change of the worktree or the log.
+    [ "$i" = 1 ] && continue
     [ "${WD_AT[$n.$i]}" -le "$last" ] || last=${WD_AT[$n.$i]}
     [ $((now - ${WD_AT[$n.$i]})) -lt $((SERVE_STALL * unit)) ] || quiet+="${quiet:+, }${name[$i]}"
   done
-  if [ $((now - RUN_STARTED[$n])) -ge $((RUN_TIMEOUT * unit)) ]; then
-    why="timed out after $RUN_TIMEOUT minute$([ "$RUN_TIMEOUT" -eq 1 ] || echo s) (autonomy.sessionTimeout)"
+  limit=${SERVE_TIMEOUT[${SERVE_SIZE[$n]:-M}]:-${SERVE_TIMEOUT[M]:-$RUN_TIMEOUT}}
+  if [ $((now - RUN_STARTED[$n])) -ge $((limit * unit)) ]; then
+    why="timed out after $limit minute$([ "$limit" -eq 1 ] || echo s) (autonomy.sessionTimeout, Size ${SERVE_SIZE[$n]:-M})"
   elif [ "$base" = true ] && [ $((now - RUN_STARTED[$n])) -ge $((SERVE_STARTUP_MIN * unit)) ]; then
     why="hung at startup: no sign of life in $SERVE_STARTUP_MIN minute$([ "$SERVE_STARTUP_MIN" -eq 1 ] || echo s) (autonomy.startupMinutes)"
   elif [ $((now - last)) -ge $((SERVE_STALL * unit)) ]; then

@@ -56,10 +56,10 @@ serve_starts_drop() {
 }
 
 # Is autonomy.ticketsPerHour reached? Prints the reason and returns 0 when it is. It counts ticket starts, not the
-# role sessions a ticket costs (#355): one line "<time> <ticket>" in ticket-starts per ticket begun.
+# role sessions a ticket costs (#355): one line "<time> <ticket>" in ticket-starts per ticket begun. 0 is no limit.
 serve_ticket_cap() {
   local now count f=$SERVE_DIR/ticket-starts
-  [ -f "$f" ] || return 1
+  [ "$SERVE_TICKETS_PER_HOUR" -gt 0 ] && [ -f "$f" ] || return 1
   now=$(serve_now)
   state_update serve_starts_trim "$((now - 3600))" || true
   count=$(awk 'END { print NR }' "$f")
@@ -70,50 +70,6 @@ serve_ticket_cap() {
 # A ticket's session is the only one it has: the numbers of the tickets with a session running.
 serve_busy() {
   [[ " ${running[*]} " == *" $1 "* ]]
-}
-
-# What sandbox_decide says for this machine (#760): the mode, the runtime (not looked for when the mode is `off`), and
-# whether the credential file is good.
-serve_sandbox_decision() {
-  local mode runtime="" cred=no
-  mode=$(sandbox_mode)
-  if [ "$mode" != off ]; then
-    runtime=$(sandbox_runtime) || runtime=""
-    ! sandbox_credential_ok || cred=yes
-  fi
-  sandbox_decide "$mode" "$runtime" "$cred"
-}
-
-# The note of a session that runs on the host, said once per local day: the file `sandbox-note` keeps the day and the note.
-serve_sandbox_note() {
-  local day
-  day=$(date -d "@$(serve_now)" +%F)
-  [ "$(cat "$SERVE_DIR/sandbox-note" 2>/dev/null)" != "$day $1" ] || return 0
-  state_put "$SERVE_DIR/sandbox-note" "$day $1" || return 0
-  echo "serve: $1" >&2
-}
-
-# May the session start where the sandbox decides it runs (#760)? A `hold` (mode `required` without a runtime or a model
-# credential, or an image that does not build) holds every launch with cause `sandbox`: serve_hold_set, and an approved pull
-# request still merges. A `host` note is logged once a day. A container gets its image built here (sandbox_image).
-serve_sandbox_gate() {
-  local out kind detail
-  out=$(serve_sandbox_decision)
-  kind=${out%% *}
-  detail=${out#* }
-  if [ "$kind" = container ] && ! out=$(sandbox_image); then
-    kind=hold
-    detail=${out#hold }
-  fi
-  case $kind in
-    hold)
-      serve_hold_set sandbox "$detail"
-      [ -n "$SERVE_HELD" ] || SERVE_HELD="held, environment problem (sandbox): $detail"
-      return 1
-      ;;
-    host) serve_sandbox_note "$detail" ;;
-  esac
-  return 0
 }
 
 # May a session start now? Not when serve is stopping, held back (serve_hold), without a free slot or after the
@@ -131,7 +87,6 @@ serve_can_launch() {
     fi
   fi
   [ "$SERVE_GUARDS" = ok ] || return 1
-  serve_sandbox_gate || return 1
   if [ -z "$SERVE_WAIT" ] && SERVE_WAIT=$(serve_ceiling); then
     echo "serve: waiting for the next poll: $SERVE_WAIT"
   fi

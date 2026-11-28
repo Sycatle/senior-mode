@@ -1,7 +1,6 @@
 # shellcheck shell=bash
 # Skill evals (#368): a change to a skill or an agent that answers a failure cause (an improvement ticket of `retro`)
-# carries a before/after eval of the targeted `evals/` case in its pull request, and `ready` refuses it without one. Only the
-# shipped skills and agents (`plugins/senior-mode/`) are held to it, not a project's own `.claude/` ones (ADR 0034).
+# carries a before/after eval of the targeted `evals/` case in its pull request, and `ready` refuses it without one.
 
 # The "Eval" table of a pull request body $1, one row per line as `<case>\t<before k>\t<before n>\t<after k>\t<after n>`:
 # the rows under a heading that says "eval" whose second and third cells are scores `k/n`.
@@ -20,7 +19,7 @@ eval_rows() {
 # phrase, or nothing. Starts with "not ready: " when the pull request is at fault; other phrases say what could not be read.
 eval_blocker() {
   local slug=$1 pull=$3 files=$4 changed n issue rows row cases="" c name bk bn ak an
-  changed=$(cut -f1 <<<"$files" | grep -E '^plugins/senior-mode/(skills|agents)/' | paste -sd, - | sed 's/,/, /g') || changed=""
+  changed=$(cut -f1 <<<"$files" | grep -E '^(plugins/[^/]+/|\.claude/)(skills|agents)/' | paste -sd, - | sed 's/,/, /g') || changed=""
   [ -n "$changed" ] || return 0
   while IFS= read -r n; do
     [ -n "$n" ] || continue

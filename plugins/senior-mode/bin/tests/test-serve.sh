@@ -146,6 +146,7 @@ case $(sed -n 3p "$fx") in
     wait ;;
   slow) for _ in $(seq 600); do [ -f "$FIX/release-$n" ] && break; sleep 0.1; done ;;
   busy) for i in $(seq 30); do echo "$i" >>busy.txt; sleep 0.3; done; rm -f busy.txt ;;
+  spin) end=$((SECONDS + 30)); while [ "$SECONDS" -lt "$end" ]; do :; done ;;
   flaky*:*)
     # flaky:<message> dies once, flaky<k>:<message> k times (the count is in $FIX/flaky-done-<n>-<model>).
     spec=$(sed -n 3p "$fx")
@@ -325,6 +326,16 @@ started 20 || fail "C2: no launch: $(cat "$CLAUDE_LOG")"
 started 21 && fail "C2: two tickets started in the hour"
 grep -q 'autonomy.ticketsPerHour 1' "$work/out" || fail "C2: the binding cap is not named: $(cat "$work/out")"
 grep -q 'autonomy.sessionsPerHour' "$work/out" && fail "C2: the session cap is named, it does not bind: $(cat "$work/out")"
+# C3: autonomy.ticketsPerHour 0 (the default, #829) is no limit: with three tickets begun this hour, a fourth starts.
+config '{"parallel": 2, "ticketsPerHour": 0}'
+board 20 21
+fresh
+mkdir -p "$state"
+printf '%s 1\n%s 2\n%s 3\n' 1799999000 1799999100 1799999200 >"$state/ticket-starts"
+SENIOR_MODE_NOW=1800000000 once || fail "C3: serve failed: $(cat "$work/out")"
+started 20 || fail "C3: ticketsPerHour 0 held the first ticket: $(cat "$work/out")"
+started 21 || fail "C3: ticketsPerHour 0 held the second ticket: $(cat "$work/out")"
+grep -q 'autonomy.ticketsPerHour' "$work/out" && fail "C3: a cap of 0 is named: $(cat "$work/out")"
 # Without sessionsPerHour, the safety cap is 6 sessions per slot: 6 role sessions in the hour stop one slot, not two.
 config '{"parallel": 1}'
 board 20
@@ -435,6 +446,20 @@ session 44-sonnet delivered pr
 SENIOR_MODE_NOW=1800000101 once || fail "F: serve failed after the cooldown: $(cat "$work/out")"
 started 44 || fail "F: not launched after the cooldown: $(cat "$work/out")"
 [ ! -e "$state/paused" ] || fail "F: the pause outlived its cooldown"
+
+# F2: with autonomy.maxConsecutiveFailures 3 (the default, #829), two failed tickets in a row do not pause serve, the third does.
+config '{"parallel": 3, "escalate": false, "maxConsecutiveFailures": 3}' '{"breakerCooldown": 100}'
+board 45 46
+session 45-sonnet "failed: broke"
+session 46-sonnet "failed: broke too"
+session 47-sonnet "failed: broke again"
+fresh
+SENIOR_MODE_NOW=1800000000 once || fail "F2: serve failed: $(cat "$work/out")"
+[ ! -e "$state/paused" ] || fail "F2: two failures opened the breaker: $(cat "$state/paused")"
+board 45 46 47
+fresh
+SENIOR_MODE_NOW=1800000000 once || fail "F2: serve failed: $(cat "$work/out")"
+[ "$(sed -n 1p "$state/paused" 2>/dev/null)" = 1800000100 ] || fail "F2: three failures did not open the breaker: $(cat "$work/out")"
 
 # G: TERM stops the launching at once and gives the sessions the grace. A session that ends within it is read;
 # one that does not is killed and its ticket labelled needs-human. A second serve is refused meanwhile.
@@ -1594,8 +1619,8 @@ once || fail "W: serve failed: $(cat "$work/out")"
 grep -q 'issues/.*/labels\|issues/.*/comments' "$GH_LOG" && fail "W: a transient blocker got needs-human: $(cat "$GH_LOG")"
 grep -q 'Waiting for a human.*senior-mode/security not green' "$work/out" || fail "W: the transient wait is not said: $(cat "$work/out")"
 green "$sha66"
-# A pull request over its size budget only warns (ADR 0034) and merges; one that is not ready for its tickets (#297):
-# needs-human on the pull request and the ticket, with the numbers; it is never merged. One with a commit per ticket merges.
+# A pull request that is not ready for its tickets (#297, #303): needs-human on the pull request and the ticket, with
+# the numbers; it is never merged. One that is within budget, with a commit per ticket, merges.
 size_item() { jq -nc --arg s "$2" '{data: {repository: {issue: {projectItems: {nodes: [{project: {id: "PVT_1"},
   fieldValues: {nodes: [{name: $s, field: {name: "Size"}}]}}]}}}}}' >"$FIX/item-$1.json"; }
 size_item 66 S
@@ -1604,8 +1629,10 @@ printf 'src/big.ts\t450\npackage-lock.json\t9000\n' >"$FIX/files-166"
 PRBODY="Closes #66" pr 166 feat/66-x "$sha66" clean
 fresh
 once || fail "X: serve failed: $(cat "$work/out")"
-grep -q "^pr merge 166 --rebase --match-head-commit $sha66" "$GH_LOG" || fail "X: a pull request over its size budget is held: $(cat "$work/out")"
-grep -q 'issues/166/labels.*needs-human' "$GH_LOG" && fail "X: #166 over its budget got needs-human: $(cat "$GH_LOG")"
+grep -q '^pr merge' "$GH_LOG" && fail "X: merged a pull request over its size budget"
+grep -q 'issues/166/comments.*450 changed lines, 150 over the size budget of 300' "$GH_LOG" || fail "X: no comment with the numbers: $(grep 'issues/166' "$GH_LOG")"
+grep -q 'issues/166/labels.*needs-human' "$GH_LOG" || fail "X: #166 not needs-human: $(cat "$GH_LOG")"
+grep -q 'issues/66/labels.*needs-human' "$GH_LOG" || fail "X: ticket #66 not needs-human: $(cat "$GH_LOG")"
 printf 'src/ok.ts\t200\n' >"$FIX/files-166"
 printf '%s\n' '[{"commit": {"message": "feat: both\n\nRefs #66"}}]' >"$FIX/commits-166.json"
 PRBODY=$'Closes #66\nCloses #67' pr 166 feat/66-x "$sha66" clean
@@ -2175,6 +2202,27 @@ fresh
 once || fail "AG: serve failed: $(cat "$work/out")"
 grep -q 'is stopped' "$work/out" && fail "AG: a session that works was stopped: $(cat "$work/out")"
 outcome_of 111 delivered AG
+# A session that burns CPU but writes no output and changes no file is stalled (#829): only the worktree and the log count.
+config '{"startupMinutes": 30, "stallMinutes": 2}'
+board 113
+session 113-sonnet "" "" spin
+fresh
+once || fail "AG: serve failed: $(cat "$work/out")"
+grep -q '#113: the session is stopped, hung: nothing moved' "$work/out" || fail "AG: a session that only burns CPU was not stopped: $(cat "$work/out")"
+# The wall clock follows the Size (#829): S 45, M 120, L 240 minutes by default; an S ticket stops at its own value, and a
+# project's scalar autonomy.sessionTimeout applies to every Size (run's own timer is the same one then: either says it).
+[ "$(cd "$repo" && "$cli" config get autonomy.sessionTimeoutBySize)" = '{"S":45,"M":120,"L":240}' ] || fail "AG: the timeouts by Size are not 45, 120, 240"
+config '{"startupMinutes": 30, "stallMinutes": 30, "sessionTimeoutBySize": {"S": 2, "M": 120, "L": 240}}'
+board 114
+session 114-sonnet "" "" hang
+fresh
+once || fail "AG: serve failed: $(cat "$work/out")"
+grep -q '#114: the session is stopped, timed out after 2 minutes (autonomy.sessionTimeout, Size S)' "$work/out" || fail "AG: the S timeout did not stop the session: $(cat "$work/out")"
+config '{"startupMinutes": 30, "stallMinutes": 30, "sessionTimeout": 1, "sessionTimeoutBySize": {"S": 100, "M": 120, "L": 240}}'
+board 114
+fresh
+once || fail "AG: serve failed: $(cat "$work/out")"
+grep -q 'timed out after 1 minute' "$work/out" || fail "AG: the scalar timeout did not win over the Size: $(cat "$work/out")"
 # What the session left behind is killed at the next poll, and only that.
 config '{}'
 board 112

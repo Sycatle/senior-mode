@@ -8,7 +8,7 @@ SELF=$(readlink -f "${BASH_SOURCE[0]}")
 LIB=$(dirname "$SELF")/lib
 
 usage() {
-  die "usage: senior-mode config get <key> | config explain <key> | config validate [--json] | override list | override show <file> | doctor [--json] | version | item set <issue|owner/name#n> <field> <option> [<field> <option>]... | item get <issue|owner/name#n> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n|owner/name#n>]... [--parent <n|owner/name#n>] [--repo <owner/name>] | pick [--json] [--max N] | start <issue|owner/name#n> [--base <ref>] | preflight <issue>... | hotfix <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish] | clean [--dry-run] [--days N] | statusline | retro [--since <dur> | --iteration [<name>]] [--json] | check [--pre-push|--ci-only|--changed|--all|--no-cache|--tier 3 [--publish <sha>]|--update-baseline] | untested [--changed] [--check] [<glob>...] | publish [commit] | preview | shots <pr> | release [--dry-run|--patch] | frame start <idea> | frame decide <issue> <question> <answer> | frame end | protected [--base <ref>] | red-tests record <issue> | red-tests verify <issue> | slot -- <command>... | ready [--pr <n> | --milestone <m>... | --optin | <n>...] [--dry-run] | checkpoint [--done <t>]... [--doing <t>]... [--next <t>]... [--assumption <t>]... | context | architecture [--write|--check] | ratchet [--init] | survey | setup github [--ci local|actions|existing] [--migrate|--upgrade] [--project <n|url> [--home <owner/name>] [--move-items]] [--dry-run] | setup repo [--command <name>=<command>]... [--dry-run] [--adopt [--debt]] [--knowledge] | setup repo --hooks | setup detect [--json] | setup answers [--strictness strict|fast] [--language en|fr] [--autonomy ask|alone] [--lsp yes|no] [--previews platform|ready|off] [--dry-run] | setup org <owner> [--apply] [--print-ruleset] | setup remove [--apply] | setup statusline | demo [--yes] [--budget <usd>] [--clean]"
+  die "usage: senior-mode config get <key> | config explain <key> | config validate [--json] | override list | override show <file> | doctor [--json] | version | item set <issue> <field> <option> [<field> <option>]... | item get <issue> [field] | issue create --title <t> --body-file <f> --size <s> [--priority <p>] [--severity critical|high|moderate|low] [--kind <k> --path <p> --rule <r> [--details-file <f> | --no-advisory]] [--status <s>] [--milestone <m>] [--type <t>] [--blocked-by <n>]... [--parent <n>] | pick [--json] [--max N] | start <issue> [--base <ref>] | preflight <issue>... | hotfix <issue> | run [--max N] [--parallel P] | schedule install [--at HH:MM] [--max N] | schedule remove | schedule status | serve [--install|--uninstall|--resume] | status [--json] [--since <dur>] [--watch [secs]] [--fix] [--publish] | clean [--dry-run] [--days N] | statusline | retro [--since <dur> | --iteration [<name>]] [--json] | check [--pre-push|--ci-only|--changed|--all|--no-cache|--tier 3 [--publish <sha>]|--update-baseline] | untested [--changed] [--check] [<glob>...] | publish [commit] | preview | shots <pr> | release [--dry-run|--patch] | frame start <idea> | frame decide <issue> <question> <answer> | frame end | protected [--base <ref>] | red-tests record <issue> | red-tests verify <issue> | slot -- <command>... | ready [--pr <n> | --milestone <m>... | --optin | <n>...] [--dry-run] | checkpoint [--done <t>]... [--doing <t>]... [--next <t>]... [--assumption <t>]... | context | architecture [--write|--check] | ratchet [--init] | survey | setup github [--ci local|actions|existing] [--migrate|--upgrade] [--project <n|url> [--home <owner/name>] [--move-items]] [--dry-run] | setup repo [--command <name>=<command>]... [--dry-run] [--adopt [--debt]] [--knowledge] | setup repo --hooks | setup detect [--json] | setup answers [--strictness strict|fast] [--language en|fr] [--autonomy ask|alone] [--lsp yes|no] [--previews platform|ready|off] [--dry-run] | setup org <owner> [--apply] [--print-ruleset] | setup remove [--apply] | setup statusline | demo [--yes] [--budget <usd>] [--clean]"
 }
 
 # The modules hold definitions only: function bodies and constants, no statement runs at load time.
@@ -121,8 +121,6 @@ done
 . "$LIB/serve-hold.sh"
 # shellcheck source=lib/serve-launch.sh
 . "$LIB/serve-launch.sh"
-# shellcheck source=lib/serve-sandbox.sh
-. "$LIB/serve-sandbox.sh"
 # shellcheck source=lib/serve-session.sh
 . "$LIB/serve-session.sh"
 # shellcheck source=lib/serve-merge.sh
@@ -133,8 +131,6 @@ done
 . "$LIB/serve-frame.sh"
 # shellcheck source=lib/serve-duties.sh
 . "$LIB/serve-duties.sh"
-# shellcheck source=lib/serve-plugin.sh
-. "$LIB/serve-plugin.sh"
 # shellcheck source=lib/demo.sh
 . "$LIB/demo.sh"
 
@@ -170,7 +166,6 @@ case "${1:-}" in
     ;;
   serve)
     shift
-    [ $# -gt 0 ] || serve_plugin_enter
     serve "$@"
     ;;
   setup)

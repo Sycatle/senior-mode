@@ -131,11 +131,10 @@ grep -q 'framing' "$work/err" || fail "C: non-framing pull request not explained
 ready --pr abc 2>/dev/null && fail "C: --pr abc accepted"
 ready --bogus 2>/dev/null && fail "C: an unknown option accepted"
 
-# D: without --pr, the Backlog tickets an agent filed. They become Ready only when S or M, not high or critical
+# D: without --pr, the Backlog tickets an agent filed. They become Ready only when S, not high or critical
 # security and outside the protected zones (and they pass the Definition of Ready).
 items="[]"
 item 20 Backlog "P2 later" S low "docs/**" '["security"]' "$criteria$agent"
-item 19 Backlog "P2 later" L - "docs/**" '[]' "$criteria$agent"
 item 21 Backlog "P2 later" M - "docs/**" '[]' "$criteria$agent"
 item 22 Backlog "P0 now" S high "docs/**" '["security"]' "$criteria$agent"
 item 23 Backlog "P2 later" S - "auth/login.ts" '[]' "$criteria$agent"
@@ -149,16 +148,15 @@ board
 ready || fail "D: ready failed: $(cat "$work/err")"
 said '^#20 Status = Ready' || fail "D: a small, low-risk agent ticket not Ready: $(cat "$work/out")"
 said '^#28 Status = Ready' || fail "D: an agent ticket outside the zones not Ready: $(cat "$work/out")"
-said '^#21 Status = Ready' || fail "D: an agent ticket of size M not Ready: $(cat "$work/out")"
-grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 3 || fail "D: only #20, #21 and #28 become Ready: $(cat "$GH_LOG")"
-said '^#19 needs-human: .*size L' || fail "D: an L agent ticket: $(cat "$work/out")"
+grep -c 'item-edit.*--single-select-option-id o2' "$GH_LOG" | grep -qx 2 || fail "D: only #20 and #28 become Ready: $(cat "$GH_LOG")"
+said '^#21 needs-human: .*size M' || fail "D: an M agent ticket: $(cat "$work/out")"
 said '^#22 needs-human: .*high security' || fail "D: a high security agent ticket: $(cat "$work/out")"
 said '^#26 needs-human: .*critical security' || fail "D: a critical security agent ticket: $(cat "$work/out")"
 said '^#23 needs-human: .*protected zone.*auth/login.ts' || fail "D: an agent ticket in a protected zone: $(cat "$work/out")"
 said '^#27 needs-human: .*protected zone' || fail "D: a Paths glob that reaches a protected zone: $(cat "$work/out")"
 said '^#29 needs-human: .*Paths' || fail "D: an agent ticket without Paths: $(cat "$work/out")"
-for n in 19 22 23 26 27 29; do labelled "$n" || fail "D: #$n not labelled needs-human"; done
-for n in 20 21 24 25 28; do labelled "$n" && fail "D: #$n labelled needs-human"; done
+for n in 21 22 23 26 27 29; do labelled "$n" || fail "D: #$n not labelled needs-human"; done
+for n in 20 24 25 28; do labelled "$n" && fail "D: #$n labelled needs-human"; done
 grep -qE "issues/24[/ ]" "$GH_LOG" && fail "D: #24 (not filed by an agent, in no framing pull request) was touched"
 grep -qE "issues/25[/ ]" "$GH_LOG" && fail "D: #25 (already Ready) was touched"
 
@@ -245,11 +243,10 @@ changes 300 src/a.sh:250 package-lock.json:9000 tests/fixtures/big.json:5000 src
 ready --pr 300 || fail "H: a pull request within its budget is not ready: $(cat "$work/out")"
 said '^pull request #300 is ready$' || fail "H: no ready line: $(cat "$work/out")"
 logged "pulls/300/commits" && fail "H: the commits of a single-ticket pull request were read"
-# 400 lines of 300: a warning with the excess (ADR 0034), the pull request is not held.
+# 400 lines of 300: not ready, by how much.
 changes 300 src/a.sh:250 src/b.sh:150
-ready --pr 300 || fail "H: a pull request over its budget is held: $(cat "$work/out")"
-said '^warning: 400 changed lines, 100 over the size budget of 300' || fail "H: the excess is not warned: $(cat "$work/out")"
-said '^pull request #300 is ready$' || fail "H: an over-budget pull request is not ready: $(cat "$work/out")"
+ready --pr 300 && fail "H: a pull request over its budget is ready"
+said 'pull request #300 is not ready: 400 changed lines, 100 over the size budget of 300' || fail "H: the excess is not said: $(cat "$work/out")"
 # A single-ticket pull request needs no Refs: its one commit may say anything.
 changes 300 src/a.sh:10
 ready --pr 300 || fail "H: a single-ticket pull request needs no reference: $(cat "$work/out")"
@@ -258,7 +255,7 @@ delivery 305 "Closes #304" "feat: m"
 changes 305 src/a.sh:700
 ready --pr 305 || fail "H: an M pull request of 700 lines is not ready: $(cat "$work/out")"
 jq '.limits = {diffLines: {M: 600}}' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
-ready --pr 305 || fail "H: an over-budget M pull request is held: $(cat "$work/out")"
+ready --pr 305 && fail "H: limits.diffLines.M = 600 not applied"
 said '100 over the size budget of 600' || fail "H: the configured budget is not said: $(cat "$work/out")"
 ready --pr 300 || fail "H: the S budget was lost with a partial limits.diffLines: $(cat "$work/out")"
 config '["auth/**"]'
@@ -275,8 +272,8 @@ size 306 M
 echo '{"labels": [{"name": "hotfix"}]}' >"$FIX/issue-306.json"
 delivery 307 "Closes #306" "fix: m"
 changes 307 src/a.sh:400 docs/incidents/2026-11-24-306-down.md:60
-ready --pr 307 || fail "H: a hotfix over the S budget is held: $(cat "$work/out")"
-said '^warning: 400 changed lines, 100 over the size budget of 300 \(limits.diffLines: #306 S hotfix\)' || fail "H: the hotfix budget is not said: $(cat "$work/out")"
+ready --pr 307 && fail "H: a hotfix over the S budget is ready"
+said 'pull request #307 is not ready: 400 changed lines, 100 over the size budget of 300 \(limits.diffLines: #306 S hotfix\)' || fail "H: the hotfix budget is not said: $(cat "$work/out")"
 changes 307 src/a.sh:250 docs/incidents/2026-11-24-306-down.md:60
 ready --pr 307 || fail "H: a hotfix within the S budget is not ready: $(cat "$work/out")"
 rm -f "$FIX/issue-306.json"
@@ -290,7 +287,7 @@ delivery 312 $'Closes #301\nCloses #302\nCloses #303' 'Refs #301' 'Refs #302' 'R
 changes 312 src/a.sh:900
 ready --pr 312 || fail "H: a batch at the sum of its budgets is not ready: $(cat "$work/out")"
 changes 312 src/a.sh:901
-ready --pr 312 || fail "H: a batch over the sum of its budgets is held: $(cat "$work/out")"
+ready --pr 312 && fail "H: a batch over the sum of its budgets is ready"
 said '1 over the size budget of 900 \(limits.diffLines: #301 S, #302 S, #303 S\)' || fail "H: the batch budget is not said: $(cat "$work/out")"
 # A ticket whose Size is unknown cannot be checked; it is not called ready.
 size 301 ""
@@ -311,10 +308,10 @@ printf '{"body": "## Why\\nx\\n\\n## Acceptance criteria\\n- Given a, then b.\\n
 printf '{"body": "## Acceptance criteria\\n\\n- Given e, then f.\\n"}' >"$FIX/issue-402.json"
 delivery 400 "Closes #401" "feat: a"
 changes 400 src/a.sh:10
-ready --pr 400 || fail "I: a pull request without a Self-review table is held: $(cat "$work/out")"
-said '^warning: the Self-review table has no row with evidence for #401.1, #401.2 ' || fail "I: the gaps are not warned: $(cat "$work/out")"
+ready --pr 400 && fail "I: a pull request without a Self-review table is ready"
+said 'pull request #400 is not ready: the Self-review table has no row with evidence for #401.1, #401.2 ' || fail "I: the gaps are not named: $(cat "$work/out")"
 delivery 400 $'Closes #401\n\n## Self-review\n\n| Criterion | Evidence |\n|---|---|\n| 1 Given a | test_a passes |\n| 2 Given c | - |\n' "feat: a"
-ready --pr 400 || fail "I: an empty evidence holds the pull request: $(cat "$work/out")"
+ready --pr 400 && fail "I: an empty evidence is accepted"
 said 'for #401.2 ' || fail "I: the criterion without evidence is not named: $(cat "$work/out")"
 said '#401.1' && fail "I: a criterion with evidence is named: $(cat "$work/out")"
 delivery 400 $'Closes #401\n\n## Self-review\n\n| Criterion | Evidence |\n|---|---|\n| #401.1 Given a | test_a passes |\n| #401.2 Given c | `make test`: 12 passed |\n' "feat: a"
@@ -322,7 +319,7 @@ ready --pr 400 || fail "I: a full Self-review table is not ready: $(cat "$work/o
 # A batch: rows are #<ticket>.<k>; a bare number is ambiguous and does not count.
 delivery 410 $'Closes #401\nCloses #402\n\n## Self-review\n| # | Evidence |\n|---|---|\n| #401.1 | t1 |\n| #401.2 | t2 |\n| 1 | t3 |\n' 'Refs #401' 'Refs #402'
 changes 410 src/a.sh:10
-ready --pr 410 || fail "I: a batch with a missing ticket row is held: $(cat "$work/out")"
+ready --pr 410 && fail "I: a batch with a missing ticket row is ready"
 said 'for #402.1 ' || fail "I: the batch gap is not named: $(cat "$work/out")"
 
 # J: a spike (#321) ends in a note, an ADR or framed tickets, never in code: its pull request changes docs/ only.
@@ -480,9 +477,6 @@ evalpr 500 501 "" src/a.sh:10 docs/guide/skills.md:4
 ready --pr 500 || fail "M: an improvement pull request that changes no skill is held to an eval: $(cat "$work/out")"
 evalpr 500 502 "" plugins/senior-mode/skills/tdd/SKILL.md:10
 ready --pr 500 || fail "M: a pull request of an ordinary ticket is held to an eval: $(cat "$work/out")"
-# A project's own skills and agents (.claude/) and another plugin's are not held to it; the shipped ones are (above).
-evalpr 500 501 "" .claude/skills/deploy/SKILL.md:10 .claude/agents/db.md:5 plugins/other/skills/x/SKILL.md:3
-ready --pr 500 || fail "M: a project's skill is held to an eval: $(cat "$work/out")"
 
 # N (#632): a ticket that declares a tool absent from the machine (`Needs:`) is kept out of Ready, with that reason.
 items="[]"
@@ -528,7 +522,7 @@ size 403 S
 printf '{"body": "## Why\\nx\\n\\n## Criteria\\n- Given a, then b.\\n- Given c, then d.\\n\\n## Out of scope\\n- not this\\n"}' >"$FIX/issue-403.json"
 delivery 420 "Closes #403" "feat: a"
 changes 420 src/a.sh:10
-ready --pr 420 || fail "P: a pull request without a Self-review table is held: $(cat "$work/out")"
+ready --pr 420 && fail "P: a pull request without a Self-review table is ready"
 said 'no row with evidence for #403.1, #403.2 ' || fail "P: the criteria under ## Criteria are not read: $(cat "$work/out")"
 
 # Q (#637): the size budget weighs test lines at 0.5 and documentation lines at 0.25 (limits.diffWeights), and
@@ -538,22 +532,20 @@ delivery 430 "Closes #301" "feat: a"
 changes 430 src/a.sh:100 tests/test-a.sh:200 plugins/x/bin/tests/b.test.ts:200
 ready --pr 430 || fail "Q: 100 code and 400 test lines (300 weighted) are not ready: $(cat "$work/out")"
 changes 430 src/a.sh:100 tests/test-a.sh:402
-ready --pr 430 || fail "Q: 100 code and 402 test lines (301 weighted) are held: $(cat "$work/out")"
-said '^warning: 301 changed lines \(100 of code, 402 of tests counted at 0.5, 0 of docs counted at 0.25\), 1 over the size budget of 300' ||
+ready --pr 430 && fail "Q: 100 code and 402 test lines (301 weighted) are ready"
+said 'pull request #430 is not ready: 301 changed lines \(100 of code, 402 of tests counted at 0.5, 0 of docs counted at 0.25\), 1 over the size budget of 300' ||
   fail "Q: the code and test counts are not said: $(cat "$work/out")"
 changes 430 src/a.sh:200 README.md:200 docs/guide/x.md:200
 ready --pr 430 || fail "Q: 200 code and 400 doc lines (300 weighted) are not ready: $(cat "$work/out")"
 changes 430 src/a.sh:100 plugins/x/skills/y/SKILL.md:201
-ready --pr 430 || fail "Q: a skill over budget is held: $(cat "$work/out")"
-said '^warning: 301 changed lines' || fail "Q: the Markdown of a skill was weighed as documentation: $(cat "$work/out")"
+ready --pr 430 && fail "Q: the Markdown of a skill was weighed as documentation"
 changes 430 src/a.sh:10 src/gen/a.ts:1000 src/gen/deep/b.ts:1000
-ready --pr 430 || fail "Q: a pull request over budget is held: $(cat "$work/out")"
-said '^warning: 2010 changed lines' || fail "Q: unlisted generated files were not counted: $(cat "$work/out")"
+ready --pr 430 && fail "Q: unlisted generated files were not counted"
 jq '.limits = {diffExclude: ["src/gen/*"]}' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
 ready --pr 430 || fail "Q: limits.diffExclude is not applied: $(cat "$work/out")"
 jq '.limits = {diffWeights: {tests: 1}}' "$repo/.claude/senior-mode.json" >"$work/c" && mv "$work/c" "$repo/.claude/senior-mode.json"
 changes 430 src/a.sh:100 tests/test-a.sh:201
-ready --pr 430 || fail "Q: a pull request over budget is held: $(cat "$work/out")"
+ready --pr 430 && fail "Q: limits.diffWeights.tests = 1 not applied"
 said '301 changed lines' || fail "Q: the configured weight is not applied: $(cat "$work/out")"
 config '["auth/**"]'
 
@@ -681,7 +673,8 @@ ready --optin || fail "T: a damaged opt-in file fails: $(cat "$work/err")"
 said '^no candidate: nothing is opted in' || fail "T: a damaged opt-in file is not set aside: $(cat "$work/out")"
 rm -f "$optin"
 
-# U: the tickets a framing session filed (#585, `framed-by: serve`) are an agent's: Ready by rule like #20-#29, a protected zone and a high severity still stop one, and one that waits for an answer
+# U: the tickets a framing session filed (#585, `framed-by: serve`) are an agent's: Ready by rule like #20-#29, but an M
+# passes (not an agent's M), a protected zone and a high severity still stop one, and one that waits for an answer
 # (needs-decision) is left alone until its label goes.
 framed=$'\nfiled-by: agent\nframed-by: serve\n'
 items="[]"
@@ -693,7 +686,7 @@ item 44 Backlog "P1 next" L - "docs/**" '[]' "$criteria$framed"
 board
 ready || fail "U: ready failed: $(cat "$work/err")"
 said '^#40 Status = Ready' || fail "U: a framed M ticket not Ready: $(cat "$work/out")"
-said '^#41 Status = Ready' || fail "U: an agent's M ticket is not Ready: $(cat "$work/out")"
+said '^#41 needs-human: .*size M' || fail "U: an agent's M ticket that no framing filed is Ready: $(cat "$work/out")"
 said '^#42 needs-human: .*protected zone' || fail "U: a framed ticket in a protected zone: $(cat "$work/out")"
 said '^#44 needs-human: .*size L' || fail "U: a framed L ticket: $(cat "$work/out")"
 grep -qE "issues/43[/ ]" "$GH_LOG" && fail "U: #43 (needs-decision) was touched: $(grep 'issues/43' "$GH_LOG")"

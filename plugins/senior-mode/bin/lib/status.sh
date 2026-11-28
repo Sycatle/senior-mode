@@ -74,14 +74,14 @@ STATUS_JQ="$BRANCH_DEF"'. as $d | $d.items as $items | {
       (if (.labels | index("blocked")) then "blocked" else empty end),
       (if (.labels | index("needs-info")) then "needs information" else empty end),
       (if (.blockers | length) > 0 and (.status | IN("Ready", "In progress", "In review"))
-        then "waits for " + (.blockers | map(if type == "string" then . else "#\(.)" end) | join(", ")) else empty end)]) as $r
+        then "waits for " + (.blockers | map("#\(.)") | join(", ")) else empty end)]) as $r
     | select($r | length > 0) | {number, title, reasons: $r}],
   waiting: (([$d.prs[] | select(.labels | index("needs-human")) | {kind: "pull request", number, title, why: "needs a human decision"}]
       + [$d.prs[] | select(.failing | length > 0) | {kind: "pull request", number, title, why: ("failing: " + (.failing | join(", ")))}]
       + [$items[] | select(.open and (.labels | index("needs-human"))) | {kind: "ticket", number, title, why: "needs a human decision"}])
     | group_by([.kind, .number]) | map(.[0] + {why: (map(.why) | join("; "))})),
   decisions: decisions($d),
-  drift: drift($d; $locals[0]),
+  drift: drift($d; $locals),
   orphans: (([$items[] | .parent.number // empty] | unique) as $epics
     | [$items[] | select(.open and (.status | IN("Backlog", "Ready", "In progress", "In review")) and .orphan != null and (.number | IN($epics[]) | not))
       | {number, title, why: .orphan}]),
@@ -92,7 +92,7 @@ STATUS_JQ="$BRANCH_DEF"'. as $d | $d.items as $items | {
   customized: $customized,
   next: ($d | pick | .[:3] | map({number, title, priority, size, milestone})),
   release: {latest: $d.release, pr: ([$d.prs[] | select(.branch | startswith("release-please")) | {number, title}][0])}
-} + (if ($d.others // [] | length) > 0 then {otherRepositories: $d.others} else {} end)'
+}'
 
 # The hierarchy of spec 325 §7 (#353): progress per goal, milestone and epic, from a milestone query. A ticket is an issue
 # of a milestone with no sub-issue, an epic one with sub-issues (its own progress is that of its sub-issues). The goal of
@@ -279,7 +279,7 @@ hierarchy_report() {
   answer=$(jq -nc --arg q "$HIERARCHY_QUERY" --arg o "${slug%%/*}" --arg n "${slug#*/}" '{query: $q, variables: {owner: $o, name: $n}}' |
     gh_retry api graphql --input - 2>/dev/null) && jq -e '.data.repository.milestones' >/dev/null 2>&1 <<<"$answer" ||
     { echo '{"goals": null, "noGoal": null, "milestones": [], "drift": [], "note": "could not be read"}'; return 0; }
-  jq -c --slurpfile g <(vision_goals "$1") "$HIERARCHY_DEF"' hierarchy($g[0])' <<<"$answer"
+  jq -c --argjson g "$(vision_goals "$1")" "$HIERARCHY_DEF"' hierarchy($g)' <<<"$answer"
 }
 
 # One status report. $1 json|text, $2 --since duration or "", $3 true to move the "last time" mark,
@@ -308,17 +308,17 @@ status_once() {
   # The local branches count too: a ticket worked on and not pushed yet has a branch.
   locals=$(local_branches)
   out=$(jq -c --arg now "$now" --arg since "$since_iso" --arg repo "$(repo_slug)" --argjson wip "$wip" \
-    --argjson audit "$audit" --slurpfile locals <(printf '%s' "$locals") --argjson process "$(process_summary)" --argjson customized "$(customization_summary)" "$PICK_DEF$DRIFT_DEF$DECISIONS_DEF$STATUS_JQ" <<<"$data") ||
+    --argjson audit "$audit" --argjson locals "$locals" --argjson process "$(process_summary)" --argjson customized "$(customization_summary)" "$PICK_DEF$DRIFT_DEF$DECISIONS_DEF$STATUS_JQ" <<<"$data") ||
     die "could not build the status"
   trees=$(ticket_trees "$root")
-  out=$(jq -c --slurpfile t <(printf '%s' "$trees") '.inProgress |= map(. + {worktree: ($t[0][.number | tostring])})' <<<"$out")
+  out=$(jq -c --argjson t "$trees" '.inProgress |= map(. + {worktree: ($t[.number | tostring])})' <<<"$out")
   # A ticket the hygiene repair takes is not also drift that waits for a human.
-  out=$(jq -c --slurpfile h <(hygiene_report "$data" "$trees" "$now" "$locals") '. + {hygiene: $h[0]}
-    | .drift |= map(select(.kind != "stale" or (.number as $n | $h[0].orphans | all(.number != $n))))' <<<"$out") || return 1
+  out=$(jq -c --argjson h "$(hygiene_report "$data" "$trees" "$now" "$locals")" '. + {hygiene: $h}
+    | .drift |= map(select(.kind != "stale" or (.number as $n | $h.orphans | all(.number != $n))))' <<<"$out") || return 1
   # The spec drift reads git, and GitHub only for the pull requests of the commits it needs; it never fails the report.
   specs=$(spec_drift 2>/dev/null) || specs='{"drift": [], "note": "could not be read"}'
-  out=$(jq -c --slurpfile s <(printf '%s' "$specs") '. + {specDrift: $s[0].drift, specDriftNote: $s[0].note}' <<<"$out") || return 1
-  out=$(jq -c --slurpfile h <(hierarchy_report "$root") '. + {hierarchy: $h[0]}' <<<"$out") || return 1
+  out=$(jq -c --argjson s "$specs" '. + {specDrift: $s.drift, specDriftNote: $s.note}' <<<"$out") || return 1
+  out=$(jq -c --argjson h "$(hierarchy_report "$root")" '. + {hierarchy: $h}' <<<"$out") || return 1
   # The sections all read the same report and are merged in order; one that fails fails the report.
   parts=("$out")
   for name in $(status_sections); do
@@ -332,17 +332,17 @@ status_once() {
     results=$(status_fix "$out") || rc=1
     fixed=$(jq -sc '[.[] | select(.fixed)]' <<<"$results")
     lines=$(jq -r '.line' <<<"$results")
-    out=$(jq -c --slurpfile f <(printf '%s' "$fixed") '. + {fixed: ($f[0] | map({number, title}))}' <<<"$out")
+    out=$(jq -c --argjson f "$fixed" '. + {fixed: ($f | map({number, title}))}' <<<"$out")
     results=$(status_hygiene_fix "$out") || rc=1
     fixed=$(jq -sc '[.[] | select(.fixed) | {kind, id}]' <<<"$results")
     lines=$(printf '%s\n%s' "$lines" "$(jq -r '.line' <<<"$results")" | sed '/^$/d')
-    out=$(jq -c --slurpfile f <(printf '%s' "$fixed") '.hygiene.fixed = $f[0]' <<<"$out")
+    out=$(jq -c --argjson f "$fixed" '.hygiene.fixed = $f' <<<"$out")
   fi
   if [ "$publish" = true ]; then
     # What --fix repaired is not drift any more.
     drift=$(jq -c '(.fixed // []) as $f | .drift | map(select(.number as $n | $f | all(.number != $n)))' <<<"$out")
     if health=$(health_publish "$data" "$drift" "$now"); then
-      out=$(jq -c --slurpfile h <(printf '%s' "$health") '. + {health: ($h[0] | del(.body))}' <<<"$out")
+      out=$(jq -c --argjson h "$health" '. + {health: ($h | del(.body))}' <<<"$out")
     else
       rc=1
     fi

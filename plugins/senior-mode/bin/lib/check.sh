@@ -1189,27 +1189,6 @@ check_tier_errors() {
       else empty end' "$1"
 }
 
-# The configuration errors of the `since` keys of the checks of the config file $1, one per line: a date YYYY-MM-DD, never on
-# the built-in checks that do not wait (the secret scan and the dependency audit, ADR 0027).
-check_since_errors() {
-  jq -r '.checks // [] | to_entries[] | select(.value | has("since")) | .key as $i | .value
-    | if (.name == "secret scan" or .name == "dependency audit") then "checks[\($i)].since: \(.name) is a built-in check that never warns, it cannot take a since"
-      elif ((.since | type) != "string" or (.since | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$") | not)) then "checks[\($i)].since must be a date YYYY-MM-DD, not \(.since | tojson)"
-      else empty end' "$1"
-}
-
-# Whether the date $1 (YYYY-MM-DD) is still within the warning period of a new check or rule (#481, spec 474 §9): a check
-# that fails warns for `check.warnDays` days (default 14) after its `since`, and blocks from the day after. SENIOR_MODE_NOW
-# stands in for the clock.
-check_warn_active() {
-  local t days
-  [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
-  t=$(date -u -d "$1" +%s 2>/dev/null || date -j -u -f %Y-%m-%d "$1" +%s 2>/dev/null) || return 1
-  days=$(config_effective 2>/dev/null | jq -r '.check.warnDays // 14' 2>/dev/null) || days=14
-  [[ $days =~ ^[0-9]+$ ]] || days=14
-  [ $((($(serve_now) - t) / 86400)) -le "$days" ]
-}
-
 # The lockfiles that take part in the key of the check cache (#479): a change to one of them misses it.
 CHECK_LOCKFILES=(package-lock.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb Cargo.lock go.sum poetry.lock uv.lock
   requirements.txt Gemfile.lock composer.lock)
@@ -1353,7 +1332,7 @@ Log: \`$log\`"
 check() {
   local file root count i name cmd output passed=0 failed="" state description names cmds started took scope="" log rundir runtmp ci_only=false jobs="[]" job
   local flaky="" fl waiting="" ci_failed="" st url free pre_push=false changed=false update=false a label vext vcmd preset nbuiltin vc
-  local changed_list="" changed_scope="" sel all=false pk="" pkdesc="" pdir pcmd found idx argc=$# tier_only="" tier run2=true run3=false tier_errors urc=0 no_cache=false ckey inp cdir publish_sha="" since
+  local changed_list="" changed_scope="" sel all=false pk="" pkdesc="" pdir pcmd found idx argc=$# tier_only="" tier run2=true run3=false tier_errors urc=0 no_cache=false ckey inp cdir publish_sha=""
   local -a bases=()
   local -A variant=()
   while [ $# -gt 0 ]; do
@@ -1418,7 +1397,6 @@ check() {
   count=$(jq '.checks // [] | length' "$file")
   [ "$count" -gt 0 ] || die "no checks in .claude/senior-mode.json; run /senior-mode:setup"
   tier_errors=$(check_tier_errors "$file")
-  tier_errors+=${tier_errors:+$'\n'}$(check_since_errors "$file")
   [ -z "$tier_errors" ] || { rm -f "$scope"; die "$tier_errors"; }
   # Without its dependencies a node project fails typecheck and build with errors that do not say so (#110).
   if deps_missing "$root"; then
@@ -1630,16 +1608,8 @@ check() {
       [ -z "$fl" ] || flaky+="${flaky:+,}$fl"
     else
       took=$(since_ms "$started")
-      # A new check (`since`) only warns during its period (#481); the built-in checks have no `since`.
-      since=""
-      [ "$i" -lt "$nbuiltin" ] || since=$(jq -r --arg n "${bases[i]}" '[.checks[]? | select(.name == $n) | .since // empty][0] // empty' "$file")
-      if [ -n "$since" ] && check_warn_active "$since"; then
-        passed=$((passed + 1))
-        echo "warn  $label ($took): new since $since, it blocks once its warning period is over"
-      else
-        failed="${failed:+$failed, }$name"
-        echo "FAIL  $label ($took)"
-      fi
+      failed="${failed:+$failed, }$name"
+      echo "FAIL  $label ($took)"
       # The audit lists every blocking advisory (it caps them itself); another check shows one line per finding, else its last lines.
       if [ "$name" = "dependency audit" ]; then
         tail -n 300 "$output" | sed 's/^/      /'

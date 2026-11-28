@@ -101,8 +101,7 @@ config_findings() { # document [schema]
 # --- Layers, process profiles and overrides (#307) ---------------------------------------------------------------
 #
 # The configuration merges in layers, lowest first: the plugin defaults, the process profile, the organization
-# (the config.json of the organization's .github repository, org_layer_read; a file <git common dir>/senior-mode/organization.json
-# of the machine replaces it), the repository
+# (a file the v1.4 reader will fill: <git common dir>/senior-mode/organization.json), the repository
 # (.claude/senior-mode.json) and a local untracked file (.claude/senior-mode.local.json of the main worktree).
 # A higher layer replaces a lower one key by key; the lists of the safety base (`protected`, `secrets`,
 # `envGuard.forbidden`) are the union of the layers, so a layer can add to them and none can remove an entry.
@@ -240,15 +239,8 @@ config_resolve() { # [--validate]
   root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
   common=$(git rev-parse --path-format=absolute --git-common-dir)
   text[repository]=$(config_repo_text) || return 1
+  text[organization]=$(cat "$common/senior-mode/organization.json" 2>/dev/null) || text[organization]=""
   text[local]=$(cat "$(dirname "$common")/.claude/senior-mode.local.json" 2>/dev/null) || text[local]=""
-  orgsrc=$common/senior-mode/organization.json
-  text[organization]=""
-  if [ -e "$orgsrc" ]; then
-    text[organization]=$(cat "$orgsrc" 2>/dev/null) || text[organization]=""
-  elif j=$(org_layer_read "${text[repository]}" "${text[local]}") && [ -n "$j" ]; then
-    text[organization]=$(jq -c .config <<<"$j")
-    orgsrc=$(jq -r .source <<<"$j")
-  fi
   for n in repository organization local; do
     t=${text[$n]}
     layer[$n]='{}'
@@ -284,10 +276,10 @@ config_resolve() { # [--validate]
   ! config_from_base || base=" on $(default_branch 2>/dev/null || echo the base branch)"
   layers=$(jq -nc --argjson d "$DEFAULTS" --argjson p "$prof" --argjson o "${layer[organization]}" --argjson r "${layer[repository]}" \
     --argjson l "${layer[local]}" --argjson op "${present[organization]}" --argjson rp "${present[repository]}" \
-    --argjson lp "${present[local]}" --arg orgsrc "$orgsrc" --arg base "$base" '[
+    --argjson lp "${present[local]}" --arg common "$common" --arg base "$base" '[
     {name: "defaults", source: "the plugin defaults", present: true, config: $d},
     {name: "profile", source: "profile \($p.name) (\($p.origin))", present: true, config: $p.config},
-    {name: "organization", source: $orgsrc, present: $op, config: $o},
+    {name: "organization", source: "\($common)/senior-mode/organization.json", present: $op, config: $o},
     {name: "repository", source: ".claude/senior-mode.json\($base)", present: $rp, config: $r},
     {name: "local", source: ".claude/senior-mode.local.json", present: $lp, config: $l}]')
   merged=$(jq -c "$CONFIG_MERGE"'reduce .[] as $l ({}; merge2($l.config))' <<<"$layers")
@@ -339,7 +331,7 @@ config_effective() {
   local strict='.process = {profile: "strict", gates: ($g | map({key: ., value: true}) | from_entries)}'
   local fast='.process = {profile: "fast", gates: ($g | map({key: ., value: true}) | from_entries | .review = false)}'
   if ! config_from_base; then
-    # The common case: no organization layer (file or repository), no local file, no project profile, nothing under `process`.
+    # The common case: no organization or local file, no project profile, nothing under `process`.
     root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
     common=$(git rev-parse --path-format=absolute --git-common-dir)
     text='{}'
@@ -348,8 +340,7 @@ config_effective() {
       text=$(<"$file")
     fi
     if [ ! -e "$common/senior-mode/organization.json" ] && [ ! -e "$(dirname "$common")/.claude/senior-mode.local.json" ] &&
-      [ ! -e "$root/.claude/senior-mode/profiles" ] && jq -e 'has("process") | not' <<<"$text" >/dev/null &&
-      [ -z "$(org_layer_read "$text" "")" ]; then
+      [ ! -e "$root/.claude/senior-mode/profiles" ] && jq -e 'has("process") | not' <<<"$text" >/dev/null; then
       jq -c --argjson d "$DEFAULTS" --argjson g "$CONFIG_GATES" "(\$d * .) | $fast" <<<"$text"
       return
     fi
@@ -363,8 +354,7 @@ config_effective() {
   # The result only changes with the base branch or an untracked layer: it is kept under that key, so that the
   # many reads of a daemon cost one file read.
   cache=$common/senior-mode/config.cache.json
-  text=$(cat "$(dirname "$common")/.claude/senior-mode.local.json" 2>/dev/null) || text=""
-  key=$(sha256 "$commit$(cat "$common/senior-mode/organization.json" 2>/dev/null)$text$(org_layer_read "$(config_repo_text)" "$text")")
+  key=$(sha256 "$commit$(cat "$common/senior-mode/organization.json" "$(dirname "$common")/.claude/senior-mode.local.json" 2>/dev/null)")
   if [ -f "$cache" ] && jq -ce --arg k "$key" 'select(.key == $k) | .config' "$cache" 2>/dev/null; then
     return
   fi

@@ -74,7 +74,7 @@ STATUS_JQ="$BRANCH_DEF"'. as $d | $d.items as $items | {
       (if (.labels | index("blocked")) then "blocked" else empty end),
       (if (.labels | index("needs-info")) then "needs information" else empty end),
       (if (.blockers | length) > 0 and (.status | IN("Ready", "In progress", "In review"))
-        then "waits for " + (.blockers | map("#\(.)") | join(", ")) else empty end)]) as $r
+        then "waits for " + (.blockers | map(if type == "string" then . else "#\(.)" end) | join(", ")) else empty end)]) as $r
     | select($r | length > 0) | {number, title, reasons: $r}],
   waiting: (([$d.prs[] | select(.labels | index("needs-human")) | {kind: "pull request", number, title, why: "needs a human decision"}]
       + [$d.prs[] | select(.failing | length > 0) | {kind: "pull request", number, title, why: ("failing: " + (.failing | join(", ")))}]
@@ -92,7 +92,7 @@ STATUS_JQ="$BRANCH_DEF"'. as $d | $d.items as $items | {
   customized: $customized,
   next: ($d | pick | .[:3] | map({number, title, priority, size, milestone})),
   release: {latest: $d.release, pr: ([$d.prs[] | select(.branch | startswith("release-please")) | {number, title}][0])}
-}'
+} + (if ($d.others // [] | length) > 0 then {otherRepositories: $d.others} else {} end)'
 
 # The hierarchy of spec 325 §7 (#353): progress per goal, milestone and epic, from a milestone query. A ticket is an issue
 # of a milestone with no sub-issue, an epic one with sub-issues (its own progress is that of its sub-issues). The goal of

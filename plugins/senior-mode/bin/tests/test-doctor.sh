@@ -82,8 +82,8 @@ expect_fail() { # case what fix
   grep -q "fix: $3" "$work/out" || fail "$1: the fix '$3' is not printed: $(cat "$work/out")"
 }
 
-# A: everything in place: exit 0, every line ok, nothing overridden: the default fast profile with its shipped review lift
-# (ADR 0034) is the default process, not an override (#854).
+# A: everything in place: exit 0, every line ok, nothing overridden (the strict profile: the default fast one lifts the review).
+good=$(jq -c '.process = {profile: "strict"}' <<<"$good")
 config "$good"
 doctor || fail "A: doctor failed: $(cat "$work/out" "$work/err")"
 for c in 'gh auth' 'claude login' 'git hooks' config 'board fields' 'type labels' ruleset; do
@@ -93,11 +93,6 @@ grep -q 'senior-mode plugin' "$work/out" || fail "A: no version line: $(cat "$wo
 grep -q 'nothing overridden' "$work/out" || fail "A: customization not said: $(cat "$work/out")"
 doctor --json && [ "$(jq -r '.ok' "$work/out")" = true ] && [ "$(jq -r '.customization.nothing' "$work/out")" = true ] || fail "A: --json wrong: $(cat "$work/out")"
 doctor --bogus && fail "A: an unknown option was accepted"
-jq -e 'has("process") | not' "$repo/.claude/senior-mode.json" >/dev/null || fail "A: the default config pins a process"
-config "$(jq -c '.process = {profile: "strict"}' <<<"$good")"
-doctor || fail "A2: doctor failed"
-grep -q 'nothing overridden' "$work/out" || fail "A2: the strict profile with no lift is not nothing overridden: $(cat "$work/out")"
-config "$good"
 
 # B: gh and claude.
 GH_STUB_AUTH=no expect_fail "B1" 'gh is not logged in' 'gh auth login'

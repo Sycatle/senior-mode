@@ -100,23 +100,16 @@ by one, the old path is removed last.
 An organization can set its base configuration once. Configuration has five
 [layers](configuration.md#layers) and the organization is the third.
 
-**Available (#400).** The layer is read from the organization's own repository, with a file
-`<git common dir>/senior-mode/organization.json` of a clone as a machine override; `senior-mode config get` and
-`config explain` read it (explain names the layer and its commit), and the repository and local layers override it.
-`setup org` ([below](#setup-org)) proposes the one key it knows about, `board.template`, for it.
+**Available.** The layer is the file `<git common dir>/senior-mode/organization.json` of a clone, copied there by
+whoever manages the machine; `senior-mode config get` and `config explain` read it, and the repository and local layers
+override it. `setup org` ([below](#setup-org)) proposes the one key it knows about, `board.template`, for it.
+
+**Planned (#400, #459).** The layer is read from the organization's own repository instead of a copied file:
 
 - `<owner>/<org.repo>` (default `.github`), directory `org.path` (default `senior-mode`), from its default branch only,
-  or from `org.ref` when the repository pins one. A pull request or another branch is never read. Its `config.json`
-  is the base configuration; `overrides/`, and `knowledge/`, `adr/` and `vision.md` that the briefing and `check` use,
-  are planned (#459).
-- One conditional read at most every 10 minutes (an hour for `serve`), cached in
-  `${XDG_CACHE_HOME:-~/.cache}/senior-mode/org/<owner>/<sha>/`. GitHub unreachable: the last good copy, named by one line
-  `org layer: cached <sha>, <age>`; no copy: an empty layer. A missing repository or directory is an empty layer,
-  checked again after an hour. Reading never fails a command.
+  or from `org.ref` when the repository pins one. A pull request or another branch is never read. It holds `config.json`,
+  `overrides/`, and `knowledge/`, `adr/` and `vision.md` that the briefing and `check` use.
 - `org.inherit: false` turns the read off. The `org.*` keys are read from the repository and local layers only.
-
-**Planned (#735).** What the organization may and may not set:
-
 - Commands do not inherit: `commands`, `checks`, `agent.command`, `slot`, `slotUp`, `slotDown` and `notify.webhook` from
   the organization are ignored unless the repository lists the key in `org.allowExec`. Machine keys (`serve.repos`,
   `serve.scope`) do not inherit either.
@@ -168,4 +161,4 @@ and the exit code stays 0. Without `--all`, `status` is unchanged.
 The new keys of this page are all optional, and every one has its row in
 [Configuration](configuration.md#multi-repo-keys): `serve.scope`, `serve.include`, `serve.exclude`, `serve.repos`,
 `serve.repoOrder`, `autonomy.repoParallel`, `epics.available`, `org.inherit`, `org.repo`, `org.path`, `org.ref`,
-`org.allowExec` and `project.home`. Only `project.home` and the `org.*` keys but `org.allowExec` are read today.
+`org.allowExec` and `project.home`. Only `project.home` is read today.

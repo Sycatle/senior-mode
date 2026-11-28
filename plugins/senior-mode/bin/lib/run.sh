@@ -629,8 +629,8 @@ run_blocker() {
   elif zones=$(protected_match "$RUN_GLOBS" < <(cut -f1 <<<"$files")) && [ -n "$zones" ]; then
     echo "it touches a protected zone ($(paste -sd, - <<<"$zones" | sed 's/,/, /g'))"
   else
-    # One commit per ticket and the size budget of the tickets it closes (#297, #303), then their red tests (#306).
-    reason=$(delivery_blocker "$RUN_SLUG" "$pr" "$3" "$files")
+    # One commit per ticket (#297), the size budget and Self-review are warnings only (ADR 0034), then their red tests (#306).
+    reason=$(delivery_blocker "$RUN_SLUG" "$pr" "$3" "$files" 2>/dev/null)
     [ -n "$reason" ] || reason=$(red_blocker "$RUN_SLUG" "$pr" "$(jq -r '.body // ""' <<<"$3")" "$RUN_ROOT")
     if [ -n "$reason" ]; then
       echo "$reason"

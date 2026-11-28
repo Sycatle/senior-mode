@@ -1494,6 +1494,7 @@ rm -f "$FIX"/files-1043 "$FIX"/status-94* "$FIX/check-heads"
   done
   RUN_SLUG=acme/app RUN_BASE=origin/main RUN_GLOBS='["auth/**"]' RUN_DIR="$work/rs"
   mkdir -p "$RUN_DIR"
+  config_get() { if [ "$1" = review.followUps ]; then echo "${RS_FOLLOW_UPS:-blocking}"; fi; }
   declare -A RUN_SIZE=([951]=M [952]=L [953]=M)
   declare -A RUN_BATCH=()
   item_get() { :; }
@@ -1510,6 +1511,15 @@ rm -f "$FIX"/files-1043 "$FIX"/status-94* "$FIX/check-heads"
   grep -qF 'goes in' <<<"$light" || echo "FAIL: RS: nits do not go in the comment"
   grep -qF 'This is a light review' <<<"$(serve_review_prompt 952 t 252 sha opus)" && echo "FAIL: RS: an L pull request has the light review"
   grep -qF 'This is a light review' <<<"$(serve_review_prompt 953 t 253 sha opus)" && echo "FAIL: RS: a diff in a protected zone has the light review"
+  # #874: the reviewer files an issue only for a blocker or a security risk, unless review.followUps is all.
+  RS_FOLLOW_UPS=blocking
+  fu=$(serve_review_prompt 952 t 252 sha opus)
+  grep -qF 'only for a finding that blocks the milestone in progress or is a real security risk' <<<"$fu" || echo "FAIL: RS: the reviewer prompt does not limit follow-up issues"
+  grep -qF 'any other finding is a comment on the pull request, no issue' <<<"$fu" || echo "FAIL: RS: another finding is not a comment"
+  RS_FOLLOW_UPS=all
+  fu=$(serve_review_prompt 952 t 252 sha opus)
+  grep -qF 'File each out-of-scope or pre-existing defect as an issue' <<<"$fu" || echo "FAIL: RS: followUps all does not keep every follow-up"
+  grep -qF 'only for a finding that blocks' <<<"$fu" && echo "FAIL: RS: followUps all still limits follow-ups"
   exit 0
 ) >"$work/rs.out" 2>&1
 grep -q '^FAIL' "$work/rs.out" && { cat "$work/rs.out"; failures=$((failures + 1)); }

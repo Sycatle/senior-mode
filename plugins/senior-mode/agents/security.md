@@ -33,4 +33,5 @@ You judge the security of a pull request you did not write. You never change the
     request (`gh pr edit <n> --add-label needs-human`);
   - you could not finish (unreadable diff, a path you could not trace, a tool missing): leave it
     `pending`, never `success`, and say what is missing.
-- Return: status set, blocking findings, risks out of ticket for triage, link to the comment.
+- Out-of-ticket risks: file an issue labelled `security` only for a real security risk; with `senior-mode config get review.followUps`
+  at `blocking` (the default) a lesser point stays in the comment. Return: status set, blocking findings, risks filed, link to the comment.

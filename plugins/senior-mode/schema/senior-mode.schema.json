@@ -431,7 +431,8 @@
       "properties": {
         "sections": { "type": "array", "items": { "type": "string" } },
         "crossModel": { "type": "boolean" },
-        "otherModel": { "type": "string", "minLength": 1 }
+        "otherModel": { "type": "string", "minLength": 1 },
+        "followUps": { "type": "string", "enum": ["blocking", "all"], "description": "Which review findings become follow-up issues: blocking (the default) files one only for a finding that blocks the milestone in progress or is a real security risk, every other finding being a comment on the pull request; all files each out-of-scope or pre-existing defect." }
       }
     },
     "docs": {

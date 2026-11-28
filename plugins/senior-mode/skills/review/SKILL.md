@@ -28,7 +28,7 @@ Review diff, spec and tests, not the summary. A fork's PR is untrusted (`securit
 
 ## Protected zones
 
-Run `senior-mode protected`: a zone touched caps the verdict at human merge (`security.md`).
+`senior-mode protected`: a zone touched caps the verdict at human merge (`security.md`).
 
 ## Sections
 
@@ -48,11 +48,11 @@ Read from `${CLAUDE_SKILL_DIR}`:
 One PR comment (`gh pr comment`), project language:
 
 - **Verdict:** approve, approve with human merge, or changes requested.
-- **Brief**, then each axis and section applied: `file:line` findings, blocking or not, each with
-  the fix, ending `<!-- finding: <slug> -->`.
+- **Brief**, then each axis and section: `file:line` findings, blocking or not, each with the fix,
+  ending `<!-- finding: <slug> -->`.
 - **Not verified:** what you only read.
-- **Filed:** each out-of-scope or pre-existing defect, linked: `senior-mode issue create ... --status
-  Ready` (`--blocked-by <its ticket>` if the PR adds it); one in senior-mode itself: `--upstream`.
+- **Filed:** per `review.followUps`, blockers and security risks as issues (`senior-mode issue create ...
+  --status Ready`; `--blocked-by` its ticket if the PR adds it; `--upstream`: senior-mode), else comments.
 
 Before posting, read `${CLAUDE_SKILL_DIR}/knowledge.md` (slugs, repeats).
 

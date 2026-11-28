@@ -63,7 +63,7 @@ resolves `lib/` from its own real path (`readlink -f`), so it works through a sy
 - `sandbox.sh`: `sandbox_mode`, `sandbox_runtime` (podman, then docker), `sandbox_enabled`, `sandbox_credential_ok` and the pure
   `sandbox_decide` (container, host or hold).
 - `serve.sh`: `serve` (loop, poll, drain, install; the loop runs each `serve_step_<NN>_<name>` of any module, in `<NN>` order). Then `serve-ends.sh`
-  (how a session ended, backoffs), `serve-hold.sh` (hold, probes, breaker), `serve-launch.sh` (may a session start), `serve-session.sh` (roles' finish,
+  (how a session ended, backoffs), `serve-hold.sh` (hold, probes, breaker), `serve-launch.sh` (may a session start; the sandbox gate), `serve-sandbox.sh` (the `sandbox` hold's recovery step), `serve-session.sh` (roles' finish,
   report, recovery), `serve-review.sh` (pull requests In review: reviewer, fix rounds, best-of-N, needs-human), `serve-merge.sh` (merge, queue, rebase,
   requalify, conflicts, main verification), `serve-frame.sh` (ready by rule, framing), `serve-duties.sh` (digests, deps, gardening, questions).
 - `demo.sh`: `demo` (a throwaway repository with three toy tickets, delivered by serve; progress in `demo.json`).

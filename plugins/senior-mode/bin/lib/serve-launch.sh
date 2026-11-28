@@ -72,6 +72,50 @@ serve_busy() {
   [[ " ${running[*]} " == *" $1 "* ]]
 }
 
+# What sandbox_decide says for this machine (#760): the mode, the runtime (not looked for when the mode is `off`), and
+# whether the credential file is good.
+serve_sandbox_decision() {
+  local mode runtime="" cred=no
+  mode=$(sandbox_mode)
+  if [ "$mode" != off ]; then
+    runtime=$(sandbox_runtime) || runtime=""
+    ! sandbox_credential_ok || cred=yes
+  fi
+  sandbox_decide "$mode" "$runtime" "$cred"
+}
+
+# The note of a session that runs on the host, said once per local day: the file `sandbox-note` keeps the day and the note.
+serve_sandbox_note() {
+  local day
+  day=$(date -d "@$(serve_now)" +%F)
+  [ "$(cat "$SERVE_DIR/sandbox-note" 2>/dev/null)" != "$day $1" ] || return 0
+  state_put "$SERVE_DIR/sandbox-note" "$day $1" || return 0
+  echo "serve: $1" >&2
+}
+
+# May the session start where the sandbox decides it runs (#760)? A `hold` (mode `required` without a runtime or a model
+# credential, or an image that does not build) holds every launch with cause `sandbox`: serve_hold_set, and an approved pull
+# request still merges. A `host` note is logged once a day. A container gets its image built here (sandbox_image).
+serve_sandbox_gate() {
+  local out kind detail
+  out=$(serve_sandbox_decision)
+  kind=${out%% *}
+  detail=${out#* }
+  if [ "$kind" = container ] && ! out=$(sandbox_image); then
+    kind=hold
+    detail=${out#hold }
+  fi
+  case $kind in
+    hold)
+      serve_hold_set sandbox "$detail"
+      [ -n "$SERVE_HELD" ] || SERVE_HELD="held, environment problem (sandbox): $detail"
+      return 1
+      ;;
+    host) serve_sandbox_note "$detail" ;;
+  esac
+  return 0
+}
+
 # May a session start now? Not when serve is stopping, held back (serve_hold), without a free slot or after the
 # failures the breaker counts, nor a ticket $1 that waits on an environment problem of its own; then the guards (#117) are in place and no ceiling is reached. What it says, it
 # says once per poll.
@@ -87,6 +131,7 @@ serve_can_launch() {
     fi
   fi
   [ "$SERVE_GUARDS" = ok ] || return 1
+  serve_sandbox_gate || return 1
   if [ -z "$SERVE_WAIT" ] && SERVE_WAIT=$(serve_ceiling); then
     echo "serve: waiting for the next poll: $SERVE_WAIT"
   fi

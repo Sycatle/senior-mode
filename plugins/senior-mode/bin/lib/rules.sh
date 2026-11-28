@@ -132,7 +132,18 @@ rules_pack_errors() {
        elif $r.kind == "tool" then
          (if ($r.run | type) != "string" or $r.run == "" then "\($w): run is missing" else empty end),
          (if ($r.format // "") as $x | $f | index($x) | not then "\($w): unknown format \($r.format | tojson)" else empty end)
-       else empty end)' "$2"
+       else empty end),
+      (if ($r | has("since")) and (($r.since | type) != "string" or ($r.since | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$") | not)) then "\($w): since must be a date YYYY-MM-DD" else empty end)' "$2"
+}
+
+# Records the finding $2 (one line) of the rule $1 in the caller's `findings`, or in its `warns` while the rule is in its
+# warning period (`since` of the pack entry, `check.warnDays`, #872).
+rules_find() {
+  if [ -n "${soft[$1]:-}" ]; then
+    warns+="warning: $2 [new rule since ${soft[$1]}: it warns for check.warnDays days, then blocks]"$'\n'
+  else
+    findings+="$2"$'\n'
+  fi
 }
 
 # The `rules.off` entries without a reason, one error per line.
@@ -195,7 +206,7 @@ rules_check() {
   local okpaths okkey ext out findings="" warns="" lifted="" tool_hit=0 preset n i sev tf tl tm
   local needs install tmp report format shared addedjson
   local -a rules=() recs=() files=() content=()
-  local -A added=() off=() offpaths=() verified=() allow=() allowwhy=() okcfg=()
+  local -A added=() off=() offpaths=() verified=() allow=() allowwhy=() okcfg=() soft=()
   local US=$'\x1f'
   root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
   cfg=$(config_effective | jq -c '.rules // {}') || return 1
@@ -216,6 +227,10 @@ rules_check() {
   done <<<"$packs"
   errs+=$(rules_off_errors "$cfg")
   [ -z "${errs//$'\n'/}" ] || { printf 'configuration error: %s\n' "${errs%$'\n'}" | sed '2,$s/^/  /'; return 1; }
+  # A rule with a `since` still in its warning period (#481) only warns.
+  while IFS="$US" read -r id why; do
+    ! check_warn_active "$why" || soft[$id]=$why
+  done < <(printf '%s\n' ${rules[@]+"${rules[@]}"} | jq -r 'select(.since) | [.id, .since] | join("\u001f")')
   # One record per rule, read once: id, kind, tier, match, ext, prodOnly, skip, fix, message and the matcher's fields.
   for r in ${rules[@]+"${rules[@]}"}; do
     recs+=("$(jq -r '[.id, .kind, .tier, (.match // "line"), ((.ext // []) | join(",")), (.prodOnly // false), ((.skip // []) | join("\t")), .fix, (.message // .id),
@@ -274,13 +289,13 @@ rules_check() {
         [ -n "$line" ] || continue
         if [ "$match" = suppression ]; then
           case $n in
-            never) findings+="$f:$line: $id: $msg (fix: $fix)"$'\n' ;;
-            noref) findings+="$f:$line: $id: no issue and reason on the line or the line above (fix: $fix)"$'\n' ;;
+            never) rules_find "$id" "$f:$line: $id: $msg (fix: $fix)" ;;
+            noref) rules_find "$id" "$f:$line: $id: no issue and reason on the line or the line above (fix: $fix)" ;;
             ref:*)
               n=${n#ref:}
               [ -n "${verified[$n]:-}" ] || verified[$n]=$(rules_issue_state "$n")
               case ${verified[$n]} in
-                missing) findings+="$f:$line: $id: #$n not found (fix: $fix)"$'\n' ;;
+                missing) rules_find "$id" "$f:$line: $id: #$n not found (fix: $fix)" ;;
                 unknown) warns+="warning: $f:$line: $id: #$n not verified"$'\n' ;;
               esac
               ;;
@@ -291,7 +306,7 @@ rules_check() {
           lifted+="warning: $f:$line: $id lifted by senior-mode: allow${allowwhy[$line:$id]:+ (${allowwhy[$line:$id]})}"$'\n'
           continue
         fi
-        findings+="$f:$line: $id: $msg (fix: $fix)"$'\n'
+        rules_find "$id" "$f:$line: $id: $msg (fix: $fix)"
       done <<<"$out"
     done
   done
@@ -333,7 +348,7 @@ rules_check() {
         if [ "$sev" = warn ]; then
           warns+="warning: $tf:$tl: $id: $tm (fix: $fix)"$'\n'
         else
-          findings+="$tf:$tl: $id: $tm (fix: $fix)"$'\n'
+          rules_find "$id" "$tf:$tl: $id: $tm (fix: $fix)"
         fi
       done < <("rules_$format" "$addedjson" "$root" "$shared" <<<"$report")
     done

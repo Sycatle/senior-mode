@@ -813,8 +813,21 @@ protected_match() {
     | inputs | select(. as $f | any($res[]; . as $r | $f | test($r)))'
 }
 
+# The ref the red tests of this branch are computed against (#875): the parent of a stacked branch (`start --base`
+# leaves it in branch.<name>.senior-mode-base) while it exists, else the default branch. A stacked branch's list holds
+# its own tests, not the files of its parent's list or of the production code its parent changed.
+red_base() {
+  local b p
+  b=$(git symbolic-ref --short -q HEAD) && p=$(git config --get "branch.$b.senior-mode-base") &&
+    git rev-parse -q --verify "$p^{commit}" >/dev/null && {
+    printf '%s\n' "$p"
+    return 0
+  }
+  default_branch
+}
+
 # `senior-mode red-tests record <issue>` (#191): the files of the commits the test-author session made on the
-# ticket branch, since the default branch, one path per line from the repository root, in
+# ticket branch, since its base (red_base), one path per line from the repository root, in
 # <git common dir>/senior-mode/runs/<issue>/red-tests. hooks/self-protect.sh keeps them read-only for a
 # session with SENIOR_MODE_ROLE=ticket. Written once: later commits are the implementer's, so run it between
 # the two sessions. A deleted file is not a red test.
@@ -826,7 +839,7 @@ red_tests() {
   }
   local common base list files
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
-  base=$(default_branch) || die "no default branch to compare with"
+  base=$(red_base) || die "no default branch to compare with"
   list=$common/senior-mode/runs/$2/red-tests
   [ ! -e "$list" ] || die "the red tests of #$2 are already recorded ($list): only the test-author's commits belong in it"
   files=$(git diff -z --no-renames --name-only --diff-filter=AM "$base...HEAD" | tr '\0' '\n')
@@ -837,7 +850,7 @@ red_tests() {
 }
 
 # `senior-mode red-tests verify <issue>` (#306): the proof, for a feature or bug ticket the test-author did not
-# start, that its tests count. The test files the branch adds or changes since the default branch are carried to a
+# start, that its tests count. The test files the branch adds or changes since its base (red_base) are carried to a
 # copy of the merge base and the project's test command (commands.test, else the check named test) must fail there;
 # on the head it must pass. The files are then listed in <git common dir>/senior-mode/runs/<issue>/red-verified, which
 # `run` and `serve` read next to red-tests (red_blocker). Unlike red-tests, that list does not make the files read-only.
@@ -845,7 +858,7 @@ red_tests_verify() {
   local n=$1 common base root file cmd preset files="" f mb wt tp jid jtest jexists jspec
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository"
   root=$(git rev-parse --show-toplevel) || die "not inside a git repository"
-  base=$(default_branch) || die "no default branch to compare with"
+  base=$(red_base) || die "no default branch to compare with"
   file=$(config_file)
   cmd=$(jq -r '.commands.test // ([.checks[]? | select(.name == "test" or .name == "tests")][0].run) // empty' "$file")
   [ -n "$cmd" ] || die "no test command: set commands.test in .claude/senior-mode.json"

@@ -47,6 +47,7 @@
           "changed": { "type": "string", "minLength": 1, "description": "The command `check --changed` runs on the changed files only; {files} stands for them." },
           "fix": { "type": "string", "minLength": 1, "description": "The command that fixes what the check reports; a failure prints it as `fix: <command>`." },
           "inputs": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Globs of the tracked files the check reads. With them, a success is cached by the content of those files, the configuration and the lockfiles, and the next run skips the check as `ok <name> (cached)`; `check --no-cache` runs it anyway." },
+          "since": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The date (YYYY-MM-DD) the check was added: a failure only warns for `check.warnDays` days after it, then blocks. `setup repo` stamps it on the checks it adds to a project that already had some. The secret scan and the dependency audit never take one." },
           "tier": { "type": "integer", "enum": [2, 3], "description": "When the check runs: 2 (default) at every push, 3 in the heavy run (`check --tier 3`, `check --all`)." }
         }
       }
@@ -55,7 +56,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "edit": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Tier 1 fixers (formatter, lint --fix) run on the file the agent just wrote, `{file}` standing for its quoted path. They never block: at most 10 unfixed findings go back to the agent." }
+        "edit": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Tier 1 fixers (formatter, lint --fix) run on the file the agent just wrote, `{file}` standing for its quoted path. They never block: at most 10 unfixed findings go back to the agent." },
+        "warnDays": { "type": "integer", "minimum": 0, "description": "Days a check with a `since` only warns when it fails, before it blocks (default 14)." }
       }
     },
     "performance": {
